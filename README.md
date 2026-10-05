@@ -15,8 +15,9 @@ implementation.
 
 [Releases](https://github.com/nyosegawa/speech.cpp/releases) carry, for macOS arm64 (Metal) and Windows x64
 (Vulkan), `speech-worker-<version>-<platform>.zip` with the worker alone, which is what ASIST bundles, and
-`speech-cpp-tools-<version>-<platform>.zip` with the command-line tools, the HTTP server `speech-server`, and
-the shared library with its header (`libspeech.dylib`, or `speech.dll` with its import library `speech.lib`, and `speech.h`), with their
+`speech-cpp-tools-<version>-<platform>.zip` with the command-line tool `speech-tts`, the HTTP server
+`speech-server` and the shared library with its header (`libspeech.dylib`, or `speech.dll` with its import
+library `speech.lib`, and `speech.h`), with their
 SHA-256 sums. A release is the tag `v<version>` of the number in the file `VERSION`, which CI checks before it
 publishes; the library reports the same number through `speech_version()`, and the worker in its `ready`
 message. Versions follow [Semantic Versioning](https://semver.org): while they are 0.x, a release whose
@@ -48,15 +49,75 @@ modulo 128 columns; on an M5 this turned a codec window of 64 frames into noise
 ([#13](https://github.com/nyosegawa/speech.cpp/issues/13)). Without it Metal comes closer to the CPU, and on
 the M5 Irodori-TTS takes a fifth to a third longer to its first audio while Qwen3-TTS keeps its speed.
 
+## Command line
+
+`speech-tts` speaks text with any model speech.cpp runs, through the C API, into a WAVE file (16-bit mono PCM
+at the model's rate) or to stdout. It loads the model once and speaks the text given, or, without one, every
+line of stdin as a request of its own, blank lines skipped, all into the one WAVE in the order of the lines.
+The first line takes the seed and each later line the next one, as the worker's requests do, so a line gives
+the same audio as the same request to the worker.
+
+```sh
+# One sentence to a file, with a Qwen3-TTS speaker
+speech-tts qwen3-tts-0.6b-customvoice-q8_0.gguf qwen3-tts-codec-12hz-f16.gguf \
+    --voice-name ono_anna --seed 42 -o out.wav "明日の東京は晴れです。"
+
+# A text file, one sentence per line, into one WAVE file, in the voice of a reference recording
+speech-tts irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
+    --voice bright=bright-young-woman-10s.voice.gguf -o story.wav < story.txt
+
+# Straight into a player, which starts as the first audio arrives
+echo "こんにちは。" | speech-tts irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
+    --voice bright=bright-young-woman-10s.voice.gguf -o - | ffplay -nodisp -autoexit -
+
+# An Irodori-TTS voice file from a 48 kHz reference recording (see Irodori-TTS voices below)
+speech-tts make-voice irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
+    bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf --device cpu
+```
+
+The options have the names and meanings of the worker's and of the C API's fields:
+
+| Option | For | Meaning |
+|---|---|---|
+| `-o FILE` | both | the WAVE file to write, or `-` for stdout. Needed |
+| `--device NAME`, `gpu`, `cpu` | both | the device as `speech-tts --devices` lists it, the first GPU (the default) or the CPU |
+| `--seed n` | both | the seed of the first text; each later line takes the next one. Without it the seed is random |
+| `--voice-name NAME` | both | the voice to speak with: a Qwen3-TTS speaker or the name of a `--voice`. Needed unless the model has a single voice; an error lists the model's voices |
+| `--language TAG` | both | a BCP 47 tag of one of the model's languages, or `auto` (the default) |
+| `--ctx n` | Qwen3-TTS | the talker's context in positions (2048) |
+| `--voice NAME=FILE` | Irodori-TTS | a voice, repeated for more: a reference WAVE file or a voice file. At least one is needed |
+| `--steps n` | Irodori-TTS | the sampler's steps: 4 for v4.1-Small-MF and 40 for v4.1-Small unless given |
+| `--speed x` | Irodori-TTS | the speaking rate, 0.25 to 4 (1) |
+| `--seconds s` | Irodori-TTS | the length of each text's speech, 0.5 to 30 s after `--speed`, instead of the predicted one |
+| `--duration-scale x` | Irodori-TTS | the factor of the predicted length (1); not together with `--seconds` |
+| `-v` | both | also report the release, the model's voices, languages and steps, and each text's seed |
+
+A text that begins with `-` follows `--`. A model refuses what it cannot do, as in the C API: Qwen3-TTS
+answers `--speed`, `--seconds` and `--duration-scale` with an error.
+
+`speech-tts` reports on stderr where the time went, which makes it a tool for measuring as well: the load
+(which includes compiling the GPU's kernels), and for each text its seconds of audio, the time to its first
+audio and to its end, and the real-time factor, with the sums when stdin gave several lines. Nothing else is
+written unless `-v` asks for it. With `-o -`, stdout carries the WAVE and nothing else, as the worker's
+stdout carries its protocol alone. The audio is written as it is made, so a player reading the pipe starts
+before the rest is made. Into a regular file, `> out.wav` included, the RIFF and data sizes are set once the
+audio is complete. Anywhere else, a pipe or a file appended to with `>>`, the header cannot be written again
+in place, so the sizes stay `0xFFFFFFFF`, as ffmpeg writes them to a pipe, and players and ffmpeg read to the
+end of the stream.
+
+A run that fails exits with 1 (2 for a command line it cannot run) and a message that names what failed,
+and removes the WAVE file it was writing, so a file it leaves is always complete. Text on stdin is UTF-8;
+a byte order mark and CRLF line endings are accepted.
+
 ## Layout
 
 - `include/speech.h` is the C API, the one way into the library.
 - `src/` is the library: `speech.cpp` implements the C API over one engine per family,
   `src/families/<family>/` runs one architecture of model, whichever weights it is given, and `src/common/`
   holds what the families share.
-- `tools/` holds the programs built on the library: the worker (`tools/worker/`) and a command-line tool per
-  family.
-- `tools/server/` holds `speech-server`, which serves a model over HTTP with OpenAI's speech API.
+- `tools/` holds the programs built on the library: the worker (`tools/worker/`), the command-line tool
+  `speech-tts` (`tools/cli/`) and the HTTP server `speech-server` (`tools/server/`), which serves a model
+  over HTTP with OpenAI's speech API.
 - `vendor/cpp-httplib/` holds cpp-httplib's header and license, which the server alone uses.
 - `checks/` holds a check per ported stage that compares it with the official implementation, and
   `speech-api-check`, which runs the C API through the shared library.
@@ -199,11 +260,11 @@ Irodori-TTS has no voices of its own; it speaks in the voice of a reference. A v
 - a reference WAVE file: 48 kHz (other rates are refused), at most 120 s, 16-, 24- or 32-bit PCM or 32-bit
   float, the channels averaged. The worker normalizes its loudness and encodes it with the codec when it
   starts, as the official runtime does for every request.
-- a voice file, which `irodori-tts --make-voice` or `speech_make_voice()` writes from a reference WAVE file: the reference's codec
+- a voice file, which `speech-tts make-voice` or `speech_make_voice()` writes from a reference WAVE file: the reference's codec
   latent in a GGUF that names the codec it was made with (a voice file of another codec is refused).
 
 ```sh
-irodori-tts --make-voice irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
+speech-tts make-voice irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
     bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf --device cpu
 ```
 
@@ -350,7 +411,7 @@ uv run python convert.py <Qwen3-TTS-12Hz-1.7B-CustomVoice dir> ../../models/gguf
 ### Use
 
 ```sh
-build/qwen3-tts <talker.gguf> <codec.gguf> ono_anna ja "明日の東京は晴れです。" out.wav
+build/speech-tts <talker.gguf> <codec.gguf> --voice-name ono_anna --language ja -o out.wav "明日の東京は晴れです。"
 ```
 
 `speech-worker <talker.gguf> <codec.gguf>` runs it behind the worker protocol (above).
@@ -424,15 +485,15 @@ table below with 2.99% CER in F32 and in F16, and 3.81% in Q8_0, which garbled o
 ### Use
 
 ```sh
-build/irodori-tts irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
-    bright-young-woman-10s.voice.gguf "明日の東京は晴れです。" out.wav [--device NAME] [--seed n] [--steps n] \
-    [--seconds s | --duration-scale x] [--speed x]
+build/speech-tts irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
+    --voice bright=bright-young-woman-10s.voice.gguf -o out.wav "明日の東京は晴れです。" [--device NAME] [--seed n] \
+    [--steps n] [--seconds s | --duration-scale x] [--speed x]
 ```
 
 ### Length and speed
 
 The duration predictor sets the length of a sentence before the DiT makes it. A request may change it as the
-official runtime's request does, and the C API, the worker and `irodori-tts` take the same three options:
+official runtime's request does, and the C API, the worker and `speech-tts` take the same three options:
 
 - `seconds` fixes the length: the latent has the frames that hold `int(seconds × 48000)` samples, and the
   audio is cut there. The duration predictor does not run. It must lie within 0.5 to 30 s; the runtime
