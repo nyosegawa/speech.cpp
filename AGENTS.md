@@ -2,9 +2,10 @@
 
 ## Project
 
-speech.cpp runs speech models in C++ on [ggml](https://github.com/ggml-org/ggml), on macOS arm64 with Metal
-and Windows x64 with Vulkan, as a library with one C API, `include/speech.h`, for any program that speaks
-text: ASIST's worker, other tools, bindings and other people's applications. Each model's official
+speech.cpp runs speech models in C++ on [ggml](https://github.com/ggml-org/ggml), on macOS arm64 with Metal,
+Windows x64 with Vulkan and Linux x64 with Vulkan or the CPU alone, as a library with one C API,
+`include/speech.h`, for any program that speaks text: ASIST's worker, other tools, bindings and other people's
+applications. Each model's official
 implementation is the reference: every stage of a port is checked against tensors dumped from it.
 README.md is the documentation for users; `docs/adr/` keeps the decisions. Read the relevant implementation
 and its check before changing behavior.
@@ -68,6 +69,9 @@ another one.
 - A path is a UTF-8 string from the command line to the file. A C stream opens it with `ggml_fopen()` and a
   C++ stream through `std::filesystem::u8path()`: `fopen()` and a stream opened on a `std::string` read the
   path in the ANSI code page on Windows, so a path with any character outside ASCII is not found.
+- A Linux release runs on glibc 2.34 and needs no shared library but glibc's and, in the Vulkan build,
+  `libvulkan.so.1`; CI fails a build that needs more (docs/adr/0008). It is built on the oldest Ubuntu GitHub
+  hosts, with libstdc++ linked in and ggml's OpenMP off.
 - Model weights, reference dumps and audio are never committed; `.gitignore` covers `models/`,
   `reference/*/out/`, `*.gguf` and `*.wav`.
 

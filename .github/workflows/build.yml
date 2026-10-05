@@ -82,9 +82,106 @@ jobs:
           name: speech-cpp-windows-x64-vulkan
           path: package/
 
+  # Linux x64 twice: with Vulkan, for a GPU of any vendor, and for the CPU alone, which needs no Vulkan loader
+  # to start. The binaries are built on the oldest Ubuntu GitHub hosts and run on glibc 2.34 or later
+  # (docs/adr/0008).
+  linux:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        backend: [vulkan, cpu]
+    env:
+      BACKEND: ${{ matrix.backend }}
+      VULKAN_VERSION: 1.4.357.0
+      VULKAN_SHA256: 0f09bf6a0625e346bf004be70b92907e934a4c76606b323441b2baf3a5a0e66d
+      # The oldest glibc the binaries run on; the check below fails a build that needs a newer one.
+      GLIBC_FLOOR: '2.34'
+      # The programs the archives carry besides libspeech.so and speech.h.
+      TOOLS: speech-worker qwen3-tts irodori-tts
+      # As on Windows, ggml is built once, installed with static libraries, and restored from the cache while
+      # its commit, the runner's Ubuntu, the Vulkan SDK, GCC and these options stay the same. libspeech.so
+      # links ggml's static libraries, so they are position-independent, and OpenMP is off so that nothing
+      # needs libgomp.
+      CMAKE_OPTIONS: -DCMAKE_BUILD_TYPE=Release
+      GGML_OPTIONS: -DGGML_VULKAN=${{ matrix.backend == 'vulkan' && 'ON' || 'OFF' }} -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF -DGGML_BUILD_TESTS=OFF -DGGML_BUILD_EXAMPLES=OFF
+    steps:
+      - uses: actions/checkout@v6
+      - name: Name the ggml build
+        id: ggml
+        run: |
+          commit=$(git ls-tree HEAD ggml | awk '{print $3}')
+          options=$(printf '%s' "$CMAKE_OPTIONS $GGML_OPTIONS" | sha256sum | cut -c1-12)
+          sdk=
+          if [ "$BACKEND" = vulkan ]; then sdk="-$VULKAN_VERSION"; fi
+          echo "key=ggml-$commit-$ImageOS-$BACKEND$sdk-gcc$(gcc -dumpfullversion)-$options" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: ggml-install
+          key: ${{ steps.ggml.outputs.key }}
+      # The SDK keeps its Vulkan loader in lib/VulkanLoader, where CMake's FindVulkan looks only through the
+      # prefix path.
+      - name: Install the Vulkan SDK
+        if: matrix.backend == 'vulkan'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/vulkansdk.tar.xz" "https://sdk.lunarg.com/sdk/download/$VULKAN_VERSION/linux/vulkansdk-linux-x86_64-$VULKAN_VERSION.tar.xz"
+          echo "$VULKAN_SHA256  $RUNNER_TEMP/vulkansdk.tar.xz" | sha256sum -c
+          tar -xJf "$RUNNER_TEMP/vulkansdk.tar.xz" -C "$RUNNER_TEMP"
+          sdk="$RUNNER_TEMP/$VULKAN_VERSION/x86_64"
+          echo "VULKAN_SDK=$sdk" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$sdk/lib/VulkanLoader" >> "$GITHUB_ENV"
+          echo "$sdk/bin" >> "$GITHUB_PATH"
+      - name: Build ggml
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          git submodule update --init --depth 1 ggml
+          cmake -S ggml -B ggml-build $CMAKE_OPTIONS $GGML_OPTIONS "-DCMAKE_INSTALL_PREFIX=$PWD/ggml-install"
+          cmake --build ggml-build -j "$(nproc)"
+          cmake --install ggml-build
+      - name: Build
+        run: |
+          cmake -B build $CMAKE_OPTIONS -DSPEECH_INSTALLED_GGML=ON "-DCMAKE_PREFIX_PATH=$PWD/ggml-install"
+          cmake --build build -j "$(nproc)"
+      # libspeech.so exports the C API alone (src/speech.map). Every file needs no glibc newer than the floor and
+      # no shared library but glibc's and, in the Vulkan build, the Vulkan loader.
+      - name: Check the exports and the libraries needed
+        run: |
+          status=0
+          exported=$(nm -D --defined-only build/libspeech.so | awk '{print $3}' | grep -v '^speech_' || true)
+          if [ -n "$exported" ]; then
+            echo "::error::libspeech.so exports symbols outside the C API: $(echo $exported). Hide them through src/speech.map."
+            status=1
+          fi
+          allowed='libc.so.6 libm.so.6 ld-linux-x86-64.so.2'
+          if [ "$BACKEND" = vulkan ]; then allowed="$allowed libvulkan.so.1"; fi
+          for file in $TOOLS libspeech.so; do
+            newest=$(objdump -T "build/$file" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -Vu | tail -1)
+            if [ "$(printf '%s\n' "$newest" "$GLIBC_FLOOR" | sort -V | tail -1)" != "$GLIBC_FLOOR" ]; then
+              echo "::error::$file needs glibc $newest, newer than the $GLIBC_FLOOR it must run on. Find the call that needs it with objdump -T."
+              status=1
+            fi
+            for library in $(readelf -d "build/$file" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p'); do
+              case " $allowed " in
+                *" $library "*) ;;
+                *) echo "::error::$file needs $library, which a Linux release does not carry. Link it statically or turn it off."; status=1 ;;
+              esac
+            done
+            echo "$file: glibc $newest, $(readelf -d "build/$file" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | tr '\n' ' ')"
+          done
+          exit $status
+      - name: Stage
+        run: |
+          mkdir package
+          for tool in $TOOLS; do cp "build/$tool" package/; done
+          cp build/libspeech.so include/speech.h package/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: speech-cpp-linux-x64-${{ matrix.backend }}
+          path: package/
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [macos-metal, windows-vulkan]
+    needs: [macos-metal, windows-vulkan, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -105,9 +202,9 @@ jobs:
       - name: Package
         run: |
           cd dist
-          # Artifacts lose the executable bit; the Mac binaries need it back. ASIST bundles the worker alone,
-          # so the worker goes into one archive, and the other tools with libspeech and speech.h into another.
-          for platform in macos-arm64-metal windows-x64-vulkan; do
+          # Artifacts lose the executable bit; the Mac and Linux binaries need it back. ASIST bundles the worker
+          # alone, so the worker goes into one archive, and the other tools with libspeech and speech.h into another.
+          for platform in macos-arm64-metal windows-x64-vulkan linux-x64-vulkan linux-x64-cpu; do
             (cd "speech-cpp-$platform" && chmod +x * && \
               zip -q "../speech-worker-${GITHUB_REF_NAME}-$platform.zip" speech-worker* && \
               zip -q "../speech-cpp-tools-${GITHUB_REF_NAME}-$platform.zip" $(ls | grep -v '^speech-worker'))
@@ -119,4 +216,4 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" dist/*.zip dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" --generate-notes \
-            --notes "speech-worker, the other tools and the shared library libspeech with its C API, speech.h, for macOS arm64 (Metal) and Windows x64 (Vulkan). The README lists the model families the worker runs and where their converted weights are on Hugging Face."
+            --notes "speech-worker, the other tools and the shared library libspeech with its C API, speech.h, for macOS arm64 (Metal), Windows x64 (Vulkan) and Linux x64 (Vulkan, and the CPU alone; glibc 2.34 or later). The README lists the model families the worker runs and where their converted weights are on Hugging Face."
