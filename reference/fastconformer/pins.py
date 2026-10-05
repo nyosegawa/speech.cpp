@@ -17,6 +17,13 @@ MODELS = {
         "size": 2490951680,
         "sha256": "a2ed2aab9c82cce4e9b699dca669184d7525c7b5e1eb8c3f7b789421bc3637e8",
     },
+    "parakeet-tdt-0.6b-v3": {
+        "repository": "nvidia/parakeet-tdt-0.6b-v3",
+        "revision": "541d1f99c6b0c3cd0b11a95167540bb8edefd82b",
+        "file": "parakeet-tdt-0.6b-v3.nemo",
+        "size": 2509332480,
+        "sha256": "3cbdc85877e668ca7b82d0d56770eb1fac76691f55d6b97545e8d61ca588d10d",
+    },
 }
 
 

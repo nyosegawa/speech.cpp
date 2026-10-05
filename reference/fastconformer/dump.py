@@ -42,7 +42,8 @@ args = parser.parse_args()
 pin = MODELS[args.model]
 model = restore(pin)
 sample_rate = int(model.cfg.preprocessor.sample_rate)
-assert model.cur_decoder == "rnnt" and model.cfg.decoding.model_type == "tdt"
+# A hybrid checkpoint has a CTC head beside its TDT decoder; transcribe() decodes with TDT while cur_decoder is "rnnt".
+assert getattr(model, "cur_decoder", "rnnt") == "rnnt" and model.cfg.decoding.model_type == "tdt"
 
 # The decoding calls the prediction network once per label it feeds, projects each output for the joint, and
 # evaluates the joint on one encoder frame at a time; these wrappers record every call.

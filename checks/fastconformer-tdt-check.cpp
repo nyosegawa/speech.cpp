@@ -1,7 +1,7 @@
 // Checks FastConformer's TDT decoder against NeMo on each dump of reference/fastconformer/dump.py, in the order data
 // flows: the prediction network on the dump's labels, the joint on the dump's encoder frames and prediction outputs,
 // the greedy decoding and the detokenization from the dump's encoder output, then the whole path from the dump's
-// audio to the text, which it also times.
+// audio to the text, which it also times. The dumps are those of the model, in <reference out dir>/<its general.name>/.
 //
 // usage: fastconformer-tdt-check <model.gguf> <reference out dir> [gpu|cpu|device name]
 
@@ -80,7 +80,7 @@ int main(int argc, char ** argv) {
             const Joint & joint = recognizer.joint();
             const int hidden = prediction.hidden(), outputs = joint.outputs(), blank = recognizer.tdt().blank();
             ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
-            for (const auto & d : fastconformer_dumps(args[2])) {
+            for (const auto & d : fastconformer_dumps(args[2], recognizer.model())) {
                 const Npy encoded = read_npy((d / "encoded.npy").u8string());
                 const Npy pred_labels = read_npy((d / "pred_labels.npy").u8string());
                 const Npy pred_output = read_npy((d / "pred_output.npy").u8string());
@@ -137,10 +137,10 @@ int main(int argc, char ** argv) {
                 std::printf("  greedy ids %s, text %s\n", ids == want_ids.i32 ? "equal" : "DIFFER", text == want_text ? "equal" : "DIFFERS");
                 if (ids != want_ids.i32) std::printf("    got%s\n    want%s\n", ids_text(ids).c_str(), ids_text(want_ids.i32).c_str());
                 if (text != want_text) std::printf("    got  %s\n    want %s\n", text.c_str(), want_text.c_str());
-                // Measured on an Apple M5 on 2026-10-06: the prediction network 130 to 133 dB on the CPU with F32 weights,
-                // 57 to 60 dB with F16, 132 to 134 dB on Metal with F32 and 66 to 70 dB with F16; the joint 140 dB on the
-                // CPU with F32, 76 dB with F16 and 85 to 87 dB on Metal with either. A wrong gate or a wrong output falls
-                // far below.
+                // Measured on an Apple M5 on 2026-10-06 with parakeet-tdt_ctc-0.6b-ja and parakeet-tdt-0.6b-v3: the
+                // prediction network 130 to 133 dB on the CPU with F32 weights, 56 to 60 dB with F16, 130 to 134 dB on
+                // Metal with F32 and 66 to 70 dB with F16; the joint 140 to 142 dB on the CPU with F32, 76 to 77 dB with
+                // F16 and 85 to 89 dB on Metal with either. A wrong gate or a wrong output falls far below.
                 ok = ok && dp.snr_db > 40 && dj.snr_db > 40 && ids == want_ids.i32 && text == want_text;
 
                 // The whole path, timed after a first run that builds Metal's pipelines.
