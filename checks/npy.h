@@ -64,7 +64,7 @@ inline Npy read_npy(const std::string & path) {
         npy.i32.resize(npy.size());
         f.read((char *) npy.i32.data(), npy.size() * 4);
     } else {
-        throw std::runtime_error(path + " is not float32, float64 or int32");
+        throw std::runtime_error(path + " is neither float32, float64 nor int32");
     }
     if (!f) throw std::runtime_error("cannot read the data of " + path);
     return npy;

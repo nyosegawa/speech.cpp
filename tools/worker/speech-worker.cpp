@@ -28,7 +28,7 @@
 //        {"type": "error", "id": "...", "error": "..."}
 // A request is answered once: with its text, or with one error, which comes as soon as one of its lines is refused
 // (a chunk out of order or not base64, an end without a whole-number sampleRate), after which its other lines are
-// dropped. The audio must be at the model's sampleRate; the worker does not resample.
+// dropped. sampleRate is the rate of the chunks' audio, any rate; the library resamples it to the model's.
 //
 // Every family lists its languages as BCP 47 tags, and a request's "language", when given, must be one of
 // them or a region or script of one ("ja", "ja-JP"); "auto" or no language leaves the choice to the model.

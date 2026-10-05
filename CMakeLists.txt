@@ -42,6 +42,7 @@ add_library(speechcommon STATIC
     src/common/args.cpp
     src/common/language.cpp
     src/common/graph.cpp
+    src/common/resample.cpp
 )
 target_include_directories(speechcommon PUBLIC src/common)
 target_link_libraries(speechcommon PUBLIC ggml::ggml)
@@ -142,6 +143,9 @@ target_include_directories(speech-asr PRIVATE tools/common)
 target_link_libraries(speech-asr PRIVATE speech-static)
 
 # The checks compare each stage with the reference dumps; they are built but not released.
+add_executable(resample-check checks/resample-check.cpp)
+target_link_libraries(resample-check PRIVATE speechcommon)
+
 add_executable(codec-check checks/codec-check.cpp)
 target_link_libraries(codec-check PRIVATE qwen3tts)
 
