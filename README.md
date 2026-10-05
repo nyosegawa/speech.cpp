@@ -1,9 +1,10 @@
 # speech.cpp
 
-The speech models of [ASIST](https://github.com/nyosegawa/asist) in C++ on [ggml](https://github.com/ggml-org/ggml),
-run as one worker process that ASIST starts. It targets Metal, Vulkan and CUDA; it is checked on Metal,
-on Vulkan (NVIDIA) and on the CPU. It implements only what ASIST uses from each model, and checks every
-stage of a port against the official implementation.
+Speech synthesis in C++ on [ggml](https://github.com/ggml-org/ggml), as a library with a C API
+(`include/speech.h`) and the programs built on it, among them the worker process that
+[ASIST](https://github.com/nyosegawa/asist) starts. It targets Metal, Vulkan and CUDA; it is checked on
+Metal, on Vulkan (NVIDIA) and on the CPU. Every stage of a port is checked against the official
+implementation.
 
 | Family | Model | Task | Converted weights |
 |---|---|---|---|
@@ -14,8 +15,9 @@ stage of a port against the official implementation.
 
 [Releases](https://github.com/nyosegawa/speech.cpp/releases) carry, for macOS arm64 (Metal) and Windows x64
 (Vulkan), `speech-worker-<version>-<platform>.zip` with the worker alone, which is what ASIST bundles, and
-`speech-cpp-tools-<version>-<platform>.zip` with the command-line tools and the checks, with their SHA-256
-sums. The Vulkan build needs no particular driver version; on the first run the GPU driver compiles its
+`speech-cpp-tools-<version>-<platform>.zip` with the command-line tools and the shared library with its
+header (`libspeech.dylib`, or `speech.dll` with its import library `speech.lib`, and `speech.h`), with their
+SHA-256 sums. The Vulkan build needs no particular driver version; on the first run the GPU driver compiles its
 shaders, which takes seconds and is cached by the driver until it is updated. The Metal build compiles its
 kernels on its first run as well (16 s for an Irodori-TTS worker on an Apple M5, 1.5 s on the runs after).
 
@@ -31,6 +33,11 @@ cmake --build build --config Release -j
 For Vulkan or CUDA, configure with `-DGGML_VULKAN=ON` (the Vulkan SDK is needed to build) or
 `-DGGML_CUDA=ON` instead.
 
+The build makes the library twice from the same sources: statically into every executable, so that each
+tool is one file with ggml inside, and as the shared library `libspeech` (`libspeech.dylib`, `libspeech.so`,
+`speech.dll`), which exports the functions of `speech.h` and nothing else. It also builds the checks, which
+need the weights and the reference dumps to run.
+
 On Metal, every tool turns off Metal 4's tensor API before it starts a device. ggml uses that API on the
 M5 and later chips, and its matrix kernel in ggml v0.25.3 writes past its output when the output has 64
 modulo 128 columns; on an M5 this turned a codec window of 64 frames into noise
@@ -39,17 +46,76 @@ the M5 Irodori-TTS takes a fifth to a third longer to its first audio while Qwen
 
 ## Layout
 
-- `families/<family>/` runs one architecture of model, whichever weights it is given.
-- `tools/` holds the worker, a command-line tool per family, and the checks that compare each stage with
-  the official implementation.
+- `include/speech.h` is the C API, the one way into the library.
+- `src/` is the library: `speech.cpp` implements the C API over one engine per family,
+  `src/families/<family>/` runs one architecture of model, whichever weights it is given, and `src/common/`
+  holds what the families share.
+- `tools/` holds the programs built on the library: the worker (`tools/worker/`) and a command-line tool per
+  family.
+- `checks/` holds a check per ported stage that compares it with the official implementation, and
+  `speech-api-check`, which runs the C API through the shared library.
 - `reference/<model>/` pins the official implementation in a uv environment, converts its weights to GGUF
   and dumps the tensors the checks compare with.
 
+## The C API
+
+`include/speech.h` declares everything; this is the shape of a program that speaks one sentence:
+
+```c
+#include "speech.h"
+
+static int on_audio(const float * samples, size_t n, void * user_data) {
+    /* n mono float samples at speech_model_sample_rate(); n is 0 between Irodori-TTS's sampler steps.
+       Returning nonzero stops the request. */
+    return 0;
+}
+
+speech_model_params params = speech_model_default_params();
+params.model_path = "irodori-tts-v4.1-small-mf-f16.gguf";
+params.codec_path = "semantic-dacvae-japanese-32dim-f32.gguf";
+speech_voice_source voice = {"bright", "bright-young-woman-10s.voice.gguf"};
+params.voices = &voice;
+params.n_voices = 1;
+
+speech_model * model;
+if (speech_model_load(&params, &model) != SPEECH_OK) {
+    fprintf(stderr, "%s\n", speech_last_error());
+    return 1;
+}
+speech_request request = {"明日の東京は晴れです。", "bright", NULL, 42};
+speech_status status = speech_synthesize(model, &request, on_audio, NULL);
+speech_model_free(model);
+```
+
+- **Devices.** `speech_device_count()` and `speech_device_get()` list what the library can run on, with the
+  memory of each; `params.device` takes a device's name, `"cpu"`, or `"gpu"`/NULL for the first GPU.
+- **Models.** `speech_model_load()` chooses the family from `general.architecture` of the model's GGUF and
+  takes Qwen3-TTS's context and Irodori-TTS's voices (WAVE or voice files) and steps. The `speech_model_*`
+  getters describe the loaded model: its name, architecture, sample rate, how it streams, its voices and
+  languages, whether the language reaches the model, its steps and its backend.
+- **Requests.** `speech_synthesize()` speaks a text in a voice, in a language or `auto`, from a seed, and
+  passes the audio to the callback as it is made. It returns `SPEECH_OK`, `SPEECH_STOPPED` when the callback
+  or `speech_cancel()` stopped it, or `SPEECH_ERROR`.
+- **Voice files.** `speech_make_voice()` writes an Irodori-TTS voice file from a reference WAVE file.
+- **Errors.** A function that can fail returns `SPEECH_ERROR`, and `speech_last_error()` gives the message
+  on the same thread. No C++ exception crosses the API.
+- **Ownership.** Every string the library returns is its own: a device's strings live as long as the
+  process, a model's until `speech_model_free()`, the error message until the next call on the thread.
+  Nothing the caller passes is kept after the call.
+- **Threads.** A model speaks one request at a time; concurrent `speech_synthesize()` calls on it wait for
+  each other. `speech_cancel()` and the getters may be called from any thread. Separate models are
+  independent.
+- **Versions.** `SPEECH_API_VERSION` and `speech_api_version()` give the version of the API, raised when a
+  change is one an existing caller notices.
+
+Link `libspeech` (on Windows, define `SPEECH_SHARED` and link `speech.lib`), or, within this CMake project,
+the target `speech` (shared) or `speech-static`.
+
 ## The worker
 
-`speech-worker` is the process ASIST starts. It reads one JSON request per line on stdin and answers on
-stdout, each line prefixed with `ASIST_JSON:`, and runs the family that `general.architecture` of the model
-GGUF names.
+`speech-worker` is the process ASIST starts, a program on the C API like any other. It reads one JSON
+request per line on stdin and answers on stdout, each line prefixed with `ASIST_JSON:`, and runs the family
+that `general.architecture` of the model GGUF names.
 
 ```sh
 speech-worker qwen3-tts-0.6b-customvoice-q8_0.gguf qwen3-tts-codec-12hz-f16.gguf
@@ -101,7 +167,7 @@ Irodori-TTS has no voices of its own; it speaks in the voice of a reference. A v
 - a reference WAVE file: 48 kHz (other rates are refused), at most 120 s, 16-, 24- or 32-bit PCM or 32-bit
   float, the channels averaged. The worker normalizes its loudness and encodes it with the codec when it
   starts, as the official runtime does for every request.
-- a voice file, which `irodori-tts --make-voice` writes from a reference WAVE file: the reference's codec
+- a voice file, which `irodori-tts --make-voice` or `speech_make_voice()` writes from a reference WAVE file: the reference's codec
   latent in a GGUF that names the codec it was made with (a voice file of another codec is refused).
 
 ```sh
@@ -192,7 +258,7 @@ runtime's guidance, text 3.0 and speaker 5.0 while t ≥ 0.5):
   then 48 at a time, each window giving the samples of decoding the whole latent at once.
 
 Not implemented: captions (VoiceDesign), speaker-inversion embeddings, SilentCipher's watermark,
-`duration_scale`, and resampling a reference that is not at 48 kHz. The noise comes from the worker's own
+`duration_scale`, and resampling a reference that is not at 48 kHz. The noise comes from speech.cpp's own
 generator, so a seed gives other audio than the same seed in the official runtime.
 
 ### Models

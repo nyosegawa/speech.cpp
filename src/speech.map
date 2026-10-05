@@ -1,0 +1,6 @@
+{
+    global:
+        speech_*;
+    local:
+        *;
+};

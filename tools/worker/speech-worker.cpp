@@ -36,15 +36,15 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
-#include <cstring>
 #include <deque>
 #include <iostream>
-#include <memory>
 #include <mutex>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -53,10 +53,8 @@
 #endif
 
 #include "args.h"
-#include "backend.h"
 #include "flat-json.h"
-#include "model-file.h"
-#include "worker/engine.h"
+#include "speech.h"
 
 namespace {
 
@@ -82,6 +80,19 @@ std::string base64(const uint8_t * data, size_t n) {
         out += i + 2 < n ? table[v & 63] : '=';
     }
     return out;
+}
+
+/** A JSON array of the strings a getter gives for 0 to count - 1. */
+template <typename Get>
+std::string json_array(size_t count, Get get) {
+    std::string out = "[";
+    for (size_t i = 0; i < count; i++) out += (i ? "," : "") + json_string(get(i));
+    return out + "]";
+}
+
+std::string value(const FlatJson & request, const char * key) {
+    const auto it = request.find(key);
+    return it == request.end() ? "" : it->second;
 }
 
 struct Inbox {
@@ -125,30 +136,37 @@ void read_requests(Inbox & inbox) {
 
 void list_devices() {
     std::string list;
-    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
-        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
-        const enum ggml_backend_dev_type type = ggml_backend_dev_type(dev);
-        const char * kind = type == GGML_BACKEND_DEVICE_TYPE_GPU ? "gpu" : type == GGML_BACKEND_DEVICE_TYPE_IGPU ? "igpu" : "cpu";
-        size_t free = 0, total = 0;
-        ggml_backend_dev_memory(dev, &free, &total);
-        list += (i ? "," : "") + std::string("{\"name\":") + json_string(ggml_backend_dev_name(dev)) +
-                ",\"description\":" + json_string(ggml_backend_dev_description(dev)) + ",\"kind\":\"" + kind +
-                "\",\"memoryTotal\":" + std::to_string(total) + ",\"memoryFree\":" + std::to_string(free) + "}";
+    for (size_t i = 0; i < speech_device_count(); i++) {
+        speech_device d;
+        if (speech_device_get(i, &d) != SPEECH_OK) throw std::runtime_error(speech_last_error());
+        // ggml's accelerators (BLAS) run with the CPU, and ASIST chooses only between a GPU and the CPU.
+        const char * kind = d.kind == SPEECH_DEVICE_GPU ? "gpu" : d.kind == SPEECH_DEVICE_IGPU ? "igpu" : "cpu";
+        list += (i ? "," : "") + std::string("{\"name\":") + json_string(d.name) + ",\"description\":" + json_string(d.description) +
+                ",\"kind\":\"" + kind + "\",\"memoryTotal\":" + std::to_string(d.memory_total) +
+                ",\"memoryFree\":" + std::to_string(d.memory_free) + "}";
     }
     emit("{\"type\":\"devices\",\"devices\":[" + list + "]}");
 }
 
-/** The options after the two model files; anything else on the command line throws. */
-WorkerOptions parse_options(const std::vector<std::string> & a, std::string & device, uint64_t & seed) {
-    WorkerOptions o;
+/** The command line after the two model files, as the library's parameters; anything else on it throws. */
+struct Options {
+    std::string model, codec, device;
+    int context = speech_model_default_params().context;
+    int steps = 0;
+    std::vector<std::pair<std::string, std::string>> voices;
+    uint64_t seed = std::random_device{}();
+};
+
+Options parse_options(const std::vector<std::string> & a) {
+    Options o;
     o.model = a[1];
     o.codec = a[2];
     for (size_t i = 3; i < a.size(); i++) {
         const std::string & key = a[i];
         if (i + 1 >= a.size()) throw std::runtime_error(key + " needs a value");
         const std::string & value = a[++i];
-        if (key == "--device" || key == "--backend") device = value;
-        else if (key == "--seed") seed = std::stoull(value);
+        if (key == "--device" || key == "--backend") o.device = value;
+        else if (key == "--seed") o.seed = std::stoull(value);
         else if (key == "--ctx") o.context = std::stoi(value);
         else if (key == "--steps") o.steps = std::stoi(value);
         else if (key == "--voice") {
@@ -162,6 +180,57 @@ WorkerOptions parse_options(const std::vector<std::string> & a, std::string & de
     return o;
 }
 
+speech_model * load(const Options & o) {
+    std::vector<speech_voice_source> voices;
+    for (const auto & [name, path] : o.voices) voices.push_back({name.c_str(), path.c_str()});
+    speech_model_params params = speech_model_default_params();
+    params.model_path = o.model.c_str();
+    params.codec_path = o.codec.c_str();
+    params.device = o.device.c_str();
+    params.context = o.context;
+    params.voices = voices.data();
+    params.n_voices = voices.size();
+    params.steps = o.steps;
+    speech_model * model = nullptr;
+    if (speech_model_load(&params, &model) != SPEECH_OK) throw std::runtime_error(speech_last_error());
+    return model;
+}
+
+/** The ready message, whose members after "type" describe the model. */
+std::string ready_message(const speech_model * m) {
+    std::string out = "{\"type\":\"ready\",\"model\":" + json_string(speech_model_name(m)) +
+                      ",\"architecture\":" + json_string(speech_model_architecture(m)) +
+                      ",\"sampleRate\":" + std::to_string(speech_model_sample_rate(m)) + ",\"streaming\":\"" +
+                      (speech_model_streaming(m) == SPEECH_STREAMING_FRAME ? "frame" : "sentence") + "\",\"voices\":" +
+                      json_array(speech_model_voice_count(m), [&](size_t i) { return speech_model_voice(m, i); }) +
+                      ",\"languages\":" +
+                      json_array(speech_model_language_count(m), [&](size_t i) { return speech_model_language(m, i); }) +
+                      ",\"languageSelectable\":" + (speech_model_language_selectable(m) ? "true" : "false");
+    if (speech_model_steps(m) > 0) out += ",\"steps\":" + std::to_string(speech_model_steps(m));
+    return out + ",\"backend\":" + json_string(speech_model_backend(m)) + "}";
+}
+
+/** What the audio callback needs of one request. */
+struct Speaking {
+    Inbox & inbox;
+    const std::string & id;
+    int seq = 0;
+    size_t samples = 0;
+    std::vector<int16_t> pcm;
+};
+
+int on_audio(const float * s, size_t n, void * user_data) {
+    Speaking & r = *static_cast<Speaking *>(user_data);
+    if (r.inbox.is_cancelled(r.id)) return 1;
+    if (n == 0) return 0;
+    r.pcm.resize(n);
+    for (size_t i = 0; i < n; i++) r.pcm[i] = (int16_t) std::lround(std::max(-1.0f, std::min(1.0f, s[i])) * 32767.0f);
+    emit("{\"type\":\"chunk\",\"id\":" + json_string(r.id) + ",\"seq\":" + std::to_string(r.seq++) + ",\"pcm\":\"" +
+         base64((const uint8_t *) r.pcm.data(), n * sizeof(int16_t)) + "\"}");
+    r.samples += n;
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
@@ -169,10 +238,14 @@ int main(int argc, char ** argv) {
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stdin), _O_BINARY);
 #endif
-    configure_ggml();
     const std::vector<std::string> args = utf8_args(argc, argv);
     if (args.size() == 2 && args[1] == "--devices") {
-        list_devices();
+        try {
+            list_devices();
+        } catch (const std::exception & e) {
+            emit("{\"type\":\"fatal\",\"error\":" + json_string(e.what()) + "}");
+            return 1;
+        }
         return 0;
     }
     if (args.size() < 3) {
@@ -180,22 +253,17 @@ int main(int argc, char ** argv) {
         return 2;
     }
 
-    ggml_backend_t backend = nullptr;
-    std::unique_ptr<Engine> engine;
-    std::string device;
-    uint64_t seed = std::random_device{}();
+    speech_model * model = nullptr;
+    uint64_t seed = 0;
     try {
-        const WorkerOptions options = parse_options(args, device, seed);
-        const std::string architecture = gguf_architecture(options.model);
-        backend = init_backend(device);
-        if (architecture == "qwen3tts-talker") engine = make_qwen3_tts(options, backend);
-        else if (architecture == "irodori-tts") engine = make_irodori_tts(options, backend);
-        else throw std::runtime_error(options.model + " is a model of " + architecture + ", which this worker does not run");
+        const Options options = parse_options(args);
+        seed = options.seed;
+        model = load(options);
     } catch (const std::exception & e) {
         emit("{\"type\":\"fatal\",\"error\":" + json_string(e.what()) + "}");
         return 1;
     }
-    emit("{\"type\":\"ready\"," + engine->describe() + ",\"backend\":" + json_string(ggml_backend_name(backend)) + "}");
+    emit(ready_message(model));
 
     Inbox inbox;
     std::thread reader(read_requests, std::ref(inbox));
@@ -211,29 +279,21 @@ int main(int argc, char ** argv) {
             inbox.requests.pop_front();
         }
         const std::string id = request["id"];
-        const Cancelled cancelled = [&] { return inbox.is_cancelled(id); };
-        try {
-            if (cancelled()) {
-                inbox.forget(id);
-                continue;
-            }
-            size_t samples = 0;
-            int seq = 0;
-            std::vector<int16_t> pcm;
-            engine->speak(request, seed++, [&](const float * s, size_t n) {
-                pcm.resize(n);
-                for (size_t i = 0; i < n; i++) pcm[i] = (int16_t) std::lround(std::max(-1.0f, std::min(1.0f, s[i])) * 32767.0f);
-                emit("{\"type\":\"chunk\",\"id\":" + json_string(id) + ",\"seq\":" + std::to_string(seq++) + ",\"pcm\":\"" +
-                     base64((const uint8_t *) pcm.data(), n * sizeof(int16_t)) + "\"}");
-                samples += n;
-            }, cancelled);
-            if (!cancelled()) emit("{\"type\":\"end\",\"id\":" + json_string(id) + ",\"samples\":" + std::to_string(samples) + "}");
-        } catch (const std::exception & e) {
-            emit("{\"type\":\"error\",\"id\":" + json_string(id) + ",\"error\":" + json_string(e.what()) + "}");
+        if (inbox.is_cancelled(id)) {
+            inbox.forget(id);
+            continue;
+        }
+        const std::string text = value(request, "text"), voice = value(request, "voice"), language = value(request, "language");
+        speech_request r = {text.c_str(), voice.c_str(), language.c_str(), seed++};
+        Speaking speaking{inbox, id, 0, 0, {}};
+        const speech_status status = speech_synthesize(model, &r, on_audio, &speaking);
+        if (status == SPEECH_ERROR) {
+            emit("{\"type\":\"error\",\"id\":" + json_string(id) + ",\"error\":" + json_string(speech_last_error()) + "}");
+        } else if (!inbox.is_cancelled(id)) {
+            emit("{\"type\":\"end\",\"id\":" + json_string(id) + ",\"samples\":" + std::to_string(speaking.samples) + "}");
         }
         inbox.forget(id);
     }
-    engine.reset();
-    ggml_backend_free(backend);
+    speech_model_free(model);
     return 0;
 }

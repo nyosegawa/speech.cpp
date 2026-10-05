@@ -1,7 +1,7 @@
-"""Writes families/irodori-tts/unicode-data.inc: the tables NFKC and str.strip() need, from the Unicode
+"""Writes src/families/irodori-tts/unicode-data.inc: the tables NFKC and str.strip() need, from the Unicode
 version of this Python, which is the one the official runtime normalizes text with.
 
-usage: uv run python gen_unicode.py ../../families/irodori-tts/unicode-data.inc
+usage: uv run python gen_unicode.py ../../src/families/irodori-tts/unicode-data.inc
 
   kDecompositions   code point, offset and length into kDecompositionPool of its full compatibility
                     decomposition, for every code point that has one other than the Hangul syllables
