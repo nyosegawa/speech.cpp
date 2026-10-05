@@ -1,6 +1,6 @@
 // Compares the tokenizer with the ids of the model's own tokenizer.json (reference/tokenizer_cases.py).
 //
-// usage: tokenizer-check <talker.gguf> <cases.tsv>
+// usage: tokenizer-check <model.gguf> <cases.tsv>
 
 #include <cstdio>
 #include <filesystem>
@@ -9,16 +9,17 @@
 
 #include "args.h"
 #include "backend.h"
+#include "qwen3-tts/layout.h"
 #include "qwen3-tts/tokenizer.h"
 
 int main(int argc, char ** argv) {
     const std::vector<std::string> args = utf8_args(argc, argv);
     if (args.size() < 3) {
-        std::fprintf(stderr, "usage: %s <talker.gguf> <cases.tsv>\n", args[0].c_str());
+        std::fprintf(stderr, "usage: %s <model.gguf> <cases.tsv>\n", args[0].c_str());
         return 2;
     }
     ggml_backend_t backend = init_backend("cpu");
-    ModelFile model(args[1], backend);
+    const ModelFile model(args[1], backend, qwen3_tts_layout);
     Tokenizer tokenizer(model);
 
     std::ifstream f(std::filesystem::u8path(args[2]));

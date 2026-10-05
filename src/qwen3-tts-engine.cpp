@@ -1,4 +1,3 @@
-#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -11,17 +10,13 @@ namespace {
 
 class Qwen3TtsEngine : public Engine {
 public:
-    Qwen3TtsEngine(const EngineOptions & options, ggml_backend_t backend)
-        : synth_(options.model, options.codec, backend, options.context) {
-        info_.name = synth_.talker_name();
+    Qwen3TtsEngine(const EngineOptions & options, ggml_backend_t backend) : synth_(options.model, backend) {
+        info_.name = synth_.model().str("general.name");
         info_.sample_rate = synth_.sample_rate();
         info_.streaming = SPEECH_STREAMING_FRAME;
-        info_.voices = synth_.ids().speaker_names;
-        info_.languages = synth_.languages();
-        info_.language_selectable = true;
-        std::sort(info_.voices.begin(), info_.voices.end());
-        std::sort(info_.languages.begin(), info_.languages.end());
-        if (info_.voices.empty()) throw std::runtime_error("the model has no preset voices");
+        info_.voices = synth_.ids().voices;
+        info_.languages = synth_.ids().languages;
+        info_.language_selectable = synth_.model().str("speech.language_use") == "steers";
         // The first synthesis compiles the GPU kernels, which on Vulkan takes seconds for every new shape, so a
         // short and a longer text run through the prompt, the talker, the code predictor and the codec at the
         // sizes speech uses.

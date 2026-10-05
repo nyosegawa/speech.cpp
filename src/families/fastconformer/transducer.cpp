@@ -14,8 +14,8 @@ ggml_tensor * linear(ggml_context * ctx, const ModelFile & m, ggml_tensor * x, c
 }  // namespace
 
 PredictionNetwork::PredictionNetwork(const ModelFile & m)
-    : m_(m), layers_((int) m.u32("fastconformer.prediction.num_layers")), hidden_((int) m.tensor("pred.embed.weight")->ne[0]) {
-    if (m.tensor("pred.embed.weight")->ne[1] != (int64_t) m.u32("fastconformer.blank_id") + 1) {
+    : m_(m), layers_((int) m.u32("fastconformer.decoder.prediction_layers")), hidden_((int) m.tensor("pred.embed.weight")->ne[0]) {
+    if (m.tensor("pred.embed.weight")->ne[1] != (int64_t) m.u32("fastconformer.decoder.blank_id") + 1) {
         throw std::runtime_error("pred.embed.weight does not have a row for each token and the blank");
     }
     for (int l = 0; l < layers_; l++) {

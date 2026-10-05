@@ -3,7 +3,7 @@ into a regular file through stdout, and appended to a file with content and thro
 the header cannot be written again in place and keeps its sizes at 0xFFFFFFFF. Also checks that nothing but
 the WAVE reaches stdout.
 
-usage: python3 tools/speech_tts_smoke.py <build dir> <work dir> <model.gguf> <codec.gguf> [model options...]
+usage: python3 tools/speech_tts_smoke.py <build dir> <work dir> <model.gguf> [model options...]
 """
 
 import base64
@@ -15,14 +15,14 @@ import subprocess
 import sys
 import threading
 
-build, work, model, codec, *options = sys.argv[1:]
+build, work, model, *options = sys.argv[1:]
 exe = ".exe" if os.name == "nt" else ""
 worker = os.path.join(build, "speech-worker" + exe)
 tts = os.path.join(build, "speech-tts" + exe)
 lines = ["明日の東京は晴れです。", "二つ目の文です。"]
 seed = 11
 
-proc = subprocess.Popen([worker, model, codec, "--seed", str(seed), *options],
+proc = subprocess.Popen([worker, model, "--seed", str(seed), *options],
                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 ready = json.loads(proc.stdout.readline())
 assert ready["type"] == "ready", ready
@@ -46,7 +46,7 @@ def wave(riff_size, data_size):
 
 complete, streamed = wave(36 + len(pcm), len(pcm)), wave(0xFFFFFFFF, 0xFFFFFFFF)
 stdin = ("\n".join(lines) + "\n").encode()
-command = [tts, model, codec, "--seed", str(seed), "--voice-name", voice, *options]
+command = [tts, model, "--seed", str(seed), "--voice-name", voice, *options]
 
 
 def run(output, stdout):

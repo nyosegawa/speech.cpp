@@ -15,6 +15,7 @@
 #include "args.h"
 #include "backend.h"
 #include "compare.h"
+#include "irodori-tts/layout.h"
 #include "irodori-tts/sampler.h"
 #include "npy.h"
 
@@ -42,7 +43,7 @@ int main(int argc, char ** argv) {
     try {
         ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
         std::printf("backend: %s\n", ggml_backend_name(backend));
-        ModelFile model(args[1], backend);
+        const ModelFile model(args[1], backend, model_layout);
         const Dit dit(model);
         Sampler sampler(dit, model, backend);
         const std::string source = model.str("general.source.url");

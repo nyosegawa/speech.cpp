@@ -81,7 +81,7 @@ int main(int argc, char ** argv) {
             const PredictionNetwork & prediction = recognizer.prediction();
             const Joint & joint = recognizer.joint();
             const int hidden = prediction.hidden(), outputs = joint.outputs(), blank = recognizer.decoder().blank();
-            const bool tdt = recognizer.model().str("fastconformer.decoder") == "tdt";
+            const bool tdt = recognizer.model().str("fastconformer.decoder.kind") == "tdt";
             ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
             for (const auto & d : fastconformer_dumps(args[2], recognizer.model())) {
                 const Npy encoded = read_npy((d / "encoded.npy").u8string());

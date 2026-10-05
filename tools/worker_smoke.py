@@ -4,7 +4,7 @@ JSON object. Then checks that Irodori-TTS speaks a fixed length of 1 s in at mos
 answers a speed and a length with an error, that both answer a speed out of range or not a number with
 one, and that every line the worker cannot read gets an error. Writes the first answer to a WAV.
 
-usage: python3 tools/worker_smoke.py <out.wav> <worker> <model.gguf> <codec.gguf> [worker options...]
+usage: python3 tools/worker_smoke.py <out.wav> <worker> <model.gguf> [worker options...]
 """
 
 import base64

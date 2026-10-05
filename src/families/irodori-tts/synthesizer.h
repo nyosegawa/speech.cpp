@@ -9,6 +9,7 @@
 #include "codec.h"
 #include "dit.h"
 #include "duration.h"
+#include "reference.h"
 #include "sampler.h"
 #include "speaker-encoder.h"
 #include "text-encoder.h"
@@ -16,12 +17,19 @@
 
 namespace irodori {
 
-/** A voice: the latent of its reference, and the speaker condition the model makes of it. */
+/**
+ * A voice: the latent of its reference, the speaker condition the model makes of it, and what the reference was and
+ * the kind of device that encoded it, which a voice file keeps.
+ */
 struct Voice {
     std::vector<float> latent;
     int frames = 0;
     std::vector<float> speaker;
     int speaker_tokens = 0;
+    double reference_seconds = 0;
+    int reference_sample_rate = 0;
+    /** "cpu", "gpu" or "igpu". */
+    std::string device_kind;
 };
 
 struct Request {
@@ -47,20 +55,33 @@ struct Stats {
 };
 
 /**
+ * The official runtime's cut where a sampled latent goes flat (find_flattening_point()), with its settings from the
+ * model file: the first frame from which `window` frames, zeros past the end, have a standard deviation under
+ * `std_threshold` and a mean within `mean_threshold` of zero, or the number of frames when none does.
+ */
+struct TailCut {
+    int window = 0;
+    double std_threshold = 0, mean_threshold = 0;
+
+    explicit TailCut(const ModelFile & m);
+    int flattening_point(const std::vector<float> & latent, int frames, int latent_dim) const;
+};
+
+/**
  * Text in, 48 kHz audio out, as the official runtime makes it: the normalized text's tokens, the text
  * condition and the predicted length, the sampler from seeded noise, the tail cut where the latent goes
  * flat, and the codec decoding window by window so that the first audio comes before the rest is decoded.
  */
 class Synthesizer {
 public:
-    Synthesizer(const std::string & model_path, const std::string & codec_path, ggml_backend_t backend);
+    Synthesizer(const std::string & model_path, ggml_backend_t backend);
     ~Synthesizer();
 
-    /** A voice from a reference WAVE file or a voice file that save_voice() wrote. */
+    /** A voice from a reference WAVE file or a voice file that save_voice() wrote with this model's codec. */
     Voice load_voice(const std::string & path);
     /** A voice from the latent of its reference, row-major [frames, latent_dim]. */
     Voice voice_from_latent(std::vector<float> latent);
-    /** Writes a voice's latent to a GGUF file that load_voice() reads, bound to this codec. */
+    /** Writes a voice to a voice file that load_voice() reads, bound to this codec by its hash. */
     void save_voice(const Voice & voice, const std::string & path) const;
 
     /** Speaks `r.text` in `voice`, passing the audio to `sink` window by window. Returns the samples. */
@@ -85,14 +106,9 @@ private:
     DurationPredictor duration_;
     Dit dit_;
     Sampler sampler_;
+    ReferenceRules reference_;
+    TailCut tail_;
     ggml_gallocr_t allocr_ = nullptr;
-    double max_reference_seconds_ = 0;
 };
-
-/**
- * The official find_flattening_point(): the first frame from which 20 frames (zeros past the end) have a
- * standard deviation under 0.05 and a mean within 0.1 of zero, or the number of frames when none does.
- */
-int flattening_point(const std::vector<float> & latent, int frames, int latent_dim);
 
 }  // namespace irodori

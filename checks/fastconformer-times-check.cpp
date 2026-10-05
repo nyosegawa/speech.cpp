@@ -1,9 +1,9 @@
 // Checks FastConformer's recognition times against NeMo's transcribe(timestamps=True) on each dump of
 // reference/fastconformer/dump.py: the frame the decoding emitted each token on and, for TDT, the duration it
 // predicted, from the dump's encoder output and from the dump's audio; each token's span in frames and in seconds;
-// and the segments NeMo's separators give, without breaks, their spans and their texts. For a Japanese model it then
-// prints the segments with the breaks that end a Japanese sentence and checks that each ends in a break, at a
-// separator that ends a word, or with the last token. The dumps are those of the model, in
+// and the segments the file's separators give, without breaks, their spans and their texts. For a model whose file
+// has breaks (the Japanese models) it then prints the recognizer's segments, with them, and checks that each ends in
+// a break, at a separator that ends a word, or with the last token. The dumps are those of the model, in
 // <reference out dir>/<its general.name>/.
 //
 // usage: fastconformer-times-check <model.gguf> <reference out dir> [gpu|cpu|device name]
@@ -26,15 +26,6 @@
 using namespace fastconformer;
 
 namespace {
-
-/** NeMo's segment_seperators by default; dump.py records in times.json that no checkpoint sets its own. */
-const std::vector<std::string> kNemoSeparators = {".", "?", "!"};
-
-/**
- * The breaks of a model whose languages are written without spaces: the full stop, question and exclamation marks of
- * Japanese, and the ASCII question and exclamation marks the Japanese models write.
- */
-const std::vector<std::string> kJapaneseBreaks = {"\xe3\x80\x82", "\xef\xbc\x9f", "\xef\xbc\x81", "?", "!"};
 
 bool ends_with(const std::string & text, const std::vector<std::string> & marks) {
     for (const std::string & m : marks) {
@@ -113,9 +104,10 @@ int main(int argc, char ** argv) {
         {
             Recognizer recognizer(args[1], backend);
             const Detokenizer & detokenizer = recognizer.detokenizer();
-            const bool tdt = recognizer.model().str("fastconformer.decoder") == "tdt";
-            const std::vector<std::string> languages = recognizer.model().str_array("speech.languages");
-            const bool japanese = languages == std::vector<std::string>{"ja"};
+            const bool tdt = recognizer.model().str("fastconformer.decoder.kind") == "tdt";
+            // The file's separators are NeMo's, whose segments the dumps hold; its breaks are speech.cpp's own.
+            const std::vector<std::string> separators = recognizer.model().str_array("fastconformer.segment.separators");
+            const std::vector<std::string> breaks = recognizer.model().str_array("fastconformer.segment.breaks");
             ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
             for (const auto & d : fastconformer_dumps(args[2], recognizer.model())) {
                 const Npy encoded = read_npy((d / "encoded.npy").u8string());
@@ -163,12 +155,12 @@ int main(int argc, char ** argv) {
                 std::printf("  token spans: %zu of %zu differ in frames, %zu in seconds\n", spans_differ, nemo.size(), seconds_differ);
                 same = same && spans_differ == 0 && seconds_differ == 0;
 
-                // The tokens' texts and the segments NeMo's separators give.
+                // The tokens' texts and the segments the separators give, as NeMo's.
                 const std::vector<std::string> texts = detokenizer.token_texts(decoding.ids);
                 const std::vector<bool> word_starts = detokenizer.word_starts(decoding.ids);
                 std::string joined;
                 for (const std::string & t : texts) joined += t;
-                const std::vector<Segment> segs = segments(texts, word_starts, nemo, kNemoSeparators, {});
+                const std::vector<Segment> segs = segments(texts, word_starts, nemo, separators, {});
                 bool same_segments = joined == want_text && segs.size() == want_segments.size();
                 for (size_t k = 0; same_segments && k < segs.size(); k++) {
                     same_segments = segs[k].span.start == segment_offsets.i32[2 * k] && segs[k].span.end == segment_offsets.i32[2 * k + 1] &&
@@ -176,7 +168,7 @@ int main(int argc, char ** argv) {
                                     recognizer.seconds(segs[k].span.end) == segment_seconds.f64[2 * k + 1] &&
                                     without_spaces(segs[k].text) == without_spaces(want_segments[k]);
                 }
-                std::printf("  token texts %s; segments with NeMo's separators %s\n", joined == want_text ? "make the text" : "DO NOT make the text",
+                std::printf("  token texts %s; segments with the file's separators %s\n", joined == want_text ? "make the text" : "DO NOT make the text",
                             same_segments ? "equal" : "DIFFER");
                 if (!same_segments) {
                     for (const Segment & s : segs) std::printf("    got  %lld-%lld %s\n", (long long) s.span.start, (long long) s.span.end, s.text.c_str());
@@ -199,13 +191,12 @@ int main(int argc, char ** argv) {
                     ok = false;
                 }
 
-                // The segments with the breaks, at the frames the tokens were emitted on.
-                if (japanese) {
-                    const std::vector<Segment> broken = segments(texts, word_starts, spans, kNemoSeparators, kJapaneseBreaks);
+                // The recognizer's segments, with the breaks, at the frames the tokens were emitted on.
+                if (!breaks.empty()) {
+                    const std::vector<Segment> broken = recognizer.segments(decoding);
                     bool ends = true;
                     for (size_t k = 0; k + 1 < broken.size(); k++) {
-                        ends = ends && (ends_with(broken[k].text, kJapaneseBreaks) ||
-                                        (ends_with(broken[k].text, kNemoSeparators) && word_starts[broken[k].end]));
+                        ends = ends && (ends_with(broken[k].text, breaks) || (ends_with(broken[k].text, separators) && word_starts[broken[k].end]));
                     }
                     std::printf("  segments with breaks: %zu, each %s\n", broken.size(),
                                 ends ? "ending in a break, at a separator that ends a word or with the last token" : "NOT ending where it should");

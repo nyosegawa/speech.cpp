@@ -86,21 +86,21 @@ the same audio as the same request to the worker.
 
 ```sh
 # One sentence to a file, with a Qwen3-TTS speaker
-speech-tts qwen3-tts-0.6b-customvoice-q8_0.gguf qwen3-tts-codec-12hz-f16.gguf \
-    --voice-name ono_anna --seed 42 -o out.wav "明日の東京は晴れです。"
+speech-tts qwen3-tts-0.6b-customvoice-q8_0.gguf --voice-name ono_anna --seed 42 -o out.wav "明日の東京は晴れです。"
 
 # A text file, one sentence per line, into one WAVE file, in the voice of a reference recording
-speech-tts irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
-    --voice bright=bright-young-woman-10s.voice.gguf -o story.wav < story.txt
+speech-tts irodori-tts-v4.1-small-mf-f16.gguf --voice bright=bright-young-woman-10s.voice.gguf -o story.wav < story.txt
 
 # Straight into a player, which starts as the first audio arrives
-echo "こんにちは。" | speech-tts irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
+echo "こんにちは。" | speech-tts irodori-tts-v4.1-small-mf-f16.gguf \
     --voice bright=bright-young-woman-10s.voice.gguf -o - | ffplay -nodisp -autoexit -
 
 # An Irodori-TTS voice file from a reference recording (see Irodori-TTS voices below)
-speech-tts make-voice irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
-    bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf --device cpu
+speech-tts make-voice irodori-tts-v4.1-small-mf-f16.gguf bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf \
+    --device cpu
 ```
+
+A model is one GGUF file, its codec included (see GGUF files below).
 
 The options have the names and meanings of the worker's and of the C API's fields:
 
@@ -111,7 +111,6 @@ The options have the names and meanings of the worker's and of the C API's field
 | `--seed n` | both | the seed of the first text; each later line takes the next one. Without it the seed is random |
 | `--voice-name NAME` | both | the voice to speak with: a Qwen3-TTS speaker or the name of a `--voice`. Needed unless the model has a single voice; an error lists the model's voices |
 | `--language TAG` | both | a BCP 47 tag of one of the model's languages, or `auto` (the default) |
-| `--ctx n` | Qwen3-TTS | the talker's context in positions (2048) |
 | `--voice NAME=FILE` | Irodori-TTS | a voice, repeated for more: a reference WAVE file or a voice file. At least one is needed |
 | `--steps n` | Irodori-TTS | the sampler's steps: 4 for v4.1-Small-MF and 40 for v4.1-Small unless given |
 | `--speed x` | Irodori-TTS | the speaking rate, 0.25 to 4 (1) |
@@ -169,9 +168,9 @@ what failed; the lines of the files before it are already on stdout.
 - `checks/` holds a check per ported stage that compares it with the official implementation, and
   `speech-api-check`, which runs the C API through the shared library with a synthesis model and, with
   `transcribe`, with a recognition model and the dumps of `reference/fastconformer/`.
-- `reference/<model>/` pins the official implementation in a uv environment, converts its weights to GGUF
-  and dumps the tensors the checks compare with; `reference/resample/` dumps torchaudio's resampling, which
-  `resample-check` compares the library's with.
+- `reference/<model>/` pins the official implementation in a uv environment and the checkpoints by revision,
+  converts the weights to one GGUF file per model (GGUF files, below) and dumps the tensors the checks compare with;
+  `reference/resample/` dumps torchaudio's resampling, which `resample-check` compares the library's with.
 
 ## Audio at another rate
 
@@ -214,7 +213,6 @@ static int on_audio(const float * samples, size_t n, void * user_data) {
 
 speech_model_params params = speech_model_default_params();
 params.model_path = "irodori-tts-v4.1-small-mf-f16.gguf";
-params.codec_path = "semantic-dacvae-japanese-32dim-f32.gguf";
 speech_voice_source voice = {"bright", "bright-young-woman-10s.voice.gguf"};
 params.voices = &voice;
 params.n_voices = 1;
@@ -258,10 +256,11 @@ speech_model_free(model);
 
 - **Devices.** `speech_device_count()` and `speech_device_get()` list what the library can run on, with the
   memory of each; `params.device` takes a device's name, `"cpu"`, or `"gpu"`/NULL for the first GPU.
-- **Models.** `speech_model_load()` chooses the family from `general.architecture` of the model's GGUF and
-  takes the codec of Qwen3-TTS and Irodori-TTS, Qwen3-TTS's context and Irodori-TTS's voices (WAVE or voice
-  files) and steps. A family refuses, naming the field, a codec it needs and lacks and any field it does not take
-  (a codec, voices, steps or a context other than 2048 for FastConformer, voices for Qwen3-TTS). The
+- **Models.** `speech_model_load()` loads a model from its one GGUF file, which holds its codec, chooses the
+  family from the file's `general.architecture`, and takes Irodori-TTS's voices (WAVE or voice files) and steps.
+  A family refuses, naming the field, any field it does not take (voices or steps for FastConformer, voices for
+  Qwen3-TTS), and a file of a layout this library does not read is refused with a message that names the release
+  that reads it (GGUF files, below). The
   `speech_model_*` getters describe the loaded model: its name, architecture, task (`speech_model_task()`,
   synthesis or recognition), sample rate, how it streams, its voices and languages, whether the language reaches
   the model, its steps and its backend. A recognition model has no voices or steps and streams
@@ -289,11 +288,11 @@ speech_model_free(model);
   independent.
 - **Versions.** `speech_version()` gives the release the library was built from (`"0.4.0"`).
   `SPEECH_API_VERSION` and `speech_api_version()` give the version of the API, raised when a change is one an
-  existing caller notices; a function added to the API does not raise it. It is 2 since `speech_request`
-  gained `speed`, `seconds` and `duration_scale`: a program built against version 1 passes a smaller
-  `speech_request`, so it must be rebuilt and start its requests from `speech_request_default()`. Recognition
-  added functions, a struct and an enum value and changed nothing an existing caller uses, so the version
-  stayed 2.
+  existing caller notices; a function added to the API does not raise it. It is 3 since `speech_model_params`
+  lost `codec_path` and `context`: a model's one file holds its codec, and Qwen3-TTS's longest speech comes from
+  the file. A program built against version 2 passes a larger `speech_model_params`, so it must be rebuilt and give
+  the model's file alone. Version 2 came when `speech_request` gained `speed`, `seconds` and `duration_scale`, and
+  recognition added functions, a struct and an enum value without changing the version.
 
 Link `libspeech` (on Windows, define `SPEECH_SHARED` and link `speech.lib`), or, within this CMake project,
 the target `speech` (shared) or `speech-static`.
@@ -309,19 +308,16 @@ ggml, a system library or the GPU driver prints to stdout. A caller treats a lin
 object as a defect of the worker and fails, rather than skipping it.
 
 ```sh
-speech-worker qwen3-tts-0.6b-customvoice-q8_0.gguf qwen3-tts-codec-12hz-f16.gguf
-speech-worker irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
+speech-worker qwen3-tts-0.6b-customvoice-q8_0.gguf
+speech-worker irodori-tts-v4.1-small-mf-f16.gguf \
     --voice bright=bright-young-woman-10s.voice.gguf --voice calm=calm-reference.wav
 speech-worker parakeet-tdt_ctc-0.6b-ja-f16.gguf
 ```
-
-A synthesis model is given with its codec; a recognition model has none.
 
 | Option | For | Meaning |
 |---|---|---|
 | `--device NAME`, `gpu`, `cpu` | all | the device as `--devices` names it (`MTL0`, `Vulkan1`), the first GPU (the default) or the CPU |
 | `--seed n` | synthesis | the seed of the first request; each later request takes the next one. Without it the seed is random |
-| `--ctx n` | Qwen3-TTS | the talker's context in positions (2048, about 160 s of speech) |
 | `--voice NAME=FILE` | Irodori-TTS | a voice, repeated for more: a reference WAVE file or a voice file (below). At least one is needed |
 | `--steps n` | Irodori-TTS | the sampler's steps: 4 for v4.1-Small-MF and 40 for v4.1-Small unless given |
 
@@ -398,12 +394,15 @@ Irodori-TTS has no voices of its own; it speaks in the voice of a reference. A v
 - a reference WAVE file: at most 120 s, 16-, 24- or 32-bit PCM or 32-bit float at any rate, the channels
   averaged and resampled to 48 kHz. The worker normalizes its loudness and encodes it with the codec when it
   starts, as the official runtime does for every request.
-- a voice file, which `speech-tts make-voice` or `speech_make_voice()` writes from a reference WAVE file: the reference's codec
-  latent in a GGUF that names the codec it was made with (a voice file of another codec is refused).
+- a voice file, which `speech-tts make-voice` or `speech_make_voice()` writes from a reference WAVE file: the
+  reference's codec latent in a GGUF file of its own (Voice files, below) that carries the hash of the codec's
+  tensors. It works with every model file of the same codec, v4.1-Small-MF and v4.1-Small in any type, and a model
+  of another codec refuses it. Voice files made before 0.7.0 have no layout and are refused; make them again from
+  their WAVE files.
 
 ```sh
-speech-tts make-voice irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
-    bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf --device cpu
+speech-tts make-voice irodori-tts-v4.1-small-mf-f16.gguf bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf \
+    --device cpu
 ```
 
 For the 10.7 s reference bright-young-woman-10s.wav, the voice file is 35 KB against the WAVE file's 1 MB,
@@ -419,8 +418,8 @@ can speak a text or recognize speech without starting the worker. It loads the m
 once the model is ready, and logs to stderr.
 
 ```sh
-speech-server qwen3-tts-0.6b-customvoice-q8_0.gguf qwen3-tts-codec-12hz-f16.gguf
-speech-server irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
+speech-server qwen3-tts-0.6b-customvoice-q8_0.gguf
+speech-server irodori-tts-v4.1-small-mf-f16.gguf \
     --voice bright=bright-young-woman-10s.voice.gguf --port 8080 --cors-origin http://localhost:5173
 speech-server parakeet-tdt_ctc-0.6b-ja-f16.gguf
 ```
@@ -430,7 +429,7 @@ speech-server parakeet-tdt_ctc-0.6b-ja-f16.gguf
 | `--host ADDRESS` | the address to listen on, 127.0.0.1 unless given; the server has no authentication and no TLS, so a server reachable from other machines belongs behind a proxy that adds them |
 | `--port n` | the port, 8080 unless given |
 | `--cors-origin ORIGIN` | an origin a web page may call the server from, such as `http://localhost:5173`, repeated for more, or `*` for any. Without it the server sends no CORS headers. Preflight requests are answered |
-| `--device`, `--ctx`, `--voice NAME=FILE`, `--steps` | as for the worker (above) |
+| `--device`, `--voice NAME=FILE`, `--steps` | as for the worker (above) |
 
 The endpoints:
 
@@ -561,29 +560,37 @@ not add artifacts at the frame boundaries. Implemented:
 
 Voice cloning, VoiceDesign, the codec encoder and the speaker encoder are out of scope. The model has no
 control of its speaking rate or its length, so a request with a speed other than 1 or with a length is
-refused (docs/adr/0007).
+refused (docs/adr/0007). A request stops at the model's limit, 8192 frames (655 s of speech), the checkpoint's
+`max_new_tokens`, as the official implementation stops. The talker's key/value cache grows with the speech rather
+than holding the longest from the start, so a short sentence does not take the memory of the longest. A text of
+more than 24565 tokens, what the talker's 32768 positions leave beside the longest speech and its prompt, is refused.
 
 ### Models
 
-A synthesis needs one talker and the codec, which
+A synthesis needs one file per model, the codec inside it:
 [sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF)
-(`qwen3-tts-0.6b-customvoice-q8_0.gguf`) and
+holds `qwen3-tts-0.6b-customvoice-q8_0.gguf` and
 [sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF)
-(`qwen3-tts-1.7b-customvoice-q8_0.gguf`) each hold with `qwen3-tts-codec-12hz-f16.gguf`. To convert them
-yourself from the official checkpoints:
+`qwen3-tts-1.7b-customvoice-q8_0.gguf`. The repositories get these files with the release of 0.7.0; until then
+they hold the talker and the separate codec of earlier releases, which this one refuses. To convert them yourself
+from the official checkpoints, which `reference/qwen3-tts/pins.py` pins by revision:
 
 ```sh
 cd reference/qwen3-tts
-uv run python convert.py <Qwen3-TTS-12Hz-1.7B-CustomVoice dir> ../../models/gguf --type q8_0 --codec-type f16
+uv run python convert.py 0.6b ../../models --type q8_0    # qwen3-tts-0.6b-customvoice-q8_0.gguf, 1.2 GB
+uv run python convert.py 1.7b ../../models --type q8_0    # qwen3-tts-1.7b-customvoice-q8_0.gguf, 2.3 GB
 ```
+
+`--type` also takes `f16` and `f32`, whose files are 4.1 GB for 0.6B and 8.1 GB for 1.7B. The codec's large weights
+are float16 in a Q8_0 or F16 file, as the released files have them, and float32 in an F32 file.
 
 ### Use
 
 ```sh
-build/speech-tts <talker.gguf> <codec.gguf> --voice-name ono_anna --language ja -o out.wav "明日の東京は晴れです。"
+build/speech-tts <model.gguf> --voice-name ono_anna --language ja -o out.wav "明日の東京は晴れです。"
 ```
 
-`speech-worker <talker.gguf> <codec.gguf>` runs it behind the worker protocol (above).
+`speech-worker <model.gguf>` runs it behind the worker protocol (above).
 
 ### Accuracy
 
@@ -637,29 +644,30 @@ at another rate, above).
 
 ### Models
 
-A synthesis needs one model and the codec, which
+A synthesis needs one file per model, the codec inside it:
 [sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF)
-(`irodori-tts-v4.1-small-mf-f16.gguf`) and
-[sakasegawa/Irodori-TTS-v4.1-Small-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) (`irodori-tts-v4.1-small-f16.gguf`)
-each hold with `semantic-dacvae-japanese-32dim-f32.gguf`; their cards list the SHA-256. To convert them yourself
-from the pinned official checkpoints:
+holds `irodori-tts-v4.1-small-mf-f16.gguf` and
+[sakasegawa/Irodori-TTS-v4.1-Small-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF)
+`irodori-tts-v4.1-small-f16.gguf`, and their cards list the SHA-256. The repositories get these files with the
+release of 0.7.0; until then they hold the model and the separate codec of earlier releases, which this one refuses.
+To convert them yourself from the official checkpoints and codec, which `reference/irodori-tts/pins.py` pins by
+revision:
 
 ```sh
 cd reference/irodori-tts
-uv run python convert.py mf ../../models --type f16       # irodori-tts-v4.1-small-mf-f16.gguf, 1.5 GB
-uv run python convert.py rf ../../models --type f16       # irodori-tts-v4.1-small-f16.gguf, 1.5 GB
-uv run python convert_codec.py ../../models --type f32    # semantic-dacvae-japanese-32dim-f32.gguf, 371 MB
+uv run python convert.py mf ../../models --type f16       # irodori-tts-v4.1-small-mf-f16.gguf, 1.9 GB
+uv run python convert.py rf ../../models --type f16       # irodori-tts-v4.1-small-f16.gguf, 1.9 GB
 ```
 
-`--type` also takes `f32` and `q8_0` (0.8 GB). Qwen3-ASR 1.7B transcribed the 20 sentences of the speed
-table below with 2.99% CER in F32 and in F16, and 3.81% in Q8_0, which garbled one phrase.
+`--type` also takes `f32` (3.4 GB) and `q8_0` (1.2 GB). The codec stays float32 in every type, as the released
+files have it. Qwen3-ASR 1.7B transcribed the 20 sentences of the speed table below with 2.99% CER in F32 and in
+F16, and 3.81% in Q8_0, which garbled one phrase.
 
 ### Use
 
 ```sh
-build/speech-tts irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
-    --voice bright=bright-young-woman-10s.voice.gguf -o out.wav "明日の東京は晴れです。" [--device NAME] [--seed n] \
-    [--steps n] [--seconds s | --duration-scale x] [--speed x]
+build/speech-tts irodori-tts-v4.1-small-mf-f16.gguf --voice bright=bright-young-woman-10s.voice.gguf \
+    -o out.wav "明日の東京は晴れです。" [--device NAME] [--seed n] [--steps n] [--seconds s | --duration-scale x] [--speed x]
 ```
 
 ### Length and speed
@@ -781,14 +789,15 @@ worker, the server and `speech-asr` in [ADR 0011](docs/adr/0011-speech-recogniti
 
 ### Models
 
-Recognition needs one file: `parakeet-tdt_ctc-0.6b-ja-f16.gguf` from
+Recognition needs one file per model: `parakeet-tdt_ctc-0.6b-ja-f16.gguf` from
 [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF),
 `parakeet-tdt-0.6b-v3-f16.gguf` from
 [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) or
 `reazonspeech-nemo-v2-f16.gguf` from
 [sakasegawa/reazonspeech-nemo-v2-GGUF](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF), whose cards
-list their SHA-256. To convert them yourself, `reference/fastconformer/` pins NeMo 3.0.0 with PyTorch 2.10.0 and
-each checkpoint by revision, size and SHA-256:
+list their SHA-256. The repositories get these files in layout 1 with the release of 0.7.0; until then they hold
+the files of earlier releases, which this one refuses. To convert them yourself, `reference/fastconformer/` pins NeMo
+3.0.0 with PyTorch 2.10.0 and each checkpoint by revision, size and SHA-256:
 
 ```sh
 cd reference/fastconformer
@@ -799,11 +808,9 @@ uv run python convert.py reazonspeech-nemo-v2 ../../models --type f16       # re
 
 `--type f32` writes the same at 2.5 GB. The converter refuses a checkpoint with an option the C++ does not run
 (another subsampling, attention or decoding, a prompt, a language tag to strip, a tokenizer piece it cannot write)
-rather than write a file that would recognize differently from NeMo. GGUF files converted for speech.cpp 0.5.0,
-which carry the CTC head instead of the TDT decoder, for 0.6.0, which lack `fastconformer.use_bias`, and before
-ReazonSpeech was added, which lack `fastconformer.attention` and `fastconformer.decoder`, are refused; convert them
-again. The parakeet weights are NVIDIA's, under CC-BY-4.0, and ReazonSpeech's are reazon-research's, under the
-Apache License 2.0.
+rather than write a file that would recognize differently from NeMo. GGUF files converted before 0.7.0 have no
+layout and are refused; convert them again. The parakeet weights are NVIDIA's, under CC-BY-4.0, and ReazonSpeech's
+are reazon-research's, under the Apache License 2.0.
 
 ### Use
 
@@ -915,7 +922,8 @@ for TDT, the duration predicted with it, and the spans of the tokens and of the 
 spans in frames and in seconds and the segments NeMo's separators give, at the ends of words as NeMo ends them, with
 them: on every dump of the three models, on the CPU with F32 weights and on Metal with F16, all are NeMo's exactly.
 For the Japanese models, whose text has no spaces and so no end of a word before its last token, it also cuts
-segments after `。`, `？`, `！`, `?` and `!` wherever they stand, and checks that each segment ends there, at a
+segments as the recognizer does with their files' `fastconformer.segment.breaks`, after `。`, `？`, `！`, `?` and `!`
+wherever they stand, and checks that each segment ends there, at a
 separator that ends a word, or with the last token. NeMo's beam search records with each token
 the step of its search, the frame plus the tokens before it, so that its times for ReazonSpeech run past the end of
 the audio, to 386.16 s for the 311.22 s input; speech.cpp keeps the frame, and the check compares the step it gives.
@@ -946,6 +954,255 @@ search 3.3 s, the frontend 0.14 s). The process's peak memory footprint on the C
 holds every buffer, is 1.35 GB for 6.36 s, 1.55 GB for 64.80 s and 2.35 GB for 311.22 s, growing with the length;
 parakeet-tdt_ctc-0.6b-ja's is 1.30, 1.49 and 4.14 GB, growing with its square, and the 311 s input takes it 62 s on
 the CPU where ReazonSpeech takes 26 s.
+
+## GGUF files
+
+Every model is one GGUF file, its codec included, which `reference/<model>/convert.py` writes from the checkpoint
+that `reference/<model>/pins.py` pins by revision (docs/adr/0015). The file says the version of its layout in
+`speech.layout`, 1 for every family, and in `speech.requires` the first release whose reader takes it, 0.7.0. A
+reader takes the layout it knows; a newer one is refused with a message that names `speech.requires`, and a file
+without `speech.layout`, converted for a release before 0.7.0, is refused as such. Every key below is required in
+its family's layout unless the table says when it is present, and has exactly the type listed: a key missing or of
+another type is refused with a message that names it, and so is a string that names a kind other than the ones
+listed. The tensors are exactly the ones the keys call for: a tensor missing or one not called for is refused. A key
+whose meaning the tables leave empty means what the official configuration's field of the same name means.
+
+### Keys of every model file
+
+| Key | Type | Meaning | Source |
+|---|---|---|---|
+| `general.architecture` | string | the family: `qwen3-tts`, `irodori-tts` or `fastconformer` | the converter |
+| `general.name` | string | the model's name | the pinned repository's name (`Qwen3-TTS-12Hz-0.6B-CustomVoice`, `Irodori-TTS-v4.1-Small-MF`, `parakeet-tdt-0.6b-v3`) |
+| `general.license` | string | SPDX identifier | the model card |
+| `general.source.url` | string | `https://huggingface.co/<repository>/tree/<revision>` | the pin |
+| `speech.layout` | u32 | 1, the version of the family's layout | the converter |
+| `speech.requires` | string | `0.7.0`, the first release whose reader takes this layout | the converter's table of layouts |
+| `speech.task` | string | `synthesis` or `recognition`; must be the family's | the converter |
+| `speech.sample_rate` | u32 | the rate of the audio made or recognized | Qwen3-TTS: `speech_tokenizer/config.json` `output_sample_rate`; Irodori-TTS: the DACVAE's `sample_rate`; FastConformer: the featurizer's `sample_rate` |
+| `speech.languages` | [string] | BCP 47 tags, sorted | Qwen3-TTS: the names of `codec_language_id` through the converter's tag table, dialects left out; the others: the model card |
+| `speech.language_use` | string | `steers` or `checked`; must be what the family does | `steers` for qwen3-tts, `checked` for the others |
+| `speech.voices` | [string] | the built-in voices' names; present for qwen3-tts alone | `talker_config.spk_id`'s names, sorted |
+| `speech.voice_languages` | [string] | each voice's language, aligned with `speech.voices` | the model card's "Native Language" column through the tag table (Dylan's and Eric's dialects are `zh`) |
+| `speech.voice_genders` | [string] | `female` or `male`, aligned | the model card's "Voice Description" column |
+| `speech.voice_descriptions` | [string] | the description, aligned | the model card's "Voice Description" column |
+
+### qwen3-tts
+
+From the checkpoint's `config.json` (`talker_config`, its `code_predictor_config`, and the top level),
+`generation_config.json`, `vocab.json`, `merges.txt`, `tokenizer_config.json` and `speech_tokenizer/config.json`
+(`decoder_config`), and the official code at the commit the converter's environment pins (QwenLM/Qwen3-TTS@022e286).
+
+| Key | Type | Meaning | Source |
+|---|---|---|---|
+| `qwen3-tts.talker.hidden_size`, `intermediate_size`, `num_hidden_layers`, `num_attention_heads`, `num_key_value_heads`, `head_dim` | u32 | | `talker_config` |
+| `qwen3-tts.talker.rms_norm_eps`, `rope_theta` | f32 | | `talker_config` |
+| `qwen3-tts.talker.vocab_size` | u32 | the codec ids, audio codes and control tokens | `talker_config.vocab_size` |
+| `qwen3-tts.talker.num_code_groups` | u32 | codes per frame | `talker_config.num_code_groups` |
+| `qwen3-tts.talker.max_position_embeddings` | u32 | the positions of the talker's cache, prompt and frames together | `talker_config.max_position_embeddings` |
+| `qwen3-tts.talker.codec_bos_id`, `codec_eos_token_id` (the end of speech), `codec_pad_id`, `codec_think_id`, `codec_nothink_id`, `codec_think_bos_id`, `codec_think_eos_id` | u32 | | `talker_config` |
+| `qwen3-tts.talker.suppressed_tokens` | u32 | the ids at the end of the vocabulary that sampling never picks, the end of speech excepted (1024) | the official `generate()`'s `suppress_tokens`, `range(vocab_size - 1024, vocab_size)` |
+| `qwen3-tts.code_predictor.hidden_size`, `intermediate_size`, `num_hidden_layers`, `num_attention_heads`, `num_key_value_heads`, `head_dim`, `vocab_size` | u32 | | `code_predictor_config` |
+| `qwen3-tts.code_predictor.rms_norm_eps`, `rope_theta` | f32 | | `code_predictor_config` |
+| `qwen3-tts.text.tts_bos_token_id`, `tts_eos_token_id`, `tts_pad_token_id`, `im_start_token_id`, `im_end_token_id`, `assistant_token_id` | u32 | | `config.json` |
+| `qwen3-tts.text.newline_token_id` | u32 | the token of "\n" in the chat template (198) | `vocab.json`'s id of `Ċ`, the byte-level form of "\n" |
+| `qwen3-tts.language_ids` | [i32] | the codec id of each of `speech.languages`, aligned | `talker_config.codec_language_id` |
+| `qwen3-tts.speaker_ids` | [i32] | the codec id of each of `speech.voices`, aligned | `talker_config.spk_id` |
+| `qwen3-tts.dialect_ids` | [i32] | the codec id of the dialect each voice speaks, or −1, aligned | `talker_config.spk_is_dialect` through `codec_language_id` |
+| `qwen3-tts.dialect_language` | string | the language in which, as with `auto`, a voice with a dialect speaks it (`zh`) | the official prompt's `language.lower() in ["chinese", "auto"]` through the tag table |
+| `qwen3-tts.generation.min_frames` | u32 | frames before the end of speech may be sampled (2) | the official `generate()`'s `min_new_tokens` |
+| `qwen3-tts.generation.max_frames` | u32 | the model's limit in frames (8192) | `generation_config.json` `max_new_tokens` |
+| `qwen3-tts.generation.talker.do_sample` | bool | | `generation_config.json` `do_sample` |
+| `qwen3-tts.generation.talker.temperature`, `top_p`, `repetition_penalty` | f32 | | `generation_config.json` |
+| `qwen3-tts.generation.talker.top_k` | u32 | | `generation_config.json` |
+| `qwen3-tts.generation.code_predictor.do_sample` | bool | | `subtalker_dosample` |
+| `qwen3-tts.generation.code_predictor.temperature`, `top_p` | f32 | | `subtalker_temperature`, `subtalker_top_p` |
+| `qwen3-tts.generation.code_predictor.top_k` | u32 | | `subtalker_top_k` |
+| `qwen3-tts.generation.code_predictor.repetition_penalty` | f32 | | `code_predictor_config.repetition_penalty`, which the code predictor's `generate()` uses since the official code passes none |
+| `qwen3-tts.tokenizer.tokens` | [string] | the BPE vocabulary in id order | `vocab.json` and `tokenizer_config.json` `added_tokens_decoder` |
+| `qwen3-tts.tokenizer.merges` | [string] | merges in rank order | `merges.txt` |
+| `qwen3-tts.codec.num_quantizers` | u32 | must equal `talker.num_code_groups` | `decoder_config.num_quantizers` |
+| `qwen3-tts.codec.latent_dim`, `codebook_dim`, `hidden_size`, `num_attention_heads`, `head_dim`, `num_hidden_layers`, `sliding_window` | u32 | | `decoder_config` |
+| `qwen3-tts.codec.num_key_value_heads` | u32 | must equal the heads, the one form the C++ runs | `decoder_config.num_key_value_heads` |
+| `qwen3-tts.codec.rms_norm_eps`, `rope_theta` | f32 | | `decoder_config` |
+| `qwen3-tts.codec.upsample_rates` | [i32] | the decoder blocks' strides | `decoder_config.upsample_rates` |
+| `qwen3-tts.codec.upsampling_ratios` | [i32] | the upsampling stages' strides | `decoder_config.upsampling_ratios` |
+
+A frame lasts the product of `upsample_rates` and `upsampling_ratios` (1920) samples at `speech.sample_rate`, 0.08 s.
+The text a request takes at most is `talker.max_position_embeddings` − `generation.max_frames` − 11, the rows its
+prompt adds to the text (24565 tokens for both sizes).
+
+Tensors, with T = `talker.num_hidden_layers`, C = `code_predictor.num_hidden_layers`, G = `talker.num_code_groups`,
+Q = `codec.num_quantizers`, L = `codec.num_hidden_layers`, U = the length of `codec.upsampling_ratios`, B = the
+length of `codec.upsample_rates`:
+
+- `talker.text_embd`, `talker.text_proj.fc1.{weight,bias}`, `talker.text_proj.fc2.{weight,bias}`, `talker.codec_embd`,
+  `talker.codec_head`, `talker.norm`;
+- `talker.blk.{0..T-1}.` and `cp.blk.{0..C-1}.` each with `attn_norm`, `ffn_norm`, `attn_q`, `attn_k`, `attn_v`,
+  `attn_o`, `attn_q_norm`, `attn_k_norm`, `ffn_gate`, `ffn_up`, `ffn_down`;
+- `cp.norm`, `cp.codec_embd.{0..G-2}`, `cp.head.{0..G-2}`, and `cp.in_proj.{weight,bias}` when
+  `code_predictor.hidden_size` differs from `talker.hidden_size` (the 1.7B model), as the official model makes
+  `small_to_mtp_projection` a Linear exactly then;
+- `codec.vq.first.codebook.0`, `codec.vq.first.out_proj`, `codec.vq.rest.codebook.{0..Q-2}`, `codec.vq.rest.out_proj`;
+- `codec.pre_conv.{weight,bias}`, `codec.tf.in_proj.{weight,bias}`, `codec.tf.out_proj.{weight,bias}`, `codec.tf.norm`,
+  and `codec.tf.blk.{0..L-1}.` with `attn_norm`, `ffn_norm`, `attn_q`, `attn_k`, `attn_v`, `attn_o`, `attn_scale`,
+  `ffn_gate`, `ffn_up`, `ffn_down`, `ffn_scale`;
+- `codec.up.{0..U-1}.` with `tconv.{weight,bias}`, `dwconv.{weight,bias}`, `norm.{weight,bias}`, `pw1.{weight,bias}`,
+  `pw2.{weight,bias}`, `gamma`;
+- `codec.dec.in_conv.{weight,bias}`, `codec.dec.blk.{0..B-1}.` with `snake.{alpha,inv_beta}`, `tconv.{weight,bias}`
+  and `res.{0,1,2}.` with `snake1.{alpha,inv_beta}`, `conv1.{weight,bias}`, `snake2.{alpha,inv_beta}`,
+  `conv2.{weight,bias}`; `codec.dec.out_snake.{alpha,inv_beta}`, `codec.dec.out_conv.{weight,bias}`.
+
+The three residual units per decoder block (dilations 1, 3 and 9) are the architecture's, as the official module
+builds them, and stay in the C++.
+
+### irodori-tts
+
+From the checkpoint's `model.safetensors` metadata (`config_json`, `text_encoder_config_json`), its `tokenizer/` and
+model card, the DACVAE codec (Aratako/Semantic-DACVAE-Japanese-32dim at its pin), the official runtime at the commit
+the converter's environment pins (`SamplingRequest`'s defaults in `irodori_tts/inference_runtime.py`) and
+Irodori-TTS-Server@61012c760f22f7b4a6c21c5c5f8f9e148120b6f9 for the speed.
+
+| Key | Type | Meaning | Source |
+|---|---|---|---|
+| `irodori-tts.flow` | string | `meanflow` or `rf_velocity` | `config_json` `flow_parameterization` (`rf_velocity` when absent, the config's default) |
+| `irodori-tts.latent_dim` | u32 | the codec latent's channels, the DiT's and the speaker encoder's input | `config_json` `latent_dim`; the converter checks the codec's `codebook_dim` equals it |
+| `irodori-tts.norm_eps` | f32 | | `config_json` `norm_eps` |
+| `irodori-tts.rope_theta` | f32 | the RoPE base of the speaker encoder and the DiT (10000) | the official `precompute_freqs_cis()` default, which both keep |
+| `irodori-tts.text.hidden_size`, `num_heads`, `num_layers` | u32 | ModernBERT-ja | `text_encoder_config_json` `hidden_size`, `num_attention_heads`, `num_hidden_layers` |
+| `irodori-tts.text.norm_eps` | f32 | | `norm_eps` |
+| `irodori-tts.text.window` | u32 | the tokens a local layer reaches on either side | `local_attention / 2` |
+| `irodori-tts.text.layer_global` | [i32] | 1 for a layer with global attention | `layer_types`, `full_attention` |
+| `irodori-tts.text.rope_theta_global`, `rope_theta_local` | f32 | | `rope_parameters.full_attention.rope_theta`, `rope_parameters.sliding_attention.rope_theta` |
+| `irodori-tts.text.dim` | u32 | the text condition's channels | `config_json` `text_dim` |
+| `irodori-tts.text.max_tokens` | u32 | the longest text (256) | `config_json` `max_text_len` |
+| `irodori-tts.speaker.dim`, `num_layers`, `num_heads`, `patch_size` | u32 | | `config_json` `speaker_dim`, `speaker_layers`, `speaker_heads`, `speaker_patch_size` |
+| `irodori-tts.duration.num_layers` | u32 | | `duration_layers` |
+| `irodori-tts.dit.dim`, `num_layers`, `num_heads`, `timestep_dim` | u32 | | `model_dim`, `num_layers`, `num_heads`, `timestep_embed_dim` |
+| `irodori-tts.sampler.default_steps` | u32 | the default of the sampler's steps (4 or 40) | the runtime's `num_steps` default, 4 for MeanFlow and 40 otherwise |
+| `irodori-tts.sampler.cfg_text` | f32 | present when `flow` is `rf_velocity` (3.0) | `SamplingRequest.cfg_scale_text` |
+| `irodori-tts.sampler.cfg_speaker` | f32 | the same (5.0) | `SamplingRequest.cfg_scale_speaker` |
+| `irodori-tts.sampler.cfg_min_t`, `cfg_max_t` | f32 | the same (0.5 and 1.0) | `SamplingRequest.cfg_min_t`, `cfg_max_t` |
+| `irodori-tts.length.min_seconds`, `max_seconds` | f32 | the shortest and the longest speech (0.5 and 30) | `SamplingRequest.min_seconds`, `max_seconds` |
+| `irodori-tts.length.min_speed`, `max_speed` | f32 | the speed's bounds (0.25 and 4) | Irodori-TTS-Server's speed bounds, OpenAI's |
+| `irodori-tts.reference.max_seconds` | f32 | the longest reference recording (120) | `config_json` `ref_max_seconds` |
+| `irodori-tts.reference.lufs` | f32 | the loudness a reference is brought to (−16) | `SamplingRequest.ref_normalize_db` |
+| `irodori-tts.tail.window` | u32 | the frames over which the latent's tail is found flat (20) | `SamplingRequest.tail_window_size` |
+| `irodori-tts.tail.std_threshold`, `mean_threshold` | f32 | (0.05 and 0.1) | `SamplingRequest.tail_std_threshold`, `tail_mean_threshold` |
+| `irodori-tts.tokenizer.tokens` | [string] | the Unigram pieces | `tokenizer/tokenizer.json` `model.vocab` |
+| `irodori-tts.tokenizer.scores` | [f64] | their scores | the same |
+| `irodori-tts.tokenizer.added_ids` | [i32] | | `added_tokens` |
+| `irodori-tts.tokenizer.bos_id` | u32 | | `tokenizer_config.json` `bos_token` |
+| `irodori-tts.tokenizer.unknown_id` | u32 | | `model.unk_id` |
+| `irodori-tts.codec.hop_length` | u32 | samples per latent frame | the DACVAE's `hop_length`; the converter checks it is the product of the encoder's rates |
+| `irodori-tts.codec.encoder_rates`, `decoder_rates` | [i32] | | the DACVAE's `encoder_rates`, `decoder_rates` |
+| `irodori-tts.codec.sha256` | string | the codec's identity, which voice files carry | the SHA-256 the converter computes over the official codec's tensors (below) |
+
+The codec's hash is SHA-256 over the tensors of `weights.pth` as `DACVAE.load()` gives them, before the weight
+normalization is folded: for each tensor in ascending order of its name, the name in UTF-8, a 0 byte, the number of
+dimensions as a little-endian u32, each dimension as a little-endian u64, and the values as little-endian float32 in
+row-major order. Every conversion of the same official codec carries the same hash, whatever type it stores:
+Semantic-DACVAE-Japanese-32dim at its pin is `67cb1a241c3b75d7c5f46c966fca711e7962422da98f7f32ee2863d39dbe794d`.
+
+Tensors, with X = `text.num_layers`, S = `speaker.num_layers`, D = `duration.num_layers`, N = `dit.num_layers`, E and
+F the lengths of `codec.encoder_rates` and `codec.decoder_rates`:
+
+- `text.embd`, `text.embd_norm`, `text.blk.{0..X-1}.` with `attn_q`, `attn_k`, `attn_v`, `attn_out`, `ffn_norm`,
+  `ffn_act`, `ffn_gate`, `ffn_down`, and `attn_norm` for every layer but the first, which ModernBERT does not
+  normalize; `text.final_norm`, `text.proj.{weight,bias}`, `text.proj.res_norm`, `text.proj.res_up.{weight,bias}`,
+  `text.proj.res_down.{weight,bias}`, `text.norm`;
+- `speaker.in_proj.{weight,bias}`, `speaker.blk.{0..S-1}.` with `attn_norm`, `attn_q`, `attn_k`, `attn_v`, `attn_o`,
+  `attn_gate`, `q_norm`, `k_norm`, `ffn_norm`, `ffn_gate`, `ffn_up`, `ffn_down`; `speaker.norm`;
+- `duration.in_proj.{weight,bias}`, `duration.blk.{0..D-1}.` with `norm`, `mod.{weight,bias}`,
+  `caption_mod.{weight,bias}`, `ffn_gate`, `ffn_up`, `ffn_down`; `duration.out_norm`, `duration.out_proj.{weight,bias}`,
+  `duration.null_caption`;
+- `dit.cond.{0,1,2}`, and `dit.delta_cond.{0,1,2}` when `flow` is `meanflow`; `dit.in_proj.{weight,bias}`,
+  `dit.blk.{0..N-1}.` with `attn_q`, `attn_k`, `attn_v`, `attn_o`, `attn_gate`, `attn_k_text`, `attn_v_text`,
+  `attn_k_speaker`, `attn_v_speaker`, `q_norm`, `k_norm`, `ffn_gate`, `ffn_up`, `ffn_down`, and for `attn_ada` and
+  `ffn_ada` each of `shift`, `scale`, `gate` with `down`, `up.weight`, `up.bias`; `dit.out_norm`,
+  `dit.out_proj.{weight,bias}`;
+- `codec.enc.conv_in.{weight,bias}`, `codec.enc.blk.{0..E-1}.` with `res.{0,1,2}.` (`snake1.{alpha,inv_alpha}`,
+  `conv1.{weight,bias}`, `snake2.{alpha,inv_alpha}`, `conv2.{weight,bias}`), `snake.{alpha,inv_alpha}`,
+  `down.first`, `down.second`, `down.bias`; `codec.enc.snake.{alpha,inv_alpha}`, `codec.enc.conv_out.{weight,bias}`,
+  `codec.bottleneck.mean.{weight,bias}`;
+- `codec.dec.in_proj.{weight,bias}`, `codec.dec.conv_in.{weight,bias}`, `codec.dec.blk.{0..F-1}.` with
+  `snake.{alpha,inv_alpha}`, `up.{weight,bias}` and `res.{0,1,2}.` as in the encoder;
+  `codec.dec.out_snake.{alpha,inv_alpha}`, `codec.dec.conv_out.{weight,bias}`.
+
+Constants that stay in the C++, since they are not the model's: the decoder's windows of 12 and 48 frames, which are
+how speech.cpp streams a latent the official runtime decodes whole; the encoder's and decoder's margins of 8 and 10
+frames, which follow from the codec's architecture; and SentencePiece's penalty for an unknown piece.
+
+### fastconformer
+
+From the `.nemo` checkpoint as NeMo 3.0.0 restores it (`model.cfg`, the featurizer, the encoder, the decoding and the
+SentencePiece model), NeMo's own constants where it has them, and the model card for the languages and the license.
+
+| Key | Type | Meaning | Source |
+|---|---|---|---|
+| `fastconformer.frontend.n_fft` | u32 | | featurizer `n_fft` |
+| `fastconformer.frontend.hop_length` | u32 | samples per mel frame | featurizer `hop_length` |
+| `fastconformer.frontend.n_mels` | u32 | the mel bins, also the subsampling's input width | featurizer `nfilt` |
+| `fastconformer.frontend.preemphasis` | f32 | | featurizer `preemph` |
+| `fastconformer.frontend.log_guard` | f32 | | featurizer `log_zero_guard_value` |
+| `fastconformer.frontend.std_guard` | f32 | (1e-5) | `CONSTANT` in NeMo's `features.py` |
+| `fastconformer.encoder.d_model`, `num_layers`, `num_heads`, `conv_kernel` | u32 | | `cfg.encoder.d_model`, `n_layers`, `n_heads`, `conv_kernel_size` |
+| `fastconformer.encoder.subsampling_factor` | u32 | a power of two | `cfg.encoder.subsampling_factor` |
+| `fastconformer.encoder.norm_eps` | f32 | | the layers' `norm_out.eps` |
+| `fastconformer.encoder.pos_base` | f32 | (10000) | `INF_VAL` of NeMo's `multi_head_attention.py` |
+| `fastconformer.encoder.xscale` | f32 | | `encoder.xscale`, or 1 when it is None |
+| `fastconformer.encoder.ff_factor` | f32 | | the layers' `fc_factor` |
+| `fastconformer.encoder.use_bias` | bool | whether the linear layers and pointwise convolutions have biases | the layers' `use_bias` |
+| `fastconformer.encoder.attention` | string | `rel_pos` or `rel_pos_local_attn` | `encoder.self_attention_model` |
+| `fastconformer.encoder.attention_context` | u32 | present for `rel_pos_local_attn`: frames on either side | `encoder.att_context_size[0]` |
+| `fastconformer.encoder.global_tokens` | u32 | present for `rel_pos_local_attn` | `encoder.global_tokens` |
+| `fastconformer.decoder.kind` | string | `tdt` or `rnnt` | the decoding `transcribe()` runs (`GreedyBatchedTDTInfer` or `BeamRNNTInfer`) |
+| `fastconformer.decoder.blank_id` | u32 | | `decoding.blank_id` |
+| `fastconformer.decoder.prediction_layers` | u32 | the prediction network's LSTM layers | `decoder.pred_rnn_layers` |
+| `fastconformer.decoder.tdt.durations` | [i32] | present for `tdt` | `decoding.cfg.durations` |
+| `fastconformer.decoder.tdt.max_symbols` | u32 | present for `tdt`: tokens on one frame at most | the decoding's `max_symbols` |
+| `fastconformer.decoder.rnnt.beam_size` | u32 | present for `rnnt` | the beam search's `beam_size` |
+| `fastconformer.decoder.rnnt.score_norm` | bool | present for `rnnt` | `score_norm` |
+| `fastconformer.decoder.rnnt.max_target_ratio` | f32 | present for `rnnt` | `alsd_max_target_length` |
+| `fastconformer.segment.separators` | [string] | the marks that end a segment where a word ends, as NeMo ends one | the decoding's `segment_seperators`, or NeMo's default `.`, `?`, `!` when the checkpoint sets none (none of the three does) |
+| `fastconformer.segment.breaks` | [string] | the marks that end a segment wherever they stand: `。`, `？`, `！`, `?`, `!` for a model whose languages are written without spaces, which NeMo's word ends never cut, and none otherwise | speech.cpp's own, from the model's languages |
+| `fastconformer.tokenizer.tokens` | [string] | the SentencePiece pieces in id order | the tokenizer's model proto |
+| `fastconformer.tokenizer.unknown_id` | u32 | | `unk_id()` |
+| `fastconformer.tokenizer.unknown_surface` | string | | `trainer_spec.unk_surface` |
+| `fastconformer.tokenizer.strip_leading_space` | bool | whether the first "▁" of the text is dropped | `normalizer_spec.add_dummy_prefix or remove_extra_whitespaces` |
+| `fastconformer.tokenizer.punctuation` | [string] | the marks before which the decoding removes a space | `decoding.supported_punctuation` |
+
+An encoder frame lasts `frontend.hop_length × encoder.subsampling_factor / speech.sample_rate` (160 × 8 / 16000 =
+0.08 s).
+
+Tensors, with L = `encoder.num_layers`, K = log2(`encoder.subsampling_factor`) and P = `decoder.prediction_layers`:
+
+- `frontend.window`, `frontend.filterbank`;
+- `sub.conv.0.{weight,bias}`, `sub.conv.{1..K-1}.` with `dw.{weight,bias}` and `pw.{weight,bias}`,
+  `sub.out.{weight,bias}`;
+- `blk.{0..L-1}.` with `ff1_norm.{weight,bias}`, `ff2_norm.{weight,bias}`, `attn_norm.{weight,bias}`,
+  `conv_norm.{weight,bias}`, `out_norm.{weight,bias}`, `attn_pos.weight`, `attn_pos_bias_u`, `attn_pos_bias_v`,
+  `conv_dw.{weight,bias}`, and `ff1_up`, `ff1_down`, `ff2_up`, `ff2_down`, `attn_q`, `attn_k`, `attn_v`, `attn_out`,
+  `conv_pw1_a`, `conv_pw1_gate` and `conv_pw2`, each a `.weight` and, when `encoder.use_bias` is true, a `.bias`;
+- `pred.embed.weight`, `pred.lstm.{0..P-1}.` with `ih.weight`, `hh.weight`, `bias`;
+- `joint.enc.{weight,bias}`, `joint.pred.{weight,bias}`, `joint.out.{weight,bias}`; `joint.out` has
+  `decoder.blank_id` + 1 outputs, and as many more as `decoder.tdt.durations` has entries for `tdt`.
+
+### Voice files
+
+A voice file of Irodori-TTS is a GGUF file of its own, layout 1:
+
+| Key | Type | Meaning |
+|---|---|---|
+| `general.architecture` | string | `irodori-tts-voice` |
+| `speech.layout` | u32 | 1 |
+| `speech.requires` | string | `0.7.0` |
+| `irodori-tts-voice.codec_sha256` | string | the `irodori-tts.codec.sha256` of the model that encoded it; a model with another hash refuses it |
+| `irodori-tts-voice.reference_seconds` | f32 | the reference recording's length |
+| `irodori-tts-voice.reference_sample_rate` | u32 | the reference recording's rate, before it was resampled |
+| `irodori-tts-voice.device_kind` | string | `cpu`, `gpu` or `igpu`: the kind of device that encoded it |
+
+and one tensor, `latent`, F32 with ne = [`latent_dim`, frames]. Voice files made before 0.7.0 have no `speech.layout`
+and are refused; they are made again from their WAVE files.
 
 ## License
 

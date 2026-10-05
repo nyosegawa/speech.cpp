@@ -102,29 +102,26 @@ struct Graph {
 
 }  // namespace
 
-CodecDecoder::CodecDecoder(const std::string & path, ggml_backend_t backend) : backend_(backend) {
-    model_ = std::make_unique<ModelFile>(path, backend);
-    const ModelFile & m = *model_;
-    n_q_ = (int) m.u32("codec.num_quantizers");
-    latent_dim_ = (int) m.u32("codec.latent_dim");
-    codebook_dim_ = (int) m.u32("codec.codebook_dim");
-    hidden_ = (int) m.u32("codec.hidden_size");
-    n_head_ = (int) m.u32("codec.num_attention_heads");
-    head_dim_ = (int) m.u32("codec.head_dim");
-    n_layer_ = (int) m.u32("codec.num_hidden_layers");
-    window_ = (int) m.u32("codec.sliding_window");
-    rms_eps_ = m.f32("codec.rms_norm_eps");
-    rope_theta_ = m.f32("codec.rope_theta");
-    upsample_rates_ = m.i32_array("codec.upsample_rates");
-    upsampling_ratios_ = m.i32_array("codec.upsampling_ratios");
-    if (m.u32("codec.num_key_value_heads") != (uint32_t) n_head_) {
-        throw std::runtime_error("the codec transformer is expected to have as many key/value heads as query heads");
-    }
+CodecDecoder::CodecDecoder(const ModelFile & m, ggml_backend_t backend) : backend_(backend), m_(m) {
+    const std::string p = "qwen3-tts.codec.";
+    sample_rate_ = (int) m.u32("speech.sample_rate");
+    n_q_ = (int) m.u32(p + "num_quantizers");
+    latent_dim_ = (int) m.u32(p + "latent_dim");
+    codebook_dim_ = (int) m.u32(p + "codebook_dim");
+    hidden_ = (int) m.u32(p + "hidden_size");
+    n_head_ = (int) m.u32(p + "num_attention_heads");
+    head_dim_ = (int) m.u32(p + "head_dim");
+    n_layer_ = (int) m.u32(p + "num_hidden_layers");
+    window_ = (int) m.u32(p + "sliding_window");
+    rms_eps_ = m.f32(p + "rms_norm_eps");
+    rope_theta_ = m.f32(p + "rope_theta");
+    upsample_rates_ = m.i32_array(p + "upsample_rates");
+    upsampling_ratios_ = m.i32_array(p + "upsampling_ratios");
     samples_per_frame_ = 1;
     for (int r : upsample_rates_) samples_per_frame_ *= r;
     for (int r : upsampling_ratios_) samples_per_frame_ *= r;
 
-    const size_t n_states = 1 + 2 * n_layer_ + upsampling_ratios_.size() + 2 + upsample_rates_.size() * 4;
+    const size_t n_states = 1 + 2 * n_layer_ + upsampling_ratios_.size() + 2 + upsample_rates_.size() * (1 + kCodecResidualUnits);
     ggml_init_params params = {ggml_tensor_overhead() * (n_states + 8), nullptr, true};
     state_ctx_ = ggml_init(params);
 
@@ -146,7 +143,7 @@ CodecDecoder::CodecDecoder(const std::string & path, ggml_backend_t backend) : b
         if (tw->ne[2] == 2 * upsample_rates_[i]) {
             state_tensor("dec." + std::to_string(i) + ".tconv", tw->ne[1] * upsample_rates_[i], 1);
         }
-        for (int j = 0; j < 3; j++) {
+        for (int j = 0; j < kCodecResidualUnits; j++) {
             ggml_tensor * cw = m.tensor(b + ".res." + std::to_string(j) + ".conv1.weight");
             const int dilation = (int) std::pow(3, j);
             state_tensor("dec." + std::to_string(i) + ".res." + std::to_string(j), cw->ne[0], (cw->ne[2] - 1) * dilation);
@@ -181,7 +178,7 @@ void CodecDecoder::reset() {
 
 void CodecDecoder::decode(const int32_t * codes, int n_frames, std::vector<float> & out) {
     if (n_frames <= 0) return;
-    const ModelFile & m = *model_;
+    const ModelFile & m = m_;
     auto state = [&](const std::string & name) {
         ggml_tensor * t = ggml_get_tensor(state_ctx_, ("state." + name).c_str());
         if (!t) throw std::runtime_error("missing codec state " + name);
@@ -274,7 +271,7 @@ void CodecDecoder::decode(const int32_t * codes, int n_frames, std::vector<float
         ggml_tensor * tw = m.tensor(b + "tconv.weight");
         x = g.tconv(x, tw, m.tensor(b + "tconv.bias"), upsample_rates_[i],
                     tw->ne[2] == 2 * upsample_rates_[i] ? state(s + ".tconv") : nullptr);
-        for (int j = 0; j < 3; j++) {
+        for (int j = 0; j < kCodecResidualUnits; j++) {
             const std::string r = b + "res." + std::to_string(j) + ".";
             ggml_tensor * h = g.snake(x, m.tensor(r + "snake1.alpha"), m.tensor(r + "snake1.inv_beta"));
             h = g.conv(h, m.tensor(r + "conv1.weight"), m.tensor(r + "conv1.bias"), (int) std::pow(3, j),

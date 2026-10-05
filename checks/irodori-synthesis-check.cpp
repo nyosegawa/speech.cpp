@@ -3,7 +3,7 @@
 // reference latent from the dump's noise and with its seconds, duration scale and speed, against the audio
 // the official synthesize() returned, the cut at the tail included.
 //
-// usage: irodori-synthesis-check <model.gguf> <codec.gguf> <reference out dir> [gpu|cpu|device name]
+// usage: irodori-synthesis-check <model.gguf> <reference out dir> [gpu|cpu|device name]
 
 #include <algorithm>
 #include <cstdio>
@@ -44,17 +44,17 @@ double meta_number(const std::filesystem::path & dir, const std::string & key, d
 
 int main(int argc, char ** argv) {
     const std::vector<std::string> args = utf8_args(argc, argv);
-    if (args.size() < 4) {
-        std::fprintf(stderr, "usage: %s <model.gguf> <codec.gguf> <reference out dir> [gpu|cpu|device name]\n", args[0].c_str());
+    if (args.size() < 3) {
+        std::fprintf(stderr, "usage: %s <model.gguf> <reference out dir> [gpu|cpu|device name]\n", args[0].c_str());
         return 2;
     }
     try {
-        ggml_backend_t backend = init_backend(args.size() > 4 ? args[4] : "");
+        ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
         std::printf("backend: %s\n", ggml_backend_name(backend));
-        Synthesizer synth(args[1], args[2], backend);
+        Synthesizer synth(args[1], backend);
         const std::string source = synth.model().str("general.source.url");
         std::vector<std::filesystem::path> dumps;
-        for (const auto & e : std::filesystem::directory_iterator(std::filesystem::u8path(args[3]))) {
+        for (const auto & e : std::filesystem::directory_iterator(std::filesystem::u8path(args[2]))) {
             if (std::filesystem::exists(e.path() / "audio.npy") &&
                 source.find("huggingface.co/" + meta_string(e.path(), "repository", "model") + "/tree/") != std::string::npos) {
                 dumps.push_back(e.path());

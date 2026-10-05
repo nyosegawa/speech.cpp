@@ -5,16 +5,15 @@
 #include <random>
 #include <stdexcept>
 
-Synthesizer::Synthesizer(const std::string & talker_path, const std::string & codec_path, ggml_backend_t backend,
-                         int n_ctx)
-    : talker_(talker_path, backend, n_ctx),
-      codec_(codec_path, backend),
-      tokenizer_(talker_.model()),
-      ids_(talker_.model()) {
-    if (codec_.num_quantizers() != talker_.num_code_groups()) {
-        throw std::runtime_error("the talker and the codec disagree on the number of codebooks");
-    }
-}
+#include "layout.h"
+
+Synthesizer::Synthesizer(const std::string & path, ggml_backend_t backend)
+    : model_(path, backend, qwen3_tts_layout),
+      talker_(model_, backend),
+      codec_(model_, backend),
+      tokenizer_(model_),
+      ids_(model_),
+      generation_(model_) {}
 
 namespace {
 
@@ -39,23 +38,25 @@ int Synthesizer::synthesize(const SynthesisRequest & r, const AudioSink & sink, 
         std::vector<int32_t> text_ids = {ids_.im_start, ids_.assistant, ids_.newline};
         const std::vector<int32_t> body = tokenizer_.encode(r.text);
         if (body.empty()) throw std::runtime_error("the text is empty");
+        if ((int) body.size() > max_text_tokens()) {
+            throw std::runtime_error("the text is " + std::to_string(body.size()) + " tokens long and Qwen3-TTS takes at most " +
+                                     std::to_string(max_text_tokens()) + "; split it into shorter texts");
+        }
         text_ids.insert(text_ids.end(), body.begin(), body.end());
         text_ids.insert(text_ids.end(), {ids_.im_end, ids_.newline, ids_.im_start, ids_.assistant, ids_.newline});
-        prompt = build_prompt(talker_, ids_, text_ids, r.speaker, ids_.language_name(r.language));
+        prompt = build_prompt(talker_, ids_, text_ids, r.speaker, r.language);
     }
 
     const int n_groups = talker_.num_code_groups();
     const int vocab = talker_.vocab();
-    // Only the 2048 audio codes and the end of speech may be sampled; the rest of the talker's
-    // vocabulary is its control tokens.
-    std::vector<bool> banned(vocab, false);
-    for (int i = vocab - 1024; i < vocab; i++) banned[i] = i != ids_.codec_eos;
     const std::vector<bool> none;
     std::mt19937_64 rng(r.seed);
+    const int max_frames = std::min(r.max_frames, generation_.max_frames);
 
     {
         Timer t{&st.talker};
-        talker_.prefill(prompt.embeds, prompt.n);
+        // Every frame takes one position of the talker's cache after the prompt's.
+        talker_.prefill(prompt.embeds, prompt.n, (int64_t) prompt.n + max_frames);
     }
     codec_.reset();
     std::vector<int32_t> history, frame(n_groups), pending;
@@ -75,20 +76,15 @@ int Synthesizer::synthesize(const SynthesisRequest & r, const AudioSink & sink, 
         if (!sink(audio.data(), audio.size())) stopped = true;
     };
 
-    // Every frame takes one position of the talker's cache after the prompt's.
-    const int max_frames = std::min(r.max_frames, talker_.n_ctx() - prompt.n);
     while (frames < max_frames && !stopped) {
-        std::vector<bool> b = banned;
-        // The official generate() asks for at least two frames before the end of speech.
-        if (frames < 2) b[ids_.codec_eos] = true;
-        frame[0] = sample(talker_.logits(), r.talker, history, b, rng);
+        frame[0] = sample(talker_.logits(), generation_.talker, history, generation_.banned(vocab, ids_.codec_eos, frames), rng);
         if (frame[0] == ids_.codec_eos) break;
         history.push_back(frame[0]);
         {
             Timer t{&st.code_predictor};
-            frame[1] = sample(talker_.cp_begin(frame[0]), r.code_predictor, {}, none, rng);
+            frame[1] = sample(talker_.cp_begin(frame[0]), generation_.code_predictor, {}, none, rng);
             for (int g = 1; g < n_groups - 1; g++) {
-                frame[g + 1] = sample(talker_.cp_next(g, frame[g]), r.code_predictor, {}, none, rng);
+                frame[g + 1] = sample(talker_.cp_next(g, frame[g]), generation_.code_predictor, {}, none, rng);
             }
         }
         pending.insert(pending.end(), frame.begin(), frame.end());

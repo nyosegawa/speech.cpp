@@ -4,13 +4,35 @@
 #include <random>
 #include <vector>
 
-/** Sampling settings of one stack, with the defaults of the official generate_config. */
+#include "model-file.h"
+
+/** Sampling settings of one stack; the defaults leave the distribution as it is. */
 struct SamplingParams {
     bool greedy = false;
-    float temperature = 0.9f;
-    int top_k = 50;
+    float temperature = 1.0f;
+    /** 0 keeps every token. */
+    int top_k = 0;
     float top_p = 1.0f;
     float repetition_penalty = 1.0f;
+};
+
+/**
+ * How the official generate() samples a model, read from its file: each stack's settings, the frames made before the
+ * end of speech may come and at most, and the ids at the end of the talker's vocabulary that are never sampled, the
+ * end of speech excepted.
+ */
+struct Generation {
+    SamplingParams talker, code_predictor;
+    int min_frames = 0, max_frames = 0;
+    int suppressed_tokens = 0;
+
+    explicit Generation(const ModelFile & m);
+
+    /**
+     * The talker's ids that the frame after `frames` frames may not take: the suppressed ones, and the end of speech
+     * before min_frames.
+     */
+    std::vector<bool> banned(int vocab, int32_t end_of_speech, int frames) const;
 };
 
 /**

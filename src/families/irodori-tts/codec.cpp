@@ -94,14 +94,13 @@ struct Convolutions {
 
 }  // namespace
 
-Codec::Codec(const std::string & path, ggml_backend_t backend) : backend_(backend) {
-    model_ = std::make_unique<ModelFile>(path, backend);
-    sample_rate_ = (int) model_->u32("dacvae.sample_rate");
-    hop_ = (int) model_->u32("dacvae.hop_length");
-    latent_dim_ = (int) model_->u32("dacvae.latent_dim");
-    encoder_rates_ = model_->i32_array("dacvae.encoder_rates");
-    decoder_rates_ = model_->i32_array("dacvae.decoder_rates");
-    source_ = model_->str("general.source.url");
+Codec::Codec(const ModelFile & m, ggml_backend_t backend) : backend_(backend), m_(m) {
+    sample_rate_ = (int) m.u32("speech.sample_rate");
+    hop_ = (int) m.u32("irodori-tts.codec.hop_length");
+    latent_dim_ = (int) m.u32("irodori-tts.latent_dim");
+    encoder_rates_ = m.i32_array("irodori-tts.codec.encoder_rates");
+    decoder_rates_ = m.i32_array("irodori-tts.codec.decoder_rates");
+    sha256_ = m.str("irodori-tts.codec.sha256");
     allocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
 }
 
@@ -110,18 +109,17 @@ Codec::~Codec() {
 }
 
 ggml_tensor * Codec::build_encoder(Graph & g, const std::vector<float> & samples) const {
-    Convolutions l{g, *model_};
+    Convolutions l{g, m_};
     const int64_t n = (int64_t) samples.size();
     if (n % hop_ != 0) throw std::runtime_error("the encoder takes a whole number of frames");
-    ggml_tensor * x = l.conv(g.input(samples, 1, n), "enc.conv_in");
+    ggml_tensor * x = l.conv(g.input(samples, 1, n), "codec.enc.conv_in");
     for (size_t i = 0; i < encoder_rates_.size(); i++) {
-        const std::string b = "enc.blk." + std::to_string(i);
-        for (int j = 0, dilation = 1; j < 3; j++, dilation *= 3) x = l.residual(x, b + ".res." + std::to_string(j), dilation);
+        const std::string b = "codec.enc.blk." + std::to_string(i);
+        for (int j = 0, dilation = 1; j < kCodecResidualUnits; j++, dilation *= 3) x = l.residual(x, b + ".res." + std::to_string(j), dilation);
         x = l.down(l.snake(x, b + ".snake"), b + ".down", encoder_rates_[i]);
     }
-    x = l.conv(l.snake(x, "enc.snake"), "enc.conv_out");
-    return ggml_add(g.ctx(), mul_mat(g.ctx(), model_->tensor("bottleneck.mean.weight"), x),
-                    model_->tensor("bottleneck.mean.bias"));
+    x = l.conv(l.snake(x, "codec.enc.snake"), "codec.enc.conv_out");
+    return ggml_add(g.ctx(), mul_mat(g.ctx(), m_.tensor("codec.bottleneck.mean.weight"), x), m_.tensor("codec.bottleneck.mean.bias"));
 }
 
 std::vector<float> Codec::encode(const std::vector<float> & audio, int window) {
@@ -149,20 +147,20 @@ std::vector<float> Codec::encode(const std::vector<float> & audio, int window) {
 }
 
 ggml_tensor * Codec::build_decoder(Graph & g, const std::vector<float> & latent, std::vector<ggml_tensor *> * stages) const {
-    Convolutions l{g, *model_};
+    Convolutions l{g, m_};
     const int64_t frames = (int64_t) latent.size() / latent_dim_;
     if (frames < 2) throw std::runtime_error("the decoder takes at least two frames at once");
-    ggml_tensor * x = l.conv(g.input(latent, latent_dim_, frames), "dec.in_proj");
+    ggml_tensor * x = l.conv(g.input(latent, latent_dim_, frames), "codec.dec.in_proj");
     if (stages) stages->push_back(x);
-    x = l.conv(x, "dec.conv_in");
+    x = l.conv(x, "codec.dec.conv_in");
     if (stages) stages->push_back(x);
     for (size_t i = 0; i < decoder_rates_.size(); i++) {
-        const std::string b = "dec.blk." + std::to_string(i);
+        const std::string b = "codec.dec.blk." + std::to_string(i);
         x = l.up(l.snake(x, b + ".snake"), b + ".up", decoder_rates_[i]);
-        for (int j = 0, dilation = 1; j < 3; j++, dilation *= 3) x = l.residual(x, b + ".res." + std::to_string(j), dilation);
+        for (int j = 0, dilation = 1; j < kCodecResidualUnits; j++, dilation *= 3) x = l.residual(x, b + ".res." + std::to_string(j), dilation);
         if (stages) stages->push_back(x);
     }
-    return ggml_tanh(g.ctx(), l.conv(l.snake(x, "dec.out_snake"), "dec.conv_out"));
+    return ggml_tanh(g.ctx(), l.conv(l.snake(x, "codec.dec.out_snake"), "codec.dec.conv_out"));
 }
 
 void Codec::decode(const std::vector<float> & latent, int64_t samples, int first_window, int window, const AudioSink & sink) {

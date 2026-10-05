@@ -43,16 +43,16 @@ void fft(std::vector<std::complex<double>> & x, const std::vector<std::complex<d
 }  // namespace
 
 Frontend::Frontend(const ModelFile & m)
-    : sample_rate_((int) m.u32("fastconformer.sample_rate")),
-      n_fft_((int) m.u32("fastconformer.n_fft")),
-      hop_((int) m.u32("fastconformer.hop_length")),
-      mels_((int) m.u32("fastconformer.n_mels")),
-      preemphasis_(m.f32("fastconformer.preemphasis")),
-      log_guard_(m.f32("fastconformer.log_guard")),
-      std_guard_(m.f32("fastconformer.std_guard")) {
-    if (n_fft_ <= 0 || (n_fft_ & (n_fft_ - 1)) != 0) throw std::runtime_error("fastconformer.n_fft is not a power of two");
+    : sample_rate_((int) m.u32("speech.sample_rate")),
+      n_fft_((int) m.u32("fastconformer.frontend.n_fft")),
+      hop_((int) m.u32("fastconformer.frontend.hop_length")),
+      mels_((int) m.u32("fastconformer.frontend.n_mels")),
+      preemphasis_(m.f32("fastconformer.frontend.preemphasis")),
+      log_guard_(m.f32("fastconformer.frontend.log_guard")),
+      std_guard_(m.f32("fastconformer.frontend.std_guard")) {
+    if (n_fft_ <= 0 || (n_fft_ & (n_fft_ - 1)) != 0) throw std::runtime_error("fastconformer.frontend.n_fft is not a power of two");
     const int64_t window = ggml_nelements(m.tensor("frontend.window"));
-    if (window > n_fft_) throw std::runtime_error("frontend.window is longer than fastconformer.n_fft");
+    if (window > n_fft_) throw std::runtime_error("frontend.window is longer than fastconformer.frontend.n_fft");
     const std::vector<double> w = read_tensor(m, "frontend.window", window);
     window_.assign(n_fft_, 0.0);
     // torch.stft() centres a window shorter than n_fft in it.

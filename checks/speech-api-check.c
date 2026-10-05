@@ -2,19 +2,19 @@
  * Checks that the C API alone, through the shared libspeech, does what a program needs. It is written in C so that
  * speech.h is checked to be plain C.
  *
- * With a synthesis model: reports the release and API it was built as, lists the devices, refuses to load the model
- * without its codec, optionally makes an Irodori-TTS voice file and loads it, loads the model, describes it, speaks
+ * With a synthesis model: reports the release and API it was built as, lists the devices, optionally makes an
+ * Irodori-TTS voice file and loads it, loads the model, describes it, speaks
  * one sentence into a WAVE file, takes or refuses the options of speed and length as the model can or cannot follow
  * them, stops a second request with speech_cancel() from another thread before it finishes, reports an unknown voice
  * as an error, and refuses to recognize speech.
  *
- * With a recognition model (transcribe): refuses to load it with a codec, voices or steps, loads it, describes it,
+ * With a recognition model (transcribe): refuses to load it with voices or steps, loads it, describes it,
  * recognizes the audio of each dump of reference/fastconformer/dump.py and compares the text with the dump's text
  * byte for byte, refuses audio without a sample rate, no audio, a language the model does not recognize and a request
  * to speak, stops a request whose callback returns nonzero, and stops one with speech_cancel() from another thread
  * while the encoder runs.
  *
- * usage: speech-api-check <model.gguf> <codec.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]...
+ * usage: speech-api-check <model.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]...
  *                         [--make-voice <reference.wav> <voice.gguf>]
  *        speech-api-check transcribe <model.gguf> <dump folder>... [--device NAME]
  */
@@ -258,9 +258,9 @@ int main(int argc, char ** argv) {
     argv = utf8_argv(&argc);
 #endif
     const int recognition = argc > 1 && !strcmp(argv[1], "transcribe");
-    if (argc < 4) {
+    if (argc < 3) {
         fprintf(stderr,
-                "usage: %s <model.gguf> <codec.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]... "
+                "usage: %s <model.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]... "
                 "[--make-voice <reference.wav> <voice.gguf>]\n"
                 "       %s transcribe <model.gguf> <dump folder>... [--device NAME]\n",
                 argv[0], argv[0]);
@@ -279,11 +279,10 @@ int main(int argc, char ** argv) {
 
     speech_model_params params = speech_model_default_params();
     params.model_path = argv[1];
-    params.codec_path = argv[2];
     speech_voice_source voices[MAX_VOICES];
     size_t n_voices = 0;
     const char * reference = NULL, * made = NULL;
-    for (int i = 4; i < argc; i++) {
+    for (int i = 3; i < argc; i++) {
         if (!strcmp(argv[i], "--device") && i + 1 < argc) {
             params.device = argv[++i];
         } else if (!strcmp(argv[i], "--voice") && i + 1 < argc && n_voices < MAX_VOICES - 1) {
@@ -330,15 +329,6 @@ int main(int argc, char ** argv) {
     params.n_voices = n_voices;
 
     speech_model * model = NULL;
-    {
-        speech_model_params without_codec = params;
-        without_codec.codec_path = NULL;
-        if (speech_model_load(&without_codec, &model) != SPEECH_ERROR || model || !strstr(speech_last_error(), "codec_path")) {
-            fprintf(stderr, "FAIL: a synthesis model without its codec is not an error that names codec_path\n");
-            return 1;
-        }
-        printf("a synthesis model without its codec is refused: %s\n", speech_last_error());
-    }
     if (speech_model_load(&params, &model) != SPEECH_OK) return fail("speech_model_load");
     if (speech_model_task(model) != SPEECH_TASK_SYNTHESIS) {
         fprintf(stderr, "FAIL: a synthesis model reports the task %d\n", (int) speech_model_task(model));
@@ -367,11 +357,11 @@ int main(int argc, char ** argv) {
         fprintf(stderr, "FAIL: the sentence gave no audio\n");
         return 1;
     }
-    if (!write_wav(argv[3], &audio, speech_model_sample_rate(model))) {
-        fprintf(stderr, "FAIL: cannot write %s\n", argv[3]);
+    if (!write_wav(argv[2], &audio, speech_model_sample_rate(model))) {
+        fprintf(stderr, "FAIL: cannot write %s\n", argv[2]);
         return 1;
     }
-    printf("spoke %.2f s of audio in the voice %s into %s\n", (double) audio.n / speech_model_sample_rate(model), voice, argv[3]);
+    printf("spoke %.2f s of audio in the voice %s into %s\n", (double) audio.n / speech_model_sample_rate(model), voice, argv[2]);
 
     if (check_length_options(model, &request) != 0) return 1;
 

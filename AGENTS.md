@@ -21,8 +21,10 @@ and its check before changing behavior.
   (synthesis or recognition), the fields of `speech_model_params` they take and their engine.
   `speech_model_load()` chooses the family from the table, and adding a family is adding its line.
 - `src/families/<family>/` holds the code of one architecture, whichever weights it is given: `qwen3-tts/`
-  runs Qwen3-TTS 0.6B and 1.7B. A family reads its GGUF files and turns text into audio or audio into text;
-  it knows nothing of the C API, the worker protocol or the command line.
+  runs Qwen3-TTS 0.6B and 1.7B. A family reads its model's one GGUF file, its codec included, and turns text into
+  audio or audio into text; it knows nothing of the C API, the worker protocol or the command line. Its
+  `layout.cpp` says what its reader takes: the architecture, the layout version, every key with its type, and the
+  tensors the keys call for.
 - `src/common/` holds what two families use in the same role. Code moves there when a second family needs
   it, not before, and never as a framework for families that do not exist yet.
 - `tools/` holds the programs for users: the worker in `tools/worker/` and the command-line tools in
@@ -42,9 +44,10 @@ and its check before changing behavior.
   through the C API; `openai-api.h` reads OpenAI's requests and writes its errors and stream events, and
   `jobs.h` runs one request at a time in arrival order and cancels the request of a client that goes away.
 - `reference/<model>/` holds, per model, a uv environment that pins the official code, PyTorch and the rest,
-  the conversion of the official weights to GGUF, and the scripts that run the official implementation to
-  dump reference tensors. Dumps go to `reference/<model>/out/`. `reference/resample/` does the same for the
-  resampler of `src/common/`, against torchaudio.
+  `pins.py`, which pins the checkpoints by revision, the conversion of the official weights to one GGUF file per
+  model, and the scripts that run the official implementation to dump reference tensors. Dumps go to
+  `reference/<model>/out/`. `reference/resample/` does the same for the resampler of `src/common/`, against
+  torchaudio.
 
 Keep these boundaries explicit: code does not reach past its module for an operation that belongs to
 another one.
@@ -58,10 +61,15 @@ another one.
   bindings and other programs.
 - Anything the C API returns is owned by the library, and the header says for how long. A model serves one
   request at a time, and the header says which functions any thread may call.
-- The GGUF layout is this repository's own: `reference/<model>/convert.py` defines the tensor names and
-  metadata keys, and the C++ reads exactly what it writes. A change of layout changes both in the same
-  commit. The model's constants live in the GGUF metadata, not in the C++.
-- Do not add fallback behavior; fail loudly rather than degrade silently. A GGUF without a key or tensor,
+- The GGUF layout is this repository's own (docs/adr/0015): one file per model, its codec included, written by
+  `reference/<model>/convert.py` and read by the family's `layout.cpp`, with `speech.layout` naming its version.
+  Every key is required and has one type, and the tensors are exactly the ones the keys call for. A change of
+  layout changes the converter, the reader and README.md's tables in the same commit, and a change a reader of
+  the previous layout cannot read raises `speech.layout`, adds the release that reads it to the converter's table
+  and brings the previous layout up in the family's one upgrade function. Every model constant lives in the
+  file, from the checkpoint or, where it has none, from the official code, and the converter says where.
+- Do not add fallback behavior; fail loudly rather than degrade silently. A GGUF without a key or tensor, a key
+  of another type, a tensor the keys do not call for, a layout the reader does not know,
   a text longer than the model takes, a WAVE format that is not understood and a device that does not
   start all throw with a message; the C API returns them as `SPEECH_ERROR` and the worker reports them as
   `error` or `fatal`. Nothing is truncated or
@@ -149,7 +157,7 @@ settled a choice or turned an approach down for good; if so, the record goes int
   tags are never deleted or moved: callers such as ASIST pin them by SHA-256.
 - Converted GGUF files go to Hugging Face only with the user's approval, one repository for each upstream
   repository, named after it with `-GGUF` (sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF for
-  Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice). A repository holds every file its model needs, the codec included, and
+  Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice). A repository holds one file per model and type, the codec inside it, and
   the licenses of what it holds; its card says that only speech.cpp reads it. A changed file goes up under the
   same name, and its card's SHA-256 changes with it.
 - When a change alters what a user does or sees (the C API, a tool's arguments, the worker protocol, the

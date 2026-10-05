@@ -10,6 +10,7 @@
 #include "encoder.h"
 #include "frontend.h"
 #include "model-file.h"
+#include "times.h"
 #include "transducer.h"
 
 namespace fastconformer {
@@ -48,6 +49,12 @@ public:
      */
     double seconds(int64_t frame) const;
 
+    /**
+     * The segments of a decoding at the frames its tokens were emitted on, cut where the file's
+     * fastconformer.segment.separators end a word and wherever its fastconformer.segment.breaks stand.
+     */
+    std::vector<Segment> segments(const Decoding & decoding) const;
+
     int sample_rate() const { return frontend_.sample_rate(); }
     const ModelFile & model() const { return model_; }
     const Frontend & frontend() const { return frontend_; }
@@ -66,6 +73,7 @@ private:
     Joint joint_;
     std::unique_ptr<Decoder> decoder_;
     Detokenizer detokenizer_;
+    std::vector<std::string> separators_, breaks_;
     ggml_gallocr_t allocr_;
 };
 

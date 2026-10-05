@@ -1,31 +1,38 @@
-"""Converts a pinned NeMo FastConformer checkpoint with an RNN-T or TDT decoder to the GGUF the C++ port reads.
+"""Converts a pinned NeMo FastConformer checkpoint with an RNN-T or TDT decoder to the one GGUF file the C++ port reads.
 
 usage: uv run python convert.py <model> <out dir> [--type f32|f16]
 
-Writes <model>-<type>.gguf: the frontend's window and mel filterbank, the subsampling, the conformer layers,
-the prediction network and the joint, with the SentencePiece pieces the token ids name and the settings of the
-decoding transcribe() runs: greedy TDT's durations and limit, or the beam and length of RNN-T's alignment-length
-synchronous beam search. A hybrid checkpoint's CTC head is left out, since NeMo decodes with its transducer.
+Writes <model>-<type>.gguf in layout 1: the frontend's window and mel filterbank, the subsampling, the conformer
+layers, the prediction network and the joint, with the SentencePiece pieces the token ids name, the settings of the
+decoding transcribe() runs (greedy TDT's durations and limit, or the beam and length of RNN-T's alignment-length
+synchronous beam search) and every other constant the C++ reads. A hybrid checkpoint's CTC head is left out, since
+NeMo decodes with its transducer.
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [out, in] is stored as is
 (ne = [in, out]). --type f16 applies to the matrices of the linear layers; convolution kernels, norms, biases,
 the frontend and the rest stay float32. The batch norm of each convolution module is folded into its
 depthwise convolution, which it follows in evaluation, and each LSTM layer's two biases are summed. A checkpoint
 whose conformer layers have no biases (ConformerEncoder's use_bias false) is written without them, and
-fastconformer.use_bias says so.
+fastconformer.encoder.use_bias says so.
 """
 
 import argparse
 import os
 
 import numpy as np
-from gguf import GGUFWriter
+from gguf import GGUFValueType, GGUFWriter
 from nemo.collections.asr.models import EncDecHybridRNNTCTCBPEModel, EncDecRNNTBPEModel
+from nemo.collections.asr.parts.preprocessing import features
+from nemo.collections.asr.parts.submodules import multi_head_attention
 from sentencepiece import sentencepiece_model_pb2
 
-from pins import MODELS, NEMO, restore
+from pins import MODELS, restore
 
 ARCH = "fastconformer"
+# Each layout this converter has written, with the first release of speech.cpp whose reader takes it; it writes the
+# last.
+RELEASES = {1: "0.7.0"}
+LAYOUT = max(RELEASES)
 # The BCP 47 tags of the languages each checkpoint transcribes, from its model card. None takes a language:
 # parakeet-tdt-0.6b-v3 finds the language of the audio itself.
 LANGUAGES = {
@@ -34,7 +41,23 @@ LANGUAGES = {
     "parakeet-tdt-0.6b-v3": ["en", "es", "fr", "de", "bg", "hr", "cs", "da", "nl", "et", "fi", "el", "hu", "it", "lv",
                              "lt", "mt", "pl", "pt", "ro", "sk", "sl", "sv", "ru", "uk"],
 }
+# The SPDX identifier of each checkpoint's license, from its model card.
 LICENSES = {"parakeet-tdt_ctc-0.6b-ja": "CC-BY-4.0", "parakeet-tdt-0.6b-v3": "CC-BY-4.0", "reazonspeech-nemo-v2": "Apache-2.0"}
+# speech.cpp's addition to NeMo's segments: the marks that end a segment wherever they stand, for a model whose
+# languages are written without spaces. NeMo ends a segment at one of its separators only where a word ends, which
+# text without spaces between its words never reaches.
+UNSPACED_LANGUAGES = {"ja", "zh"}
+UNSPACED_BREAKS = ["。", "？", "！", "?", "!"]
+
+
+class Writer(GGUFWriter):
+    """A GGUFWriter that writes an empty array of a given element type, which GGUFWriter refuses."""
+
+    def _pack_val(self, val, vtype, add_vtype, sub_type=None):
+        if vtype == GGUFValueType.ARRAY and sub_type is not None and len(val) == 0:
+            return (self._pack("I", vtype) if add_vtype else b"") + self._pack("I", sub_type) + self._pack("Q", 0)
+        return super()._pack_val(val, vtype, add_vtype, sub_type)
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("model", choices=sorted(MODELS))
@@ -101,45 +124,53 @@ assert joint.num_extra_outputs == len(durations) == len(decoding.durations or []
 assert joint.joint_net[-1].out_features == decoding.blank_id + 1 + len(durations)
 
 path = os.path.join(args.out_dir, f"{args.model}-{args.type}.gguf")
-w = GGUFWriter(path, ARCH)
+w = Writer(path, ARCH)
+
+
+def add_array(key, values, element):
+    """An array with its element type given, not inferred from its first value."""
+    w.add_key_value(key, list(values), GGUFValueType.ARRAY, sub_type=element)
+
+
 w.add_name(args.model)
 w.add_license(LICENSES[args.model])
 w.add_source_url(f"https://huggingface.co/{pin['repository']}/tree/{pin['revision']}")
-w.add_string("fastconformer.nemo_version", NEMO)
-w.add_languages(LANGUAGES[args.model])
-w.add_array("speech.languages", LANGUAGES[args.model])
-w.add_bool("speech.language_selectable", False)
+w.add_uint32("speech.layout", LAYOUT)
+w.add_string("speech.requires", RELEASES[LAYOUT])
+w.add_string("speech.task", "recognition")
+w.add_uint32("speech.sample_rate", int(featurizer.sample_rate))
+add_array("speech.languages", sorted(LANGUAGES[args.model]), GGUFValueType.STRING)
+w.add_string("speech.language_use", "checked")
 
 # The frontend: FilterbankFeatures' parameters, and the normalization guard, CONSTANT in features.py.
-w.add_uint32("fastconformer.sample_rate", int(featurizer.sample_rate))
-w.add_uint32("fastconformer.n_fft", int(featurizer.n_fft))
-w.add_uint32("fastconformer.hop_length", int(featurizer.hop_length))
-w.add_uint32("fastconformer.n_mels", int(featurizer.nfilt))
-w.add_float32("fastconformer.preemphasis", float(featurizer.preemph))
-w.add_float32("fastconformer.log_guard", float(featurizer.log_zero_guard_value))
-w.add_float32("fastconformer.std_guard", 1e-5)
+w.add_uint32("fastconformer.frontend.n_fft", int(featurizer.n_fft))
+w.add_uint32("fastconformer.frontend.hop_length", int(featurizer.hop_length))
+w.add_uint32("fastconformer.frontend.n_mels", int(featurizer.nfilt))
+w.add_float32("fastconformer.frontend.preemphasis", float(featurizer.preemph))
+w.add_float32("fastconformer.frontend.log_guard", float(featurizer.log_zero_guard_value))
+w.add_float32("fastconformer.frontend.std_guard", float(features.CONSTANT))
 
 # The encoder. pos_base is INF_VAL of multi_head_attention.py, the base of RelPositionalEncoding's
 # wavelengths; ff_factor is ConformerLayer's fc_factor, the weight of each half-step feed-forward.
-w.add_uint32("fastconformer.d_model", int(enc.d_model))
-w.add_uint32("fastconformer.num_layers", int(enc.n_layers))
-w.add_uint32("fastconformer.num_heads", int(enc.n_heads))
-w.add_uint32("fastconformer.conv_kernel", int(enc.conv_kernel_size))
-w.add_uint32("fastconformer.subsampling_factor", int(enc.subsampling_factor))
-w.add_float32("fastconformer.norm_eps", float(model.encoder.layers[0].norm_out.eps))
-w.add_float32("fastconformer.pos_base", 10000.0)
-w.add_float32("fastconformer.xscale", float(model.encoder.xscale or 1.0))
-w.add_string("fastconformer.attention", attention)
-if attention == "rel_pos_local_attn":
-    w.add_uint32("fastconformer.attention_context", int(context[0]))
-    w.add_uint32("fastconformer.global_tokens", int(encoder.global_tokens))
-w.add_float32("fastconformer.ff_factor", float(model.encoder.layers[0].fc_factor))
-# 1 when the linear layers of the feed-forward modules and the attention and the pointwise convolutions have biases;
+w.add_uint32("fastconformer.encoder.d_model", int(enc.d_model))
+w.add_uint32("fastconformer.encoder.num_layers", int(enc.n_layers))
+w.add_uint32("fastconformer.encoder.num_heads", int(enc.n_heads))
+w.add_uint32("fastconformer.encoder.conv_kernel", int(enc.conv_kernel_size))
+w.add_uint32("fastconformer.encoder.subsampling_factor", int(enc.subsampling_factor))
+w.add_float32("fastconformer.encoder.norm_eps", float(model.encoder.layers[0].norm_out.eps))
+w.add_float32("fastconformer.encoder.pos_base", float(multi_head_attention.INF_VAL))
+w.add_float32("fastconformer.encoder.xscale", float(model.encoder.xscale or 1.0))
+w.add_float32("fastconformer.encoder.ff_factor", float(model.encoder.layers[0].fc_factor))
+# Whether the linear layers of the feed-forward modules and the attention and the pointwise convolutions have biases;
 # the depthwise convolution has one either way once the batch norm is folded into it.
 use_bias = bool(model.encoder.layers[0].feed_forward1.use_bias)
 assert all(bool(m.use_bias) == use_bias for layer in model.encoder.layers
            for m in (layer.feed_forward1, layer.feed_forward2, layer.self_attn, layer.conv))
-w.add_uint32("fastconformer.use_bias", int(use_bias))
+w.add_bool("fastconformer.encoder.use_bias", use_bias)
+w.add_string("fastconformer.encoder.attention", attention)
+if attention == "rel_pos_local_attn":
+    w.add_uint32("fastconformer.encoder.attention_context", int(context[0]))
+    w.add_uint32("fastconformer.encoder.global_tokens", int(encoder.global_tokens))
 
 # The joint's classes are the tokenizer's ids, a blank after them, then one per duration.
 tokenizer = model.tokenizer
@@ -153,34 +184,38 @@ assert all(p.type in allowed for p in proto.pieces)
 assert not proto.trainer_spec.treat_whitespace_as_suffix
 blank = int(decoding.blank_id)
 assert blank == len(proto.pieces) == tokenizer.vocab_size
-w.add_uint32("fastconformer.blank_id", blank)
-w.add_uint32("fastconformer.prediction.num_layers", int(dec.pred_rnn_layers))
-w.add_string("fastconformer.decoder", decoder)
+w.add_string("fastconformer.decoder.kind", decoder)
+w.add_uint32("fastconformer.decoder.blank_id", blank)
+w.add_uint32("fastconformer.decoder.prediction_layers", int(dec.pred_rnn_layers))
 if decoder == "tdt":
-    w.add_array("fastconformer.tdt.durations", durations)
+    add_array("fastconformer.decoder.tdt.durations", durations, GGUFValueType.INT32)
     # The most tokens emitted on one frame before the decoding moves to the next.
-    w.add_uint32("fastconformer.tdt.max_symbols", int(decoding.decoding.max_symbols))
+    w.add_uint32("fastconformer.decoder.tdt.max_symbols", int(decoding.decoding.max_symbols))
 else:
-    w.add_uint32("fastconformer.rnnt.beam_size", int(beam.beam_size))
-    # 1 when the best of the finished hypotheses is the one with the highest score per label, the blank it starts
+    w.add_uint32("fastconformer.decoder.rnnt.beam_size", int(beam.beam_size))
+    # Whether the best of the finished hypotheses is the one with the highest score per label, the blank it starts
     # with counted.
-    w.add_uint32("fastconformer.rnnt.score_norm", int(bool(beam.score_norm)))
+    w.add_bool("fastconformer.decoder.rnnt.score_norm", bool(beam.score_norm))
     # The most labels a hypothesis takes, as a multiple of the encoder's frames.
-    w.add_float32("fastconformer.rnnt.max_target_ratio", float(beam.alsd_max_target_length))
-w.add_string("tokenizer.model", "sentencepiece")
-w.add_array("tokenizer.tokens", [p.piece for p in proto.pieces])
-w.add_uint32("tokenizer.unknown_id", int(tokenizer.tokenizer.unk_id()))
-w.add_string("tokenizer.unknown_surface", proto.trainer_spec.unk_surface)
-# 1 when SentencePiece's decoder drops the leading "▁" of each piece until the text is no longer empty, which
-# it does when either normalizer option is set.
-w.add_uint32("tokenizer.strip_leading_space",
-             int(proto.normalizer_spec.add_dummy_prefix or proto.normalizer_spec.remove_extra_whitespaces))
+    w.add_float32("fastconformer.decoder.rnnt.max_target_ratio", float(beam.alsd_max_target_length))
+# The marks that end a segment where a word ends: the checkpoint's decoding segment_seperators, or NeMo's default
+# (".", "?", "!") when it sets none, as the decoding object takes them.
+add_array("fastconformer.segment.separators", list(decoding.segment_seperators), GGUFValueType.STRING)
+unspaced = all(language in UNSPACED_LANGUAGES for language in LANGUAGES[args.model])
+add_array("fastconformer.segment.breaks", UNSPACED_BREAKS if unspaced else [], GGUFValueType.STRING)
+add_array("fastconformer.tokenizer.tokens", [p.piece for p in proto.pieces], GGUFValueType.STRING)
+w.add_uint32("fastconformer.tokenizer.unknown_id", int(tokenizer.tokenizer.unk_id()))
+w.add_string("fastconformer.tokenizer.unknown_surface", proto.trainer_spec.unk_surface)
+# Whether SentencePiece's decoder drops the leading "▁" of each piece until the text is no longer empty, which it
+# does when either normalizer option is set.
+w.add_bool("fastconformer.tokenizer.strip_leading_space",
+           bool(proto.normalizer_spec.add_dummy_prefix or proto.normalizer_spec.remove_extra_whitespaces))
 # The marks before which the decoding removes one whitespace character. The C++ looks for a space only,
 # the one whitespace character a decoded text can hold when no piece holds another and the unknown surface
 # holds only spaces.
 assert not any(c.isspace() for p in proto.pieces for c in p.piece)
 assert all(c == " " or not c.isspace() for c in proto.trainer_spec.unk_surface)
-w.add_array("tokenizer.punctuation", sorted(decoding.supported_punctuation or []))
+add_array("fastconformer.tokenizer.punctuation", sorted(decoding.supported_punctuation or []), GGUFValueType.STRING)
 # The decoding strips no language tags from the text (strip_lang_tags, for models that write them), which the C++
 # does not do.
 assert not decoding.strip_lang_tags

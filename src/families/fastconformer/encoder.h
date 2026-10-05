@@ -19,10 +19,11 @@ struct EncoderStages {
 
 /**
  * NeMo's ConformerEncoder with dw_striding subsampling and relative positional self-attention, with or without the
- * biases of its conformer layers (use_bias). The attention is fastconformer.attention: NeMo's self_attention_model
- * "rel_pos" over the whole utterance (att_context_size [-1, -1]), or "rel_pos_local_attn", Longformer's attention
- * over the frames within fastconformer.attention_context of each frame on either side, with
- * fastconformer.global_tokens frames from the first on that every frame attends to and that attend to every frame.
+ * biases of its conformer layers (use_bias). The attention is fastconformer.encoder.attention: NeMo's
+ * self_attention_model "rel_pos" over the whole utterance (att_context_size [-1, -1]), or "rel_pos_local_attn",
+ * Longformer's attention over the frames within fastconformer.encoder.attention_context of each frame on either side,
+ * with fastconformer.encoder.global_tokens frames from the first on that every frame attends to and that attend to
+ * every frame.
  *
  * ConformerEncoder.forward_internal() (nemo/collections/asr/modules/conformer_encoder.py) runs on a batch padded to
  * its longest utterance and masks the padding out of every convolution and attention; MaskedConvSequential

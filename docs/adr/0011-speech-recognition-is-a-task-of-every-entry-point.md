@@ -1,5 +1,7 @@
 # Speech recognition is a task of every entry point
 
+Superseded in part by docs/adr/0015: the codec is inside the model file and Qwen3-TTS's limit comes from it, so the family table no longer says whether a family needs a codec or takes a context.
+
 Decided 2026-10-05.
 
 ## Context

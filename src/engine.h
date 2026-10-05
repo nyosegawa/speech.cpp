@@ -16,8 +16,7 @@
  * what the family does not take, so a family reads only its own fields.
  */
 struct EngineOptions {
-    std::string model, codec;
-    int context = 2048;
+    std::string model;
     std::vector<std::pair<std::string, std::string>> voices;
     int steps = 0;
 };

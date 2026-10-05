@@ -1,5 +1,7 @@
 # The worker names languages with BCP 47 tags
 
+Superseded in part by docs/adr/0015: the tags are `speech.languages`, and `general.languages` and `talker.language_tags` are gone.
+
 Decided 2026-10-01.
 
 ## Context

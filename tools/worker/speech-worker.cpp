@@ -55,10 +55,9 @@
 //   {"type": "devices", "devices": [{"name": "Vulkan0", "description": "NVIDIA GeForce RTX 2080",
 //                                    "kind": "gpu", "memoryTotal": 8589934592, "memoryFree": 7516192768}]}
 //
-// usage: speech-worker <model.gguf> <codec.gguf> [--device NAME|gpu|cpu] [--seed n]    (synthesis)
-//                      [--ctx n]                               (Qwen3-TTS)
+// usage: speech-worker <model.gguf> [--device NAME|gpu|cpu] [--seed n]                (synthesis)
 //                      [--voice NAME=FILE]... [--steps n]      (Irodori-TTS; FILE is a WAVE or voice file)
-//        speech-worker <model.gguf> [--device NAME|gpu|cpu]                      (recognition)
+//        speech-worker <model.gguf> [--device NAME|gpu|cpu]                           (recognition)
 //        speech-worker --devices
 
 #include <algorithm>
@@ -119,10 +118,9 @@ void list_devices() {
     emit("{\"type\":\"devices\",\"devices\":[" + list + "]}");
 }
 
-/** The command line after the two model files, as the library's parameters; anything else on it throws. */
+/** The command line after the model file, as the library's parameters; anything else on it throws. */
 struct Options {
-    std::string model, codec, device;
-    int context = speech_model_default_params().context;
+    std::string model, device;
     int steps = 0;
     std::vector<std::pair<std::string, std::string>> voices;
     bool has_seed = false;
@@ -132,11 +130,11 @@ struct Options {
 Options parse_options(const std::vector<std::string> & a) {
     Options o;
     o.model = a[1];
-    // A recognition model has no codec, so the second path is there only when it is not an option.
-    size_t first = 2;
-    if (a.size() > 2 && a[2].compare(0, 2, "--") != 0) o.codec = a[first++];
-    for (size_t i = first; i < a.size(); i++) {
+    for (size_t i = 2; i < a.size(); i++) {
         const std::string & key = a[i];
+        if (key.compare(0, 2, "--") != 0) {
+            throw std::runtime_error("unexpected " + key + "; give the model's one GGUF file, which holds its codec, and then the options");
+        }
         if (i + 1 >= a.size()) throw std::runtime_error(key + " needs a value");
         const std::string & value = a[++i];
         if (key == "--device" || key == "--backend") o.device = value;
@@ -144,7 +142,6 @@ Options parse_options(const std::vector<std::string> & a) {
             o.seed = std::stoull(value);
             o.has_seed = true;
         }
-        else if (key == "--ctx") o.context = std::stoi(value);
         else if (key == "--steps") o.steps = std::stoi(value);
         else if (key == "--voice") {
             const size_t eq = value.find('=');
@@ -162,9 +159,7 @@ speech_model * load(const Options & o) {
     for (const auto & [name, path] : o.voices) voices.push_back({name.c_str(), path.c_str()});
     speech_model_params params = speech_model_default_params();
     params.model_path = o.model.c_str();
-    params.codec_path = o.codec.c_str();
     params.device = o.device.c_str();
-    params.context = o.context;
     params.voices = voices.data();
     params.n_voices = voices.size();
     params.steps = o.steps;
@@ -275,7 +270,7 @@ int main(int argc, char ** argv) {
         return 0;
     }
     if (args.size() < 2) {
-        emit("{\"type\":\"fatal\",\"error\":\"expected the model's GGUF path, and the codec's for a synthesis model\"}");
+        emit("{\"type\":\"fatal\",\"error\":\"expected the model's GGUF path\"}");
         return 2;
     }
 

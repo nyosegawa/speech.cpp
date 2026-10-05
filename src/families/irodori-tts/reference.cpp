@@ -8,7 +8,10 @@
 
 namespace irodori {
 
-std::vector<float> encode_reference(Codec & codec, const std::string & wav_path, double max_seconds) {
+ReferenceRules::ReferenceRules(const ModelFile & m)
+    : max_seconds(m.f32("irodori-tts.reference.max_seconds")), lufs(m.f32("irodori-tts.reference.lufs")) {}
+
+EncodedReference encode_reference(Codec & codec, const std::string & wav_path, const ReferenceRules & rules) {
     const Wav wav = read_wav(wav_path);
     const Resampler resample = [&] {
         try {
@@ -19,11 +22,11 @@ std::vector<float> encode_reference(Codec & codec, const std::string & wav_path,
     }();
     std::vector<float> mono = wav.mono();
     const double seconds = (double) mono.size() / wav.sample_rate;
-    if (seconds > max_seconds) {
+    if (seconds > rules.max_seconds) {
         throw std::runtime_error(wav_path + " is " + std::to_string(seconds) + " s long; a reference voice is at most " +
-                                 std::to_string(max_seconds) + " s");
+                                 std::to_string(rules.max_seconds) + " s");
     }
-    return codec.encode(normalize_loudness(resample(std::move(mono)), codec.sample_rate(), kReferenceLufs));
+    return {codec.encode(normalize_loudness(resample(std::move(mono)), codec.sample_rate(), rules.lufs)), seconds, wav.sample_rate};
 }
 
 }  // namespace irodori

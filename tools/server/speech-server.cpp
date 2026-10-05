@@ -23,9 +23,8 @@
 // The model serves one request at a time, in the order they arrive, and the others wait. A client that goes
 // away, while it waits, while its audio streams or while its audio is recognized, cancels its request.
 //
-// usage: speech-server <model.gguf> [<codec.gguf>] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
-//                      [--device NAME|gpu|cpu]                 (the codec for a synthesis model)
-//                      [--ctx n]                               (Qwen3-TTS)
+// usage: speech-server <model.gguf> [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
+//                      [--device NAME|gpu|cpu]
 //                      [--voice NAME=FILE]... [--steps n]      (Irodori-TTS; FILE is a WAVE or voice file)
 
 #include <algorithm>
@@ -87,11 +86,10 @@ std::string wav_header(size_t data_bytes, int sample_rate) {
 
 /** What the server was started with; anything else on the command line throws. */
 struct Options {
-    std::string model, codec, device;
+    std::string model, device;
     std::string host = "127.0.0.1";
     int port = 8080;
     std::vector<std::string> cors_origins;
-    int context = speech_model_default_params().context;
     int steps = 0;
     std::vector<std::pair<std::string, std::string>> voices;
 };
@@ -105,23 +103,22 @@ int integer(const std::string & key, const std::string & value) {
 
 Options parse_options(const std::vector<std::string> & a) {
     if (a.size() < 2) {
-        throw std::runtime_error("expected the model's GGUF path, and the codec's for a synthesis model: speech-server "
-                                 "<model.gguf> [<codec.gguf>] [options], with the options the README lists");
+        throw std::runtime_error("expected the model's GGUF path: speech-server <model.gguf> [options], with the options the README "
+                                 "lists");
     }
     Options o;
     o.model = a[1];
-    // A recognition model has no codec, so the second path is there only when it is not an option.
-    size_t first = 2;
-    if (a.size() > 2 && a[2].compare(0, 2, "--") != 0) o.codec = a[first++];
-    for (size_t i = first; i < a.size(); i++) {
+    for (size_t i = 2; i < a.size(); i++) {
         const std::string & key = a[i];
+        if (key.compare(0, 2, "--") != 0) {
+            throw std::runtime_error("unexpected " + key + "; give the model's one GGUF file, which holds its codec, and then the options");
+        }
         if (i + 1 >= a.size()) throw std::runtime_error(key + " needs a value");
         const std::string & value = a[++i];
         if (key == "--host") o.host = value;
         else if (key == "--port") o.port = integer(key, value);
         else if (key == "--cors-origin") o.cors_origins.push_back(value);
         else if (key == "--device") o.device = value;
-        else if (key == "--ctx") o.context = integer(key, value);
         else if (key == "--steps") o.steps = integer(key, value);
         else if (key == "--voice") {
             const size_t eq = value.find('=');
@@ -139,9 +136,7 @@ speech_model * load(const Options & o) {
     for (const auto & [name, path] : o.voices) voices.push_back({name.c_str(), path.c_str()});
     speech_model_params params = speech_model_default_params();
     params.model_path = o.model.c_str();
-    params.codec_path = o.codec.c_str();
     params.device = o.device.c_str();
-    params.context = o.context;
     params.voices = voices.data();
     params.n_voices = voices.size();
     params.steps = o.steps;

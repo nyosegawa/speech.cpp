@@ -7,7 +7,7 @@
 // not the CPU, the same decoding on the CPU: how far below the voice the device's error lies, and how loud
 // the quietest parts are on each, where a device that mishandles the decoder shows its error first.
 //
-// usage: irodori-codec-check <codec.gguf> <dump dir> <reference.wav> [gpu|cpu|device name]
+// usage: irodori-codec-check <model.gguf> <dump dir> <reference.wav> [gpu|cpu|device name]
 
 #include <algorithm>
 #include <chrono>
@@ -23,6 +23,7 @@
 #include "compare.h"
 #include "ggml-cpu.h"
 #include "irodori-tts/codec.h"
+#include "irodori-tts/layout.h"
 #include "irodori-tts/loudness.h"
 #include "irodori-tts/reference.h"
 #include "npy.h"
@@ -63,7 +64,7 @@ double level(const std::vector<float> & signal, const std::vector<size_t> & fram
     return dbfs(sum / (double) (frames.size() * width));
 }
 
-bool check_encoder(Codec & codec, const std::string & dir, const std::string & wav_path) {
+bool check_encoder(Codec & codec, const ReferenceRules & rules, const std::string & dir, const std::string & wav_path) {
     const Npy ref_wav = read_npy(dir + "/ref_wav.npy");
     const Npy ref_normalized = read_npy(dir + "/ref_wav_normalized.npy");
     const Npy ref_latent = read_npy(dir + "/ref_latent.npy");
@@ -74,7 +75,7 @@ bool check_encoder(Codec & codec, const std::string & dir, const std::string & w
     print_diff("reading the WAVE file", dr);
     ok = ok && read.size() == ref_wav.f32.size() && dr.max_abs == 0;
 
-    const std::vector<float> normalized = normalize_loudness(ref_wav.f32, codec.sample_rate(), kReferenceLufs);
+    const std::vector<float> normalized = normalize_loudness(ref_wav.f32, codec.sample_rate(), rules.lufs);
     const Diff dn = compare(normalized, ref_normalized.f32);
     print_diff("loudness normalization", dn);
     ok = ok && dn.snr_db > 80;
@@ -99,7 +100,7 @@ bool check_encoder(Codec & codec, const std::string & dir, const std::string & w
     ok = ok && windowed.size() == ref_latent.f32.size() && de.snr_db > 30 && dw.snr_db > 60;
 
     t0 = std::chrono::steady_clock::now();
-    const std::vector<float> from_file = encode_reference(codec, wav_path, 120.0);
+    const std::vector<float> from_file = encode_reference(codec, wav_path, rules).latent;
     std::printf("reference file to latent: %.3f s\n", seconds_since(t0));
     const Diff df = compare(from_file, ref_latent.f32);
     print_diff("reference file to latent", df);
@@ -123,7 +124,7 @@ std::vector<float> decode_whole(Codec & codec, ggml_backend_t backend, const std
     return audio;
 }
 
-bool check_decoder(Codec & codec, ggml_backend_t backend, const std::string & codec_path, const std::string & dir) {
+bool check_decoder(Codec & codec, ggml_backend_t backend, const std::string & model_path, const std::string & dir) {
     const Npy xs = read_npy(dir + "/dit_x.npy");
     const int frames = meta_int(dir, "latent_frames");
     const size_t n = (size_t) frames * codec.latent_dim();
@@ -163,7 +164,8 @@ bool check_decoder(Codec & codec, ggml_backend_t backend, const std::string & co
 
     if (std::string(ggml_backend_name(backend)) != "CPU") {
         ggml_backend_t cpu = ggml_backend_cpu_init();
-        Codec cpu_codec(codec_path, cpu);
+        const ModelFile cpu_model(model_path, cpu, model_layout);
+        Codec cpu_codec(cpu_model, cpu);
         const std::vector<float> reference = decode_whole(cpu_codec, cpu, latent);
         const Diff dc = compare(whole, reference);
         std::printf("%s against the CPU: error %.1f dB below the voice, max |diff| %.2e\n", ggml_backend_name(backend), dc.snr_db,
@@ -196,7 +198,7 @@ bool check_decoder(Codec & codec, ggml_backend_t backend, const std::string & co
 int main(int argc, char ** argv) {
     const std::vector<std::string> args = utf8_args(argc, argv);
     if (args.size() < 4) {
-        std::fprintf(stderr, "usage: %s <codec.gguf> <dump dir> <reference.wav> [gpu|cpu|device name]\n", args[0].c_str());
+        std::fprintf(stderr, "usage: %s <model.gguf> <dump dir> <reference.wav> [gpu|cpu|device name]\n", args[0].c_str());
         return 2;
     }
     try {
@@ -204,8 +206,9 @@ int main(int argc, char ** argv) {
         std::printf("backend: %s\n", ggml_backend_name(backend));
         bool ok;
         {
-            Codec codec(args[1], backend);
-            ok = check_encoder(codec, args[2], args[3]);
+            const ModelFile model(args[1], backend, model_layout);
+            Codec codec(model, backend);
+            ok = check_encoder(codec, ReferenceRules(model), args[2], args[3]);
             ok = check_decoder(codec, backend, args[1], args[2]) && ok;
         }
         ggml_backend_free(backend);
