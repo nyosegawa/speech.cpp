@@ -2,24 +2,33 @@
 
 ## Project
 
-speech.cpp runs the speech models ASIST uses in C++ on [ggml](https://github.com/ggml-org/ggml), on macOS
-arm64 with Metal and Windows x64 with Vulkan, as one worker process that ASIST starts. It implements only
-what ASIST uses from each model. Each model's official implementation is the reference: every stage of a
-port is checked against tensors dumped from it. README.md is the documentation for users; `docs/adr/` keeps
-the decisions. Read the relevant implementation and its check before changing behavior.
+speech.cpp runs speech models in C++ on [ggml](https://github.com/ggml-org/ggml), on macOS arm64 with Metal
+and Windows x64 with Vulkan, as a library with one C API, `include/speech.h`, for any program that speaks
+text: ASIST's worker, other tools, bindings and other people's applications. Each model's official
+implementation is the reference: every stage of a port is checked against tensors dumped from it.
+README.md is the documentation for users; `docs/adr/` keeps the decisions. Read the relevant implementation
+and its check before changing behavior.
 
 ## Architecture
 
-- `families/<family>/` holds the code of one architecture, whichever weights it is given: `qwen3-tts/`
+- `include/speech.h` is the C API and the way into the library for every program and binding (`qwen3-tts`
+  and `irodori-tts` still call their family directly): plain C, opaque handles, UTF-8 strings, errors as
+  return codes with the message from `speech_last_error()`, and no C++ exception or type crossing it.
+  A change a caller notices raises `SPEECH_API_VERSION`.
+- `src/speech.cpp` implements the C API over `src/engine.h`, the interface of one family behind it, with one
+  engine per family (`src/<family>-engine.cpp`) that turns the API's options and requests into the family's.
+  `speech_model_load()` chooses the family from `general.architecture` of the model's GGUF.
+- `src/families/<family>/` holds the code of one architecture, whichever weights it is given: `qwen3-tts/`
   runs Qwen3-TTS 0.6B and 1.7B. A family reads its GGUF files and turns text into audio; it knows nothing
-  of the worker protocol or the command line.
-- `common/` holds what two families use in the same role. Code moves there when a second family needs
+  of the C API, the worker protocol or the command line.
+- `src/common/` holds what two families use in the same role. Code moves there when a second family needs
   it, not before, and never as a framework for families that do not exist yet.
-- `tools/` holds the executables: the worker, a command-line tool per family that speaks a text into a
-  WAV file, and one check per ported stage (`*-check.cpp`) that compares the stage with the reference
-  dumps.
-- The worker chooses the family from `general.architecture` of the model's GGUF. Its protocol (the
-  `ASIST_JSON:` lines) is ASIST's contract.
+- `tools/` holds the programs for users: the worker in `tools/worker/` and a command-line tool per family
+  that speaks a text into a WAV file. The worker reaches the models only through the C API; its protocol
+  (the `ASIST_JSON:` lines) is ASIST's contract.
+- `checks/` holds one check per ported stage (`*-check.cpp`) that compares the stage with the reference
+  dumps, and `speech-api-check.c`, which runs the C API through the shared library. Checks reach into
+  `src/` for the stage they check; they are built but not released.
 - `reference/<model>/` holds, per model, a uv environment that pins the official code, PyTorch and the rest,
   the conversion of the official weights to GGUF, and the scripts that run the official implementation to
   dump reference tensors. Dumps go to `reference/<model>/out/`.
@@ -29,14 +38,18 @@ another one.
 
 ## Code
 
-- C++17 with ggml as a git submodule and no other dependency. Each tool is one executable with ggml linked
-  in, so that a release is one file per tool.
+- C++17 with ggml as a git submodule and no other dependency. Each tool is one executable with the library
+  and ggml linked in statically, so that a release is one file per tool; the shared library `libspeech`
+  exports the C API and nothing else, for bindings and other programs.
+- Anything the C API returns is owned by the library, and the header says for how long. A model serves one
+  request at a time, and the header says which functions any thread may call.
 - The GGUF layout is this repository's own: `reference/<model>/convert.py` defines the tensor names and
   metadata keys, and the C++ reads exactly what it writes. A change of layout changes both in the same
   commit. The model's constants live in the GGUF metadata, not in the C++.
 - Do not add fallback behavior; fail loudly rather than degrade silently. A GGUF without a key or tensor,
   a text longer than the model takes, a WAVE format that is not understood and a device that does not
-  start all throw with a message; the worker reports them as `error` or `fatal`. Nothing is truncated or
+  start all throw with a message; the C API returns them as `SPEECH_ERROR` and the worker reports them as
+  `error` or `fatal`. Nothing is truncated or
   moved to another device behind the caller's back.
 - Fix a defect where its cause is, in a form in which it cannot happen, rather than with a guard for the
   one case that showed it; the code after the fix reads better than before. When a fix is much larger
@@ -99,7 +112,8 @@ settled a choice or turned an approach down for good; if so, the record goes int
 ## Workflow
 
 - Build with `cmake -B build && cmake --build build -j`, and run the checks the change touches before
-  committing code.
+  committing code. A change to the C API or the worker also runs `speech-api-check` and
+  `tools/worker_smoke.py` for both families.
 - Never commit on main. Every change reaches main through a pull request, one coherent unit each: a
   model's stage, a fix, a refactor or a documentation change.
 - Commit messages and pull request titles are one English sentence in the imperative, without a prefix
@@ -110,5 +124,5 @@ settled a choice or turned an approach down for good; if so, the record goes int
 - Converted GGUF files go to Hugging Face only with the user's approval, one repository per family
   (sakasegawa/qwen3-tts-ggml, sakasegawa/irodori-tts-ggml), with the licenses of what it holds. A changed
   file goes up under the same name, and its card's SHA-256 changes with it.
-- When a change alters what a user does or sees (a tool's arguments, the worker protocol, the GGUF
-  layout), update README.md in the same change.
+- When a change alters what a user does or sees (the C API, a tool's arguments, the worker protocol, the
+  GGUF layout), update README.md in the same change.

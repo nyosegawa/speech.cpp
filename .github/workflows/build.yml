@@ -18,17 +18,15 @@ jobs:
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_METAL_EMBED_LIBRARY=ON -DGGML_NATIVE=OFF
           cmake --build build --config Release -j 4
+      # The checks are built to keep them compiling, and released in no archive.
+      - name: Stage
+        run: |
+          mkdir package
+          cp build/speech-worker build/qwen3-tts build/irodori-tts build/libspeech.dylib include/speech.h package/
       - uses: actions/upload-artifact@v4
         with:
           name: speech-cpp-macos-arm64-metal
-          path: |
-            build/speech-worker
-            build/qwen3-tts
-            build/irodori-tts
-            build/codec-check
-            build/talker-check
-            build/tokenizer-check
-            build/irodori-*-check
+          path: package/
 
   windows-vulkan:
     runs-on: windows-2025
@@ -74,17 +72,15 @@ jobs:
           $options = $env:CMAKE_OPTIONS -split ' '
           cmake -B build @options -DSPEECH_INSTALLED_GGML=ON "-DCMAKE_PREFIX_PATH=$PWD/ggml-install"
           cmake --build build --config Release -j 4
+      # speech.lib is the import library a program links to use speech.dll.
+      - name: Stage
+        run: |
+          New-Item -ItemType Directory package
+          Copy-Item build/Release/speech-worker.exe, build/Release/qwen3-tts.exe, build/Release/irodori-tts.exe, build/Release/speech.dll, build/Release/speech.lib, include/speech.h package/
       - uses: actions/upload-artifact@v4
         with:
           name: speech-cpp-windows-x64-vulkan
-          path: |
-            build/Release/speech-worker.exe
-            build/Release/qwen3-tts.exe
-            build/Release/irodori-tts.exe
-            build/Release/codec-check.exe
-            build/Release/talker-check.exe
-            build/Release/tokenizer-check.exe
-            build/Release/irodori-*-check.exe
+          path: package/
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -100,7 +96,7 @@ jobs:
         run: |
           cd dist
           # Artifacts lose the executable bit; the Mac binaries need it back. ASIST bundles the worker alone,
-          # so the worker and the other tools go into separate archives.
+          # so the worker goes into one archive, and the other tools with libspeech and speech.h into another.
           for platform in macos-arm64-metal windows-x64-vulkan; do
             (cd "speech-cpp-$platform" && chmod +x * && \
               zip -q "../speech-worker-${GITHUB_REF_NAME}-$platform.zip" speech-worker* && \
@@ -113,4 +109,4 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" dist/*.zip dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" --generate-notes \
-            --notes "speech-worker and the other tools for macOS arm64 (Metal) and Windows x64 (Vulkan). The README lists the model families the worker runs and where their converted weights are on Hugging Face."
+            --notes "speech-worker, the other tools and the shared library libspeech with its C API, speech.h, for macOS arm64 (Metal) and Windows x64 (Vulkan). The README lists the model families the worker runs and where their converted weights are on Hugging Face."

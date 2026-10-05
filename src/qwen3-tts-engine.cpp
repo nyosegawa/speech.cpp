@@ -1,0 +1,60 @@
+#include <algorithm>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "engine.h"
+#include "qwen3-tts/synthesizer.h"
+
+namespace {
+
+class Qwen3TtsEngine : public Engine {
+public:
+    Qwen3TtsEngine(const EngineOptions & options, ggml_backend_t backend)
+        : synth_(options.model, options.codec, backend, options.context) {
+        info_.name = synth_.talker_name();
+        info_.architecture = "qwen3tts-talker";
+        info_.sample_rate = synth_.sample_rate();
+        info_.streaming = SPEECH_STREAMING_FRAME;
+        info_.voices = synth_.ids().speaker_names;
+        info_.languages = synth_.languages();
+        info_.language_selectable = true;
+        std::sort(info_.voices.begin(), info_.voices.end());
+        std::sort(info_.languages.begin(), info_.languages.end());
+        if (info_.voices.empty()) throw std::runtime_error("the model has no preset voices");
+        // The first synthesis compiles the GPU kernels, which on Vulkan takes seconds for every new shape, so a
+        // short and a longer text run through the prompt, the talker, the code predictor and the codec at the
+        // sizes speech uses.
+        for (const auto & [text, frames] : std::vector<std::pair<std::string, int>>{
+                 {"あ", 4}, {"明日の東京は晴れで、最高気温は二十四度の予報です。", 40}}) {
+            SynthesisRequest warmup;
+            warmup.text = text;
+            warmup.speaker = info_.voices[0];
+            warmup.max_frames = frames;
+            synth_.synthesize(warmup, [](const float *, size_t) { return true; });
+        }
+    }
+
+    void speak(const EngineRequest & request, const AudioCallback & on_audio) override {
+        SynthesisRequest r;
+        r.text = request.text;
+        r.speaker = request.voice;
+        r.language = request.language.empty() ? "auto" : request.language;
+        r.seed = request.seed;
+        // Qwen3-TTS passes audio after its first frame and then every four frames, so it stops at the sink.
+        synth_.synthesize(r, on_audio);
+    }
+
+private:
+    Synthesizer synth_;
+};
+
+}  // namespace
+
+std::unique_ptr<Engine> make_qwen3_tts(const EngineOptions & options, ggml_backend_t backend) {
+    if (!options.voices.empty() || options.steps != 0) {
+        throw std::runtime_error("voices and steps are for Irodori-TTS models; a Qwen3-TTS model speaks with its own speakers");
+    }
+    return std::make_unique<Qwen3TtsEngine>(options, backend);
+}
