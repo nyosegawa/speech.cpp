@@ -309,8 +309,9 @@ typedef int (*speech_text_callback)(const char * text, void * user_data);
  * text is passed (SPEECH_OK), once the callback or speech_cancel() stopped it (SPEECH_STOPPED), or on an error
  * (SPEECH_ERROR). The audio is checked before any work starts: no samples, a rate other than the model's or a language
  * it does not recognize is an error. A synthesis model is an error. FastConformer recognizes the whole audio in one
- * pass, so speech_cancel() takes effect before the encoder starts or once it has run, and its time and memory grow
- * with the square of the audio's length.
+ * pass, so speech_cancel() takes effect before the encoder starts or once it has run; its time and memory grow with
+ * the square of the audio's length for a model that attends over the whole audio (parakeet), and with its length for
+ * one that attends locally (reazonspeech-nemo-v2).
  */
 SPEECH_API speech_status speech_transcribe(speech_model * model, const speech_transcription_request * request,
                                            speech_text_callback on_text, void * user_data);

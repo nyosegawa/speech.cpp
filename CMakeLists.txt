@@ -82,7 +82,9 @@ add_library(fastconformer STATIC
     src/families/fastconformer/frontend.cpp
     src/families/fastconformer/encoder.cpp
     src/families/fastconformer/transducer.cpp
+    src/families/fastconformer/decoder.cpp
     src/families/fastconformer/tdt.cpp
+    src/families/fastconformer/alsd.cpp
     src/families/fastconformer/detokenizer.cpp
     src/families/fastconformer/recognizer.cpp
 )
@@ -177,7 +179,7 @@ else()
 endif()
 
 # The checks of FastConformer's stages.
-foreach(stage frontend encoder tdt)
+foreach(stage frontend encoder transducer)
     add_executable(fastconformer-${stage}-check checks/fastconformer-${stage}-check.cpp)
     target_link_libraries(fastconformer-${stage}-check PRIVATE fastconformer)
 endforeach()

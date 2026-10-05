@@ -1,10 +1,11 @@
-"""Converts a pinned NeMo FastConformer checkpoint with a TDT decoder to the GGUF the C++ port reads.
+"""Converts a pinned NeMo FastConformer checkpoint with an RNN-T or TDT decoder to the GGUF the C++ port reads.
 
 usage: uv run python convert.py <model> <out dir> [--type f32|f16]
 
 Writes <model>-<type>.gguf: the frontend's window and mel filterbank, the subsampling, the conformer layers,
-the prediction network and the joint, with the SentencePiece pieces the token ids name and the TDT greedy
-decoding's durations and limit. A hybrid checkpoint's CTC head is left out, since NeMo decodes with TDT.
+the prediction network and the joint, with the SentencePiece pieces the token ids name and the settings of the
+decoding transcribe() runs: greedy TDT's durations and limit, or the beam and length of RNN-T's alignment-length
+synchronous beam search. A hybrid checkpoint's CTC head is left out, since NeMo decodes with its transducer.
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [out, in] is stored as is
 (ne = [in, out]). --type f16 applies to the matrices of the linear layers; convolution kernels, norms, biases,
@@ -25,14 +26,15 @@ from sentencepiece import sentencepiece_model_pb2
 from pins import MODELS, NEMO, restore
 
 ARCH = "fastconformer"
-# The BCP 47 tags of the languages each checkpoint transcribes, from its model card. Neither takes a language:
+# The BCP 47 tags of the languages each checkpoint transcribes, from its model card. None takes a language:
 # parakeet-tdt-0.6b-v3 finds the language of the audio itself.
 LANGUAGES = {
     "parakeet-tdt_ctc-0.6b-ja": ["ja"],
+    "reazonspeech-nemo-v2": ["ja"],
     "parakeet-tdt-0.6b-v3": ["en", "es", "fr", "de", "bg", "hr", "cs", "da", "nl", "et", "fi", "el", "hu", "it", "lv",
                              "lt", "mt", "pl", "pt", "ro", "sk", "sl", "sv", "ru", "uk"],
 }
-LICENSES = {"parakeet-tdt_ctc-0.6b-ja": "CC-BY-4.0", "parakeet-tdt-0.6b-v3": "CC-BY-4.0"}
+LICENSES = {"parakeet-tdt_ctc-0.6b-ja": "CC-BY-4.0", "parakeet-tdt-0.6b-v3": "CC-BY-4.0", "reazonspeech-nemo-v2": "Apache-2.0"}
 
 parser = argparse.ArgumentParser()
 parser.add_argument("model", choices=sorted(MODELS))
@@ -46,21 +48,48 @@ model = restore(pin)
 cfg = model.cfg
 enc = cfg.encoder
 featurizer = model.preprocessor.featurizer
-assert enc.subsampling == "dw_striding" and enc.self_attention_model == "rel_pos"
-assert list(enc.att_context_size) == [-1, -1] and enc.conv_norm_type == "batch_norm"
+encoder = model.encoder
+assert enc.subsampling == "dw_striding" and not enc.get("causal_downsampling", False)
+assert enc.conv_norm_type == "batch_norm" and encoder.conv_context_size == [(enc.conv_kernel_size - 1) // 2] * 2
+# Attention over the whole utterance, or Longformer's local attention with as many frames on either side and one or
+# more global tokens from the first frame on, whose queries, keys and values are the layer's own.
+attention = encoder.self_attention_model
+assert encoder.att_context_style == "regular" and len(encoder.att_context_size_all) == 1
+context = list(encoder.att_context_size)
+if attention == "rel_pos":
+    assert context == [-1, -1]
+else:
+    assert attention == "rel_pos_local_attn" and context[0] == context[1] > 0, (attention, context)
+    assert encoder.global_tokens == 1 or (encoder.global_tokens > 1 and encoder.global_tokens_spacing == 1)
+    assert not encoder.global_attn_separate
 assert featurizer.exact_pad is False and featurizer.frame_splicing == 1 and featurizer.mag_power == 2.0
 assert featurizer.normalize == "per_feature" and featurizer.log and featurizer.log_zero_guard_type == "add"
 assert featurizer.pad_value == 0
-# The decoding transcribe() runs: greedy TDT with the blank as the prediction network's padding (its embedding
-# zero, so the blank fed first is the start of the sequence) and a ReLU joint. The joint's log-softmax, which
-# NeMo applies on the CPU alone, changes no argmax and is left out.
+# The decoding transcribe() runs by default, which the C++ ports for each kind of transducer: TDT's greedy label
+# looping (greedy_batch, GreedyBatchedTDTInfer), or RNN-T's alignment-length synchronous beam search (alsd,
+# BeamRNNTInfer). Both feed the blank first as the prediction network's padding (its embedding zero, so the blank is
+# the start of the sequence) and use a ReLU joint. The joint's log-softmax, which NeMo applies on the CPU alone, is
+# left out; the beam search takes its own log-softmax over the tokens and the blank, which the C++ computes.
 # A model with a prompt (EncDecRNNTBPEModelWithPrompt and its hybrid) is told its language through an input the C++
 # does not have; a hybrid's CTC head is left aside while cur_decoder is "rnnt".
 dec, joint, decoding = model.decoder, model.joint, model.decoding
 assert type(model) in (EncDecRNNTBPEModel, EncDecHybridRNNTCTCBPEModel)
 assert type(model) is EncDecRNNTBPEModel or model.cur_decoder == "rnnt"
-assert decoding.cfg.model_type == "tdt" and decoding.cfg.strategy == "greedy_batch"
-assert not decoding.cfg.get("big_blank_durations")
+decoder = {"GreedyBatchedTDTInfer": "tdt", "BeamRNNTInfer": "rnnt"}[type(decoding.decoding).__name__]
+if decoder == "tdt":
+    assert decoding.cfg.strategy == "greedy_batch" and not decoding.cfg.get("big_blank_durations")
+    assert type(decoding.decoding.decoding_computer).__name__ == "GreedyBatchedTDTLabelLoopingComputer"
+    assert not decoding.decoding.decoding_computer.has_fusion_models()
+    durations = [int(d) for d in decoding.cfg.durations]
+else:
+    beam = decoding.decoding
+    # A beam of 1 runs greedy_search() instead. The blank is the last class (index_incr 0), and a float target
+    # length is a multiple of the frames.
+    assert decoding.cfg.strategy == "alsd" and beam.search_algorithm == beam.align_length_sync_decoding
+    assert beam.beam_size > 1 and beam.return_best_hypothesis and beam.softmax_temperature == 1.0
+    assert beam.language_model is None and beam.ngram_lm is None and not beam.hat_subtract_ilm
+    assert beam.blank == beam.vocab_size and isinstance(beam.alsd_max_target_length, float)
+    durations = []
 assert dec.blank_as_pad and dec.blank_idx == decoding.blank_id and not dec.random_state_sampling
 # LSTMDropout is the plain LSTM rnn() makes without a normalization; its dropout is off in evaluation.
 assert type(dec.prediction.dec_rnn).__name__ == "LSTMDropout" and dec.prediction.dec_rnn.lstm.proj_size == 0
@@ -68,8 +97,7 @@ assert dec.prediction.dec_rnn.lstm.bias and not dec.prediction.dec_rnn.lstm.bidi
 assert not dec.is_adapter_available() and not joint.is_adapter_available()
 assert float(dec.prediction.embed.weight[dec.blank_idx].abs().max()) == 0
 assert joint.activation == "relu" and joint.temperature == 1.0
-durations = [int(d) for d in decoding.cfg.durations]
-assert joint.num_extra_outputs == len(durations) == len(decoding.durations)
+assert joint.num_extra_outputs == len(durations) == len(decoding.durations or [])
 assert joint.joint_net[-1].out_features == decoding.blank_id + 1 + len(durations)
 
 path = os.path.join(args.out_dir, f"{args.model}-{args.type}.gguf")
@@ -101,6 +129,10 @@ w.add_uint32("fastconformer.subsampling_factor", int(enc.subsampling_factor))
 w.add_float32("fastconformer.norm_eps", float(model.encoder.layers[0].norm_out.eps))
 w.add_float32("fastconformer.pos_base", 10000.0)
 w.add_float32("fastconformer.xscale", float(model.encoder.xscale or 1.0))
+w.add_string("fastconformer.attention", attention)
+if attention == "rel_pos_local_attn":
+    w.add_uint32("fastconformer.attention_context", int(context[0]))
+    w.add_uint32("fastconformer.global_tokens", int(encoder.global_tokens))
 w.add_float32("fastconformer.ff_factor", float(model.encoder.layers[0].fc_factor))
 # 1 when the linear layers of the feed-forward modules and the attention and the pointwise convolutions have biases;
 # the depthwise convolution has one either way once the batch norm is folded into it.
@@ -123,9 +155,18 @@ blank = int(decoding.blank_id)
 assert blank == len(proto.pieces) == tokenizer.vocab_size
 w.add_uint32("fastconformer.blank_id", blank)
 w.add_uint32("fastconformer.prediction.num_layers", int(dec.pred_rnn_layers))
-w.add_array("fastconformer.tdt.durations", durations)
-# The most tokens emitted on one frame before the decoding moves to the next.
-w.add_uint32("fastconformer.tdt.max_symbols", int(decoding.decoding.max_symbols))
+w.add_string("fastconformer.decoder", decoder)
+if decoder == "tdt":
+    w.add_array("fastconformer.tdt.durations", durations)
+    # The most tokens emitted on one frame before the decoding moves to the next.
+    w.add_uint32("fastconformer.tdt.max_symbols", int(decoding.decoding.max_symbols))
+else:
+    w.add_uint32("fastconformer.rnnt.beam_size", int(beam.beam_size))
+    # 1 when the best of the finished hypotheses is the one with the highest score per label, the blank it starts
+    # with counted.
+    w.add_uint32("fastconformer.rnnt.score_norm", int(bool(beam.score_norm)))
+    # The most labels a hypothesis takes, as a multiple of the encoder's frames.
+    w.add_float32("fastconformer.rnnt.max_target_ratio", float(beam.alsd_max_target_length))
 w.add_string("tokenizer.model", "sentencepiece")
 w.add_array("tokenizer.tokens", [p.piece for p in proto.pieces])
 w.add_uint32("tokenizer.unknown_id", int(tokenizer.tokenizer.unk_id()))

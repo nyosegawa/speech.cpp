@@ -18,8 +18,11 @@ struct EncoderStages {
 };
 
 /**
- * NeMo's ConformerEncoder with dw_striding subsampling and relative positional self-attention over the whole
- * utterance (att_context_size [-1, -1]), with or without the biases of its conformer layers (use_bias).
+ * NeMo's ConformerEncoder with dw_striding subsampling and relative positional self-attention, with or without the
+ * biases of its conformer layers (use_bias). The attention is fastconformer.attention: NeMo's self_attention_model
+ * "rel_pos" over the whole utterance (att_context_size [-1, -1]), or "rel_pos_local_attn", Longformer's attention
+ * over the frames within fastconformer.attention_context of each frame on either side, with
+ * fastconformer.global_tokens frames from the first on that every frame attends to and that attend to every frame.
  *
  * ConformerEncoder.forward_internal() (nemo/collections/asr/modules/conformer_encoder.py) runs on a batch padded to
  * its longest utterance and masks the padding out of every convolution and attention; MaskedConvSequential
@@ -43,7 +46,15 @@ private:
     ggml_tensor * layer_norm(ggml_context * ctx, ggml_tensor * x, const std::string & name) const;
     ggml_tensor * subsample(Graph & g, const std::vector<float> & features, int64_t frames) const;
     ggml_tensor * feed_forward(ggml_context * ctx, ggml_tensor * x, const std::string & name) const;
-    ggml_tensor * attention(Graph & g, ggml_tensor * x, ggml_tensor * pos, const std::string & name) const;
+    /** The inputs every layer's attention shares: the positional encodings and, for local attention, its mask. */
+    struct AttentionInputs {
+        ggml_tensor * pos;
+        ggml_tensor * mask;
+    };
+    AttentionInputs attention_inputs(Graph & g, int64_t t) const;
+    ggml_tensor * attention(Graph & g, ggml_tensor * x, const AttentionInputs & in, const std::string & name) const;
+    ggml_tensor * local_attention(Graph & g, ggml_tensor * q, ggml_tensor * k, ggml_tensor * v, const AttentionInputs & in,
+                                  const std::string & name) const;
     ggml_tensor * convolution(Graph & g, ggml_tensor * x, const std::string & name) const;
 
     const ModelFile & m_;
@@ -51,6 +62,9 @@ private:
     float eps_, pos_base_, xscale_, ff_factor_;
     /** Whether the conformer layers' linear layers and pointwise convolutions have biases; the subsampling's always do. */
     bool use_bias_;
+    /** Whether the attention is local; the frames each frame sees on either side and the global tokens if it is. */
+    bool local_;
+    int context_ = 0, global_tokens_ = 0;
 };
 
 }  // namespace fastconformer

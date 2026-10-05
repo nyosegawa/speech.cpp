@@ -1,13 +1,15 @@
-// Checks FastConformer's TDT decoder against NeMo on each dump of reference/fastconformer/dump.py, in the order data
-// flows: the prediction network on the dump's labels, the joint on the dump's encoder frames and prediction outputs,
-// the greedy decoding and the detokenization from the dump's encoder output, then the whole path from the dump's
-// audio to the text, which it also times. The dumps are those of the model, in <reference out dir>/<its general.name>/.
+// Checks FastConformer's transducer, RNN-T or TDT, against NeMo on each dump of reference/fastconformer/dump.py, in
+// the order data flows: the prediction network on the dump's labels, the joint on the dump's encoder frames and
+// prediction outputs, the decoding and the detokenization from the dump's encoder output, then the whole path
+// from the dump's audio to the text, which it also times. The dumps are those of the model, in
+// <reference out dir>/<its general.name>/.
 //
-// usage: fastconformer-tdt-check <model.gguf> <reference out dir> [gpu|cpu|device name]
+// usage: fastconformer-transducer-check <model.gguf> <reference out dir> [gpu|cpu|device name]
 
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <stdexcept>
 
 #include "args.h"
 #include "backend.h"
@@ -78,7 +80,8 @@ int main(int argc, char ** argv) {
             Recognizer recognizer(args[1], backend);
             const PredictionNetwork & prediction = recognizer.prediction();
             const Joint & joint = recognizer.joint();
-            const int hidden = prediction.hidden(), outputs = joint.outputs(), blank = recognizer.tdt().blank();
+            const int hidden = prediction.hidden(), outputs = joint.outputs(), blank = recognizer.decoder().blank();
+            const bool tdt = recognizer.model().str("fastconformer.decoder") == "tdt";
             ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
             for (const auto & d : fastconformer_dumps(args[2], recognizer.model())) {
                 const Npy encoded = read_npy((d / "encoded.npy").u8string());
@@ -93,19 +96,26 @@ int main(int argc, char ** argv) {
                 std::printf("%s (%.2f s, %zu prediction steps, %zu joint evaluations)\n", d.filename().u8string().c_str(),
                             (double) audio.f32.size() / recognizer.sample_rate(), pred_labels.i32.size(), joint_frames.i32.size());
 
-                // The prediction network on the dump's labels, its state carried from one step to the next.
+                // The prediction network on the dump's labels, each step from the state of the step it continues: the
+                // one before it in greedy TDT decoding, the step of its hypothesis' labels in RNN-T's beam search.
+                std::vector<int32_t> parents((size_t) pred_labels.i32.size());
+                for (size_t n = 0; n < parents.size(); n++) parents[n] = (int32_t) n - 1;
+                if (!tdt) parents = read_npy((d / "pred_parents.npy").u8string()).i32;
+                if (parents.size() != pred_labels.i32.size()) throw std::runtime_error("pred_parents.npy and pred_labels.npy differ in length");
                 std::vector<float> outputs_got;
-                PredictionState state = prediction.initial_state();
-                for (int32_t label : pred_labels.i32) {
+                std::vector<PredictionState> states;
+                for (size_t n = 0; n < pred_labels.i32.size(); n++) {
+                    if (parents[n] >= (int32_t) n) throw std::runtime_error("a step of pred_parents.npy continues one after it");
                     Graph g(512);
-                    const PredictionNetwork::Step step = prediction.build(g, label, state);
+                    const PredictionNetwork::Step step =
+                        prediction.build(g, pred_labels.i32[n], parents[n] < 0 ? prediction.initial_state() : states[(size_t) parents[n]]);
                     g.output(step.output);
                     g.output(step.h);
                     g.output(step.c);
                     g.compute(backend, allocr);
                     const std::vector<float> out = Graph::read(step.output);
                     outputs_got.insert(outputs_got.end(), out.begin(), out.end());
-                    state = PredictionNetwork::read_state(step);
+                    states.push_back(PredictionNetwork::read_state(step));
                 }
                 const Diff dp = compare(outputs_got, pred_output.f32);
                 print_diff("  prediction network", dp);
@@ -124,23 +134,26 @@ int main(int argc, char ** argv) {
                 const Diff dj = compare(log_softmax(got, outputs), joint_output.f32);
                 print_diff("  joint log-probabilities", dj);
                 const double labels_agree = argmax_agreement(got, joint_output.f32, outputs, 0, blank + 1);
-                const double durations_agree = argmax_agreement(got, joint_output.f32, outputs, blank + 1, outputs);
-                std::printf("  argmax agreement: labels %.4f, durations %.4f\n", labels_agree, durations_agree);
+                std::printf("  argmax agreement: labels %.4f", labels_agree);
+                if (outputs > blank + 1) std::printf(", durations %.4f", argmax_agreement(got, joint_output.f32, outputs, blank + 1, outputs));
+                std::printf("\n");
 
-                // The greedy decoding and the text from the dump's encoder output.
+                // The decoding and the text from the dump's encoder output.
                 Graph e;
                 ggml_tensor * projected = joint.project_encoder(e.ctx(), e.input(encoded.f32, encoded.shape[1], encoded.shape[0]));
                 e.output(projected);
                 e.compute(backend, allocr);
                 const std::vector<int32_t> ids = recognizer.decode(Graph::read(projected));
                 const std::string text = recognizer.detokenizer().text(ids);
-                std::printf("  greedy ids %s, text %s\n", ids == want_ids.i32 ? "equal" : "DIFFER", text == want_text ? "equal" : "DIFFERS");
+                std::printf("  decoded ids %s, text %s\n", ids == want_ids.i32 ? "equal" : "DIFFER", text == want_text ? "equal" : "DIFFERS");
                 if (ids != want_ids.i32) std::printf("    got%s\n    want%s\n", ids_text(ids).c_str(), ids_text(want_ids.i32).c_str());
                 if (text != want_text) std::printf("    got  %s\n    want %s\n", text.c_str(), want_text.c_str());
                 // Measured on an Apple M5 on 2026-10-06 with parakeet-tdt_ctc-0.6b-ja and parakeet-tdt-0.6b-v3: the
                 // prediction network 130 to 133 dB on the CPU with F32 weights, 56 to 60 dB with F16, 130 to 134 dB on
                 // Metal with F32 and 66 to 70 dB with F16; the joint 140 to 142 dB on the CPU with F32, 76 to 77 dB with
-                // F16 and 85 to 89 dB on Metal with either. A wrong gate or a wrong output falls far below.
+                // F16 and 85 to 89 dB on Metal with either. reazonspeech-nemo-v2's the same day: the prediction network
+                // 125 to 128, 61 to 64, 125 to 128 and 69 to 73 dB, the joint 124 to 126, 71 to 72 and 83 to 88 dB. A
+                // wrong gate or a wrong output falls far below.
                 ok = ok && dp.snr_db > 40 && dj.snr_db > 40 && ids == want_ids.i32 && text == want_text;
 
                 // The whole path, timed after a first run that builds Metal's pipelines.

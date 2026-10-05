@@ -24,6 +24,13 @@ MODELS = {
         "size": 2509332480,
         "sha256": "3cbdc85877e668ca7b82d0d56770eb1fac76691f55d6b97545e8d61ca588d10d",
     },
+    "reazonspeech-nemo-v2": {
+        "repository": "reazon-research/reazonspeech-nemo-v2",
+        "revision": "33693408be76b7cba9fd4a7546a0a8772430211b",
+        "file": "reazonspeech-nemo-v2.nemo",
+        "size": 2477946880,
+        "sha256": "d196d43ad03466ca88beeda4bf5fafb07bab7202d4b663b8e4f12cb0a4381fae",
+    },
 }
 
 

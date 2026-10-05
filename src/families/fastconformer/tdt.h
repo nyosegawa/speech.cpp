@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "transducer.h"
+#include "decoder.h"
 
 namespace fastconformer {
 
@@ -18,14 +18,14 @@ namespace fastconformer {
  * utterance, and fed to the prediction network for the next step; after max_symbols tokens on one frame whose
  * last duration is 0, the frame advances by 1.
  */
-class TdtDecoder {
+class TdtDecoder : public Decoder {
 public:
     TdtDecoder(const ModelFile & m, const PredictionNetwork & prediction, const Joint & joint);
 
     /** The token ids for `projected`, the encoder's output through Joint::project_encoder(), [T, hidden] row-major. */
-    std::vector<int32_t> greedy(const std::vector<float> & projected, ggml_backend_t backend) const;
+    std::vector<int32_t> decode(const std::vector<float> & projected, ggml_backend_t backend) const override;
 
-    int blank() const { return blank_; }
+    int blank() const override { return blank_; }
 
 private:
     const PredictionNetwork & prediction_;

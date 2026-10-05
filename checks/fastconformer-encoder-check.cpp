@@ -32,13 +32,16 @@ int main(int argc, char ** argv) {
             const Encoder encoder(model);
             // Measured on an Apple M5, the encoder output's lowest SNR: parakeet-tdt_ctc-0.6b-ja (three utterances,
             // 2026-10-05) 113.8 dB on the CPU with F32 weights, 54.6 dB with F16 and 63.1 dB on Metal with either;
-            // parakeet-tdt-0.6b-v3 (twelve, 2026-10-06) 105.9, 31.4 and 52.0 dB. Metal's matrix kernel rounds its
-            // inputs to half precision and sums in float32. ggml's CPU dot product with F16 weights also sums in half
-            // precision on ARM (vfmaq_f16), which loses most where v3's layers carry values of 250 to 500: on
-            // de_de-10229344228128634115 the error grows from 57 dB at layer 19 to 31.4 dB at the output, with NeMo's
-            // text intact. That case alone takes the loose threshold. A wrong operation in any layer falls far below.
-            const bool half_sums = ggml_backend_is_cpu(backend) && model.tensor("blk.0.ff1_up.weight")->type == GGML_TYPE_F16;
-            const double threshold_db = half_sums ? 25 : 45;
+            // parakeet-tdt-0.6b-v3 (twelve, 2026-10-06) 105.9, 31.4 and 52.0 dB; reazonspeech-nemo-v2 (eight and two
+            // of 65 and 311 s, 2026-10-06) 95.9, 29.7 and 37.7 dB. Metal's matrix kernel rounds its inputs to half
+            // precision and sums in float32, and ggml's CPU dot product with F16 weights also sums in half precision on
+            // ARM (vfmaq_f16). Half precision loses most where v3's layers carry values of 250 to 500, and in the
+            // near-silent frames between the utterances of reazonspeech's long inputs, where the error grows from
+            // 70 dB at the first layer to 42 dB at the thirteenth in a few frames; the text stays NeMo's. In float32 on
+            // the CPU a wrong operation shows at once: local attention whose band misses one frame on one side gives
+            // 27 to 50 dB, so that case takes 90 dB, and the half-precision ones 25 dB.
+            const bool float32 = ggml_backend_is_cpu(backend) && model.tensor("blk.0.ff1_up.weight")->type == GGML_TYPE_F32;
+            const double threshold_db = float32 ? 90 : 25;
             std::printf("encoder output threshold: %.0f dB\n", threshold_db);
             ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
             for (const auto & d : fastconformer_dumps(args[2], model)) {
