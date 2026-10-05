@@ -146,8 +146,10 @@ settled a choice or turned an approach down for good; if so, the record goes int
   the number the changes since the last tag call for; a change does not raise it by itself.
 - The tag `v<VERSION>` builds the release in CI, which refuses a tag that differs from `VERSION`. Releases and
   tags are never deleted or moved: callers such as ASIST pin them by SHA-256.
-- Converted GGUF files go to Hugging Face only with the user's approval, one repository per family
-  (sakasegawa/qwen3-tts-ggml, sakasegawa/irodori-tts-ggml), with the licenses of what it holds. A changed
+- Converted GGUF files go to Hugging Face only with the user's approval, one repository per model line,
+  named as people search for it rather than after the family (sakasegawa/qwen3-tts-ggml,
+  sakasegawa/irodori-tts-ggml, sakasegawa/parakeet-ggml), with the licenses of what it holds. Sizes and versions
+  of one line share its repository; a line from another author or under another license gets its own. A changed
   file goes up under the same name, and its card's SHA-256 changes with it.
 - When a change alters what a user does or sees (the C API, a tool's arguments, the worker protocol, the
   GGUF layout), update README.md in the same change.
