@@ -1,6 +1,7 @@
 // Checks the FastConformer encoder against NeMo's ConformerEncoder on each dump of
 // reference/fastconformer/dump.py: the subsampling, every conformer layer and the output, all from the dump's
-// own features, so that the encoder's error is its own.
+// own features, so that the encoder's error is its own. The dumps are those of the model, in
+// <reference out dir>/<its general.name>/.
 //
 // usage: fastconformer-encoder-check <model.gguf> <reference out dir> [gpu|cpu|device name]
 
@@ -11,6 +12,7 @@
 #include "compare.h"
 #include "fastconformer-dumps.h"
 #include "fastconformer/encoder.h"
+#include "ggml-cpu.h"
 #include "npy.h"
 
 using namespace fastconformer;
@@ -28,8 +30,18 @@ int main(int argc, char ** argv) {
         {
             ModelFile model(args[1], backend);
             const Encoder encoder(model);
+            // Measured on an Apple M5, the encoder output's lowest SNR: parakeet-tdt_ctc-0.6b-ja (three utterances,
+            // 2026-10-05) 113.8 dB on the CPU with F32 weights, 54.6 dB with F16 and 63.1 dB on Metal with either;
+            // parakeet-tdt-0.6b-v3 (twelve, 2026-10-06) 105.9, 31.4 and 52.0 dB. Metal's matrix kernel rounds its
+            // inputs to half precision and sums in float32. ggml's CPU dot product with F16 weights also sums in half
+            // precision on ARM (vfmaq_f16), which loses most where v3's layers carry values of 250 to 500: on
+            // de_de-10229344228128634115 the error grows from 57 dB at layer 19 to 31.4 dB at the output, with NeMo's
+            // text intact. That case alone takes the loose threshold. A wrong operation in any layer falls far below.
+            const bool half_sums = ggml_backend_is_cpu(backend) && model.tensor("blk.0.ff1_up.weight")->type == GGML_TYPE_F16;
+            const double threshold_db = half_sums ? 25 : 45;
+            std::printf("encoder output threshold: %.0f dB\n", threshold_db);
             ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
-            for (const auto & d : fastconformer_dumps(args[2])) {
+            for (const auto & d : fastconformer_dumps(args[2], model)) {
                 const Npy features = read_npy((d / "features.npy").u8string());
                 const Npy subsampled = read_npy((d / "subsampled.npy").u8string());
                 const Npy layers = read_npy((d / "layers.npy").u8string());
@@ -55,10 +67,7 @@ int main(int argc, char ** argv) {
                 }
                 const Diff de = compare(Graph::read(out), encoded.f32);
                 print_diff("  encoder output", de);
-                // Measured on an Apple M5 on 2026-10-05: 114 to 118 dB on the CPU with F32 weights and 55 to 56 dB
-                // with F16; 63 to 64 dB on Metal with either, since its matrix kernel rounds its inputs to half
-                // precision. A wrong operation in any layer falls far below.
-                ok = ok && de.snr_db > 40;
+                ok = ok && de.snr_db > threshold_db;
             }
             ggml_gallocr_free(allocr);
         }

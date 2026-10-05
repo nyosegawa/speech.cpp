@@ -9,7 +9,9 @@ decoding's durations and limit. A hybrid checkpoint's CTC head is left out, sinc
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [out, in] is stored as is
 (ne = [in, out]). --type f16 applies to the matrices of the linear layers; convolution kernels, norms, biases,
 the frontend and the rest stay float32. The batch norm of each convolution module is folded into its
-depthwise convolution, which it follows in evaluation, and each LSTM layer's two biases are summed.
+depthwise convolution, which it follows in evaluation, and each LSTM layer's two biases are summed. A checkpoint
+whose conformer layers have no biases (ConformerEncoder's use_bias false) is written without them, and
+fastconformer.use_bias says so.
 """
 
 import argparse
@@ -17,14 +19,20 @@ import os
 
 import numpy as np
 from gguf import GGUFWriter
+from nemo.collections.asr.models import EncDecHybridRNNTCTCBPEModel, EncDecRNNTBPEModel
 from sentencepiece import sentencepiece_model_pb2
 
 from pins import MODELS, NEMO, restore
 
 ARCH = "fastconformer"
-# The BCP 47 tags of the languages each checkpoint transcribes, from its model card.
-LANGUAGES = {"parakeet-tdt_ctc-0.6b-ja": ["ja"]}
-LICENSES = {"parakeet-tdt_ctc-0.6b-ja": "CC-BY-4.0"}
+# The BCP 47 tags of the languages each checkpoint transcribes, from its model card. Neither takes a language:
+# parakeet-tdt-0.6b-v3 finds the language of the audio itself.
+LANGUAGES = {
+    "parakeet-tdt_ctc-0.6b-ja": ["ja"],
+    "parakeet-tdt-0.6b-v3": ["en", "es", "fr", "de", "bg", "hr", "cs", "da", "nl", "et", "fi", "el", "hu", "it", "lv",
+                             "lt", "mt", "pl", "pt", "ro", "sk", "sl", "sv", "ru", "uk"],
+}
+LICENSES = {"parakeet-tdt_ctc-0.6b-ja": "CC-BY-4.0", "parakeet-tdt-0.6b-v3": "CC-BY-4.0"}
 
 parser = argparse.ArgumentParser()
 parser.add_argument("model", choices=sorted(MODELS))
@@ -46,8 +54,12 @@ assert featurizer.pad_value == 0
 # The decoding transcribe() runs: greedy TDT with the blank as the prediction network's padding (its embedding
 # zero, so the blank fed first is the start of the sequence) and a ReLU joint. The joint's log-softmax, which
 # NeMo applies on the CPU alone, changes no argmax and is left out.
+# A model with a prompt (EncDecRNNTBPEModelWithPrompt and its hybrid) is told its language through an input the C++
+# does not have; a hybrid's CTC head is left aside while cur_decoder is "rnnt".
 dec, joint, decoding = model.decoder, model.joint, model.decoding
-assert model.cur_decoder == "rnnt" and decoding.cfg.model_type == "tdt" and decoding.cfg.strategy == "greedy_batch"
+assert type(model) in (EncDecRNNTBPEModel, EncDecHybridRNNTCTCBPEModel)
+assert type(model) is EncDecRNNTBPEModel or model.cur_decoder == "rnnt"
+assert decoding.cfg.model_type == "tdt" and decoding.cfg.strategy == "greedy_batch"
 assert not decoding.cfg.get("big_blank_durations")
 assert dec.blank_as_pad and dec.blank_idx == decoding.blank_id and not dec.random_state_sampling
 # LSTMDropout is the plain LSTM rnn() makes without a normalization; its dropout is off in evaluation.
@@ -90,14 +102,22 @@ w.add_float32("fastconformer.norm_eps", float(model.encoder.layers[0].norm_out.e
 w.add_float32("fastconformer.pos_base", 10000.0)
 w.add_float32("fastconformer.xscale", float(model.encoder.xscale or 1.0))
 w.add_float32("fastconformer.ff_factor", float(model.encoder.layers[0].fc_factor))
+# 1 when the linear layers of the feed-forward modules and the attention and the pointwise convolutions have biases;
+# the depthwise convolution has one either way once the batch norm is folded into it.
+use_bias = bool(model.encoder.layers[0].feed_forward1.use_bias)
+assert all(bool(m.use_bias) == use_bias for layer in model.encoder.layers
+           for m in (layer.feed_forward1, layer.feed_forward2, layer.self_attn, layer.conv))
+w.add_uint32("fastconformer.use_bias", int(use_bias))
 
 # The joint's classes are the tokenizer's ids, a blank after them, then one per duration.
 tokenizer = model.tokenizer
 assert not tokenizer.legacy
 proto = sentencepiece_model_pb2.ModelProto()
 proto.ParseFromString(tokenizer.tokenizer.serialized_model_proto())
-# Normal pieces and the unknown piece only: the C++ detokenizer handles no control, user-defined or byte pieces.
-assert all(p.type in (proto.SentencePiece.NORMAL, proto.SentencePiece.UNKNOWN) for p in proto.pieces)
+# Normal, user-defined and unknown pieces only: SentencePiece writes a user-defined piece (parakeet-tdt-0.6b-v3's
+# <|en|> and the other tags) as it writes a normal one, and the C++ detokenizer handles no control or byte pieces.
+allowed = (proto.SentencePiece.NORMAL, proto.SentencePiece.USER_DEFINED, proto.SentencePiece.UNKNOWN)
+assert all(p.type in allowed for p in proto.pieces)
 assert not proto.trainer_spec.treat_whitespace_as_suffix
 blank = int(decoding.blank_id)
 assert blank == len(proto.pieces) == tokenizer.vocab_size
@@ -120,6 +140,9 @@ w.add_uint32("tokenizer.strip_leading_space",
 assert not any(c.isspace() for p in proto.pieces for c in p.piece)
 assert all(c == " " or not c.isspace() for c in proto.trainer_spec.unk_surface)
 w.add_array("tokenizer.punctuation", sorted(decoding.supported_punctuation or []))
+# The decoding strips no language tags from the text (strip_lang_tags, for models that write them), which the C++
+# does not do.
+assert not decoding.strip_lang_tags
 
 sd = {k: v.detach().float().numpy() for k, v in model.state_dict().items()}
 
@@ -149,7 +172,7 @@ d = int(enc.d_model)
 for l in range(int(enc.n_layers)):
     a, o = f"encoder.layers.{l}.", f"blk.{l}."
 
-    def linear(src, dst, bias=True):
+    def linear(src, dst, bias=use_bias):
         add(dst + ".weight", sd[a + src + ".weight"], True)
         if bias:
             add(dst + ".bias", sd[a + src + ".bias"])
@@ -171,17 +194,20 @@ for l in range(int(enc.n_layers)):
 
     norm("norm_conv", o + "conv_norm")
     # GLU keeps the first half of the pointwise convolution's channels and gates them with the second.
-    pw1, pw1_bias = sd[a + "conv.pointwise_conv1.weight"][:, :, 0], sd[a + "conv.pointwise_conv1.bias"]
+    pw1 = sd[a + "conv.pointwise_conv1.weight"][:, :, 0]
     add(o + "conv_pw1_a.weight", pw1[:d], True)
-    add(o + "conv_pw1_a.bias", pw1_bias[:d])
     add(o + "conv_pw1_gate.weight", pw1[d:], True)
-    add(o + "conv_pw1_gate.bias", pw1_bias[d:])
+    if use_bias:
+        add(o + "conv_pw1_a.bias", sd[a + "conv.pointwise_conv1.bias"][:d])
+        add(o + "conv_pw1_gate.bias", sd[a + "conv.pointwise_conv1.bias"][d:])
     bn = a + "conv.batch_norm."
     scale = sd[bn + "weight"] / np.sqrt(sd[bn + "running_var"] + model.encoder.layers[l].conv.batch_norm.eps)
+    dw_bias = sd[a + "conv.depthwise_conv.bias"] if use_bias else 0
     add(o + "conv_dw.weight", sd[a + "conv.depthwise_conv.weight"][:, 0, :] * scale[:, None])
-    add(o + "conv_dw.bias", (sd[a + "conv.depthwise_conv.bias"] - sd[bn + "running_mean"]) * scale + sd[bn + "bias"])
+    add(o + "conv_dw.bias", (dw_bias - sd[bn + "running_mean"]) * scale + sd[bn + "bias"])
     add(o + "conv_pw2.weight", sd[a + "conv.pointwise_conv2.weight"][:, :, 0], True)
-    add(o + "conv_pw2.bias", sd[a + "conv.pointwise_conv2.bias"])
+    if use_bias:
+        add(o + "conv_pw2.bias", sd[a + "conv.pointwise_conv2.bias"])
     norm("norm_out", o + "out_norm")
 
 # The prediction network: an embedding of the tokens and the blank, then LSTM layers whose gates are stacked as

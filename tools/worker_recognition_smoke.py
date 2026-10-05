@@ -155,7 +155,7 @@ send({"type": "end", "id": "i", "sampleRate": 44100})
 expect_error("i", "audio at 44100 Hz")
 for x in chunks("j", short):
     send(x)
-send({"type": "end", "id": "j", "sampleRate": rate, "language": "en"})
+send({"type": "end", "id": "j", "sampleRate": rate, "language": "zz"})
 expect_error("j", "a language the model does not recognize")
 send({"type": "end", "id": "k", "sampleRate": rate})
 expect_error("k", "an end without chunks")

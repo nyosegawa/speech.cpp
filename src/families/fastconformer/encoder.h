@@ -19,7 +19,7 @@ struct EncoderStages {
 
 /**
  * NeMo's ConformerEncoder with dw_striding subsampling and relative positional self-attention over the whole
- * utterance (att_context_size [-1, -1]).
+ * utterance (att_context_size [-1, -1]), with or without the biases of its conformer layers (use_bias).
  *
  * ConformerEncoder.forward_internal() (nemo/collections/asr/modules/conformer_encoder.py) runs on a batch padded to
  * its longest utterance and masks the padding out of every convolution and attention; MaskedConvSequential
@@ -39,7 +39,7 @@ public:
     int d_model() const { return d_model_; }
 
 private:
-    ggml_tensor * linear(ggml_context * ctx, ggml_tensor * x, const std::string & name) const;
+    ggml_tensor * linear(ggml_context * ctx, ggml_tensor * x, const std::string & name, bool bias) const;
     ggml_tensor * layer_norm(ggml_context * ctx, ggml_tensor * x, const std::string & name) const;
     ggml_tensor * subsample(Graph & g, const std::vector<float> & features, int64_t frames) const;
     ggml_tensor * feed_forward(ggml_context * ctx, ggml_tensor * x, const std::string & name) const;
@@ -49,6 +49,8 @@ private:
     const ModelFile & m_;
     int mels_, d_model_, layers_, heads_, conv_kernel_, sub_layers_;
     float eps_, pos_base_, xscale_, ff_factor_;
+    /** Whether the conformer layers' linear layers and pointwise convolutions have biases; the subsampling's always do. */
+    bool use_bias_;
 };
 
 }  // namespace fastconformer

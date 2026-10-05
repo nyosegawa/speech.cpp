@@ -10,7 +10,7 @@ implementation.
 |---|---|---|---|
 | Qwen3-TTS | Qwen3-TTS 12Hz 0.6B and 1.7B CustomVoice | speech synthesis with the named speakers, streamed frame by frame | [sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF), [sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF) |
 | Irodori-TTS | Irodori-TTS v4.1-Small-MF and v4.1-Small | Japanese speech synthesis in the voice of a reference recording, a sentence at a time, streamed as the codec decodes it | [sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF), [sakasegawa/Irodori-TTS-v4.1-Small-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) |
-| FastConformer | NVIDIA's parakeet-tdt_ctc-0.6b-ja | Japanese speech recognition with its TDT decoder, an utterance at a time | [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) |
+| FastConformer | NVIDIA's parakeet-tdt_ctc-0.6b-ja and parakeet-tdt-0.6b-v3 | speech recognition with their TDT decoder, an utterance at a time: Japanese, and 25 European languages the model tells apart itself | [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF), [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) |
 
 ## Binaries
 
@@ -707,22 +707,25 @@ whole sampler and the codec's first window, so it grows with the sentence.
 Speech recognition with NVIDIA NeMo's [FastConformer](https://arxiv.org/abs/2305.05084) models: a log-mel
 frontend, a subsampling by 8 with depthwise convolutions, conformer layers with relative positional attention,
 and a decoder that turns the encoder's frames into tokens. Implemented, for
-[nvidia/parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) (Japanese) with its
-TDT decoder, the one NeMo's `transcribe()` uses:
+[nvidia/parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) (Japanese) and
+[nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) (25 European languages, with
+punctuation and capitals) with their TDT decoder, the one NeMo's `transcribe()` uses:
 
-- the frontend as NeMo runs it in evaluation (pre-emphasis, a centred STFT, the checkpoint's 80 mel filters, the
-  log and the normalization of each mel bin over the utterance), on the host in double precision,
+- the frontend as NeMo runs it in evaluation (pre-emphasis, a centred STFT, the checkpoint's mel filters, 80 for
+  parakeet-ja and 128 for parakeet-v3, the log and the normalization of each mel bin over the utterance), on the
+  host in double precision,
 - the subsampling, the 24 conformer layers with relative positional attention over the whole utterance, and
-  the convolution modules, on ggml,
+  the convolution modules, on ggml, with the options in which the two checkpoints differ (parakeet-v3 does not
+  scale the subsampling's output and has no biases in its conformer layers) read from the GGUF file,
 - the TDT decoder: the prediction network (an embedding and two LSTM layers) and the joint on ggml, one step
   per emitted token, and NeMo's greedy decoding on the host, with the model's durations (0 to 4 frames) and at
   most 10 tokens on one frame, as configured in the checkpoint,
-- the SentencePiece pieces turned into text as NeMo's decoding writes it.
+- the SentencePiece pieces turned into text as NeMo's decoding writes it, with the space before each of the
+  vocabulary's punctuation marks removed.
 
 The checkpoint's CTC head is not converted: NeMo decodes with TDT by default, and the two write a different text
 on some utterances ([ADR 0012](docs/adr/0012-the-recognizer-decodes-with-the-models-default-decoder.md)). Not
-implemented yet: parakeet-tdt-0.6b-v3 (English, French, German, Italian, Spanish and Portuguese) and
-reazon-research's reazonspeech-nemo-v2 (Japanese, with local attention and an RNN-T head). Why recognition goes
+implemented yet: reazon-research's reazonspeech-nemo-v2 (Japanese, with local attention and an RNN-T head). Why recognition goes
 through this port is in [ADR 0009](docs/adr/0009-speech-recognition-runs-through-a-fastconformer-port.md), and how
 it reaches the C API, the worker, the server and `speech-asr` in
 [ADR 0011](docs/adr/0011-speech-recognition-is-a-task-of-every-entry-point.md).
@@ -730,28 +733,38 @@ it reaches the C API, the worker, the server and `speech-asr` in
 ### Models
 
 Recognition needs one file, `parakeet-tdt_ctc-0.6b-ja-f16.gguf` from
-[sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF), whose card lists its SHA-256. To
-convert it yourself, `reference/fastconformer/` pins NeMo 3.0.0 with PyTorch 2.10.0 and the checkpoint by
+[sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) or
+`parakeet-tdt-0.6b-v3-f16.gguf` from
+[sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF), whose cards list their SHA-256. To
+convert them yourself, `reference/fastconformer/` pins NeMo 3.0.0 with PyTorch 2.10.0 and each checkpoint by
 revision, size and SHA-256:
 
 ```sh
 cd reference/fastconformer
 uv run python convert.py parakeet-tdt_ctc-0.6b-ja ../../models --type f16   # parakeet-tdt_ctc-0.6b-ja-f16.gguf, 1.2 GB
+uv run python convert.py parakeet-tdt-0.6b-v3 ../../models --type f16       # parakeet-tdt-0.6b-v3-f16.gguf, 1.3 GB
 ```
 
-`--type f32` writes the same at 2.5 GB. GGUF files converted for speech.cpp 0.5.0, which carry the CTC head
-instead of the TDT decoder, are refused; convert them again. The weights are NVIDIA's, under CC-BY-4.0.
+`--type f32` writes the same at 2.5 GB. The converter refuses a checkpoint with an option the C++ does not run
+(another subsampling or attention, a prompt, a language tag to strip, a tokenizer piece it cannot write) rather
+than write a file that would recognize differently from NeMo. GGUF files converted for speech.cpp 0.5.0, which
+carry the CTC head instead of the TDT decoder, and for 0.6.0, which lack `fastconformer.use_bias`, are refused;
+convert them again. The weights are NVIDIA's, under CC-BY-4.0.
 
 ### Use
 
 ```sh
 speech-asr parakeet-tdt_ctc-0.6b-ja-f16.gguf utterance.wav     # the text on stdout
+speech-asr parakeet-tdt-0.6b-v3-f16.gguf utterance.wav
 speech-worker parakeet-tdt_ctc-0.6b-ja-f16.gguf                 # a recognition worker (The worker, above)
-speech-server parakeet-tdt_ctc-0.6b-ja-f16.gguf                 # POST /v1/audio/transcriptions
+speech-server parakeet-tdt-0.6b-v3-f16.gguf                     # POST /v1/audio/transcriptions
 ```
 
-The model takes 16 kHz mono audio and recognizes `ja`; a request's language is only checked against it
-(`languageSelectable` false), since the model has no input for one.
+Both models take 16 kHz mono audio. parakeet-tdt_ctc-0.6b-ja recognizes `ja`, and parakeet-tdt-0.6b-v3 `bg`,
+`cs`, `da`, `de`, `el`, `en`, `es`, `et`, `fi`, `fr`, `hr`, `hu`, `it`, `lt`, `lv`, `mt`, `nl`, `pl`, `pt`, `ro`,
+`ru`, `sk`, `sl`, `sv` and `uk`, the languages of its model card. Neither has an input for a language: parakeet-v3
+finds the language of the audio itself, as NeMo's `transcribe()` runs it, without a prompt. A request's language is
+therefore only checked against the model's (`languageSelectable` false) and changes nothing in the text.
 
 ### Accuracy
 
@@ -761,11 +774,15 @@ checks compare each stage, given the dump's own inputs, with it:
 ```sh
 cd reference/fastconformer
 uv run python dump.py parakeet-tdt_ctc-0.6b-ja out <16 kHz mono WAVE files>
+uv run python dump.py parakeet-tdt-0.6b-v3 out <16 kHz mono WAVE files>
 cd ../..
 build/fastconformer-frontend-check <model.gguf> reference/fastconformer/out
 build/fastconformer-encoder-check <model.gguf> reference/fastconformer/out [gpu|cpu|device name]
 build/fastconformer-tdt-check <model.gguf> reference/fastconformer/out [gpu|cpu|device name]
 ```
+
+`dump.py` writes the dumps of each model to `out/<model>/<file name>/`, and each check reads those of the model
+it is given, by the GGUF file's `general.name`.
 
 On three utterances of FLEURS ja_jp's test split (12677001980660723842, 6.36 s; 13903496305700695803, 10.50 s;
 2630315561484880103, 25.50 s), on an Apple M5:
@@ -780,6 +797,24 @@ On three utterances of FLEURS ja_jp's test split (12677001980660723842, 6.36 s; 
 | Greedy tokens and text from the dump's encoder output | equal | equal | equal |
 | Text from the audio, every stage ours | equal on all three | equal on all three | equal on all three |
 
+For parakeet-tdt-0.6b-v3, on twelve utterances of FLEURS' test split, three each of en_us, de_de, fr_fr and
+es_419 (5.64 to 23.40 s, one of each language over 20 s), on an Apple M5:
+
+| Check | CPU, F32 | CPU, F16 | Metal, F32 or F16 |
+|---|---|---|---|
+| Features | 94 to 125 dB SNR | the same | the same (on the host) |
+| Subsampling | 122 dB | 59 to 61 dB | 69 to 70 dB |
+| Encoder output, after 24 layers | 106 to 114 dB | 31 to 55 dB | 52 to 61 dB |
+| Prediction network on the dump's labels | 130 to 133 dB | 56 to 60 dB | 130 to 133 dB with F32, 66 to 69 dB with F16 |
+| Joint log-probabilities on the dump's frames and prediction outputs | 141 to 142 dB | 77 dB | 88 to 89 dB |
+| Greedy tokens and text from the dump's encoder output | equal | equal | equal |
+| Text from the audio, every stage ours | equal on all twelve | equal on all twelve | equal on all twelve |
+
+The lowest features, 94 dB on fr_fr 10043298898524273336, are the dump's own float32: the same steps in float64 in
+PyTorch differ from it as much. parakeet-v3's conformer layers carry values of 250 to 500, where parakeet-ja's stay
+near 100, so half precision costs more: most on the CPU with F16 weights, whose dot product on ARM also sums in half
+precision, down to 31 dB on de_de 10229344228128634115, which still gives NeMo's text.
+
 Metal gives the same numbers with F32 and F16 weights for the encoder and the joint, since its matrix kernel
 rounds both its inputs to half precision either way; the prediction network multiplies a single vector, which
 Metal does in float32.
@@ -790,6 +825,12 @@ Metal does in float32.
 the 10.50 s one and 0.28 s for the 25.50 s one. Of the last, the encoder takes 0.20 to 0.26 s, the TDT decoding
 0.07 to 0.08 s (107 steps of the prediction network, about 0.6 ms each on the GPU) and the frontend 13 to 15 ms. On
 the CPU with F32 weights and ggml's default four threads it takes 6.3 s, 0.2 to 0.3 s of it the decoding.
+
+parakeet-tdt-0.6b-v3 on the same M5 with F16 weights on Metal, after loading: 0.08 s for 5.64 s of audio, 0.12 to
+0.17 s for 10.20 to 12.84 s and 0.24 to 0.32 s for 20.76 to 23.40 s, a real-time factor of 0.012 over the twelve
+utterances. Of the 23.40 s one, the encoder takes 0.20 s, the TDT decoding 0.08 s (128 steps of the prediction
+network, and a joint over 8,198 outputs where parakeet-ja's has 3,078) and the frontend 16 ms. On the CPU with F32
+weights it takes 9.4 s.
 
 ## License
 

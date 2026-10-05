@@ -20,7 +20,8 @@ Encoder::Encoder(const ModelFile & m)
       eps_(m.f32("fastconformer.norm_eps")),
       pos_base_(m.f32("fastconformer.pos_base")),
       xscale_(m.f32("fastconformer.xscale")),
-      ff_factor_(m.f32("fastconformer.ff_factor")) {
+      ff_factor_(m.f32("fastconformer.ff_factor")),
+      use_bias_(m.u32("fastconformer.use_bias") != 0) {
     const uint32_t factor = m.u32("fastconformer.subsampling_factor");
     sub_layers_ = 0;
     for (uint32_t f = factor; f > 1; f /= 2) sub_layers_++;
@@ -34,8 +35,9 @@ int64_t Encoder::subsampled_frames(int64_t frames) const {
     return frames;
 }
 
-ggml_tensor * Encoder::linear(ggml_context * ctx, ggml_tensor * x, const std::string & name) const {
-    return ggml_add(ctx, mul_mat(ctx, m_.tensor(name + ".weight"), x), m_.tensor(name + ".bias"));
+ggml_tensor * Encoder::linear(ggml_context * ctx, ggml_tensor * x, const std::string & name, bool bias) const {
+    ggml_tensor * y = mul_mat(ctx, m_.tensor(name + ".weight"), x);
+    return bias ? ggml_add(ctx, y, m_.tensor(name + ".bias")) : y;
 }
 
 ggml_tensor * Encoder::layer_norm(ggml_context * ctx, ggml_tensor * x, const std::string & name) const {
@@ -59,19 +61,19 @@ ggml_tensor * Encoder::subsample(Graph & g, const std::vector<float> & features,
         const int64_t w = x->ne[0], h = x->ne[1], c = x->ne[2];
         // [mels, frames, channels] to [channels, mels * frames] for the pointwise convolution.
         x = ggml_reshape_2d(ctx, ggml_cont(ctx, ggml_permute(ctx, x, 1, 2, 0, 3)), c, w * h);
-        x = ggml_relu(ctx, linear(ctx, x, p + ".pw"));
+        x = ggml_relu(ctx, linear(ctx, x, p + ".pw", true));
         x = ggml_reshape_3d(ctx, x, c, w, h);
         if (i + 1 < sub_layers_) x = ggml_cont(ctx, ggml_permute(ctx, x, 2, 0, 1, 3));
     }
     // ConvSubsampling.forward() flattens (channels, mels) with the mel axis fastest.
     const int64_t c = x->ne[0], w = x->ne[1], h = x->ne[2];
     x = ggml_reshape_2d(ctx, ggml_cont(ctx, ggml_permute(ctx, x, 1, 0, 2, 3)), w * c, h);
-    return linear(ctx, x, "sub.out");
+    return linear(ctx, x, "sub.out", true);
 }
 
 ggml_tensor * Encoder::feed_forward(ggml_context * ctx, ggml_tensor * x, const std::string & name) const {
-    ggml_tensor * h = ggml_silu(ctx, linear(ctx, layer_norm(ctx, x, name + "_norm"), name + "_up"));
-    return ggml_add(ctx, x, ggml_scale(ctx, linear(ctx, h, name + "_down"), ff_factor_));
+    ggml_tensor * h = ggml_silu(ctx, linear(ctx, layer_norm(ctx, x, name + "_norm"), name + "_up", use_bias_));
+    return ggml_add(ctx, x, ggml_scale(ctx, linear(ctx, h, name + "_down", use_bias_), ff_factor_));
 }
 
 /**
@@ -91,9 +93,9 @@ ggml_tensor * Encoder::attention(Graph & g, ggml_tensor * x, ggml_tensor * pos, 
         return ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_3d(ctx, y, dk, heads_, n), 0, 2, 1, 3));
     };
     ggml_tensor * h = layer_norm(ctx, x, name + "_norm");
-    ggml_tensor * q = ggml_reshape_3d(ctx, linear(ctx, h, name + "_q"), dk, heads_, t);
-    ggml_tensor * k = heads(linear(ctx, h, name + "_k"), t);
-    ggml_tensor * v = ggml_reshape_3d(ctx, linear(ctx, h, name + "_v"), dk, heads_, t);
+    ggml_tensor * q = ggml_reshape_3d(ctx, linear(ctx, h, name + "_q", use_bias_), dk, heads_, t);
+    ggml_tensor * k = heads(linear(ctx, h, name + "_k", use_bias_), t);
+    ggml_tensor * v = ggml_reshape_3d(ctx, linear(ctx, h, name + "_v", use_bias_), dk, heads_, t);
     ggml_tensor * p = heads(mul_mat(ctx, m_.tensor(name + "_pos.weight"), pos), 2 * t - 1);
     ggml_tensor * qu = heads(ggml_add(ctx, q, m_.tensor(name + "_pos_bias_u")), t);
     ggml_tensor * qv = heads(ggml_add(ctx, q, m_.tensor(name + "_pos_bias_v")), t);
@@ -109,7 +111,7 @@ ggml_tensor * Encoder::attention(Graph & g, ggml_tensor * x, ggml_tensor * pos, 
     ggml_tensor * vt = ggml_cont(ctx, ggml_permute(ctx, v, 1, 2, 0, 3));
     ggml_tensor * out = mul_mat(ctx, vt, weights);
     out = ggml_reshape_2d(ctx, ggml_cont(ctx, ggml_permute(ctx, out, 0, 2, 1, 3)), d_model_, t);
-    return ggml_add(ctx, x, linear(ctx, out, name + "_out"));
+    return ggml_add(ctx, x, linear(ctx, out, name + "_out", use_bias_));
 }
 
 /**
@@ -123,13 +125,13 @@ ggml_tensor * Encoder::convolution(Graph & g, ggml_tensor * x, const std::string
     ggml_context * ctx = g.ctx();
     const int64_t t = x->ne[1], pad = (conv_kernel_ - 1) / 2;
     ggml_tensor * h = layer_norm(ctx, x, name + "_norm");
-    h = ggml_mul(ctx, linear(ctx, h, name + "_pw1_a"), ggml_sigmoid(ctx, linear(ctx, h, name + "_pw1_gate")));
+    h = ggml_mul(ctx, linear(ctx, h, name + "_pw1_a", use_bias_), ggml_sigmoid(ctx, linear(ctx, h, name + "_pw1_gate", use_bias_)));
     h = ggml_cont(ctx, ggml_transpose(ctx, h));
     h = ggml_concat(ctx, g.zeros(pad, d_model_), h, 0);
     h = ggml_concat(ctx, h, g.zeros(pad, d_model_), 0);
     h = ggml_ssm_conv(ctx, ggml_reshape_3d(ctx, h, t + 2 * pad, d_model_, 1), m_.tensor(name + "_dw.weight"));
     h = ggml_silu(ctx, ggml_add(ctx, ggml_reshape_2d(ctx, h, d_model_, t), m_.tensor(name + "_dw.bias")));
-    return ggml_add(ctx, x, linear(ctx, h, name + "_pw2"));
+    return ggml_add(ctx, x, linear(ctx, h, name + "_pw2", use_bias_));
 }
 
 ggml_tensor * Encoder::build(Graph & g, const std::vector<float> & features, int64_t frames, EncoderStages * stages) const {

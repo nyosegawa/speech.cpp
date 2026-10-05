@@ -1,5 +1,6 @@
 // Checks the FastConformer frontend against NeMo's preprocessor: the normalized log-mel features of each dump
-// of reference/fastconformer/dump.py, computed from the dump's own audio.
+// of reference/fastconformer/dump.py, computed from the dump's own audio. The dumps are those of the model, in
+// <reference out dir>/<its general.name>/.
 //
 // usage: fastconformer-frontend-check <model.gguf> <reference out dir>
 
@@ -29,15 +30,18 @@ int main(int argc, char ** argv) {
         {
             ModelFile model(args[1], backend);
             const Frontend frontend(model);
-            for (const auto & d : fastconformer_dumps(args[2])) {
+            for (const auto & d : fastconformer_dumps(args[2], model)) {
                 const Npy audio = read_npy((d / "audio.npy").u8string());
                 const Npy want = read_npy((d / "features.npy").u8string());
                 const std::vector<float> got = frontend.features(audio.f32);
                 const Diff diff = compare(got, want.f32);
                 std::printf("%s (%lld frames)\n", d.filename().u8string().c_str(), (long long) want.shape[0]);
                 print_diff("  features", diff);
-                // Measured on an Apple M5 on 2026-10-05: 117 to 127 dB, the gap between this double precision and
-                // torch.stft()'s float32. A wrong window, padding, filterbank or normalization falls far below.
+                // Measured on an Apple M5: 117 to 127 dB with parakeet-tdt_ctc-0.6b-ja on 2026-10-05 and 94 to 125 dB
+                // with parakeet-tdt-0.6b-v3 on 2026-10-06, the gap between this double precision and torch.stft()'s
+                // float32. The same steps in float64 in PyTorch give the dump's fr_fr-10043298898524273336 the same
+                // 94.0 dB, with the largest difference in the second mel bin. A wrong window, padding, filterbank or
+                // normalization falls far below.
                 ok = ok && got.size() == want.f32.size() && want.shape[1] == frontend.mels() && diff.snr_db > 90;
             }
         }
