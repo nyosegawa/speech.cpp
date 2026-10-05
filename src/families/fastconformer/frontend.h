@@ -29,6 +29,7 @@ public:
     int64_t frames(size_t samples) const;
 
     int sample_rate() const { return sample_rate_; }
+    int hop_length() const { return hop_; }
     int mels() const { return mels_; }
 
 private:

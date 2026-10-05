@@ -40,6 +40,7 @@ public:
     int64_t subsampled_frames(int64_t frames) const;
 
     int d_model() const { return d_model_; }
+    int subsampling_factor() const { return 1 << sub_layers_; }
 
 private:
     ggml_tensor * linear(ggml_context * ctx, ggml_tensor * x, const std::string & name, bool bias) const;

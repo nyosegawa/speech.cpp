@@ -19,7 +19,22 @@ public:
 
     std::string text(const std::vector<int32_t> & ids) const;
 
+    /**
+     * The text of each token as it stands in text(ids), which they make when joined: a whitespace the decoding
+     * removes before a punctuation mark is taken from the token that holds it.
+     */
+    std::vector<std::string> token_texts(const std::vector<int32_t> & ids) const;
+
+    /**
+     * Whether the token, decoded alone, is one of the vocabulary's punctuation marks, as compute_rnnt_timestamps()
+     * tests it: decode_ids_to_str([id]) in supported_punctuation.
+     */
+    bool punctuation(int32_t id) const;
+
 private:
+    /** The piece of `id` as DecodeIds() writes it when the text before it is `empty` or not. */
+    std::string piece_text(int32_t id, bool empty) const;
+
     std::vector<std::string> pieces_;
     std::vector<std::string> punctuation_;
     int unknown_id_;
