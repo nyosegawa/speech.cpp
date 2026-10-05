@@ -1,6 +1,8 @@
 #include "encoder.h"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace fastconformer {
@@ -22,6 +24,17 @@ Encoder::Encoder(const ModelFile & m)
       xscale_(m.f32("fastconformer.xscale")),
       ff_factor_(m.f32("fastconformer.ff_factor")),
       use_bias_(m.u32("fastconformer.use_bias") != 0) {
+    const std::string attention = m.str("fastconformer.attention");
+    if (attention != "rel_pos" && attention != "rel_pos_local_attn") {
+        throw std::runtime_error("fastconformer.attention is \"" + attention + "\", which is neither \"rel_pos\" nor \"rel_pos_local_attn\"");
+    }
+    local_ = attention == "rel_pos_local_attn";
+    if (local_) {
+        context_ = (int) m.u32("fastconformer.attention_context");
+        global_tokens_ = (int) m.u32("fastconformer.global_tokens");
+        if (context_ == 0) throw std::runtime_error("fastconformer.attention_context is 0");
+        if (global_tokens_ == 0) throw std::runtime_error("fastconformer.global_tokens is 0; the local attention runs with one global token or more");
+    }
     const uint32_t factor = m.u32("fastconformer.subsampling_factor");
     sub_layers_ = 0;
     for (uint32_t f = factor; f > 1; f /= 2) sub_layers_++;
@@ -76,6 +89,45 @@ ggml_tensor * Encoder::feed_forward(ggml_context * ctx, ggml_tensor * x, const s
     return ggml_add(ctx, x, ggml_scale(ctx, linear(ctx, h, name + "_down", use_bias_), ff_factor_));
 }
 
+Encoder::AttentionInputs Encoder::attention_inputs(Graph & g, int64_t t) const {
+    // RelPositionalEncoding.extend_pe() (multi_head_attention.py) encodes the relative positions T - 1 down to
+    // -(T - 1), and LocalAttRelPositionalEncoding.extend_pe() those from the context down to minus the context; both
+    // through create_pe(): sines in the even channels and cosines in the odd, computed in float32, so the angles
+    // round as they do here.
+    const int64_t span = local_ ? context_ : t - 1;
+    std::vector<float> pe((size_t) ((2 * span + 1) * d_model_));
+    const float step = (float) (-std::log((double) pos_base_) / d_model_);
+    for (int64_t c = 0; c < 2 * span + 1; c++) {
+        const float position = (float) (span - c);
+        for (int i = 0; i < d_model_; i += 2) {
+            const float angle = position * std::exp((float) i * step);
+            pe[(size_t) (c * d_model_ + i)] = std::sin(angle);
+            pe[(size_t) (c * d_model_ + i + 1)] = std::cos(angle);
+        }
+    }
+    AttentionInputs in{g.input(pe, d_model_, 2 * span + 1), nullptr};
+    if (local_) {
+        // The scores of block k's query r are [global tokens, window], where window column c is the frame
+        // (k - 1) w + c; a frame is seen when it is within w of the query and in the utterance. NeMo masks the frames
+        // before the utterance with -inf and its padding after it with -10000, which both leave a weight of 0.
+        const int64_t w = context_, blocks = (t + w - 1) / w, globals = std::min<int64_t>(global_tokens_, t);
+        const int64_t row = globals + 3 * w;
+        std::vector<float> mask((size_t) (row * w * blocks), -std::numeric_limits<float>::infinity());
+        for (int64_t k = 0; k < blocks; k++) {
+            for (int64_t r = 0; r < w; r++) {
+                float * m = &mask[(size_t) ((k * w + r) * row)];
+                for (int64_t c = 0; c < globals; c++) m[c] = 0.0f;
+                for (int64_t c = r; c <= r + 2 * w; c++) {
+                    const int64_t key = (k - 1) * w + c;
+                    if (key >= 0 && key < t) m[globals + c] = 0.0f;
+                }
+            }
+        }
+        in.mask = g.input(mask, row, w, blocks);
+    }
+    return in;
+}
+
 /**
  * RelPositionMultiHeadAttention.forward() (nemo/collections/asr/parts/submodules/multi_head_attention.py):
  *
@@ -86,21 +138,23 @@ ggml_tensor * Encoder::feed_forward(ggml_context * ctx, ggml_tensor * x, const s
  * order, element (i, j) of the result is element T + i (2T - 1) + j, so it is a strided view. The zero column is
  * concatenated, since Metal's ggml_pad_ext() pads on the right only.
  */
-ggml_tensor * Encoder::attention(Graph & g, ggml_tensor * x, ggml_tensor * pos, const std::string & name) const {
+ggml_tensor * Encoder::attention(Graph & g, ggml_tensor * x, const AttentionInputs & in, const std::string & name) const {
     ggml_context * ctx = g.ctx();
     const int64_t t = x->ne[1], dk = d_model_ / heads_;
+    ggml_tensor * h = layer_norm(ctx, x, name + "_norm");
+    ggml_tensor * q = ggml_reshape_3d(ctx, linear(ctx, h, name + "_q", use_bias_), dk, heads_, t);
+    ggml_tensor * k = ggml_reshape_3d(ctx, linear(ctx, h, name + "_k", use_bias_), dk, heads_, t);
+    ggml_tensor * v = ggml_reshape_3d(ctx, linear(ctx, h, name + "_v", use_bias_), dk, heads_, t);
+    if (local_) return ggml_add(ctx, x, linear(ctx, local_attention(g, q, k, v, in, name), name + "_out", use_bias_));
+
     auto heads = [&](ggml_tensor * y, int64_t n) {
         return ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_3d(ctx, y, dk, heads_, n), 0, 2, 1, 3));
     };
-    ggml_tensor * h = layer_norm(ctx, x, name + "_norm");
-    ggml_tensor * q = ggml_reshape_3d(ctx, linear(ctx, h, name + "_q", use_bias_), dk, heads_, t);
-    ggml_tensor * k = heads(linear(ctx, h, name + "_k", use_bias_), t);
-    ggml_tensor * v = ggml_reshape_3d(ctx, linear(ctx, h, name + "_v", use_bias_), dk, heads_, t);
-    ggml_tensor * p = heads(mul_mat(ctx, m_.tensor(name + "_pos.weight"), pos), 2 * t - 1);
+    ggml_tensor * p = heads(mul_mat(ctx, m_.tensor(name + "_pos.weight"), in.pos), 2 * t - 1);
     ggml_tensor * qu = heads(ggml_add(ctx, q, m_.tensor(name + "_pos_bias_u")), t);
     ggml_tensor * qv = heads(ggml_add(ctx, q, m_.tensor(name + "_pos_bias_v")), t);
 
-    ggml_tensor * ac = mul_mat(ctx, k, qu);
+    ggml_tensor * ac = mul_mat(ctx, heads(k, t), qu);
     ggml_tensor * bd = mul_mat(ctx, p, qv);
     bd = ggml_concat(ctx, g.input(std::vector<float>((size_t) (t * heads_), 0.0f), 1, t, heads_), bd, 0);
     bd = ggml_view_3d(ctx, bd, t, t, heads_, (size_t) (2 * t - 1) * sizeof(float), bd->nb[2], (size_t) t * sizeof(float));
@@ -112,6 +166,80 @@ ggml_tensor * Encoder::attention(Graph & g, ggml_tensor * x, ggml_tensor * pos, 
     ggml_tensor * out = mul_mat(ctx, vt, weights);
     out = ggml_reshape_2d(ctx, ggml_cont(ctx, ggml_permute(ctx, out, 0, 2, 1, 3)), d_model_, t);
     return ggml_add(ctx, x, linear(ctx, out, name + "_out", use_bias_));
+}
+
+/**
+ * RelPositionMultiHeadAttentionLongformer.forward() (multi_head_attention.py) with a context of w frames on either
+ * side and G global tokens, the first G frames, whose queries, keys and values are the layer's own
+ * (global_attn_separate false). Frame i's scores are
+ *
+ *     [q_i k_g for each global token g, (q_i + u) k_j + (q_i + v) p_(i - j) for each j within w of i] / sqrt(d_k),
+ *
+ * a global token appearing among both when it is within w of i, as NeMo computes it; and a global token's own
+ * output is replaced by its attention over all frames with q k^T / sqrt(d_k) alone. As in NeMo, the queries go in
+ * blocks of w frames, padded to whole blocks, and block k's queries attend to the 3w frames from (k - 1) w: the keys
+ * and values padded with w zeros on either side and three consecutive blocks of them concatenated, since a ggml view
+ * cannot overlap itself. The mask leaves the band within the utterance. The positional term of query r of a block at
+ * window column c is that of encoding c - r: the [w, 2w + 1] products padded to rows of 3w and read with a row stride
+ * one shorter, a strided view as in rel_shift().
+ */
+ggml_tensor * Encoder::local_attention(Graph & g, ggml_tensor * q, ggml_tensor * k, ggml_tensor * v, const AttentionInputs & in,
+                                       const std::string & name) const {
+    ggml_context * ctx = g.ctx();
+    const int64_t t = q->ne[2], dk = d_model_ / heads_, w = context_, blocks = (t + w - 1) / w, padded = blocks * w;
+    const int64_t window = 3 * w, globals = std::min<int64_t>(global_tokens_, t);
+    // [d_k, heads, T] to [d_k, T, heads].
+    auto heads = [&](ggml_tensor * y) { return ggml_cont(ctx, ggml_permute(ctx, y, 0, 2, 1, 3)); };
+    // [d_k, T, heads] padded to whole blocks and split into them, [d_k, w, blocks, heads].
+    auto query_blocks = [&](ggml_tensor * y) { return ggml_reshape_4d(ctx, ggml_pad(ctx, y, 0, (int) (padded - t), 0, 0), dk, w, blocks, heads_); };
+    ggml_tensor * kh = heads(k);
+    // [T, d_k, heads], so that the products with the weights contract over the keys.
+    ggml_tensor * vt = ggml_cont(ctx, ggml_permute(ctx, v, 1, 2, 0, 3));
+
+    ggml_tensor * qu = query_blocks(heads(ggml_add(ctx, q, m_.tensor(name + "_pos_bias_u"))));
+    ggml_tensor * qv = ggml_pad(ctx, heads(ggml_add(ctx, q, m_.tensor(name + "_pos_bias_v"))), 0, (int) (padded - t), 0, 0);
+    // The keys padded to [d_k, padded + 2w, heads], and block k's window, blocks k to k + 2 of them, [d_k, 3w, blocks, heads].
+    ggml_tensor * kp = ggml_concat(ctx, g.input(std::vector<float>((size_t) (dk * w * heads_), 0.0f), dk, w, heads_), kh, 1);
+    kp = ggml_pad(ctx, kp, 0, (int) (padded - t + w), 0, 0);
+    auto key_blocks = [&](int64_t first) {
+        return ggml_view_4d(ctx, kp, dk, w, blocks, heads_, kp->nb[1], w * kp->nb[1], kp->nb[2], (size_t) first * w * kp->nb[1]);
+    };
+    ggml_tensor * kw = ggml_concat(ctx, ggml_concat(ctx, key_blocks(0), key_blocks(1), 1), key_blocks(2), 1);
+    ggml_tensor * ac = mul_mat(ctx, kw, qu);
+
+    ggml_tensor * p = heads(ggml_reshape_3d(ctx, mul_mat(ctx, m_.tensor(name + "_pos.weight"), in.pos), dk, heads_, 2 * w + 1));
+    ggml_tensor * bd = ggml_pad(ctx, mul_mat(ctx, p, qv), (int) (window - (2 * w + 1)), 0, 0, 0);
+    bd = ggml_view_4d(ctx, bd, window, w, blocks, heads_, (size_t) (window - 1) * sizeof(float), (size_t) (w * window) * sizeof(float),
+                      bd->nb[2], 0);
+    ggml_tensor * scores = ggml_add(ctx, ac, ggml_cont(ctx, bd));
+
+    // The values the same way, with time first, [3w, d_k, blocks, heads].
+    ggml_tensor * vp = ggml_concat(ctx, g.input(std::vector<float>((size_t) (w * dk * heads_), 0.0f), w, dk, heads_), vt, 0);
+    vp = ggml_pad(ctx, vp, (int) (padded - t + w), 0, 0, 0);
+    auto value_blocks = [&](int64_t first) {
+        return ggml_view_4d(ctx, vp, w, dk, blocks, heads_, vp->nb[1], w * sizeof(float), vp->nb[2], (size_t) (first * w) * sizeof(float));
+    };
+    ggml_tensor * vw = ggml_concat(ctx, ggml_concat(ctx, value_blocks(0), value_blocks(1), 0), value_blocks(2), 0);
+    // _compute_global_key_attn(): every query against the global tokens' keys, without the biases or positions.
+    ggml_tensor * qn = query_blocks(heads(q));
+    ggml_tensor * kg = ggml_cont(ctx, ggml_view_4d(ctx, kh, dk, globals, 1, heads_, kh->nb[1], kh->nb[2], kh->nb[2], 0));
+    scores = ggml_concat(ctx, mul_mat(ctx, kg, qn), scores, 0);
+    ggml_tensor * weights = ggml_soft_max_ext(ctx, scores, in.mask, 1.0f / std::sqrt((float) dk), 0.0f);
+    auto columns = [&](int64_t from, int64_t n) {
+        return ggml_cont(ctx, ggml_view_4d(ctx, weights, n, w, blocks, heads_, weights->nb[1], weights->nb[2], weights->nb[3],
+                                           (size_t) from * sizeof(float)));
+    };
+    ggml_tensor * vg = ggml_cont(ctx, ggml_view_4d(ctx, vt, globals, dk, 1, heads_, vt->nb[1], vt->nb[2], vt->nb[2], 0));
+    ggml_tensor * out = ggml_add(ctx, mul_mat(ctx, vg, columns(0, globals)), mul_mat(ctx, vw, columns(globals, window)));
+    // [d_k, w, blocks, heads] to [d_model, padded], then the frames of the utterance.
+    out = ggml_reshape_2d(ctx, ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_3d(ctx, out, dk, padded, heads_), 0, 2, 1, 3)), d_model_, padded);
+
+    // _compute_out_global_to_all(): the global tokens' queries against every frame.
+    ggml_tensor * qg = ggml_cont(ctx, ggml_permute(ctx, ggml_view_3d(ctx, q, dk, heads_, globals, q->nb[1], q->nb[2], 0), 0, 2, 1, 3));
+    ggml_tensor * gw = ggml_soft_max_ext(ctx, mul_mat(ctx, kh, qg), nullptr, 1.0f / std::sqrt((float) dk), 0.0f);
+    ggml_tensor * go = ggml_reshape_2d(ctx, ggml_cont(ctx, ggml_permute(ctx, mul_mat(ctx, vt, gw), 0, 2, 1, 3)), d_model_, globals);
+    if (globals == t) return go;
+    return ggml_concat(ctx, go, ggml_view_2d(ctx, out, d_model_, t - globals, out->nb[1], (size_t) globals * out->nb[1]), 1);
 }
 
 /**
@@ -141,27 +269,14 @@ ggml_tensor * Encoder::build(Graph & g, const std::vector<float> & features, int
     const int64_t t = x->ne[1];
     if (xscale_ != 1.0f) x = ggml_scale(ctx, x, xscale_);
 
-    // RelPositionalEncoding.extend_pe() and create_pe() (multi_head_attention.py): the encodings of the positions
-    // T - 1 down to -(T - 1), sines in the even channels and cosines in the odd. create_pe() computes them in
-    // float32, so the angles round as they do here.
-    std::vector<float> pe((size_t) ((2 * t - 1) * d_model_));
-    const float step = (float) (-std::log((double) pos_base_) / d_model_);
-    for (int64_t c = 0; c < 2 * t - 1; c++) {
-        const float position = (float) (t - 1 - c);
-        for (int i = 0; i < d_model_; i += 2) {
-            const float angle = position * std::exp((float) i * step);
-            pe[(size_t) (c * d_model_ + i)] = std::sin(angle);
-            pe[(size_t) (c * d_model_ + i + 1)] = std::cos(angle);
-        }
-    }
-    ggml_tensor * pos = g.input(pe, d_model_, 2 * t - 1);
+    const AttentionInputs in = attention_inputs(g, t);
 
     // ConformerLayer.forward() (conformer_modules.py): a half-step feed-forward, attention, convolution, another
     // half-step feed-forward, each on a pre-norm residual, and a final norm.
     for (int l = 0; l < layers_; l++) {
         const std::string p = "blk." + std::to_string(l) + ".";
         x = feed_forward(ctx, x, p + "ff1");
-        x = attention(g, x, pos, p + "attn");
+        x = attention(g, x, in, p + "attn");
         x = convolution(g, x, p + "conv");
         x = feed_forward(ctx, x, p + "ff2");
         x = layer_norm(ctx, x, p + "out_norm");

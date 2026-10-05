@@ -10,7 +10,7 @@ implementation.
 |---|---|---|---|
 | Qwen3-TTS | Qwen3-TTS 12Hz 0.6B and 1.7B CustomVoice | speech synthesis with the named speakers, streamed frame by frame | [sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF), [sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF) |
 | Irodori-TTS | Irodori-TTS v4.1-Small-MF and v4.1-Small | Japanese speech synthesis in the voice of a reference recording, a sentence at a time, streamed as the codec decodes it | [sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF), [sakasegawa/Irodori-TTS-v4.1-Small-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) |
-| FastConformer | NVIDIA's parakeet-tdt_ctc-0.6b-ja and parakeet-tdt-0.6b-v3 | speech recognition with their TDT decoder, an utterance at a time: Japanese, and 25 European languages the model tells apart itself | [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF), [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) |
+| FastConformer | NVIDIA's parakeet-tdt_ctc-0.6b-ja and parakeet-tdt-0.6b-v3, reazon-research's reazonspeech-nemo-v2 | speech recognition with the decoder NeMo uses for each, a recording at a time: Japanese, 25 European languages the model tells apart itself, and Japanese recordings of many minutes | [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF), [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF), [sakasegawa/reazonspeech-nemo-v2-GGUF](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) |
 
 ## Binaries
 
@@ -360,9 +360,10 @@ for FastConformer; another rate is answered with an error, since the worker does
 chunk whose `seq` is not the next one, whose `pcm` is not base64 or holds an odd number of bytes, and an `end`
 without a whole-number `sampleRate` are answered at once with an `error`, and the request's other lines are then
 dropped. Requests are recognized one at a time in the order of their ends. A request to speak sent to a
-recognition worker is an error, and so is a chunk or an end sent to a synthesis worker. FastConformer recognizes an
-utterance at once, its encoder attending over the whole of it, so a request should be one utterance: on an Apple
-M5, the 25.5 s FLEURS utterance takes 0.22 s on Metal and its memory grows with the square of the length. A cancel
+recognition worker is an error, and so is a chunk or an end sent to a synthesis worker. FastConformer recognizes a
+request's audio at once. The parakeet models' encoders attend over the whole of it, so a request to them should be
+one utterance: on an Apple M5, the 25.5 s FLEURS utterance takes 0.22 s on Metal and its memory grows with the
+square of the length. reazonspeech-nemo-v2 attends locally and takes a recording of minutes in one request. A cancel
 takes effect before the encoder starts or once it has run.
 
 ### Irodori-TTS voices
@@ -706,65 +707,90 @@ whole sampler and the codec's first window, so it grows with the sentence.
 
 Speech recognition with NVIDIA NeMo's [FastConformer](https://arxiv.org/abs/2305.05084) models: a log-mel
 frontend, a subsampling by 8 with depthwise convolutions, conformer layers with relative positional attention,
-and a decoder that turns the encoder's frames into tokens. Implemented, for
+and a decoder that turns the encoder's frames into tokens. Implemented, each with the decoding NeMo's `transcribe()`
+uses for it by default, for
 [nvidia/parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) (Japanese) and
 [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) (25 European languages, with
-punctuation and capitals) with their TDT decoder, the one NeMo's `transcribe()` uses:
+punctuation and capitals), with their TDT decoder, and
+[reazon-research/reazonspeech-nemo-v2](https://huggingface.co/reazon-research/reazonspeech-nemo-v2) (Japanese, with
+punctuation, for recordings of many minutes), with its RNN-T decoder:
 
 - the frontend as NeMo runs it in evaluation (pre-emphasis, a centred STFT, the checkpoint's mel filters, 80 for
-  parakeet-ja and 128 for parakeet-v3, the log and the normalization of each mel bin over the utterance), on the
-  host in double precision,
-- the subsampling, the 24 conformer layers with relative positional attention over the whole utterance, and
-  the convolution modules, on ggml, with the options in which the two checkpoints differ (parakeet-v3 does not
-  scale the subsampling's output and has no biases in its conformer layers) read from the GGUF file,
-- the TDT decoder: the prediction network (an embedding and two LSTM layers) and the joint on ggml, one step
-  per emitted token, and NeMo's greedy decoding on the host, with the model's durations (0 to 4 frames) and at
-  most 10 tokens on one frame, as configured in the checkpoint,
+  parakeet-ja and ReazonSpeech and 128 for parakeet-v3, the log and the normalization of each mel bin over the
+  recording), on the host in double precision,
+- the subsampling, the 24 conformer layers and the convolution modules, on ggml, with the options in which the
+  checkpoints differ read from the GGUF file: parakeet-v3 does not scale the subsampling's output and has no biases
+  in its conformer layers, and ReazonSpeech attends locally,
+- the attention: the parakeet models' relative positional attention over the whole recording, and ReazonSpeech's
+  local attention, Longformer's as NeMo computes it, over the 128 frames (10.24 s) on either side of each frame
+  and one global token, the first frame, that every frame attends to and that attends to every frame,
+- the TDT decoder of the parakeet models: the prediction network (an embedding and two LSTM layers) and the joint
+  on ggml, one step per emitted token, and NeMo's greedy decoding on the host, with the model's durations (0 to 4
+  frames) and at most 10 tokens on one frame, as configured in the checkpoint,
+- ReazonSpeech's RNN-T decoder: the same prediction network and a joint without durations, and the beam search its
+  checkpoint configures, NeMo's alignment-length synchronous search (`alsd`) with a beam of 4, the best finished
+  hypothesis chosen by its score per label, on the host,
 - the SentencePiece pieces turned into text as NeMo's decoding writes it, with the space before each of the
   vocabulary's punctuation marks removed.
 
-The checkpoint's CTC head is not converted: NeMo decodes with TDT by default, and the two write a different text
-on some utterances ([ADR 0012](docs/adr/0012-the-recognizer-decodes-with-the-models-default-decoder.md)). Not
-implemented yet: reazon-research's reazonspeech-nemo-v2 (Japanese, with local attention and an RNN-T head). Why recognition goes
-through this port is in [ADR 0009](docs/adr/0009-speech-recognition-runs-through-a-fastconformer-port.md), and how
-it reaches the C API, the worker, the server and `speech-asr` in
-[ADR 0011](docs/adr/0011-speech-recognition-is-a-task-of-every-entry-point.md).
+A recording goes through the encoder whole, however long, as `transcribe()` runs it: speech.cpp does not cut it
+into segments. With local attention, ReazonSpeech's time and memory grow with the length of the recording; the
+parakeet models attend over all of it, and theirs grow with its square
+([ADR 0013](docs/adr/0013-local-attention-recognizes-long-audio-whole-as-transcribe-does.md)). The
+reazonspeech package that ReazonSpeech's card recommends pads the audio with 0.5 s of silence on either side before
+it calls `transcribe()`; speech.cpp does not, so its text is NeMo's for the audio as given.
+
+The parakeet-ja checkpoint's CTC head is not converted: NeMo decodes with TDT by default, and the two write a
+different text on some utterances ([ADR 0012](docs/adr/0012-the-recognizer-decodes-with-the-models-default-decoder.md)).
+For the same reason ReazonSpeech decodes with its beam search alone, not with the greedy decoding NeMo could also run
+on it: of the eight FLEURS utterances and the 65 s input of the checks below, NeMo's greedy decoding writes another
+text for four: each lacks some of the commas and full stops the beam search writes, and one also has another word. Why recognition goes through this port is in
+[ADR 0009](docs/adr/0009-speech-recognition-runs-through-a-fastconformer-port.md), and how it reaches the C API, the
+worker, the server and `speech-asr` in [ADR 0011](docs/adr/0011-speech-recognition-is-a-task-of-every-entry-point.md).
 
 ### Models
 
-Recognition needs one file, `parakeet-tdt_ctc-0.6b-ja-f16.gguf` from
-[sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) or
+Recognition needs one file: `parakeet-tdt_ctc-0.6b-ja-f16.gguf` from
+[sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF),
 `parakeet-tdt-0.6b-v3-f16.gguf` from
-[sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF), whose cards list their SHA-256. To
-convert them yourself, `reference/fastconformer/` pins NeMo 3.0.0 with PyTorch 2.10.0 and each checkpoint by
-revision, size and SHA-256:
+[sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) or
+`reazonspeech-nemo-v2-f16.gguf` from
+[sakasegawa/reazonspeech-nemo-v2-GGUF](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF), whose cards
+list their SHA-256. To convert them yourself, `reference/fastconformer/` pins NeMo 3.0.0 with PyTorch 2.10.0 and
+each checkpoint by revision, size and SHA-256:
 
 ```sh
 cd reference/fastconformer
 uv run python convert.py parakeet-tdt_ctc-0.6b-ja ../../models --type f16   # parakeet-tdt_ctc-0.6b-ja-f16.gguf, 1.2 GB
 uv run python convert.py parakeet-tdt-0.6b-v3 ../../models --type f16       # parakeet-tdt-0.6b-v3-f16.gguf, 1.3 GB
+uv run python convert.py reazonspeech-nemo-v2 ../../models --type f16       # reazonspeech-nemo-v2-f16.gguf, 1.2 GB
 ```
 
 `--type f32` writes the same at 2.5 GB. The converter refuses a checkpoint with an option the C++ does not run
-(another subsampling or attention, a prompt, a language tag to strip, a tokenizer piece it cannot write) rather
-than write a file that would recognize differently from NeMo. GGUF files converted for speech.cpp 0.5.0, which
-carry the CTC head instead of the TDT decoder, and for 0.6.0, which lack `fastconformer.use_bias`, are refused;
-convert them again. The weights are NVIDIA's, under CC-BY-4.0.
+(another subsampling, attention or decoding, a prompt, a language tag to strip, a tokenizer piece it cannot write)
+rather than write a file that would recognize differently from NeMo. GGUF files converted for speech.cpp 0.5.0,
+which carry the CTC head instead of the TDT decoder, for 0.6.0, which lack `fastconformer.use_bias`, and before
+ReazonSpeech was added, which lack `fastconformer.attention` and `fastconformer.decoder`, are refused; convert them
+again. The parakeet weights are NVIDIA's, under CC-BY-4.0, and ReazonSpeech's are reazon-research's, under the
+Apache License 2.0.
 
 ### Use
 
 ```sh
 speech-asr parakeet-tdt_ctc-0.6b-ja-f16.gguf utterance.wav     # the text on stdout
 speech-asr parakeet-tdt-0.6b-v3-f16.gguf utterance.wav
+speech-asr reazonspeech-nemo-v2-f16.gguf meeting.wav            # a recording of minutes, whole
 speech-worker parakeet-tdt_ctc-0.6b-ja-f16.gguf                 # a recognition worker (The worker, above)
 speech-server parakeet-tdt-0.6b-v3-f16.gguf                     # POST /v1/audio/transcriptions
 ```
 
-Both models take 16 kHz mono audio. parakeet-tdt_ctc-0.6b-ja recognizes `ja`, and parakeet-tdt-0.6b-v3 `bg`,
-`cs`, `da`, `de`, `el`, `en`, `es`, `et`, `fi`, `fr`, `hr`, `hu`, `it`, `lt`, `lv`, `mt`, `nl`, `pl`, `pt`, `ro`,
-`ru`, `sk`, `sl`, `sv` and `uk`, the languages of its model card. Neither has an input for a language: parakeet-v3
-finds the language of the audio itself, as NeMo's `transcribe()` runs it, without a prompt. A request's language is
-therefore only checked against the model's (`languageSelectable` false) and changes nothing in the text.
+The models take 16 kHz mono audio. parakeet-tdt_ctc-0.6b-ja and reazonspeech-nemo-v2 recognize `ja`, and
+parakeet-tdt-0.6b-v3 `bg`, `cs`, `da`, `de`, `el`, `en`, `es`, `et`, `fi`, `fr`, `hr`, `hu`, `it`, `lt`, `lv`, `mt`,
+`nl`, `pl`, `pt`, `ro`, `ru`, `sk`, `sl`, `sv` and `uk`, the languages of its model card. None has an input for a
+language: parakeet-v3 finds the language of the audio itself, as NeMo's `transcribe()` runs it, without a prompt. A
+request's language is therefore only checked against the model's (`languageSelectable` false) and changes nothing
+in the text. For a long recording, prefer reazonspeech-nemo-v2: the parakeet models' memory grows with the square
+of the length.
 
 ### Accuracy
 
@@ -775,10 +801,11 @@ checks compare each stage, given the dump's own inputs, with it:
 cd reference/fastconformer
 uv run python dump.py parakeet-tdt_ctc-0.6b-ja out <16 kHz mono WAVE files>
 uv run python dump.py parakeet-tdt-0.6b-v3 out <16 kHz mono WAVE files>
+uv run python dump.py reazonspeech-nemo-v2 out <16 kHz mono WAVE files>
 cd ../..
 build/fastconformer-frontend-check <model.gguf> reference/fastconformer/out
 build/fastconformer-encoder-check <model.gguf> reference/fastconformer/out [gpu|cpu|device name]
-build/fastconformer-tdt-check <model.gguf> reference/fastconformer/out [gpu|cpu|device name]
+build/fastconformer-transducer-check <model.gguf> reference/fastconformer/out [gpu|cpu|device name]
 ```
 
 `dump.py` writes the dumps of each model to `out/<model>/<file name>/`, and each check reads those of the model
@@ -792,7 +819,7 @@ On three utterances of FLEURS ja_jp's test split (12677001980660723842, 6.36 s; 
 | Features (`fastconformer-frontend-check`) | 117 to 127 dB SNR | the same | the same (on the host) |
 | Subsampling (`fastconformer-encoder-check`) | 123 dB | 60 to 61 dB | 68 to 70 dB |
 | Encoder output, after 24 layers | 114 to 118 dB | 55 to 56 dB | 63 to 64 dB |
-| Prediction network on the dump's labels (`fastconformer-tdt-check`) | 130 to 133 dB | 57 to 60 dB | 132 to 134 dB with F32, 66 to 70 dB with F16 |
+| Prediction network on the dump's labels (`fastconformer-transducer-check`) | 130 to 133 dB | 57 to 60 dB | 132 to 134 dB with F32, 66 to 70 dB with F16 |
 | Joint log-probabilities on the dump's frames and prediction outputs | 140 dB | 76 dB | 85 to 87 dB |
 | Greedy tokens and text from the dump's encoder output | equal | equal | equal |
 | Text from the audio, every stage ours | equal on all three | equal on all three | equal on all three |
@@ -819,6 +846,29 @@ Metal gives the same numbers with F32 and F16 weights for the encoder and the jo
 rounds both its inputs to half precision either way; the prediction network multiplies a single vector, which
 Metal does in float32.
 
+For reazonspeech-nemo-v2, on eight utterances of FLEURS ja_jp's test split (the three above, 6183819757443715774,
+8.94 s; 14931648021649736041, 10.86 s; 16124271561776664380, 14.52 s; 17416616907086415885, 17.88 s;
+9518252661993015549, 28.20 s) and two long inputs, the first 4 and the first 21 utterances of the split in the order
+of its `test.tsv` joined end to end (64.80 s and 311.22 s), on an Apple M5:
+
+| Check | CPU, F32 | CPU, F16 | Metal, F32 | Metal, F16 |
+|---|---|---|---|---|
+| Features | 113 to 128 dB SNR | the same | the same (on the host) | the same |
+| Subsampling | 122 to 123 dB | 61 to 62 dB | 70 dB | 70 dB |
+| Encoder output, after 24 layers of local attention | 104 to 119 dB, 95.9 dB on the 311 s input | 46 to 56 dB, 29.7 dB on the 311 s input | 55 to 71 dB, 37.7 dB on the 65 s input | the same |
+| Prediction network on the dump's labels, along the beam's hypotheses | 125 to 128 dB | 61 to 64 dB | 125 to 128 dB | 69 to 73 dB |
+| Joint log-probabilities on the dump's frames and prediction outputs | 124 to 126 dB | 71 to 72 dB | 83 to 88 dB | 83 to 88 dB |
+| Beam search's tokens and text from the dump's encoder output | equal | equal | equal | equal |
+| Text from the audio, every stage ours | equal on all ten | equal on all ten | equal on all ten | equal on all ten |
+
+The dumps record every evaluation of the beam search, 464 to 2,234 joint evaluations an utterance and 18,272 for the
+311 s input, and the check replays the search on the dump's encoder output. In half precision the error of the
+encoder grows in a few near-silent frames between the joined utterances, from 70 dB at the first layer to 42 dB at
+the thirteenth in the 65 s input, and the text is NeMo's all the same; on the CPU in float32 a local attention whose
+band missed one frame on one side would give 27 to 50 dB, far below what the arithmetic explains.
+`fastconformer-encoder-check` therefore asks for 90 dB on the CPU with F32 weights and 25 dB where half precision
+enters.
+
 ### Speed
 
 `speech-asr` on an Apple M5 with F16 weights on Metal, after loading: 0.07 s for the 6.36 s utterance, 0.11 s for
@@ -831,6 +881,16 @@ parakeet-tdt-0.6b-v3 on the same M5 with F16 weights on Metal, after loading: 0.
 utterances. Of the 23.40 s one, the encoder takes 0.20 s, the TDT decoding 0.08 s (128 steps of the prediction
 network, and a joint over 8,198 outputs where parakeet-ja's has 3,078) and the frontend 16 ms. On the CPU with F32
 weights it takes 9.4 s.
+
+reazonspeech-nemo-v2 on the same M5 with F16 weights on Metal, after loading: 0.17 s for the 6.36 s utterance, 0.27 s
+for the 10.50 s one, 0.55 s for the 25.50 s one and 0.63 s for the 28.20 s one, 1.4 s for the 64.80 s input and
+4.9 s for the 311.22 s one, a real-time factor of 0.016 to 0.027. The beam search takes about half of it: each of its
+steps, one graph of the new predictions and the joint of up to 4 hypotheses on the GPU, takes about 0.7 ms, and the
+311 s input takes some 4,860 steps (timed apart in `fastconformer-transducer-check`: the encoder 3.7 s, the beam
+search 3.3 s, the frontend 0.14 s). The process's peak memory footprint on the CPU with F16 weights, which
+holds every buffer, is 1.35 GB for 6.36 s, 1.55 GB for 64.80 s and 2.35 GB for 311.22 s, growing with the length;
+parakeet-tdt_ctc-0.6b-ja's is 1.30, 1.49 and 4.14 GB, growing with its square, and the 311 s input takes it 62 s on
+the CPU where ReazonSpeech takes 26 s.
 
 ## License
 

@@ -41,7 +41,7 @@ TdtDecoder::TdtDecoder(const ModelFile & m, const PredictionNetwork & prediction
     if (max_symbols_ == 0) throw std::runtime_error("fastconformer.tdt.max_symbols is 0");
 }
 
-std::vector<int32_t> TdtDecoder::greedy(const std::vector<float> & projected, ggml_backend_t backend) const {
+std::vector<int32_t> TdtDecoder::decode(const std::vector<float> & projected, ggml_backend_t backend) const {
     const int hidden = joint_.hidden();
     const int64_t frames = (int64_t) (projected.size() / (size_t) hidden);
     auto frame = [&](int64_t t) {

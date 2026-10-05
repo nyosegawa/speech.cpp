@@ -11,7 +11,7 @@ Recognizer::Recognizer(const std::string & path, ggml_backend_t backend)
       encoder_(model_),
       prediction_(model_),
       joint_(model_),
-      tdt_(model_, prediction_, joint_),
+      decoder_(make_decoder(model_, prediction_, joint_)),
       detokenizer_(model_),
       allocr_(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))) {
     if (!allocr_) throw std::runtime_error("cannot create a graph allocator");
