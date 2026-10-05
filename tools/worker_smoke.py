@@ -1,8 +1,8 @@
 """Drives speech-worker the way a caller does: waits for ready, sends two requests in its first voice, cancels
 the second after its first chunk, sends a third, and checks each answer and that every line on stdout is a
 JSON object. Then checks that Irodori-TTS speaks a fixed length of 1 s in at most 1 s and that Qwen3-TTS
-answers a speed and a length with an error, and that both answer a speed out of range or not a number with
-one. Writes the first answer to a WAV.
+answers a speed and a length with an error, that both answer a speed out of range or not a number with
+one, and that every line the worker cannot read gets an error. Writes the first answer to a WAV.
 
 usage: python3 tools/worker_smoke.py <out.wav> <worker> <model.gguf> <codec.gguf> [worker options...]
 """
@@ -99,6 +99,22 @@ else:
     expect_error({"id": "e2", "text": "長さを決めてください。", "voice": voice, "seconds": 2})
 expect_error({"id": "f", "text": "速すぎます。", "voice": voice, "speed": 5})
 expect_error({"id": "g", "text": "数ではありません。", "voice": voice, "speed": "fast"})
+
+# Lines the worker cannot read are answered too, with the id when one can be read.
+for line, want_id in [
+    ("this is not JSON", None),
+    ('["id", "h"]', None),
+    ('{"id": "h", "text": "あ。"} trailing', None),
+    (json.dumps({"id": "i", "text": "あ。", "voice": voice, "language": None}), "i"),
+    (json.dumps({"id": "j", "text": "あ。", "voice": voice, "speed": {"value": 1}}), "j"),
+    (json.dumps({"text": "あ。", "voice": voice}), None),
+    (json.dumps({"type": "pause", "id": "k"}), "k"),
+]:
+    proc.stdin.write((line + "\n").encode("utf-8"))
+    proc.stdin.flush()
+    m = read()
+    assert m["type"] == "error" and m.get("id") == want_id, (line, m)
+    print(f"{line[:40]!r}: error{' for ' + want_id if want_id else ' without an id'}: {m['error']}")
 
 proc.stdin.close()
 proc.wait(timeout=30)

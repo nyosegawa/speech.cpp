@@ -27,6 +27,11 @@
 // Irodori-TTS also between two of the sampler's steps, before the first chunk; a cancelled request sends no
 // end, and one cancelled before it starts is dropped.
 //
+// Every line on stdin gets an answer. A line that is not a request or a cancel the worker can read (not one
+// JSON object, a member that is not a string or a number, no "id", an unknown "type") is answered at once
+// with an error naming the problem, with the "id" when one could be read and without one otherwise. Such an
+// error is the caller's defect, not the model's.
+//
 // `--devices` instead prints the devices ggml can run on and exits, so that the caller can tell whether
 // the machine has a GPU and how much memory it has before starting a worker:
 //   {"type": "devices", "devices": [{"name": "Vulkan0", "description": "NVIDIA GeForce RTX 2080",
@@ -134,7 +139,7 @@ double number(const FlatJson & request, const char * key, double absent) {
     const std::string & text = it->second.text;
     char * end = nullptr;
     const double v = std::strtod(text.c_str(), &end);
-    if (!it->second.number || end != text.c_str() + text.size() || !std::isfinite(v)) {
+    if (it->second.kind != FlatValue::NUMBER || end != text.c_str() + text.size() || !std::isfinite(v)) {
         throw std::invalid_argument(std::string("\"") + key + "\" is " + json_string(text) + "; give it as a JSON number");
     }
     return v;
@@ -157,13 +162,37 @@ struct Inbox {
     }
 };
 
+/** Why a message is not a request or a cancel the worker can serve, or nothing when it is one. */
+std::string unreadable(const FlatJson & message) {
+    for (const auto & [key, v] : message) {
+        if (v.kind == FlatValue::OTHER) {
+            return "the member " + json_string(key) + " is " + v.text + "; the protocol's members are strings and numbers";
+        }
+    }
+    if (!message.count("id")) return "the message has no \"id\"; every request and cancel needs one";
+    const auto type = message.find("type");
+    if (type != message.end() && type->second.text != "cancel") {
+        return "the message's \"type\" is " + json_string(type->second.text) + "; a request has none and a cancel has \"cancel\"";
+    }
+    return "";
+}
+
 void read_requests(Inbox & inbox) {
     std::string line;
     while (std::getline(std::cin, line)) {
         FlatJson message;
+        std::string problem;
         try {
             message = parse_flat_json(line);
-        } catch (const std::exception &) {
+            problem = unreadable(message);
+        } catch (const std::exception & e) {
+            problem = std::string("a line on stdin cannot be read: ") + e.what() + "; send one JSON object per line";
+        }
+        if (!problem.empty()) {
+            const auto id = message.find("id");
+            const bool has_id = id != message.end() && id->second.kind != FlatValue::OTHER;
+            emit("{\"type\":\"error\"," + (has_id ? "\"id\":" + json_string(id->second.text) + "," : std::string()) +
+                 "\"error\":" + json_string(problem) + "}");
             continue;
         }
         std::lock_guard<std::mutex> lock(inbox.mutex);

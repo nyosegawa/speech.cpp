@@ -157,11 +157,17 @@ The messages, one JSON object per line:
 | in | `{"id":"1","text":"明日の東京は晴れです。","voice":"bright"}`, with `"language"`, `"speed"`, `"seconds"` and `"durationScale"` optional |
 | out | `{"type":"chunk","id":"1","seq":0,"pcm":"<base64 of 16-bit little-endian mono PCM at sampleRate>"}`, one or more |
 | out | `{"type":"end","id":"1","samples":278400}` |
-| out | `{"type":"error","id":"1","error":"..."}` when a request cannot be spoken |
+| out | `{"type":"error","id":"1","error":"..."}` when a request cannot be spoken or a line cannot be read; without `"id"` when the line has none the worker could read |
 | out | `{"type":"fatal","error":"..."}` when the worker cannot start |
 | in | `{"type":"cancel","id":"1"}`: the request stops between two chunks (Irodori-TTS also between two of its sampler's steps, before the first chunk) and sends no `end`; a request cancelled before it starts is dropped |
 
 Requests are served one at a time in arrival order.
+
+Every line on stdin gets an answer; none is dropped. A line the worker cannot read as a request or a cancel
+(not one JSON object, a member that is not a string or a number such as `null` or a nested object, no `id`,
+or a `type` other than `cancel`) is answered at once with an `error` that names the problem. It carries the
+line's `id` when one could be read, and has no `id` otherwise. Such an error is a defect of the caller, which
+should fail rather than wait for an answer to the line it meant to send.
 
 `speed`, `seconds` and `durationScale` are JSON numbers, the `speed`, `seconds` and `duration_scale` of the C
 API's request. `speed` is the speaking rate against the model's own (1); `seconds` fixes the length of the
