@@ -3,18 +3,24 @@
 usage: uv run python dump.py <model> <out dir> <audio.wav>...
 
 Each WAVE file, mono at the model's sample rate, goes to <out dir>/<model>/<file name without .wav>/. The
-stages are those of the official forward pass in evaluation (no dither), recorded with hooks:
+stages are those of the official forward pass and TDT greedy decoding in evaluation (no dither), recorded with
+hooks:
 
   audio          the samples as read, [N]
   features       the normalized log-mel features of the valid frames, [frames, mels]
   subsampled     the subsampling's output, before the encoder scales it by sqrt(d_model), [T, d_model]
   layers         the output of each conformer layer, [layers, T, d_model]
   encoded        the encoder's output, [T, d_model]
-  ctc_log_probs  the CTC head's log-probabilities, the blank last, [T, vocabulary + 1]
-  ctc_ids        the greedy CTC decode's token ids after merging repeats and dropping blanks, [n]
+  pred_labels    the label of each call of the prediction network in decoding order, the blank first, [n]
+  pred_output    the prediction network's output for each, its state carried from one call to the next, [n, hidden]
+  joint_frames   the encoder frame of each evaluation of the joint, [k]
+  joint_steps    the index in pred_labels of the prediction network's output each evaluation used, [k]
+  joint_output   the joint's output for each, a log-softmax over the tokens, the blank and the durations together
+                 as the joint returns it on the CPU, [k, vocabulary + 1 + durations]
+  ids            the token ids of the greedy decoding, [m]
 
-ctc_text.txt holds the CTC text in UTF-8 without a newline, and meta.json the same text, the TDT text of the same model for reference, and the lengths. The CTC text
-of the stages is asserted to equal what the official transcribe() returns with the CTC decoder.
+text.txt holds the text in UTF-8 without a newline, and meta.json the same text and the lengths. The text of the
+stages is asserted to equal what the official transcribe() returns with the model's default decoding.
 """
 
 import argparse
@@ -36,12 +42,35 @@ args = parser.parse_args()
 pin = MODELS[args.model]
 model = restore(pin)
 sample_rate = int(model.cfg.preprocessor.sample_rate)
+assert model.cur_decoder == "rnnt" and model.cfg.decoding.model_type == "tdt"
+
+# The decoding calls the prediction network once per label it feeds, projects each output for the joint, and
+# evaluates the joint on one encoder frame at a time; these wrappers record every call.
+calls = {}
+predict, project_prednet, joint_after_projection = model.decoder.predict, model.joint.project_prednet, model.joint.joint_after_projection
 
 
-def transcribe(path, decoder_type):
-    model.change_decoding_strategy(decoder_type=decoder_type, verbose=False)
-    return model.transcribe([path], batch_size=1, verbose=False)[0].text
+def recording_predict(y, state, *a, **k):
+    assert y.shape == (1, 1)
+    out = predict(y, state, *a, **k)
+    calls["pred"].append((int(y[0, 0]), out[0][0, 0].clone()))
+    return out
 
+
+def recording_project_prednet(g):
+    out = project_prednet(g)
+    calls["projected"].append(out.clone())
+    return out
+
+
+def recording_joint(f, g):
+    out = joint_after_projection(f, g)
+    calls["joint"].append((f[0, 0].clone(), g.clone(), out[0, 0, 0].clone()))
+    return out
+
+
+model.decoder.predict, model.joint.project_prednet, model.joint.joint_after_projection = (
+    recording_predict, recording_project_prednet, recording_joint)
 
 for path in args.audio:
     samples, rate = soundfile.read(path, dtype="float32")
@@ -71,16 +100,29 @@ for path in args.audio:
     saved["encoded"] = encoded[0, :, :t].T
     assert torch.equal(saved["layers"][-1], saved["encoded"])
 
-    log_probs = model.ctc_decoder(encoder_output=encoded)
-    saved["ctc_log_probs"] = log_probs[0, :t]
-    hypothesis = model.ctc_decoding.ctc_decoder_predictions_tensor(log_probs, decoder_lengths=length, return_hypotheses=True)[0]
-    ids = [int(i) for i in hypothesis.y_sequence[:t].tolist()]
-    blank = model.ctc_decoding.blank_id
-    merged = [p for i, p in enumerate(ids) if p != blank and (i == 0 or p != ids[i - 1])]
-    saved["ctc_ids"] = np.array(merged, dtype=np.int32)
+    calls.update(pred=[], projected=[], joint=[])
+    hypothesis = model.decoding.rnnt_decoder_predictions_tensor(encoder_output=encoded, encoded_lengths=length, return_hypotheses=True)[0]
+    assert len(calls["pred"]) == len(calls["projected"])
+    saved["pred_labels"] = np.array([label for label, _ in calls["pred"]], dtype=np.int32)
+    saved["pred_output"] = torch.stack([g for _, g in calls["pred"]])
+    # Each evaluation's frame and prediction output are found by equality with the projected encoder output and
+    # the projected prediction outputs, the very tensors the decoding indexes and carries.
+    projected = model.joint.project_encoder(encoded.transpose(1, 2))[0, :t]
+    joint_frames, joint_steps = [], []
+    for f, g, _ in calls["joint"]:
+        frame = [i for i in range(t) if torch.equal(projected[i], f)]
+        step = [i for i, p in enumerate(calls["projected"]) if torch.equal(p, g)]
+        assert len(frame) == 1 and step, "a joint evaluation matches no single frame or no prediction output"
+        joint_frames.append(frame[0])
+        joint_steps.append(step[-1])
+    saved["joint_frames"] = np.array(joint_frames, dtype=np.int32)
+    saved["joint_steps"] = np.array(joint_steps, dtype=np.int32)
+    saved["joint_output"] = torch.stack([o for _, _, o in calls["joint"]])
+    ids = [int(i) for i in hypothesis.y_sequence.tolist()]
+    saved["ids"] = np.array(ids, dtype=np.int32)
     text = hypothesis.text
-    assert model.ctc_decoding.decode_tokens_to_str_with_strip_punctuation(merged) == text
-    official = transcribe(path, "ctc")
+    assert model.decoding.decode_tokens_to_str_with_strip_punctuation(ids) == text
+    official = model.transcribe([path], batch_size=1, verbose=False)[0].text
     assert text == official, f"the stages give {text!r}, transcribe() gives {official!r}"
 
     for key, value in saved.items():
@@ -89,9 +131,9 @@ for path in args.audio:
     meta = {
         "nemo": NEMO, "model": pin, "audio": os.path.basename(path), "samples": int(samples.shape[0]),
         "seconds": samples.shape[0] / sample_rate, "frames": frames, "encoded_frames": t,
-        "ctc_text": text, "tdt_text": transcribe(path, "rnnt"),
+        "prediction_steps": len(saved["pred_labels"]), "joint_evaluations": len(saved["joint_frames"]), "text": text,
     }
-    with open(os.path.join(out, "ctc_text.txt"), "w", encoding="utf-8", newline="") as f:
+    with open(os.path.join(out, "text.txt"), "w", encoding="utf-8", newline="") as f:
         f.write(text)
     json.dump(meta, open(os.path.join(out, "meta.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     print(json.dumps({k: v for k, v in meta.items() if k not in ("nemo", "model")}, ensure_ascii=False))

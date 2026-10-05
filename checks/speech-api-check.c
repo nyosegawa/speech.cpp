@@ -9,7 +9,7 @@
  * as an error, and refuses to recognize speech.
  *
  * With a recognition model (transcribe): refuses to load it with a codec, voices or steps, loads it, describes it,
- * recognizes the audio of each dump of reference/fastconformer/dump.py and compares the text with the dump's CTC text
+ * recognizes the audio of each dump of reference/fastconformer/dump.py and compares the text with the dump's text
  * byte for byte, refuses audio at another rate, no audio, a language the model does not recognize and a request to
  * speak, stops a request whose callback returns nonzero, and stops one with speech_cancel() from another thread while
  * the encoder runs.

@@ -1,14 +1,15 @@
-"""Converts a pinned NeMo FastConformer checkpoint with a CTC head to the GGUF the C++ port reads.
+"""Converts a pinned NeMo FastConformer checkpoint with a TDT decoder to the GGUF the C++ port reads.
 
 usage: uv run python convert.py <model> <out dir> [--type f32|f16]
 
-Writes <model>-<type>.gguf: the frontend's window and mel filterbank, the subsampling, the conformer layers
-and the CTC head, with the SentencePiece pieces the CTC head's ids name.
+Writes <model>-<type>.gguf: the frontend's window and mel filterbank, the subsampling, the conformer layers,
+the prediction network and the joint, with the SentencePiece pieces the token ids name and the TDT greedy
+decoding's durations and limit. A hybrid checkpoint's CTC head is left out, since NeMo decodes with TDT.
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [out, in] is stored as is
 (ne = [in, out]). --type f16 applies to the matrices of the linear layers; convolution kernels, norms, biases,
 the frontend and the rest stay float32. The batch norm of each convolution module is folded into its
-depthwise convolution, which it follows in evaluation.
+depthwise convolution, which it follows in evaluation, and each LSTM layer's two biases are summed.
 """
 
 import argparse
@@ -41,7 +42,23 @@ assert enc.subsampling == "dw_striding" and enc.self_attention_model == "rel_pos
 assert list(enc.att_context_size) == [-1, -1] and enc.conv_norm_type == "batch_norm"
 assert featurizer.exact_pad is False and featurizer.frame_splicing == 1 and featurizer.mag_power == 2.0
 assert featurizer.normalize == "per_feature" and featurizer.log and featurizer.log_zero_guard_type == "add"
-assert featurizer.pad_value == 0 and model.ctc_decoder.temperature == 1.0
+assert featurizer.pad_value == 0
+# The decoding transcribe() runs: greedy TDT with the blank as the prediction network's padding (its embedding
+# zero, so the blank fed first is the start of the sequence) and a ReLU joint. The joint's log-softmax, which
+# NeMo applies on the CPU alone, changes no argmax and is left out.
+dec, joint, decoding = model.decoder, model.joint, model.decoding
+assert model.cur_decoder == "rnnt" and decoding.cfg.model_type == "tdt" and decoding.cfg.strategy == "greedy_batch"
+assert not decoding.cfg.get("big_blank_durations")
+assert dec.blank_as_pad and dec.blank_idx == decoding.blank_id and not dec.random_state_sampling
+# LSTMDropout is the plain LSTM rnn() makes without a normalization; its dropout is off in evaluation.
+assert type(dec.prediction.dec_rnn).__name__ == "LSTMDropout" and dec.prediction.dec_rnn.lstm.proj_size == 0
+assert dec.prediction.dec_rnn.lstm.bias and not dec.prediction.dec_rnn.lstm.bidirectional
+assert not dec.is_adapter_available() and not joint.is_adapter_available()
+assert float(dec.prediction.embed.weight[dec.blank_idx].abs().max()) == 0
+assert joint.activation == "relu" and joint.temperature == 1.0
+durations = [int(d) for d in decoding.cfg.durations]
+assert joint.num_extra_outputs == len(durations) == len(decoding.durations)
+assert joint.joint_net[-1].out_features == decoding.blank_id + 1 + len(durations)
 
 path = os.path.join(args.out_dir, f"{args.model}-{args.type}.gguf")
 w = GGUFWriter(path, ARCH)
@@ -74,7 +91,7 @@ w.add_float32("fastconformer.pos_base", 10000.0)
 w.add_float32("fastconformer.xscale", float(model.encoder.xscale or 1.0))
 w.add_float32("fastconformer.ff_factor", float(model.encoder.layers[0].fc_factor))
 
-# The CTC head's classes are the tokenizer's ids and a blank after them.
+# The joint's classes are the tokenizer's ids, a blank after them, then one per duration.
 tokenizer = model.tokenizer
 assert not tokenizer.legacy
 proto = sentencepiece_model_pb2.ModelProto()
@@ -82,9 +99,13 @@ proto.ParseFromString(tokenizer.tokenizer.serialized_model_proto())
 # Normal pieces and the unknown piece only: the C++ detokenizer handles no control, user-defined or byte pieces.
 assert all(p.type in (proto.SentencePiece.NORMAL, proto.SentencePiece.UNKNOWN) for p in proto.pieces)
 assert not proto.trainer_spec.treat_whitespace_as_suffix
-blank = int(model.ctc_decoder.num_classes_with_blank) - 1
+blank = int(decoding.blank_id)
 assert blank == len(proto.pieces) == tokenizer.vocab_size
-w.add_uint32("fastconformer.ctc.blank_id", blank)
+w.add_uint32("fastconformer.blank_id", blank)
+w.add_uint32("fastconformer.prediction.num_layers", int(dec.pred_rnn_layers))
+w.add_array("fastconformer.tdt.durations", durations)
+# The most tokens emitted on one frame before the decoding moves to the next.
+w.add_uint32("fastconformer.tdt.max_symbols", int(decoding.decoding.max_symbols))
 w.add_string("tokenizer.model", "sentencepiece")
 w.add_array("tokenizer.tokens", [p.piece for p in proto.pieces])
 w.add_uint32("tokenizer.unknown_id", int(tokenizer.tokenizer.unk_id()))
@@ -93,12 +114,12 @@ w.add_string("tokenizer.unknown_surface", proto.trainer_spec.unk_surface)
 # it does when either normalizer option is set.
 w.add_uint32("tokenizer.strip_leading_space",
              int(proto.normalizer_spec.add_dummy_prefix or proto.normalizer_spec.remove_extra_whitespaces))
-# The marks before which the CTC decoding removes one whitespace character. The C++ looks for a space only,
+# The marks before which the decoding removes one whitespace character. The C++ looks for a space only,
 # the one whitespace character a decoded text can hold when no piece holds another and the unknown surface
 # holds only spaces.
 assert not any(c.isspace() for p in proto.pieces for c in p.piece)
 assert all(c == " " or not c.isspace() for c in proto.trainer_spec.unk_surface)
-w.add_array("tokenizer.punctuation", sorted(model.ctc_decoding.supported_punctuation or []))
+w.add_array("tokenizer.punctuation", sorted(decoding.supported_punctuation or []))
 
 sd = {k: v.detach().float().numpy() for k, v in model.state_dict().items()}
 
@@ -163,8 +184,19 @@ for l in range(int(enc.n_layers)):
     add(o + "conv_pw2.bias", sd[a + "conv.pointwise_conv2.bias"])
     norm("norm_out", o + "out_norm")
 
-add("ctc.weight", sd["ctc_decoder.decoder_layers.0.weight"][:, :, 0], True)
-add("ctc.bias", sd["ctc_decoder.decoder_layers.0.bias"])
+# The prediction network: an embedding of the tokens and the blank, then LSTM layers whose gates are stacked as
+# PyTorch stacks them, input, forget, cell and output.
+add("pred.embed.weight", sd["decoder.prediction.embed.weight"], True)
+for l in range(int(dec.pred_rnn_layers)):
+    r = "decoder.prediction.dec_rnn.lstm."
+    add(f"pred.lstm.{l}.ih.weight", sd[r + f"weight_ih_l{l}"], True)
+    add(f"pred.lstm.{l}.hh.weight", sd[r + f"weight_hh_l{l}"], True)
+    add(f"pred.lstm.{l}.bias", sd[r + f"bias_ih_l{l}"] + sd[r + f"bias_hh_l{l}"])
+for x in ("enc", "pred"):
+    add(f"joint.{x}.weight", sd[f"joint.{x}.weight"], True)
+    add(f"joint.{x}.bias", sd[f"joint.{x}.bias"])
+add("joint.out.weight", sd["joint.joint_net.2.weight"], True)
+add("joint.out.bias", sd["joint.joint_net.2.bias"])
 
 w.write_header_to_file()
 w.write_kv_data_to_file()

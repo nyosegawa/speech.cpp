@@ -1,5 +1,5 @@
 """Drives a recognition speech-worker the way a caller does: waits for ready, sends the audio of each dump of
-reference/fastconformer/dump.py as 16-bit chunks of one second and checks that the text is the dump's CTC text.
+reference/fastconformer/dump.py as 16-bit chunks of one second and checks that the text is the dump's text.
 Then checks that the chunks of two requests may interleave and that the requests are answered in the order of their
 ends, that a cancel drops a request whether it is still taking chunks or waiting, that audio at another rate, an
 unknown language and a request to speak are answered with an error, that a refused chunk is the one answer of its
@@ -88,7 +88,7 @@ print(f"ready in {time.perf_counter() - t0:.2f} s: {ready['model']} ({ready['arc
 audio = {}
 for d in dumps:
     name = os.path.basename(os.path.normpath(d))
-    with open(os.path.join(d, "ctc_text.txt"), encoding="utf-8") as f:
+    with open(os.path.join(d, "text.txt"), encoding="utf-8") as f:
         want = f.read()
     audio[name] = pcm16(read_npy(os.path.join(d, "audio.npy")))
     t1 = time.perf_counter()
@@ -98,8 +98,8 @@ for d in dumps:
     m = read()
     assert m["type"] == "text" and m["id"] == name, m
     if m["text"] != want:
-        raise SystemExit(f"{name}: the text differs from the dump's CTC text\n  got  {m['text']}\n  want {want}")
-    print(f"{name}: {len(audio[name]) / 2 / rate:.2f} s, the dump's CTC text in {time.perf_counter() - t1:.3f} s")
+        raise SystemExit(f"{name}: the text differs from the dump's text\n  got  {m['text']}\n  want {want}")
+    print(f"{name}: {len(audio[name]) / 2 / rate:.2f} s, the dump's text in {time.perf_counter() - t1:.3f} s")
 
 first, last = sorted(audio, key=lambda n: len(audio[n]))[0], sorted(audio, key=lambda n: len(audio[n]))[-1]
 short = audio[first]
