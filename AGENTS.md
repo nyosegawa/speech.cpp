@@ -124,8 +124,10 @@ settled a choice or turned an approach down for good; if so, the record goes int
   the worker's `ready` report it. Versions follow Semantic Versioning: while they are 0.x, a change a caller
   notices and must adapt to (the worker protocol, the C API, the GGUF layout, a voice file's form, a tool's
   arguments) raises the minor version, and anything else that is released raises the patch.
+- `VERSION` is raised by a pull request of its own just before a release ("Raise the version to 0.5.0"), to
+  the number the changes since the last tag call for; a change does not raise it by itself.
 - The tag `v<VERSION>` builds the release in CI, which refuses a tag that differs from `VERSION`. Releases and
-  tags are never deleted or moved: ASIST pins them by SHA-256.
+  tags are never deleted or moved: callers such as ASIST pin them by SHA-256.
 - Converted GGUF files go to Hugging Face only with the user's approval, one repository per family
   (sakasegawa/qwen3-tts-ggml, sakasegawa/irodori-tts-ggml), with the licenses of what it holds. A changed
   file goes up under the same name, and its card's SHA-256 changes with it.
