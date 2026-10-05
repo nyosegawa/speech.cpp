@@ -22,12 +22,12 @@ std::vector<float> linspace(float start, float end, int n) {
 }  // namespace
 
 Sampler::Sampler(const Dit & dit, const ModelFile & m, ggml_backend_t backend) : dit_(dit), backend_(backend) {
-    default_steps_ = (int) m.u32("irodori.default_steps");
+    default_steps_ = (int) m.u32("irodori-tts.sampler.default_steps");
     if (!dit.meanflow()) {
-        cfg_text_ = m.f32("irodori.cfg_text");
-        cfg_speaker_ = m.f32("irodori.cfg_speaker");
-        cfg_min_t_ = m.f32("irodori.cfg_min_t");
-        cfg_max_t_ = m.f32("irodori.cfg_max_t");
+        cfg_text_ = m.f32("irodori-tts.sampler.cfg_text");
+        cfg_speaker_ = m.f32("irodori-tts.sampler.cfg_speaker");
+        cfg_min_t_ = m.f32("irodori-tts.sampler.cfg_min_t");
+        cfg_max_t_ = m.f32("irodori-tts.sampler.cfg_max_t");
     }
     allocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
 }

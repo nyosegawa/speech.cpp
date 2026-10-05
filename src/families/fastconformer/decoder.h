@@ -20,7 +20,7 @@ public:
 };
 
 /**
- * The decoding fastconformer.decoder names: greedy TDT ("tdt", TdtDecoder) or the alignment-length synchronous beam
+ * The decoding fastconformer.decoder.kind names: greedy TDT ("tdt", TdtDecoder) or the alignment-length synchronous beam
  * search over RNN-T ("rnnt", AlsdDecoder).
  */
 std::unique_ptr<Decoder> make_decoder(const ModelFile & m, const PredictionNetwork & prediction, const Joint & joint);

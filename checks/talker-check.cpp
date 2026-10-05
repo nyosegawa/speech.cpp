@@ -4,19 +4,21 @@
 // first stage that departs is the one reported. A free-running greedy decode then shows whether the
 // same codes come out.
 //
-// usage: talker-check <talker.gguf> <reference dir> [gpu|cpu]
+// usage: talker-check <model.gguf> <reference dir> [gpu|cpu]
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <random>
 #include <string>
 
 #include "args.h"
 #include "backend.h"
 #include "npy.h"
+#include "qwen3-tts/layout.h"
 #include "qwen3-tts/prompt.h"
 #include "qwen3-tts/sampler.h"
 #include "qwen3-tts/talker.h"
@@ -52,19 +54,31 @@ std::string meta_field(const std::string & dir, const std::string & key) {
     return json.substr(a + 1, b - a - 1);
 }
 
+/** The BCP 47 tag of a language as the official API names it, which the dump's meta.json keeps. */
+std::string language_tag(const std::string & official) {
+    static const std::map<std::string, std::string> tags = {
+        {"auto", "auto"},    {"chinese", "zh"},  {"english", "en"}, {"french", "fr"},     {"german", "de"},  {"italian", "it"},
+        {"japanese", "ja"}, {"korean", "ko"},   {"portuguese", "pt"}, {"russian", "ru"}, {"spanish", "es"}};
+    const auto it = tags.find(official);
+    if (it == tags.end()) throw std::runtime_error("the dump names the language " + official + ", which the check cannot tag");
+    return it->second;
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
     const std::vector<std::string> args = utf8_args(argc, argv);
     if (args.size() < 3) {
-        std::fprintf(stderr, "usage: %s <talker.gguf> <reference dir> [gpu|cpu]\n", args[0].c_str());
+        std::fprintf(stderr, "usage: %s <model.gguf> <reference dir> [gpu|cpu]\n", args[0].c_str());
         return 2;
     }
     const std::string dir = args[2];
     ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
     std::printf("backend: %s\n", ggml_backend_name(backend));
-    Talker talker(args[1], backend, 2048);
-    const PromptIds ids(talker.model());
+    const ModelFile model(args[1], backend, qwen3_tts_layout);
+    Talker talker(model, backend);
+    const PromptIds ids(model);
+    const Generation generation(model);
 
     const Npy input_ids = read_npy(dir + "/input_ids.npy");
     const Npy ref_prefill = read_npy(dir + "/prefill_embeds.npy");
@@ -72,7 +86,7 @@ int main(int argc, char ** argv) {
     const Npy ref_hidden = read_npy(dir + "/talker_hidden.npy");
     const Npy ref_cp = read_npy(dir + "/cp_logits.npy");
     const Npy ref_codes = read_npy(dir + "/codes.npy");
-    const std::string speaker = meta_field(dir, "speaker"), language = meta_field(dir, "language");
+    const std::string speaker = meta_field(dir, "speaker"), language = language_tag(meta_field(dir, "language"));
     const int h = talker.hidden(), n_groups = talker.num_code_groups();
     const int n_frames = (int) ref_codes.shape[0];
 
@@ -87,7 +101,7 @@ int main(int argc, char ** argv) {
 
     // Teacher forcing.
     Worst w_logits, w_hidden, w_cp;
-    talker.prefill(prompt.embeds, prompt.n);
+    talker.prefill(prompt.embeds, prompt.n, (int64_t) prompt.n + n_frames);
     w_logits.add(talker.logits().data(), &ref_logits.f32[0], talker.vocab());
     w_hidden.add(talker.hidden_state().data(), &ref_hidden.f32[0], h);
     for (int f = 0; f < n_frames; f++) {
@@ -105,23 +119,19 @@ int main(int argc, char ** argv) {
     w_hidden.print("talker hidden state");
     w_cp.print("code predictor logits");
 
-    // Free-running greedy decode with the official talker settings.
-    SamplingParams talker_p;
+    // Free-running greedy decode with the official talker settings, as dump.py ran it.
+    SamplingParams talker_p = generation.talker;
     talker_p.greedy = true;
-    talker_p.repetition_penalty = 1.05f;
-    SamplingParams cp_p;
+    SamplingParams cp_p = generation.code_predictor;
     cp_p.greedy = true;
-    std::vector<bool> banned(talker.vocab(), false);
-    for (int i = talker.vocab() - 1024; i < talker.vocab(); i++) banned[i] = i != ids.codec_eos;
     std::vector<bool> none;
     std::mt19937_64 rng(0);
     std::vector<int32_t> history, codes(n_groups);
     int first_diff = -1, frames = 0;
-    talker.prefill(prompt.embeds, prompt.n);
-    for (int f = 0; f < 2 * n_frames + 10; f++) {
-        std::vector<bool> b = banned;
-        if (f < 2) b[ids.codec_eos] = true;
-        codes[0] = sample(talker.logits(), talker_p, history, b, rng);
+    const int max_frames = 2 * n_frames + 10;
+    talker.prefill(prompt.embeds, prompt.n, (int64_t) prompt.n + max_frames);
+    for (int f = 0; f < max_frames; f++) {
+        codes[0] = sample(talker.logits(), talker_p, history, generation.banned(talker.vocab(), ids.codec_eos, f), rng);
         if (codes[0] == ids.codec_eos) break;
         history.push_back(codes[0]);
         codes[1] = sample(talker.cp_begin(codes[0]), cp_p, {}, none, rng);

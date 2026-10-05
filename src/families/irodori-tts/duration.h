@@ -16,7 +16,7 @@ struct LengthOptions {
     double seconds = 0;
     /** The factor of the predicted length, above 0. It cannot be given with `seconds`. */
     double duration_scale = 1;
-    /** The speaking rate from 0.25 to 4, which divides the length, fixed or predicted. */
+    /** The speaking rate, which divides the length, fixed or predicted. */
     double speed = 1;
 
     /** Whether the length is fixed, so that the duration predictor does not run. */
@@ -36,16 +36,16 @@ struct Length {
  */
 class DurationPredictor {
 public:
-    /** `sample_rate` and `hop` are the codec's, which turn the bounds in seconds into frames. */
-    DurationPredictor(const ModelFile & m, int sample_rate, int hop);
+    /** The predictor of the model file `m`, which outlives it, with the bounds of the length and the speed it gives. */
+    explicit DurationPredictor(const ModelFile & m);
 
     /** The predicted frames summed over the tokens, [1], for a text condition [text_dim, n] and a speaker summary [speaker_dim]. */
     ggml_tensor * build(Graph & g, ggml_tensor * text_state, ggml_tensor * speaker_summary) const;
 
     /**
-     * Throws unless the options are ones the runtime takes, with seconds that, divided by the speed, lie
-     * within the model's bounds of 0.5 s and 30 s. The runtime clamps such seconds into the bounds and
-     * ignores a duration scale given with seconds; both are refused here instead.
+     * Throws unless the options are ones the runtime takes, with a speed within the model's bounds and seconds that,
+     * divided by the speed, lie within the model's bounds of the length. The runtime clamps such seconds into the
+     * bounds and ignores a duration scale given with seconds; both are refused here instead.
      */
     void check(const LengthOptions & options) const;
 
@@ -60,7 +60,7 @@ public:
 private:
     const ModelFile & m_;
     int layers_, sample_rate_, hop_, min_frames_, max_frames_;
-    double min_seconds_, max_seconds_;
+    double min_seconds_, max_seconds_, min_speed_, max_speed_;
     float eps_;
 };
 

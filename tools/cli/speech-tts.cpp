@@ -8,12 +8,11 @@
 // and data sizes are set once the audio is complete; anywhere else (a pipe, a console, a file appended to)
 // they stay 0xFFFFFFFF, as ffmpeg writes them to a pipe.
 //
-// usage: speech-tts <model.gguf> <codec.gguf> -o <out.wav|-> [options] [text]
+// usage: speech-tts <model.gguf> -o <out.wav|-> [options] [text]
 //          --device NAME|gpu|cpu   --seed n   --voice-name NAME   --language TAG
-//          --ctx n                                        (Qwen3-TTS)
 //          --voice NAME=FILE...  --steps n  --speed x  --seconds s | --duration-scale x  (Irodori-TTS)
 //          -v
-//        speech-tts make-voice <model.gguf> <codec.gguf> <reference.wav> <voice.gguf> [--device NAME|gpu|cpu]
+//        speech-tts make-voice <model.gguf> <reference.wav> <voice.gguf> [--device NAME|gpu|cpu]
 //        speech-tts --devices
 
 #include <algorithm>
@@ -53,8 +52,8 @@
 namespace {
 
 const char * const usage =
-    "usage: speech-tts <model.gguf> <codec.gguf> -o <out.wav|-> [options] [text]\n"
-    "       speech-tts make-voice <model.gguf> <codec.gguf> <reference.wav> <voice.gguf> [--device NAME]\n"
+    "usage: speech-tts <model.gguf> -o <out.wav|-> [options] [text]\n"
+    "       speech-tts make-voice <model.gguf> <reference.wav> <voice.gguf> [--device NAME]\n"
     "       speech-tts --devices\n"
     "\n"
     "Speaks the text, or without one every line of stdin, into one WAVE file; -o - writes it to stdout.\n"
@@ -65,7 +64,6 @@ const char * const usage =
     "  --voice-name NAME       the voice to speak with: a Qwen3-TTS speaker or the NAME of a --voice.\n"
     "                          Needed unless the model has a single voice\n"
     "  --language TAG          a BCP 47 tag of one of the model's languages, or auto (the default)\n"
-    "  --ctx n                 Qwen3-TTS: the talker's context in positions (2048)\n"
     "  --voice NAME=FILE       Irodori-TTS: a voice, a reference WAVE file or a voice file; repeat for more\n"
     "  --steps n               Irodori-TTS: the sampler's steps (the model's own by default)\n"
     "  --speed x               Irodori-TTS: the speaking rate, 0.25 to 4 (1)\n"
@@ -114,7 +112,6 @@ struct Options {
     std::string output, device, voice, language;
     bool has_output = false;
     bool verbose = false;
-    int context = speech_model_default_params().context;
     int steps = 0;
     std::vector<std::pair<std::string, std::string>> voices;
     bool has_seed = false;
@@ -155,8 +152,6 @@ Options parse_options(const std::vector<std::string> & a, size_t first) {
             o.voice = value();
         } else if (key == "--language") {
             o.language = value();
-        } else if (key == "--ctx") {
-            o.context = small_number(key, value());
         } else if (key == "--steps") {
             o.steps = small_number(key, value());
         } else if (key == "--voice") {
@@ -288,21 +283,19 @@ private:
 
 int make_voice(const std::vector<std::string> & a) {
     const Options o = parse_options(a, 2);
-    if (o.positional.size() != 4) throw UsageError("make-voice takes <model.gguf> <codec.gguf> <reference.wav> <voice.gguf>");
-    if (o.has_output || o.has_seed || !o.voice.empty() || !o.language.empty() || !o.voices.empty() || o.steps ||
-        o.context != speech_model_default_params().context || o.request.speed != 1 || o.request.seconds != 0 ||
-        o.request.duration_scale != 1) {
+    if (o.positional.size() != 3) throw UsageError("make-voice takes <model.gguf> <reference.wav> <voice.gguf>");
+    if (o.has_output || o.has_seed || !o.voice.empty() || !o.language.empty() || !o.voices.empty() || o.steps || o.request.speed != 1 ||
+        o.request.seconds != 0 || o.request.duration_scale != 1) {
         throw UsageError("make-voice takes no option but --device and -v");
     }
     speech_model_params params = speech_model_default_params();
     params.model_path = o.positional[0].c_str();
-    params.codec_path = o.positional[1].c_str();
     params.device = o.device.c_str();
     const auto t0 = Clock::now();
-    if (speech_make_voice(&params, o.positional[2].c_str(), o.positional[3].c_str()) != SPEECH_OK) {
+    if (speech_make_voice(&params, o.positional[1].c_str(), o.positional[2].c_str()) != SPEECH_OK) {
         throw std::runtime_error(speech_last_error());
     }
-    std::fprintf(stderr, "wrote %s in %.2f s\n", o.positional[3].c_str(), seconds_since(t0));
+    std::fprintf(stderr, "wrote %s in %.2f s\n", o.positional[2].c_str(), seconds_since(t0));
     return 0;
 }
 
@@ -357,19 +350,17 @@ bool next_line(std::string & line, bool & first) {
 
 int speak(const std::vector<std::string> & a, FILE * out) {
     Options o = parse_options(a, 1);
-    if (o.positional.size() < 2) throw UsageError("give the model's and the codec's GGUF files");
-    if (o.positional.size() > 3) throw UsageError("give the text as one argument, in quotes");
+    if (o.positional.empty()) throw UsageError("give the model's GGUF file");
+    if (o.positional.size() > 2) throw UsageError("give the model's one GGUF file, which holds its codec, and the text as one argument, in quotes");
     if (!o.has_output) throw UsageError("name the WAVE file to write with -o, or give -o - for stdout");
-    const bool from_stdin = o.positional.size() == 2;
+    const bool from_stdin = o.positional.size() == 1;
     const uint64_t first_seed = o.has_seed ? o.seed : std::random_device{}();
 
     std::vector<speech_voice_source> voices;
     for (const auto & [name, path] : o.voices) voices.push_back({name.c_str(), path.c_str()});
     speech_model_params params = speech_model_default_params();
     params.model_path = o.positional[0].c_str();
-    params.codec_path = o.positional[1].c_str();
     params.device = o.device.c_str();
-    params.context = o.context;
     params.voices = voices.data();
     params.n_voices = voices.size();
     params.steps = o.steps;
@@ -391,7 +382,7 @@ int speak(const std::vector<std::string> & a, FILE * out) {
     Output output(o.output, out);
     WavWriter wav(output.file(), speech_model_sample_rate(model));
     const double rate = speech_model_sample_rate(model);
-    std::string text = from_stdin ? "" : o.positional[2];
+    std::string text = from_stdin ? "" : o.positional[1];
     bool first_line = true;
     int count = 0;
     size_t samples = 0;

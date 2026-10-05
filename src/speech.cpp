@@ -26,15 +26,15 @@ struct Family {
     /** The name a message gives it, such as Qwen3-TTS. */
     const char * name;
     speech_task task;
-    /** Whether it needs a codec, and takes voices, a context and sampler steps; any it does not take is refused. */
-    bool codec, voices, context, steps;
+    /** Whether it takes voices and sampler steps; any it does not take is refused. */
+    bool voices, steps;
     std::unique_ptr<Engine> (*make)(const EngineOptions & options, ggml_backend_t backend);
 };
 
 const Family families[] = {
-    {"qwen3tts-talker", "Qwen3-TTS", SPEECH_TASK_SYNTHESIS, true, false, true, false, make_qwen3_tts},
-    {"irodori-tts", "Irodori-TTS", SPEECH_TASK_SYNTHESIS, true, true, false, true, make_irodori_tts},
-    {"fastconformer", "FastConformer", SPEECH_TASK_RECOGNITION, false, false, false, false, make_fastconformer},
+    {"qwen3-tts", "Qwen3-TTS", SPEECH_TASK_SYNTHESIS, false, false, make_qwen3_tts},
+    {"irodori-tts", "Irodori-TTS", SPEECH_TASK_SYNTHESIS, true, true, make_irodori_tts},
+    {"fastconformer", "FastConformer", SPEECH_TASK_RECOGNITION, false, false, make_fastconformer},
 };
 
 }  // namespace
@@ -92,8 +92,6 @@ EngineOptions engine_options(const speech_model_params & params) {
     if (params.n_voices > 0) require(params.voices, "speech_model_params.voices");
     EngineOptions o;
     o.model = params.model_path;
-    o.codec = text_or_empty(params.codec_path);
-    o.context = params.context;
     o.steps = params.steps;
     for (size_t i = 0; i < params.n_voices; i++) {
         require(params.voices[i].name, "a voice's name");
@@ -118,26 +116,15 @@ const Family & family_of(const std::string & model) {
     throw std::runtime_error(model + " is a model of " + architecture + ", which speech.cpp does not run; it runs " + known);
 }
 
-/** Refuses a codec the family needs and lacks, and any field it does not take that is not at its default. */
+/** Refuses any field the family does not take that is not at its default. */
 void check_inputs(const Family & family, const EngineOptions & o) {
     const std::string model = o.model + " is a model of " + family.name + " for " + task_name(family.task);
-    const speech_model_params defaults = speech_model_default_params();
-    if (family.codec && o.codec.empty()) {
-        throw std::invalid_argument(model + ", which needs its codec; give the codec's GGUF file in speech_model_params.codec_path");
-    }
-    if (!family.codec && !o.codec.empty()) {
-        throw std::invalid_argument(model + ", which has no codec; leave speech_model_params.codec_path NULL, not " + o.codec);
-    }
     if (!family.voices && !o.voices.empty()) {
         throw std::invalid_argument(model + ", which takes no voices" +
                                     (family.task == SPEECH_TASK_SYNTHESIS ? " and speaks with its own" : "") +
                                     "; leave speech_model_params.voices empty");
     }
-    if (!family.context && o.context != defaults.context) {
-        throw std::invalid_argument(model + ", which has no context to set; leave speech_model_params.context at " +
-                                    std::to_string(defaults.context));
-    }
-    if (!family.steps && o.steps != defaults.steps) {
+    if (!family.steps && o.steps != speech_model_default_params().steps) {
         throw std::invalid_argument(model + ", which has no sampler steps; leave speech_model_params.steps 0");
     }
 }
@@ -218,7 +205,6 @@ speech_status speech_device_get(size_t index, speech_device * device) {
 
 speech_model_params speech_model_default_params(void) {
     speech_model_params p = {};
-    p.context = 2048;
     return p;
 }
 
@@ -379,7 +365,7 @@ speech_status speech_make_voice(const speech_model_params * params, const char *
         }
         check_inputs(family, options);
         auto backend = start_device(*params);
-        irodori::Synthesizer synth(options.model, options.codec, backend.get());
+        irodori::Synthesizer synth(options.model, backend.get());
         synth.save_voice(synth.load_voice(wave_path), voice_path);
         return SPEECH_OK;
     });

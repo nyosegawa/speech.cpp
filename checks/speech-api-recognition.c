@@ -174,20 +174,14 @@ int check_recognition(int argc, char ** argv) {
         return 2;
     }
 
-    speech_model_params wrong = params;
-    wrong.codec_path = "codec.gguf";
-    if (!load_refused(&wrong, "codec_path", "a recognition model with a codec")) return 1;
     speech_voice_source voice = {"voice", "voice.gguf"};
-    wrong = params;
+    speech_model_params wrong = params;
     wrong.voices = &voice;
     wrong.n_voices = 1;
     if (!load_refused(&wrong, "voices", "a recognition model with a voice")) return 1;
     wrong = params;
     wrong.steps = 4;
     if (!load_refused(&wrong, "steps", "a recognition model with steps")) return 1;
-    wrong = params;
-    wrong.context = 4096;
-    if (!load_refused(&wrong, "context", "a recognition model with a context")) return 1;
 
     speech_model * model = NULL;
     const double load_start = now_seconds();

@@ -44,7 +44,7 @@ extern "C" {
  * function does not raise it, so a library of an older release with the same API version may lack a function
  * this header declares.
  */
-#define SPEECH_API_VERSION 2
+#define SPEECH_API_VERSION 3
 
 /** The SPEECH_API_VERSION the library was built with, for a caller that loads it at run time. */
 SPEECH_API int speech_api_version(void);
@@ -116,26 +116,20 @@ typedef struct speech_voice_source {
 /**
  * What speech_model_load() loads. Start from speech_model_default_params(), so that a field a later version
  * adds keeps its default. A family takes only the fields it has a use for: a field it does not take, given a value
- * other than its default, is an error that names the field, and so is a codec missing where the family needs one.
+ * other than its default, is an error that names the field.
  */
 typedef struct speech_model_params {
-    /** The model's GGUF file; its general.architecture chooses the family. */
-    const char * model_path;
     /**
-     * The codec's GGUF file, which Qwen3-TTS and Irodori-TTS need. A recognition model (FastConformer) has no codec
-     * and takes NULL or "".
+     * The model's GGUF file, which holds the whole model, its codec included; its general.architecture chooses the
+     * family. A file converted for a release before 0.7.0, or of a layout newer than this library reads, is an error
+     * that says so.
      */
-    const char * codec_path;
+    const char * model_path;
     /**
      * The device as speech_device.name gives it, "cpu" for the CPU, or "gpu", NULL or "" for the first GPU.
      * A device that does not exist or does not start is an error; the model is never moved to another one.
      */
     const char * device;
-    /**
-     * Qwen3-TTS: the talker's context in positions (2048 by default, about 160 s of speech). The other families have
-     * no context to set and take only the default.
-     */
-    int context;
     /**
      * Irodori-TTS, which needs at least one: the voices, `n_voices` of them. A WAVE file is 48 kHz and at most
      * 120 s; it is encoded with the codec while the model loads. Qwen3-TTS takes none and speaks with its
@@ -150,17 +144,16 @@ typedef struct speech_model_params {
     int steps;
 } speech_model_params;
 
-/** The defaults: no paths, the first GPU, a context of 2048, no voices and the model's own steps. */
+/** The defaults: no path, the first GPU, no voices and the model's own steps. */
 SPEECH_API speech_model_params speech_model_default_params(void);
 
-/** A loaded model, its codec and voices where it has them, and the device they run on. */
+/** A loaded model, with its voices where it has them, and the device it runs on. */
 typedef struct speech_model speech_model;
 
 /**
- * Loads a model, and its codec where it has one, on the device, and runs a short synthesis or recognition, so that
- * the GPU's kernels are compiled before the first request. general.architecture of the model's GGUF chooses the
- * family. On success `*model` is a model that speech_model_free() frees; on
- * failure it is NULL.
+ * Loads a model from its GGUF file on the device, and runs a short synthesis or recognition, so that the GPU's
+ * kernels are compiled before the first request. general.architecture of the model's GGUF chooses the family. On
+ * success `*model` is a model that speech_model_free() frees; on failure it is NULL.
  */
 SPEECH_API speech_status speech_model_load(const speech_model_params * params, speech_model ** model);
 
@@ -186,7 +179,7 @@ typedef enum speech_streaming {
  * parakeet-tdt_ctc-0.6b-ja.
  */
 SPEECH_API const char * speech_model_name(const speech_model * model);
-/** The family's architecture: "qwen3tts-talker", "irodori-tts" or "fastconformer". */
+/** The family's architecture: "qwen3-tts", "irodori-tts" or "fastconformer". */
 SPEECH_API const char * speech_model_architecture(const speech_model * model);
 /** Whether the model speaks (speech_synthesize()) or recognizes speech (speech_transcribe()). */
 SPEECH_API speech_task speech_model_task(const speech_model * model);
@@ -223,7 +216,10 @@ SPEECH_API const char * speech_model_backend(const speech_model * model);
  * A request that asks a model for what it cannot do is an error; nothing is ignored.
  */
 typedef struct speech_request {
-    /** The text. Irodori-TTS takes one sentence of at most 256 tokens; anything longer is an error. */
+    /**
+     * The text. Irodori-TTS takes one sentence of at most 256 tokens, and Qwen3-TTS what leaves its talker room for its
+     * longest speech (24565 tokens); anything longer is an error.
+     */
     const char * text;
     /** One of the model's voices. */
     const char * voice;
@@ -326,9 +322,9 @@ SPEECH_API void speech_cancel(speech_model * model);
 /**
  * Makes an Irodori-TTS voice file at `voice_path` from the reference WAVE file `wave_path` (48 kHz, at most
  * 120 s): the reference's codec latent, which loads in milliseconds where a WAVE file is encoded at every
- * load. It loads the model and the codec of `params` on its device for the purpose; the voices of `params`
- * are not used. The voice file names the codec and works only with it. On the CPU the latent is the official
- * encoder's to 99 dB SNR; a GPU computes it in less precision.
+ * load. It loads the model of `params` on its device for the purpose; the voices of `params` are not used. The
+ * voice file carries the hash of the codec inside the model file and works with every model file of the same codec,
+ * in any type. On the CPU the latent is the official encoder's to 99 dB SNR; a GPU computes it in less precision.
  */
 SPEECH_API speech_status speech_make_voice(const speech_model_params * params, const char * wave_path,
                                            const char * voice_path);

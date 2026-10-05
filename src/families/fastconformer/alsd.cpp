@@ -36,14 +36,14 @@ double logaddexp(double x, double y) {
 AlsdDecoder::AlsdDecoder(const ModelFile & m, const PredictionNetwork & prediction, const Joint & joint)
     : prediction_(prediction),
       joint_(joint),
-      blank_((int) m.u32("fastconformer.blank_id")),
-      beam_((int) m.u32("fastconformer.rnnt.beam_size")),
-      score_norm_(m.u32("fastconformer.rnnt.score_norm") != 0),
-      max_target_ratio_(m.f32("fastconformer.rnnt.max_target_ratio")) {
+      blank_((int) m.u32("fastconformer.decoder.blank_id")),
+      beam_((int) m.u32("fastconformer.decoder.rnnt.beam_size")),
+      score_norm_(m.boolean("fastconformer.decoder.rnnt.score_norm")),
+      max_target_ratio_(m.f32("fastconformer.decoder.rnnt.max_target_ratio")) {
     if (joint_.outputs() != blank_ + 1) throw std::runtime_error("joint.out.weight does not have an output for each token and the blank");
     // BeamRNNTInfer runs greedy_search() instead with a beam of 1.
-    if (beam_ < 2) throw std::runtime_error("fastconformer.rnnt.beam_size is less than 2");
-    if (!(max_target_ratio_ >= 0)) throw std::runtime_error("fastconformer.rnnt.max_target_ratio is negative");
+    if (beam_ < 2) throw std::runtime_error("fastconformer.decoder.rnnt.beam_size is less than 2");
+    if (!(max_target_ratio_ >= 0)) throw std::runtime_error("fastconformer.decoder.rnnt.max_target_ratio is negative");
 }
 
 std::vector<int32_t> AlsdDecoder::decode(const std::vector<float> & projected, ggml_backend_t backend) const {

@@ -19,6 +19,7 @@
 #include "backend.h"
 #include "compare.h"
 #include "irodori-tts/duration.h"
+#include "irodori-tts/layout.h"
 #include "irodori-tts/speaker-encoder.h"
 #include "npy.h"
 
@@ -47,10 +48,9 @@ int main(int argc, char ** argv) {
     try {
         ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
         std::printf("backend: %s\n", ggml_backend_name(backend));
-        ModelFile model(args[1], backend);
+        const ModelFile model(args[1], backend, model_layout);
         const SpeakerEncoder speaker(model);
-        // The codec of every Irodori-TTS checkpoint: 48 kHz audio, 1920 samples a frame.
-        const DurationPredictor duration(model, 48000, 1920);
+        const DurationPredictor duration(model);
         ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
 
         std::vector<std::filesystem::path> dumps;

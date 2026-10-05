@@ -10,7 +10,7 @@ namespace {
 
 class IrodoriTtsEngine : public Engine {
 public:
-    IrodoriTtsEngine(const EngineOptions & options, ggml_backend_t backend) : synth_(options.model, options.codec, backend), steps_(options.steps) {
+    IrodoriTtsEngine(const EngineOptions & options, ggml_backend_t backend) : synth_(options.model, backend), steps_(options.steps) {
         if (options.voices.empty()) {
             throw std::runtime_error("an Irodori-TTS model has no voices of its own; give it at least one, a WAVE or voice file");
         }
@@ -23,8 +23,8 @@ public:
         info_.sample_rate = synth_.sample_rate();
         info_.streaming = SPEECH_STREAMING_SENTENCE;
         info_.languages = synth_.model().str_array("speech.languages");
-        info_.language_selectable = false;
-        info_.steps = steps_ > 0 ? steps_ : (int) synth_.model().u32("irodori.default_steps");
+        info_.language_selectable = synth_.model().str("speech.language_use") == "steers";
+        info_.steps = steps_ > 0 ? steps_ : (int) synth_.model().u32("irodori-tts.sampler.default_steps");
         // The first synthesis compiles the GPU kernels, which on Vulkan takes seconds; a short and a longer
         // text run through every stage and both sizes of the decoder's windows.
         for (const char * text : {"あ。", "明日の東京は晴れで、最高気温は二十四度の予報です。"}) {

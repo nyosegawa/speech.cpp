@@ -14,33 +14,29 @@ namespace fastconformer {
 
 Encoder::Encoder(const ModelFile & m)
     : m_(m),
-      mels_((int) m.u32("fastconformer.n_mels")),
-      d_model_((int) m.u32("fastconformer.d_model")),
-      layers_((int) m.u32("fastconformer.num_layers")),
-      heads_((int) m.u32("fastconformer.num_heads")),
-      conv_kernel_((int) m.u32("fastconformer.conv_kernel")),
-      eps_(m.f32("fastconformer.norm_eps")),
-      pos_base_(m.f32("fastconformer.pos_base")),
-      xscale_(m.f32("fastconformer.xscale")),
-      ff_factor_(m.f32("fastconformer.ff_factor")),
-      use_bias_(m.u32("fastconformer.use_bias") != 0) {
-    const std::string attention = m.str("fastconformer.attention");
-    if (attention != "rel_pos" && attention != "rel_pos_local_attn") {
-        throw std::runtime_error("fastconformer.attention is \"" + attention + "\", which is neither \"rel_pos\" nor \"rel_pos_local_attn\"");
-    }
-    local_ = attention == "rel_pos_local_attn";
+      mels_((int) m.u32("fastconformer.frontend.n_mels")),
+      d_model_((int) m.u32("fastconformer.encoder.d_model")),
+      layers_((int) m.u32("fastconformer.encoder.num_layers")),
+      heads_((int) m.u32("fastconformer.encoder.num_heads")),
+      conv_kernel_((int) m.u32("fastconformer.encoder.conv_kernel")),
+      eps_(m.f32("fastconformer.encoder.norm_eps")),
+      pos_base_(m.f32("fastconformer.encoder.pos_base")),
+      xscale_(m.f32("fastconformer.encoder.xscale")),
+      ff_factor_(m.f32("fastconformer.encoder.ff_factor")),
+      use_bias_(m.boolean("fastconformer.encoder.use_bias")) {
+    local_ = m.one_of("fastconformer.encoder.attention", {"rel_pos", "rel_pos_local_attn"}) == "rel_pos_local_attn";
     if (local_) {
-        context_ = (int) m.u32("fastconformer.attention_context");
-        global_tokens_ = (int) m.u32("fastconformer.global_tokens");
-        if (context_ == 0) throw std::runtime_error("fastconformer.attention_context is 0");
-        if (global_tokens_ == 0) throw std::runtime_error("fastconformer.global_tokens is 0; the local attention runs with one global token or more");
+        context_ = (int) m.u32("fastconformer.encoder.attention_context");
+        global_tokens_ = (int) m.u32("fastconformer.encoder.global_tokens");
+        if (context_ == 0) throw std::runtime_error("fastconformer.encoder.attention_context is 0");
+        if (global_tokens_ == 0) throw std::runtime_error("fastconformer.encoder.global_tokens is 0; the local attention runs with one global token or more");
     }
-    const uint32_t factor = m.u32("fastconformer.subsampling_factor");
+    const uint32_t factor = m.u32("fastconformer.encoder.subsampling_factor");
     sub_layers_ = 0;
     for (uint32_t f = factor; f > 1; f /= 2) sub_layers_++;
-    if (factor < 2 || (1u << sub_layers_) != factor) throw std::runtime_error("fastconformer.subsampling_factor is not a power of two");
-    if (d_model_ % heads_ != 0) throw std::runtime_error("fastconformer.d_model is not a multiple of fastconformer.num_heads");
-    if (conv_kernel_ % 2 != 1) throw std::runtime_error("fastconformer.conv_kernel is not odd");
+    if (factor < 2 || (1u << sub_layers_) != factor) throw std::runtime_error("fastconformer.encoder.subsampling_factor is not a power of two");
+    if (d_model_ % heads_ != 0) throw std::runtime_error("fastconformer.encoder.d_model is not a multiple of fastconformer.encoder.num_heads");
+    if (conv_kernel_ % 2 != 1) throw std::runtime_error("fastconformer.encoder.conv_kernel is not odd");
 }
 
 int64_t Encoder::subsampled_frames(int64_t frames) const {

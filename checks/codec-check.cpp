@@ -1,7 +1,7 @@
 // Decodes the codes of a reference dump and compares the samples with the official decoder's, then
 // decodes them again in pieces and compares those with the whole decode.
 //
-// usage: codec-check <codec.gguf> <reference dir> [gpu|cpu] [out.wav]
+// usage: codec-check <model.gguf> <reference dir> [gpu|cpu] [out.wav]
 
 #include <chrono>
 #include <cmath>
@@ -11,6 +11,7 @@
 #include "backend.h"
 #include "npy.h"
 #include "qwen3-tts/codec.h"
+#include "qwen3-tts/layout.h"
 #include "wav.h"
 
 namespace {
@@ -43,13 +44,14 @@ double seconds_since(std::chrono::steady_clock::time_point t0) {
 int main(int argc, char ** argv) {
     const std::vector<std::string> args = utf8_args(argc, argv);
     if (args.size() < 3) {
-        std::fprintf(stderr, "usage: %s <codec.gguf> <reference dir> [gpu|cpu] [out.wav]\n", args[0].c_str());
+        std::fprintf(stderr, "usage: %s <model.gguf> <reference dir> [gpu|cpu] [out.wav]\n", args[0].c_str());
         return 2;
     }
     const std::string dir = args[2];
     ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
     std::printf("backend: %s\n", ggml_backend_name(backend));
-    CodecDecoder codec(args[1], backend);
+    const ModelFile model(args[1], backend, qwen3_tts_layout);
+    CodecDecoder codec(model, backend);
 
     const Npy codes = read_npy(dir + "/codes.npy");
     const Npy wav = read_npy(dir + "/wav.npy");

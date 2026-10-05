@@ -16,14 +16,14 @@ namespace irodori {
  */
 
 Dit::Dit(const ModelFile & m) : m_(m) {
-    meanflow_ = m.str("irodori.flow") == "meanflow";
-    dim_ = (int) m.u32("irodori.dit.dim");
-    heads_ = (int) m.u32("irodori.dit.num_heads");
-    layers_ = (int) m.u32("irodori.dit.num_layers");
-    timestep_dim_ = (int) m.u32("irodori.dit.timestep_dim");
-    latent_dim_ = (int) m.u32("irodori.latent_dim");
-    eps_ = m.f32("irodori.norm_eps");
-    theta_ = m.f32("irodori.rope_theta");
+    meanflow_ = m.one_of("irodori-tts.flow", {"meanflow", "rf_velocity"}) == "meanflow";
+    dim_ = (int) m.u32("irodori-tts.dit.dim");
+    heads_ = (int) m.u32("irodori-tts.dit.num_heads");
+    layers_ = (int) m.u32("irodori-tts.dit.num_layers");
+    timestep_dim_ = (int) m.u32("irodori-tts.dit.timestep_dim");
+    latent_dim_ = (int) m.u32("irodori-tts.latent_dim");
+    eps_ = m.f32("irodori-tts.norm_eps");
+    theta_ = m.f32("irodori-tts.rope_theta");
 }
 
 std::vector<float> timestep_embedding(float t, int dim) {

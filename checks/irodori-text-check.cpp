@@ -14,6 +14,7 @@
 #include "args.h"
 #include "backend.h"
 #include "compare.h"
+#include "irodori-tts/layout.h"
 #include "irodori-tts/text-encoder.h"
 #include "irodori-tts/text-normalizer.h"
 #include "irodori-tts/tokenizer.h"
@@ -72,7 +73,7 @@ int main(int argc, char ** argv) {
     try {
         ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
         std::printf("backend: %s\n", ggml_backend_name(backend));
-        ModelFile model(args[1], backend);
+        const ModelFile model(args[1], backend, model_layout);
         const Tokenizer tokenizer(model);
         const TextEncoder encoder(model);
         const std::filesystem::path dir = std::filesystem::u8path(args[2]);

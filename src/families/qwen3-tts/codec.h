@@ -8,6 +8,9 @@
 #include "ggml-backend.h"
 #include "model-file.h"
 
+/** The residual units of each decoder block, of dilations 1, 3 and 9, as the official module builds them. */
+constexpr int kCodecResidualUnits = 3;
+
 /**
  * The 12Hz codec decoder: 16 codes per frame in, 1920 samples of 24 kHz audio per frame out.
  *
@@ -18,7 +21,8 @@
  */
 class CodecDecoder {
 public:
-    CodecDecoder(const std::string & path, ggml_backend_t backend);
+    /** The decoder of the model file `m`, which outlives it. */
+    CodecDecoder(const ModelFile & m, ggml_backend_t backend);
     ~CodecDecoder();
 
     /** Forgets the previous utterance. */
@@ -29,19 +33,20 @@ public:
 
     int num_quantizers() const { return n_q_; }
     int samples_per_frame() const { return samples_per_frame_; }
-    int sample_rate() const { return 24000; }
+    int sample_rate() const { return sample_rate_; }
 
 private:
     struct State;
     ggml_tensor * state_tensor(const std::string & name, int64_t ne0, int64_t ne1);
 
     ggml_backend_t backend_;
-    std::unique_ptr<ModelFile> model_;
+    const ModelFile & m_;
     ggml_context * state_ctx_ = nullptr;
     ggml_backend_buffer_t state_buffer_ = nullptr;
     ggml_gallocr_t allocr_ = nullptr;
     std::vector<ggml_tensor *> states_;
 
+    int sample_rate_ = 0;
     int n_q_ = 0;
     int latent_dim_ = 0;
     int codebook_dim_ = 0;

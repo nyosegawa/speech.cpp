@@ -12,6 +12,9 @@
 
 namespace irodori {
 
+/** The residual units of each encoder and decoder block, of dilations 1, 3 and 9, as the official module builds them. */
+constexpr int kCodecResidualUnits = 3;
+
 /** Called with each piece of audio as it is decoded; returning false stops the decoding. */
 using AudioSink = std::function<bool(const float * samples, size_t n)>;
 
@@ -21,7 +24,8 @@ using AudioSink = std::function<bool(const float * samples, size_t n)>;
  */
 class Codec {
 public:
-    Codec(const std::string & path, ggml_backend_t backend);
+    /** The codec of the model file `m`, which outlives it. */
+    Codec(const ModelFile & m, ggml_backend_t backend);
     ~Codec();
     Codec(const Codec &) = delete;
     Codec & operator=(const Codec &) = delete;
@@ -29,8 +33,8 @@ public:
     int sample_rate() const { return sample_rate_; }
     int hop() const { return hop_; }
     int latent_dim() const { return latent_dim_; }
-    /** Where the weights came from, with their revision; a voice file names it. */
-    const std::string & source() const { return source_; }
+    /** The SHA-256 of the official codec's tensors, which binds a voice file to the codec that encoded it. */
+    const std::string & sha256() const { return sha256_; }
 
     /**
      * The latent, row-major [frames, latent_dim], of mono audio at sample_rate() as the official runtime
@@ -64,10 +68,10 @@ public:
 
 private:
     ggml_backend_t backend_;
-    std::unique_ptr<ModelFile> model_;
+    const ModelFile & m_;
     ggml_gallocr_t allocr_ = nullptr;
     int sample_rate_ = 0, hop_ = 0, latent_dim_ = 0;
-    std::string source_;
+    std::string sha256_;
     std::vector<int32_t> encoder_rates_, decoder_rates_;
 };
 

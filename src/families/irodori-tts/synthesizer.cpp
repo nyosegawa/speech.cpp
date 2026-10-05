@@ -1,5 +1,6 @@
 #include "synthesizer.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -8,14 +9,12 @@
 #include <stdexcept>
 
 #include "gguf.h"
-#include "reference.h"
+#include "layout.h"
 #include "text-normalizer.h"
 
 namespace irodori {
 
 namespace {
-
-constexpr const char * kVoiceArchitecture = "irodori-tts-voice";
 
 /** Adds the seconds from its construction to its destruction to `total`. */
 struct Timer {
@@ -32,23 +31,52 @@ bool starts_with_riff(const std::string & path) {
     return std::memcmp(magic, "RIFF", 4) == 0;
 }
 
+/** The kind of device `backend` runs on, as a voice file names it. */
+std::string device_kind(ggml_backend_t backend) {
+    switch (ggml_backend_dev_type(ggml_backend_get_device(backend))) {
+        case GGML_BACKEND_DEVICE_TYPE_CPU: return "cpu";
+        case GGML_BACKEND_DEVICE_TYPE_GPU: return "gpu";
+        case GGML_BACKEND_DEVICE_TYPE_IGPU: return "igpu";
+        default: throw std::runtime_error(std::string("the device ") + ggml_backend_name(backend) + " is of a kind a voice file cannot name");
+    }
+}
+
 }  // namespace
 
-Synthesizer::Synthesizer(const std::string & model_path, const std::string & codec_path, ggml_backend_t backend)
+TailCut::TailCut(const ModelFile & m)
+    : window((int) m.u32("irodori-tts.tail.window")),
+      std_threshold(m.f32("irodori-tts.tail.std_threshold")),
+      mean_threshold(m.f32("irodori-tts.tail.mean_threshold")) {}
+
+int TailCut::flattening_point(const std::vector<float> & latent, int frames, int latent_dim) const {
+    for (int i = 0; i < frames; i++) {
+        double sum = 0, squares = 0;
+        for (int f = i; f < i + window; f++) {
+            for (int d = 0; d < latent_dim; d++) {
+                const double v = f < frames ? latent[(size_t) f * latent_dim + d] : 0.0;
+                sum += v;
+                squares += v * v;
+            }
+        }
+        const double n = (double) window * latent_dim, mean = sum / n;
+        const double deviation = std::sqrt(std::max(0.0, squares / n - mean * mean));
+        if (deviation < std_threshold && std::fabs(mean) < mean_threshold) return i;
+    }
+    return frames;
+}
+
+Synthesizer::Synthesizer(const std::string & model_path, ggml_backend_t backend)
     : backend_(backend),
-      model_(std::make_unique<ModelFile>(model_path, backend)),
-      codec_(codec_path, backend),
+      model_(std::make_unique<ModelFile>(model_path, backend, model_layout)),
+      codec_(*model_, backend),
       tokenizer_(*model_),
       text_(*model_),
       speaker_(*model_),
-      duration_(*model_, codec_.sample_rate(), codec_.hop()),
+      duration_(*model_),
       dit_(*model_),
-      sampler_(dit_, *model_, backend) {
-    if (model_->str("general.architecture") != "irodori-tts") throw std::runtime_error(model_path + " is not an Irodori-TTS model");
-    if ((int) model_->u32("irodori.latent_dim") != codec_.latent_dim()) {
-        throw std::runtime_error("the model and the codec disagree on the latent's dimension");
-    }
-    max_reference_seconds_ = model_->f32("irodori.max_reference_seconds");
+      sampler_(dit_, *model_, backend),
+      reference_(*model_),
+      tail_(*model_) {
     allocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
 }
 
@@ -70,17 +98,31 @@ Voice Synthesizer::voice_from_latent(std::vector<float> latent) {
 }
 
 Voice Synthesizer::load_voice(const std::string & path) {
-    if (starts_with_riff(path)) return voice_from_latent(encode_reference(codec_, path, max_reference_seconds_));
-    ModelFile file(path, backend_);
-    if (file.str("general.architecture") != kVoiceArchitecture) throw std::runtime_error(path + " is neither a WAVE file nor a voice file");
-    if (file.str("voice.codec") != codec_.source()) {
-        throw std::runtime_error(path + " was made with the codec " + file.str("voice.codec") + ", not " + codec_.source());
+    if (starts_with_riff(path)) {
+        EncodedReference reference = encode_reference(codec_, path, reference_);
+        Voice v = voice_from_latent(std::move(reference.latent));
+        v.reference_seconds = reference.seconds;
+        v.reference_sample_rate = reference.sample_rate;
+        v.device_kind = device_kind(backend_);
+        return v;
+    }
+    ModelFile file(path, backend_, voice_layout);
+    const std::string codec = file.str("irodori-tts-voice.codec_sha256");
+    if (codec != codec_.sha256()) {
+        throw std::runtime_error(path + " was made with the codec of SHA-256 " + codec + ", and " + model_->str("general.name") +
+                                 " has the codec " + codec_.sha256() + "; make the voice again from its WAVE file with this model");
     }
     ggml_tensor * t = file.tensor("latent");
-    if (t->type != GGML_TYPE_F32 || t->ne[0] != codec_.latent_dim()) throw std::runtime_error(path + " holds no latent of this codec");
+    if (t->type != GGML_TYPE_F32 || t->ne[0] != codec_.latent_dim() || ggml_n_dims(t) > 2) {
+        throw std::runtime_error(path + " holds no latent of " + std::to_string(codec_.latent_dim()) + " channels in float32; " + file.remedy());
+    }
     std::vector<float> latent(ggml_nelements(t));
     ggml_backend_tensor_get(t, latent.data(), 0, ggml_nbytes(t));
-    return voice_from_latent(std::move(latent));
+    Voice v = voice_from_latent(std::move(latent));
+    v.reference_seconds = file.f32("irodori-tts-voice.reference_seconds");
+    v.reference_sample_rate = (int) file.u32("irodori-tts-voice.reference_sample_rate");
+    v.device_kind = file.str("irodori-tts-voice.device_kind");
+    return v;
 }
 
 void Synthesizer::save_voice(const Voice & voice, const std::string & path) const {
@@ -91,8 +133,13 @@ void Synthesizer::save_voice(const Voice & voice, const std::string & path) cons
     ggml_set_name(t, "latent");
     std::memcpy(t->data, voice.latent.data(), bytes);
     gguf_context * g = gguf_init_empty();
-    gguf_set_val_str(g, "general.architecture", kVoiceArchitecture);
-    gguf_set_val_str(g, "voice.codec", codec_.source().c_str());
+    gguf_set_val_str(g, "general.architecture", voice_layout.architecture);
+    gguf_set_val_u32(g, "speech.layout", voice_layout.version);
+    gguf_set_val_str(g, "speech.requires", kVoiceLayoutRequires);
+    gguf_set_val_str(g, "irodori-tts-voice.codec_sha256", codec_.sha256().c_str());
+    gguf_set_val_f32(g, "irodori-tts-voice.reference_seconds", (float) voice.reference_seconds);
+    gguf_set_val_u32(g, "irodori-tts-voice.reference_sample_rate", (uint32_t) voice.reference_sample_rate);
+    gguf_set_val_str(g, "irodori-tts-voice.device_kind", voice.device_kind.c_str());
     gguf_add_tensor(g, t);
     const bool written = gguf_write_to_file(g, path.c_str(), false);
     gguf_free(g);
@@ -147,7 +194,7 @@ size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
                             r.cancelled);
     }
     if (x.empty()) return 0;
-    const int flat = flattening_point(x, frames, codec_.latent_dim());
+    const int flat = tail_.flattening_point(x, frames, codec_.latent_dim());
     int64_t samples = length.samples;
     if (flat > 0) samples = std::min(samples, (int64_t) flat * codec_.hop());
 
@@ -164,24 +211,6 @@ size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
     st.frames = frames;
     st.samples = emitted;
     return emitted;
-}
-
-int flattening_point(const std::vector<float> & latent, int frames, int latent_dim) {
-    constexpr int kWindow = 20;
-    for (int i = 0; i < frames; i++) {
-        double sum = 0, squares = 0;
-        for (int f = i; f < i + kWindow; f++) {
-            for (int d = 0; d < latent_dim; d++) {
-                const double v = f < frames ? latent[(size_t) f * latent_dim + d] : 0.0;
-                sum += v;
-                squares += v * v;
-            }
-        }
-        const double n = (double) kWindow * latent_dim, mean = sum / n;
-        const double deviation = std::sqrt(std::max(0.0, squares / n - mean * mean));
-        if (deviation < 0.05 && std::fabs(mean) < 0.1) return i;
-    }
-    return frames;
 }
 
 }  // namespace irodori

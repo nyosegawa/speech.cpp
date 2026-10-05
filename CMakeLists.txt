@@ -45,11 +45,14 @@ add_library(speechcommon STATIC
 )
 target_include_directories(speechcommon PUBLIC src/common)
 target_link_libraries(speechcommon PUBLIC ggml::ggml)
+# A file of a newer layout is refused naming the release that reads it and this one.
+target_compile_definitions(speechcommon PRIVATE SPEECH_VERSION="${PROJECT_VERSION}")
 if (WIN32)
     target_link_libraries(speechcommon PUBLIC shell32)
 endif()
 
 add_library(qwen3tts STATIC
+    src/families/qwen3-tts/layout.cpp
     src/families/qwen3-tts/codec.cpp
     src/families/qwen3-tts/talker.cpp
     src/families/qwen3-tts/prompt.cpp
@@ -62,6 +65,7 @@ target_include_directories(qwen3tts PUBLIC src/families)
 target_link_libraries(qwen3tts PUBLIC speechcommon)
 
 add_library(irodoritts STATIC
+    src/families/irodori-tts/layout.cpp
     src/families/irodori-tts/text-normalizer.cpp
     src/families/irodori-tts/tokenizer.cpp
     src/families/irodori-tts/text-encoder.cpp
@@ -79,6 +83,7 @@ target_link_libraries(irodoritts PUBLIC speechcommon)
 
 # FastConformer speech recognition (NVIDIA NeMo): the family.
 add_library(fastconformer STATIC
+    src/families/fastconformer/layout.cpp
     src/families/fastconformer/frontend.cpp
     src/families/fastconformer/encoder.cpp
     src/families/fastconformer/transducer.cpp

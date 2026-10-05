@@ -25,11 +25,11 @@ size_t utf8_length(unsigned char c) {
 }  // namespace
 
 Tokenizer::Tokenizer(const ModelFile & m) {
-    tokens_ = m.str_array("tokenizer.tokens");
-    scores_ = m.f64_array("tokenizer.scores");
-    added_ = m.i32_array("tokenizer.added_ids");
-    bos_ = (int32_t) m.u32("tokenizer.bos_id");
-    unknown_ = (int32_t) m.u32("tokenizer.unknown_id");
+    tokens_ = m.str_array("irodori-tts.tokenizer.tokens");
+    scores_ = m.f64_array("irodori-tts.tokenizer.scores");
+    added_ = m.i32_array("irodori-tts.tokenizer.added_ids");
+    bos_ = (int32_t) m.u32("irodori-tts.tokenizer.bos_id");
+    unknown_ = (int32_t) m.u32("irodori-tts.tokenizer.unknown_id");
     if (scores_.size() != tokens_.size()) throw std::runtime_error("the tokenizer has a score for each token");
     double lowest = 0;
     for (size_t i = 0; i < tokens_.size(); i++) {

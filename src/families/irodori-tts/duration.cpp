@@ -10,13 +10,17 @@
 
 namespace irodori {
 
-DurationPredictor::DurationPredictor(const ModelFile & m, int sample_rate, int hop) : m_(m), sample_rate_(sample_rate), hop_(hop) {
-    layers_ = (int) m.u32("irodori.duration.num_layers");
-    eps_ = m.f32("irodori.norm_eps");
-    min_seconds_ = m.f32("irodori.min_seconds");
-    max_seconds_ = m.f32("irodori.max_seconds");
-    min_frames_ = std::max(1, (int) std::ceil(min_seconds_ * sample_rate / (double) hop));
-    max_frames_ = std::max(1, (int) std::floor(max_seconds_ * sample_rate / (double) hop));
+DurationPredictor::DurationPredictor(const ModelFile & m) : m_(m) {
+    layers_ = (int) m.u32("irodori-tts.duration.num_layers");
+    eps_ = m.f32("irodori-tts.norm_eps");
+    sample_rate_ = (int) m.u32("speech.sample_rate");
+    hop_ = (int) m.u32("irodori-tts.codec.hop_length");
+    min_seconds_ = m.f32("irodori-tts.length.min_seconds");
+    max_seconds_ = m.f32("irodori-tts.length.max_seconds");
+    min_speed_ = m.f32("irodori-tts.length.min_speed");
+    max_speed_ = m.f32("irodori-tts.length.max_speed");
+    min_frames_ = std::max(1, (int) std::ceil(min_seconds_ * sample_rate_ / (double) hop_));
+    max_frames_ = std::max(1, (int) std::floor(max_seconds_ * sample_rate_ / (double) hop_));
 }
 
 ggml_tensor * DurationPredictor::build(Graph & g, ggml_tensor * text_state, ggml_tensor * speaker_summary) const {
@@ -48,9 +52,9 @@ std::string number(double v) {
 }  // namespace
 
 void DurationPredictor::check(const LengthOptions & o) const {
-    // The range of the speed is Irodori-TTS-Server's, which is OpenAI's for its speech API.
-    if (!(o.speed >= 0.25 && o.speed <= 4)) {
-        throw std::invalid_argument("the speed is " + number(o.speed) + "; Irodori-TTS takes a speed from 0.25 to 4, 1 being its own rate");
+    if (!(o.speed >= min_speed_ && o.speed <= max_speed_)) {
+        throw std::invalid_argument("the speed is " + number(o.speed) + "; Irodori-TTS takes a speed from " + number(min_speed_) + " to " +
+                                    number(max_speed_) + ", 1 being its own rate");
     }
     if (!(o.duration_scale > 0 && std::isfinite(o.duration_scale))) {
         throw std::invalid_argument("the duration scale is " + number(o.duration_scale) + "; give a factor above 0, 1 for the predicted length");

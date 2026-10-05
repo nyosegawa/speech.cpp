@@ -107,11 +107,11 @@ size_t match_at(const std::vector<uint32_t> & cps, size_t i) {
 }  // namespace
 
 Tokenizer::Tokenizer(const ModelFile & m) {
-    const std::vector<std::string> tokens = m.str_array("tokenizer.tokens");
+    const std::vector<std::string> tokens = m.str_array("qwen3-tts.tokenizer.tokens");
     for (size_t i = 0; i < tokens.size(); i++) {
         if (!tokens[i].empty()) vocab_[tokens[i]] = (int32_t) i;
     }
-    const std::vector<std::string> merges = m.str_array("tokenizer.merges");
+    const std::vector<std::string> merges = m.str_array("qwen3-tts.tokenizer.merges");
     for (size_t r = 0; r < merges.size(); r++) {
         const size_t sp = merges[r].find(' ');
         ranks_[{merges[r].substr(0, sp), merges[r].substr(sp + 1)}] = (int) r;

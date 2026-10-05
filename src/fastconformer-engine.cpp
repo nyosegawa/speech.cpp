@@ -14,7 +14,7 @@ public:
         info_.sample_rate = recognizer_.sample_rate();
         info_.languages = recognizer_.model().str_array("speech.languages");
         // The model has no input for a language, so a request's language is only checked against the model's.
-        info_.language_selectable = false;
+        info_.language_selectable = recognizer_.model().str("speech.language_use") == "steers";
         // The first recognition builds Metal's pipelines and compiles Vulkan's shaders, which take seconds.
         recognizer_.recognize(std::vector<float>((size_t) recognizer_.sample_rate(), 0.0f));
     }

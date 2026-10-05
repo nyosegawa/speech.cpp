@@ -4,6 +4,35 @@
 #include <cmath>
 #include <numeric>
 #include <stdexcept>
+#include <string>
+
+namespace {
+
+SamplingParams read_params(const ModelFile & m, const std::string & prefix) {
+    SamplingParams p;
+    p.greedy = !m.boolean(prefix + "do_sample");
+    p.temperature = m.f32(prefix + "temperature");
+    p.top_k = (int) m.u32(prefix + "top_k");
+    p.top_p = m.f32(prefix + "top_p");
+    p.repetition_penalty = m.f32(prefix + "repetition_penalty");
+    return p;
+}
+
+}  // namespace
+
+Generation::Generation(const ModelFile & m)
+    : talker(read_params(m, "qwen3-tts.generation.talker.")),
+      code_predictor(read_params(m, "qwen3-tts.generation.code_predictor.")),
+      min_frames((int) m.u32("qwen3-tts.generation.min_frames")),
+      max_frames((int) m.u32("qwen3-tts.generation.max_frames")),
+      suppressed_tokens((int) m.u32("qwen3-tts.talker.suppressed_tokens")) {}
+
+std::vector<bool> Generation::banned(int vocab, int32_t end_of_speech, int frames) const {
+    std::vector<bool> b(vocab, false);
+    for (int i = vocab - suppressed_tokens; i < vocab; i++) b[i] = i != end_of_speech;
+    if (frames < min_frames) b[end_of_speech] = true;
+    return b;
+}
 
 int32_t sample(std::vector<float> logits, const SamplingParams & p, const std::vector<int32_t> & history,
                const std::vector<bool> & banned, std::mt19937_64 & rng) {

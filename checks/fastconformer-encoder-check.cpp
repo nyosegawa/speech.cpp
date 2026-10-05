@@ -12,6 +12,7 @@
 #include "compare.h"
 #include "fastconformer-dumps.h"
 #include "fastconformer/encoder.h"
+#include "fastconformer/layout.h"
 #include "ggml-cpu.h"
 #include "npy.h"
 
@@ -28,7 +29,7 @@ int main(int argc, char ** argv) {
         std::printf("backend: %s\n", ggml_backend_name(backend));
         bool ok = true;
         {
-            ModelFile model(args[1], backend);
+            const ModelFile model(args[1], backend, layout);
             const Encoder encoder(model);
             // Measured on an Apple M5, the encoder output's lowest SNR: parakeet-tdt_ctc-0.6b-ja (three utterances,
             // 2026-10-05) 113.8 dB on the CPU with F32 weights, 54.6 dB with F16 and 63.1 dB on Metal with either;

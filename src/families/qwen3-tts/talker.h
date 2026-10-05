@@ -1,6 +1,5 @@
 #pragma once
 
-#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,27 +23,33 @@ struct DecoderShape {
 /**
  * The talker and its code predictor. The talker reads one embedding per frame and predicts the frame's
  * first code; the code predictor, conditioned on the talker's last hidden state, predicts the other
- * fifteen one by one. Both keep a key/value cache: the talker's spans the utterance, the code
- * predictor's is rebuilt every frame.
+ * fifteen one by one. Both keep a key/value cache: the talker's spans the utterance, the code predictor's is
+ * rebuilt every frame.
  */
 class Talker {
 public:
-    Talker(const std::string & path, ggml_backend_t backend, int n_ctx);
+    /** The talker of the model file `m`, which outlives it. */
+    Talker(const ModelFile & m, ggml_backend_t backend);
     ~Talker();
 
-    const ModelFile & model() const { return *model_; }
+    const ModelFile & model() const { return m_; }
     int num_code_groups() const { return n_groups_; }
     int hidden() const { return talker_.hidden; }
     int vocab() const { return vocab_; }
     int cp_vocab() const { return cp_vocab_; }
+    /** The positions an utterance has at most, its prompt's and its frames' together. */
+    int max_positions() const { return max_positions_; }
 
     /** Projected text embeddings of `ids`, row-major [ids.size(), hidden]. */
     std::vector<float> text_embeddings(const std::vector<int32_t> & ids);
     /** Talker codec embeddings of `ids`, row-major [ids.size(), hidden]. */
     std::vector<float> codec_embeddings(const std::vector<int32_t> & ids);
 
-    /** Starts an utterance: clears the cache and runs `embeds` ([n, hidden], row-major) through the talker. */
-    void prefill(const std::vector<float> & embeds, int n);
+    /**
+     * Starts an utterance of at most `positions` positions, the prompt's and the frames': gives the cache room for
+     * them, and runs `embeds` ([n, hidden], row-major) through the talker.
+     */
+    void prefill(const std::vector<float> & embeds, int n, int64_t positions);
     /** Feeds one frame: the sum of its 16 code embeddings plus `extra` ([hidden]). */
     void step(const int32_t * codes, const std::vector<float> & extra);
 
@@ -59,28 +64,28 @@ public:
     const std::vector<float> & cp_next(int group, int32_t code);
 
     int64_t n_past() const { return n_past_; }
-    int n_ctx() const { return n_ctx_; }
 
 private:
+    struct Cache;
+
     ggml_tensor * run_stack(struct GraphCtx & g, const std::string & prefix, const DecoderShape & s, ggml_tensor * x,
-                            ggml_tensor * pos, ggml_tensor * mask, std::vector<ggml_tensor *> & k_cache,
-                            std::vector<ggml_tensor *> & v_cache, int64_t n_past, int64_t n_tokens);
+                            ggml_tensor * pos, ggml_tensor * mask, Cache & cache, int64_t n_past, int64_t n_tokens);
     void run_talker(const std::vector<float> * embeds, const int32_t * codes, const std::vector<float> * extra, int64_t n);
     const std::vector<float> & run_cp(int32_t code, int group);
 
     ggml_backend_t backend_;
-    std::unique_ptr<ModelFile> model_;
+    const ModelFile & m_;
     DecoderShape talker_, cp_;
     int n_groups_ = 0;
     int vocab_ = 0;
     int cp_vocab_ = 0;
-    int n_ctx_ = 0;
+    int max_positions_ = 0;
+    bool cp_projected_ = false;
 
-    ggml_context * cache_ctx_ = nullptr;
-    ggml_backend_buffer_t cache_buffer_ = nullptr;
-    std::vector<ggml_tensor *> talker_k_, talker_v_, cp_k_, cp_v_;
+    std::unique_ptr<Cache> cache_, cp_cache_;
     ggml_gallocr_t allocr_ = nullptr;
 
+    int64_t positions_ = 0;
     int64_t n_past_ = 0;
     int64_t cp_past_ = 0;
     std::vector<float> logits_, hidden_, cp_logits_;

@@ -13,13 +13,13 @@ namespace irodori {
  */
 
 SpeakerEncoder::SpeakerEncoder(const ModelFile & m) : m_(m) {
-    dim_ = (int) m.u32("irodori.speaker.dim");
-    heads_ = (int) m.u32("irodori.speaker.num_heads");
-    layers_ = (int) m.u32("irodori.speaker.num_layers");
-    patch_ = (int) m.u32("irodori.speaker.patch_size");
-    latent_dim_ = (int) m.u32("irodori.latent_dim");
-    eps_ = m.f32("irodori.norm_eps");
-    theta_ = m.f32("irodori.rope_theta");
+    dim_ = (int) m.u32("irodori-tts.speaker.dim");
+    heads_ = (int) m.u32("irodori-tts.speaker.num_heads");
+    layers_ = (int) m.u32("irodori-tts.speaker.num_layers");
+    patch_ = (int) m.u32("irodori-tts.speaker.patch_size");
+    latent_dim_ = (int) m.u32("irodori-tts.latent_dim");
+    eps_ = m.f32("irodori-tts.norm_eps");
+    theta_ = m.f32("irodori-tts.rope_theta");
 }
 
 ggml_tensor * SpeakerEncoder::build(Graph & g, const std::vector<float> & latent, ggml_tensor ** encoded) const {

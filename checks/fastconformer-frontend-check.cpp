@@ -11,6 +11,7 @@
 #include "compare.h"
 #include "fastconformer-dumps.h"
 #include "fastconformer/frontend.h"
+#include "fastconformer/layout.h"
 #include "ggml-cpu.h"
 #include "npy.h"
 
@@ -28,7 +29,7 @@ int main(int argc, char ** argv) {
         ggml_backend_t backend = ggml_backend_cpu_init();
         bool ok = true;
         {
-            ModelFile model(args[1], backend);
+            const ModelFile model(args[1], backend, layout);
             const Frontend frontend(model);
             for (const auto & d : fastconformer_dumps(args[2], model)) {
                 const Npy audio = read_npy((d / "audio.npy").u8string());

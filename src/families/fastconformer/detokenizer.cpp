@@ -16,11 +16,11 @@ std::string replace_all(std::string s, const std::string & from, const std::stri
 }  // namespace
 
 Detokenizer::Detokenizer(const ModelFile & m)
-    : pieces_(m.str_array("tokenizer.tokens")),
-      punctuation_(m.str_array("tokenizer.punctuation")),
-      unknown_id_((int) m.u32("tokenizer.unknown_id")),
-      unknown_surface_(m.str("tokenizer.unknown_surface")),
-      strip_leading_space_(m.u32("tokenizer.strip_leading_space") != 0) {}
+    : pieces_(m.str_array("fastconformer.tokenizer.tokens")),
+      punctuation_(m.str_array("fastconformer.tokenizer.punctuation")),
+      unknown_id_((int) m.u32("fastconformer.tokenizer.unknown_id")),
+      unknown_surface_(m.str("fastconformer.tokenizer.unknown_surface")),
+      strip_leading_space_(m.boolean("fastconformer.tokenizer.strip_leading_space")) {}
 
 std::string Detokenizer::text(const std::vector<int32_t> & ids) const {
     std::string text;

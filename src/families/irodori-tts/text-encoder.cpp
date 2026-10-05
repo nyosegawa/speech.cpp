@@ -12,17 +12,17 @@ namespace irodori {
  */
 
 TextEncoder::TextEncoder(const ModelFile & m) : m_(m) {
-    hidden_ = (int) m.u32("irodori.text.hidden_size");
-    heads_ = (int) m.u32("irodori.text.num_heads");
-    layers_ = (int) m.u32("irodori.text.num_layers");
-    window_ = (int) m.u32("irodori.text.window");
-    dim_ = (int) m.u32("irodori.text.dim");
-    max_tokens_ = (int) m.u32("irodori.max_text_tokens");
-    eps_ = m.f32("irodori.text.norm_eps");
-    norm_eps_ = m.f32("irodori.norm_eps");
-    theta_global_ = m.f32("irodori.text.rope_theta_global");
-    theta_local_ = m.f32("irodori.text.rope_theta_local");
-    global_ = m.i32_array("irodori.text.layer_global");
+    hidden_ = (int) m.u32("irodori-tts.text.hidden_size");
+    heads_ = (int) m.u32("irodori-tts.text.num_heads");
+    layers_ = (int) m.u32("irodori-tts.text.num_layers");
+    window_ = (int) m.u32("irodori-tts.text.window");
+    dim_ = (int) m.u32("irodori-tts.text.dim");
+    max_tokens_ = (int) m.u32("irodori-tts.text.max_tokens");
+    eps_ = m.f32("irodori-tts.text.norm_eps");
+    norm_eps_ = m.f32("irodori-tts.norm_eps");
+    theta_global_ = m.f32("irodori-tts.text.rope_theta_global");
+    theta_local_ = m.f32("irodori-tts.text.rope_theta_local");
+    global_ = m.i32_array("irodori-tts.text.layer_global");
 }
 
 ggml_tensor * TextEncoder::build(Graph & g, const std::vector<int32_t> & ids, std::vector<ggml_tensor *> * layers) const {
