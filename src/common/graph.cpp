@@ -3,8 +3,6 @@
 #include <cstring>
 #include <stdexcept>
 
-namespace fastconformer {
-
 Graph::Graph(int max_nodes) {
     ggml_init_params params = {ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false),
                                nullptr, true};
@@ -59,4 +57,3 @@ std::vector<float> Graph::read(const ggml_tensor * t) {
     return out;
 }
 
-}  // namespace fastconformer
