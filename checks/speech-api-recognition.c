@@ -244,8 +244,8 @@ int check_recognition(int argc, char ** argv) {
     speech_transcription_request r = speech_transcription_request_default();
     r.samples = audio[shortest];
     r.n_samples = lengths[shortest];
-    r.sample_rate = rate * 2;
-    if (!request_refused(model, &r, "audio at twice the model's rate")) return 1;
+    r.sample_rate = 0;
+    if (!request_refused(model, &r, "audio without a sample rate")) return 1;
     r.sample_rate = rate;
     r.n_samples = 0;
     if (!request_refused(model, &r, "no audio")) return 1;

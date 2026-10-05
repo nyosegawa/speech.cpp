@@ -97,7 +97,7 @@ speech-tts irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32
 echo "こんにちは。" | speech-tts irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
     --voice bright=bright-young-woman-10s.voice.gguf -o - | ffplay -nodisp -autoexit -
 
-# An Irodori-TTS voice file from a 48 kHz reference recording (see Irodori-TTS voices below)
+# An Irodori-TTS voice file from a reference recording (see Irodori-TTS voices below)
 speech-tts make-voice irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
     bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf --device cpu
 ```
@@ -138,8 +138,8 @@ a byte order mark and CRLF line endings are accepted.
 
 `speech-asr` recognizes the speech in WAVE files with a recognition model, through the C API, and writes the text of
 each file to stdout as one line, in the order the files are given. A file is 16-, 24- or 32-bit PCM or 32-bit float
-at the model's rate (16 kHz for FastConformer), its channels averaged; a file at another rate is refused rather than
-resampled, so convert it first (`ffmpeg -i in.mp3 -ar 16000 -ac 1 out.wav`).
+at any rate, its channels averaged, and the library resamples it to the model's rate (16 kHz for FastConformer; see
+Audio at another rate below); audio in another format is converted first (`ffmpeg -i in.mp3 out.wav`).
 
 ```sh
 speech-asr parakeet-tdt_ctc-0.6b-ja-f16.gguf meeting.wav
@@ -170,7 +170,34 @@ what failed; the lines of the files before it are already on stdout.
   `speech-api-check`, which runs the C API through the shared library with a synthesis model and, with
   `transcribe`, with a recognition model and the dumps of `reference/fastconformer/`.
 - `reference/<model>/` pins the official implementation in a uv environment, converts its weights to GGUF
-  and dumps the tensors the checks compare with.
+  and dumps the tensors the checks compare with; `reference/resample/` dumps torchaudio's resampling, which
+  `resample-check` compares the library's with.
+
+## Audio at another rate
+
+The library resamples the audio it is given, a recording to recognize and the reference recording of an Irodori-TTS
+voice, to the model's rate (`speech_model_sample_rate()`), and never the audio it makes. It uses the method of
+torchaudio's `functional.resample()` with the parameters torchaudio's documentation gives for librosa's `kaiser_best`:
+a rational polyphase windowed sinc with 64 zero crossings on each side, cut off at 0.9475937167399596 of the lower
+rate's Nyquist frequency, under a Kaiser window of beta 14.769656459379492, computed in double precision. From 48 to
+16 kHz it passes everything up to 0.9 of the lower Nyquist frequency within 0.022 dB and keeps everything from 1.05
+of it at -146 dB or below; torchaudio's defaults would lose 2.4 dB at 0.9 and fold a tone at 1.1 back into the band
+at -14 dB. Its output is torchaudio's with these parameters, with the same length and to double precision: 301 dB SNR
+or more on chirps and noise at eight pairs of rates. torchaudio rounds the window's beta and the output's length
+through float32, and the library does the same. Audio at the model's rate passes unchanged, so the checks against the
+dumps are unaffected. Two rates whose ratio in lowest terms has a term above 4096 (44101 and 16000 Hz) are refused
+with an error.
+
+```sh
+cd reference/resample
+uv run python dump.py out
+cd ../..
+build/resample-check reference/resample/out
+```
+
+The official implementations resample each in their own way, NeMo's `transcribe()` with librosa's soxr and the
+Irodori-TTS runtime with torchaudio's defaults, so audio at another rate gives a text or a voice slightly different
+from theirs.
 
 ## The C API
 
@@ -238,7 +265,7 @@ speech_model_free(model);
   `speech_model_*` getters describe the loaded model: its name, architecture, task (`speech_model_task()`,
   synthesis or recognition), sample rate, how it streams, its voices and languages, whether the language reaches
   the model, its steps and its backend. A recognition model has no voices or steps and streams
-  `SPEECH_STREAMING_NONE`, and its sample rate is the rate its audio must have.
+  `SPEECH_STREAMING_NONE`, and its sample rate is the rate it recognizes.
 - **Requests.** `speech_synthesize()` speaks a text in a voice, in a language or `auto`, from a seed, and
   passes the audio to the callback as it is made. It returns `SPEECH_OK`, `SPEECH_STOPPED` when the callback
   or `speech_cancel()` stopped it, or `SPEECH_ERROR`. A request starts from `speech_request_default()`, so
@@ -247,9 +274,8 @@ speech_model_free(model);
   refuses them with an error rather than ignoring them, as Qwen3-TTS does with any speed but 1 and any length.
 - **Recognition.** `speech_transcribe()` recognizes the speech in a `speech_transcription_request`, started from
   `speech_transcription_request_default()`: mono float samples, their rate and a language (or `auto`), and passes
-  the text to the callback, once for FastConformer. The rate must be the model's (`speech_model_sample_rate()`):
-  the library does not resample, since a resampler's filter changes what the model hears, and refuses another
-  rate with an error that names both. `speech_synthesize()` on a recognition model and `speech_transcribe()` on a
+  the text to the callback, once for FastConformer. Samples at a rate other than the model's are resampled to it
+  (Audio at another rate, above). `speech_synthesize()` on a recognition model and `speech_transcribe()` on a
   synthesis model are errors. `speech_cancel()` stops a recognition before FastConformer's encoder starts or
   once it has run (docs/adr/0011).
 - **Voice files.** `speech_make_voice()` writes an Irodori-TTS voice file from a reference WAVE file.
@@ -355,23 +381,22 @@ in the request's `end`:
 | out | `{"type":"error","id":"1","error":"..."}` when the request cannot be recognized or one of its lines is refused |
 | in | `{"type":"cancel","id":"1"}`: the request sends no `text`, whether it is still taking chunks, waits or is being recognized |
 
-A request is answered once, by its `text` or by one `error`. The audio must be at the model's `sampleRate`, 16000
-for FastConformer; another rate is answered with an error, since the worker does not resample (docs/adr/0011). A
-chunk whose `seq` is not the next one, whose `pcm` is not base64 or holds an odd number of bytes, and an `end`
-without a whole-number `sampleRate` are answered at once with an `error`, and the request's other lines are then
-dropped. Requests are recognized one at a time in the order of their ends. A request to speak sent to a
-recognition worker is an error, and so is a chunk or an end sent to a synthesis worker. FastConformer recognizes a
-request's audio at once. The parakeet models' encoders attend over the whole of it, so a request to them should be
-one utterance: on an Apple M5, the 25.5 s FLEURS utterance takes 0.22 s on Metal and its memory grows with the
-square of the length. reazonspeech-nemo-v2 attends locally and takes a recording of minutes in one request. A cancel
-takes effect before the encoder starts or once it has run.
+A request is answered once, by its `text` or by one `error`. `sampleRate` is the rate of the request's audio, any
+rate; the library resamples it to the model's `sampleRate`, 16000 for FastConformer. A chunk whose `seq` is not the
+next one, whose `pcm` is not base64 or holds an odd number of bytes, and an `end` without a whole-number `sampleRate`
+are answered at once with an `error`, and the request's other lines are then dropped. Requests are recognized one at a
+time in the order of their ends. A request to speak sent to a recognition worker is an error, and so is a chunk or an
+end sent to a synthesis worker. FastConformer recognizes a request's audio at once. The parakeet models' encoders
+attend over the whole of it, so a request to them should be one utterance: on an Apple M5, the 25.5 s FLEURS utterance
+takes 0.22 s on Metal and its memory grows with the square of the length. reazonspeech-nemo-v2 attends locally and
+takes a recording of minutes in one request. A cancel takes effect before the encoder starts or once it has run.
 
 ### Irodori-TTS voices
 
 Irodori-TTS has no voices of its own; it speaks in the voice of a reference. A voice is either:
 
-- a reference WAVE file: 48 kHz (other rates are refused), at most 120 s, 16-, 24- or 32-bit PCM or 32-bit
-  float, the channels averaged. The worker normalizes its loudness and encodes it with the codec when it
+- a reference WAVE file: at most 120 s, 16-, 24- or 32-bit PCM or 32-bit float at any rate, the channels
+  averaged and resampled to 48 kHz. The worker normalizes its loudness and encodes it with the codec when it
   starts, as the official runtime does for every request.
 - a voice file, which `speech-tts make-voice` or `speech_make_voice()` writes from a reference WAVE file: the reference's codec
   latent in a GGUF that names the codec it was made with (a voice file of another codec is refused).
@@ -506,17 +531,17 @@ A transcription request is a `multipart/form-data` form, as OpenAI's API referen
 
 | Member | Meaning |
 |---|---|
-| `file` | the audio, required: a WAV file, 16-, 24- or 32-bit PCM or 32-bit float at the model's `sample_rate` (16000 for FastConformer), its channels averaged. Any other file is refused with a 400 (`param` `file`) rather than guessed at; convert it first (`ffmpeg -i in.mp3 -ar 16000 -ac 1 out.wav`). Audio at another rate is a 400 as well, since the library does not resample |
+| `file` | the audio, required: a WAV file, 16-, 24- or 32-bit PCM or 32-bit float at any rate, its channels averaged and resampled to the model's `sample_rate` (16000 for FastConformer). Any other file is refused with a 400 (`param` `file`) rather than guessed at; convert it first (`ffmpeg -i in.mp3 out.wav`) |
 | `model` | the loaded model's `id`, or left out; any other model is a 404 (`model_not_found`) |
 | `language` | a BCP 47 tag of one of the model's languages, or `auto` (the default) |
 | `response_format` | `json` (the default), which answers `{"text":"..."}`, or `text`, which answers the text alone as `text/plain`. `srt`, `vtt`, `verbose_json` and `diarized_json` are refused: speech.cpp gives neither timestamps nor speakers |
 
 OpenAI's other members (`prompt`, `temperature`, `timestamp_granularities[]`, `stream`, `include[]` and the rest)
 are refused with a 400 rather than ignored, and so is a member given twice. OpenAI's json answer also carries the
-usage in tokens or seconds, which speech.cpp does not count. Audio the model cannot take (no samples, another rate,
-a language it does not recognize) is a 400 with the library's message. The upload may be up to 25 MB, OpenAI's
-limit; the model recognizes the whole file at once, so a file should be one utterance (see the worker above). The
-request waits its turn like a speech request, and a client that goes away cancels it.
+usage in tokens or seconds, which speech.cpp does not count. Audio the model cannot take (no samples, a rate the
+library cannot resample from, a language it does not recognize) is a 400 with the library's message. The upload may
+be up to 25 MB, OpenAI's limit; the model recognizes the whole file at once, so a file should be one utterance (see
+the worker above). The request waits its turn like a speech request, and a client that goes away cancels it.
 
 ```sh
 curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@utterance.wav -F response_format=text
@@ -605,9 +630,10 @@ runtime's guidance, text 3.0 and speaker 5.0 while t ≥ 0.5):
 - the tail cut where the latent goes flat, and the codec decoder, a first window of 12 frames (0.48 s) and
   then 48 at a time, each window giving the samples of decoding the whole latent at once.
 
-Not implemented: captions (VoiceDesign), speaker-inversion embeddings, SilentCipher's watermark, and
-resampling a reference that is not at 48 kHz. The noise comes from speech.cpp's own
-generator, so a seed gives other audio than the same seed in the official runtime.
+Not implemented: captions (VoiceDesign), speaker-inversion embeddings and SilentCipher's watermark. The noise comes
+from speech.cpp's own generator, so a seed gives other audio than the same seed in the official runtime. A reference
+at another rate than 48 kHz is resampled with the library's filter, not with the runtime's torchaudio defaults (Audio
+at another rate, above).
 
 ### Models
 
@@ -682,6 +708,11 @@ the port asks. The codec on a GPU is checked against the CPU as well: on Metal i
 voice and on Vulkan 68 dB, and the quietest tenth of the 20 ms frames stays as quiet as on the CPU (-78 and
 -76 dBFS against -76). audio.cpp v0.8.2's Irodori-TTS adds a distorted copy of the voice 14 dB below it on
 Metal and raises the quiet parts to -60 dBFS.
+
+A reference at another rate, made from the dumps' 48 kHz reference with torchaudio's `kaiser_best`, gives on the CPU
+the latent the official codec makes of the same audio resampled to 48 kHz by torchaudio with `kaiser_best`, to 99 dB.
+That latent lies 30.6 dB from the 48 kHz reference's at 44.1 kHz and 10.7 dB at 24 kHz, which has nothing above
+11.4 kHz; the official runtime, which resamples with torchaudio's defaults, is 29.5 and 12.5 dB from its own.
 
 ### Speed
 
@@ -784,13 +815,13 @@ speech-worker parakeet-tdt_ctc-0.6b-ja-f16.gguf                 # a recognition 
 speech-server parakeet-tdt-0.6b-v3-f16.gguf                     # POST /v1/audio/transcriptions
 ```
 
-The models take 16 kHz mono audio. parakeet-tdt_ctc-0.6b-ja and reazonspeech-nemo-v2 recognize `ja`, and
-parakeet-tdt-0.6b-v3 `bg`, `cs`, `da`, `de`, `el`, `en`, `es`, `et`, `fi`, `fr`, `hr`, `hu`, `it`, `lt`, `lv`, `mt`,
-`nl`, `pl`, `pt`, `ro`, `ru`, `sk`, `sl`, `sv` and `uk`, the languages of its model card. None has an input for a
-language: parakeet-v3 finds the language of the audio itself, as NeMo's `transcribe()` runs it, without a prompt. A
-request's language is therefore only checked against the model's (`languageSelectable` false) and changes nothing
-in the text. For a long recording, prefer reazonspeech-nemo-v2: the parakeet models' memory grows with the square
-of the length.
+The models recognize 16 kHz mono audio, to which the library resamples audio at another rate. parakeet-tdt_ctc-0.6b-ja
+and reazonspeech-nemo-v2 recognize `ja`, and parakeet-tdt-0.6b-v3 `bg`, `cs`, `da`, `de`, `el`, `en`, `es`, `et`,
+`fi`, `fr`, `hr`, `hu`, `it`, `lt`, `lv`, `mt`, `nl`, `pl`, `pt`, `ro`, `ru`, `sk`, `sl`, `sv` and `uk`, the languages
+of its model card. None has an input for a language: parakeet-v3 finds the language of the audio itself, as NeMo's
+`transcribe()` runs it, without a prompt. A request's language is therefore only checked against the model's
+(`languageSelectable` false) and changes nothing in the text. For a long recording, prefer reazonspeech-nemo-v2: the
+parakeet models' memory grows with the square of the length.
 
 ### Accuracy
 
@@ -868,6 +899,13 @@ the thirteenth in the 65 s input, and the text is NeMo's all the same; on the CP
 band missed one frame on one side would give 27 to 50 dB, far below what the arithmetic explains.
 `fastconformer-encoder-check` therefore asks for 90 dB on the CPU with F32 weights and 25 dB where half precision
 enters.
+
+The 25 dumps' audio at 44.1 and 48 kHz, made with torchaudio's `kaiser_best`, gives with F32 weights on the CPU and on
+Metal the text NeMo gives for the same file brought to 16 kHz by torchaudio with `kaiser_best`, on all 50. That text is
+the dump's own on 21 of 25 at either rate; NeMo's `transcribe()` of the files, which resamples them with soxr, gives
+the dump's text on 22 and speech.cpp's on 22. The others differ in a hyphen, a comma, a full stop and a few words of
+the 311 s input: making the files and resampling them back takes away the band above 7.6 kHz, which the 16 kHz audio
+has, and soxr takes away a slightly different one.
 
 ### Speed
 

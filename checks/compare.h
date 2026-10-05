@@ -13,7 +13,8 @@ struct Diff {
     size_t n = 0;
 };
 
-inline Diff compare(const float * got, const float * want, size_t n) {
+template <typename T>
+Diff compare(const T * got, const T * want, size_t n) {
     Diff d;
     d.n = n;
     double signal = 0, noise = 0;
@@ -27,7 +28,8 @@ inline Diff compare(const float * got, const float * want, size_t n) {
     return d;
 }
 
-inline Diff compare(const std::vector<float> & got, const std::vector<float> & want) {
+template <typename T>
+Diff compare(const std::vector<T> & got, const std::vector<T> & want) {
     return compare(got.data(), want.data(), std::min(got.size(), want.size()));
 }
 

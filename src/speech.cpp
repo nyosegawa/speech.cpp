@@ -14,6 +14,7 @@
 #include "irodori-tts/synthesizer.h"
 #include "language.h"
 #include "model-file.h"
+#include "resample.h"
 
 namespace {
 
@@ -345,18 +346,12 @@ speech_status speech_transcribe(speech_model * model, const speech_transcription
         const EngineInfo & info = model->engine->info();
         if (request->n_samples == 0) throw std::invalid_argument("the audio has no samples; give at least one");
         require(request->samples, "speech_transcription_request.samples");
-        // Resampling is left to the caller: a resampler's filter changes what the model hears, and the official
-        // implementations differ in theirs, so the library takes only the rate the model was trained on.
-        if (request->sample_rate != info.sample_rate) {
-            throw std::invalid_argument("the audio is at " + std::to_string(request->sample_rate) + " Hz, and " + info.name +
-                                        " takes " + std::to_string(info.sample_rate) + " Hz; resample it to " +
-                                        std::to_string(info.sample_rate) + " Hz first, for example with ffmpeg -ar " +
-                                        std::to_string(info.sample_rate));
-        }
+        const Resampler resample(request->sample_rate, info.sample_rate);
         check_language(model, text_or_empty(request->language));
-        const std::vector<float> samples(request->samples, request->samples + request->n_samples);
+        std::vector<float> samples(request->samples, request->samples + request->n_samples);
         std::lock_guard<std::mutex> lock(model->speaking);
         model->cancelled = false;
+        samples = resample(std::move(samples));
         const std::optional<std::string> text = model->engine->transcribe(samples, [&] { return model->cancelled.load(); });
         if (!text || model->cancelled) return SPEECH_STOPPED;
         return on_text(text->c_str(), user_data) != 0 ? SPEECH_STOPPED : SPEECH_OK;

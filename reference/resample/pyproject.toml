@@ -1,0 +1,13 @@
+[project]
+name = "speech-cpp-resample-reference"
+version = "0"
+description = "Resamples test signals with torchaudio to dump the outputs speech.cpp's resampler is checked against"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "torch==2.10.0",
+  "torchaudio==2.10.0",
+  "numpy",
+]
+
+[tool.uv]
+package = false

@@ -2,8 +2,8 @@
 // each file's text to stdout as one line, in the order the files are given. Reports on stderr where the time went:
 // the load, and for each file its seconds of audio, the time to its text and the real-time factor.
 //
-// A WAVE file is 16-, 24- or 32-bit PCM or 32-bit float at the model's rate (16 kHz for FastConformer), its
-// channels averaged; another rate is refused rather than resampled.
+// A WAVE file is 16-, 24- or 32-bit PCM or 32-bit float at any rate, its channels averaged; the library resamples
+// it to the model's rate (16 kHz for FastConformer).
 //
 // usage: speech-asr <model.gguf> [options] <audio.wav>...
 //          --device NAME|gpu|cpu   --language TAG   -v

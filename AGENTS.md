@@ -43,7 +43,8 @@ and its check before changing behavior.
   `jobs.h` runs one request at a time in arrival order and cancels the request of a client that goes away.
 - `reference/<model>/` holds, per model, a uv environment that pins the official code, PyTorch and the rest,
   the conversion of the official weights to GGUF, and the scripts that run the official implementation to
-  dump reference tensors. Dumps go to `reference/<model>/out/`.
+  dump reference tensors. Dumps go to `reference/<model>/out/`. `reference/resample/` does the same for the
+  resampler of `src/common/`, against torchaudio.
 
 Keep these boundaries explicit: code does not reach past its module for an operation that belongs to
 another one.
