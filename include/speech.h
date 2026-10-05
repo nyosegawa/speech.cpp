@@ -37,11 +37,21 @@
 extern "C" {
 #endif
 
-/** The version of this API, raised whenever a declaration changes in a way an existing caller notices. */
+/**
+ * The version of this API, raised whenever a declaration changes in a way an existing caller notices. An added
+ * function does not raise it, so a library of an older release with the same API version may lack a function
+ * this header declares.
+ */
 #define SPEECH_API_VERSION 1
 
 /** The SPEECH_API_VERSION the library was built with, for a caller that loads it at run time. */
 SPEECH_API int speech_api_version(void);
+
+/**
+ * The release of speech.cpp the library was built from, such as "0.4.0": MAJOR.MINOR.PATCH under Semantic
+ * Versioning, the release's tag without its "v". The string is the library's and lives as long as the process.
+ */
+SPEECH_API const char * speech_version(void);
 
 /** What a call that can fail returns. */
 typedef enum speech_status {

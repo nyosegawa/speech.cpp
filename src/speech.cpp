@@ -81,6 +81,10 @@ int speech_api_version(void) {
     return SPEECH_API_VERSION;
 }
 
+const char * speech_version(void) {
+    return SPEECH_VERSION;
+}
+
 const char * speech_last_error(void) {
     return last_error.c_str();
 }

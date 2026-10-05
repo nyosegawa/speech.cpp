@@ -1,8 +1,9 @@
 /*
- * Checks that the C API alone, through the shared libspeech, does what a program needs: lists the devices,
- * optionally makes an Irodori-TTS voice file and loads it, loads a model, describes it, speaks one sentence
- * into a WAVE file, stops a second request with speech_cancel() from another thread before it finishes, and
- * reports an unknown voice as an error. It is written in C so that speech.h is checked to be plain C.
+ * Checks that the C API alone, through the shared libspeech, does what a program needs: reports the release
+ * and API it was built as, lists the devices, optionally makes an Irodori-TTS voice file and loads it, loads a
+ * model, describes it, speaks one sentence into a WAVE file, stops a second request with speech_cancel() from
+ * another thread before it finishes, and reports an unknown voice as an error. It is written in C so that
+ * speech.h is checked to be plain C.
  *
  * usage: speech-api-check <model.gguf> <codec.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]...
  *                         [--make-voice <reference.wav> <voice.gguf>]
@@ -203,6 +204,11 @@ int main(int argc, char ** argv) {
         fprintf(stderr, "FAIL: the library has API version %d, the header %d\n", speech_api_version(), SPEECH_API_VERSION);
         return 1;
     }
+    if (strcmp(speech_version(), SPEECH_EXPECTED_VERSION) != 0) {
+        fprintf(stderr, "FAIL: the library is speech.cpp %s, the check was built for %s\n", speech_version(), SPEECH_EXPECTED_VERSION);
+        return 1;
+    }
+    printf("speech.cpp %s, API version %d\n", speech_version(), speech_api_version());
 
     speech_model_params params = speech_model_default_params();
     params.model_path = argv[1];
