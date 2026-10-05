@@ -21,12 +21,15 @@ namespace fastconformer {
  * the sum of their probabilities; a finished hypothesis that is merged into takes the new score too. The search ends
  * when no hypothesis has a frame left, and the result is the finished hypothesis with the best score, divided by
  * its length with the starting blank when score_norm is set, or the beam's first when none finished.
+ *
+ * Each label keeps the frame t it was added on, and a merged hypothesis keeps the frames of the first. NeMo records
+ * the step i instead, t plus the labels before it, which runs past the end of the utterance as the labels add up.
  */
 class AlsdDecoder : public Decoder {
 public:
     AlsdDecoder(const ModelFile & m, const PredictionNetwork & prediction, const Joint & joint);
 
-    std::vector<int32_t> decode(const std::vector<float> & projected, ggml_backend_t backend) const override;
+    Decoding decode(const std::vector<float> & projected, ggml_backend_t backend) const override;
 
     int blank() const override { return blank_; }
 

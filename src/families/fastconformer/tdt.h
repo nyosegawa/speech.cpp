@@ -16,14 +16,14 @@ namespace fastconformer {
  * the frame advances by the duration, by 1 at least for a blank. Blanks are passed over with the same
  * prediction until a token is found or the frames run out. A token is emitted, even when its duration ends the
  * utterance, and fed to the prediction network for the next step; after max_symbols tokens on one frame whose
- * last duration is 0, the frame advances by 1.
+ * last duration is 0, the frame advances by 1. Each token keeps the frame it was found on and the duration predicted
+ * with it, the time index and the token duration the decoding stores for timestamps.
  */
 class TdtDecoder : public Decoder {
 public:
     TdtDecoder(const ModelFile & m, const PredictionNetwork & prediction, const Joint & joint);
 
-    /** The token ids for `projected`, the encoder's output through Joint::project_encoder(), [T, hidden] row-major. */
-    std::vector<int32_t> decode(const std::vector<float> & projected, ggml_backend_t backend) const override;
+    Decoding decode(const std::vector<float> & projected, ggml_backend_t backend) const override;
 
     int blank() const override { return blank_; }
 

@@ -16,7 +16,7 @@ namespace fastconformer {
 
 /** What recognize() found: the decoding's tokens and their text. */
 struct Transcript {
-    std::vector<int32_t> ids;
+    Decoding decoding;
     std::string text;
 };
 
@@ -34,8 +34,19 @@ public:
     /** The encoder's output for `features` ([frames, mels] row-major) projected for the joint, [T, hidden] row-major. */
     std::vector<float> encode(const std::vector<float> & features, int64_t frames);
 
+    /** The tokens of encode()'s output with the frames they were emitted on. */
+    Decoding decoding(const std::vector<float> & projected) const { return decoder_->decode(projected, backend_); }
+
     /** The token ids of encode()'s output. */
-    std::vector<int32_t> decode(const std::vector<float> & projected) const { return decoder_->decode(projected, backend_); }
+    std::vector<int32_t> decode(const std::vector<float> & projected) const { return decoding(projected).ids; }
+
+    /**
+     * The time in seconds of encoder frame `frame` as process_timestamp_outputs() computes it: the frame times the
+     * window stride times the subsampling factor, in double precision and in that order. The window stride is the
+     * hop length over the sample rate; NeMo's 0.01 s is 160 samples at 16 kHz, and the division gives the double of
+     * the literal.
+     */
+    double seconds(int64_t frame) const;
 
     int sample_rate() const { return frontend_.sample_rate(); }
     const ModelFile & model() const { return model_; }

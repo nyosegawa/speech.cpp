@@ -1,6 +1,7 @@
 """Runs a pinned NeMo FastConformer on the CPU in float32 and saves the tensors the C++ port is checked against.
 
 usage: uv run python dump.py <model> <out dir> <audio.wav>...
+       uv run python dump.py --times <model> <out dir>
 
 Each WAVE file, mono at the model's sample rate, goes to <out dir>/<model>/<file name without .wav>/. The
 stages are those of the official forward pass and of the default decoding of its transducer (greedy TDT, or beam
@@ -23,11 +24,28 @@ search over RNN-T), in evaluation (no dither), recorded with hooks:
 
 text.txt holds the text in UTF-8 without a newline, and meta.json the same text and the lengths. The text of the
 stages is asserted to equal what the official transcribe() returns with the model's default decoding.
+
+Then each file goes through transcribe(timestamps=True), whose ids and text are asserted to be the stages', and the
+times it gives are saved beside them, the offsets in encoder frames and the times in seconds as NeMo computes them:
+
+  token_timestep   the time index the decoding recorded with each token, [m]: the frame it was emitted on in greedy
+                   TDT decoding, the step of the search (the frame plus the tokens before it) in the beam search
+  token_duration   the duration greedy TDT decoding predicted with each token, in frames, [m]; TDT only
+  token_offsets    the start and end offset of each token in frames, as compute_rnnt_timestamps() gives them, [m, 2]
+  token_seconds    the same in seconds, float64, [m, 2]
+  segment_offsets  the start and end offset of each segment in frames, [s, 2]
+  segment_seconds  the same in seconds, float64, [s, 2]
+
+segments.txt holds the text of each segment on a line of its own, and times.json all of it with the words, each
+token's text and the settings the times depend on: the separators, whether the checkpoint sets them, the punctuation
+marks, the subsampling factor and the window stride. With --times, the times alone are added to every dump of the
+model under <out dir>/<model>/, from the audio.npy each holds.
 """
 
 import argparse
 import json
 import os
+import tempfile
 
 import numpy as np
 import soundfile
@@ -36,10 +54,13 @@ import torch
 from pins import MODELS, NEMO, restore
 
 parser = argparse.ArgumentParser()
+parser.add_argument("--times", action="store_true", help="add the times to the model's existing dumps")
 parser.add_argument("model", choices=sorted(MODELS))
 parser.add_argument("out_dir")
-parser.add_argument("audio", nargs="+")
+parser.add_argument("audio", nargs="*")
 args = parser.parse_args()
+if args.times == bool(args.audio):
+    parser.error("give WAVE files, or --times without them")
 
 pin = MODELS[args.model]
 model = restore(pin)
@@ -47,6 +68,9 @@ sample_rate = int(model.cfg.preprocessor.sample_rate)
 # A hybrid checkpoint has a CTC head beside its transducer; transcribe() decodes with the transducer while cur_decoder
 # is "rnnt".
 assert getattr(model, "cur_decoder", "rnnt") == "rnnt"
+# transcribe(timestamps=True) merges every default of the decoding's configuration into the checkpoint's, so what the
+# checkpoint itself sets is read before.
+set_by_checkpoint = {key: key in model.cfg.decoding for key in ("segment_seperators", "word_seperator", "segment_gap_threshold")}
 
 # The decoding calls the prediction network on the label each hypothesis ends with, from the state its labels before
 # left, projects the outputs and the encoder's frames for the joint, and evaluates the joint on pairs of them: one at a
@@ -101,7 +125,9 @@ def recording_joint(f, g):
 model.decoder.predict, model.joint.project_encoder, model.joint.project_prednet, model.joint.joint_after_projection = (
     recording_predict, recording_project_encoder, recording_project_prednet, recording_joint)
 
-for path in args.audio:
+
+def dump_stages(path):
+    """Saves the stages of the WAVE file at `path` and returns the folder they went to."""
     samples, rate = soundfile.read(path, dtype="float32")
     assert rate == sample_rate and samples.ndim == 1, f"{path} is not mono at {sample_rate} Hz"
     name = os.path.splitext(os.path.basename(path))[0]
@@ -159,3 +185,74 @@ for path in args.audio:
         f.write(text)
     json.dump(meta, open(os.path.join(out, "meta.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     print(json.dumps({k: v for k, v in meta.items() if k not in ("nemo", "model")}, ensure_ascii=False))
+    return out
+
+
+def dump_times(path, out):
+    """Saves the times transcribe(timestamps=True) gives for the WAVE file at `path` into the dump folder `out`."""
+    hypothesis = model.transcribe([path], batch_size=1, timestamps=True, verbose=False)[0]
+    blank = model.decoding.blank_id
+    ids = [int(i) for i in hypothesis.y_sequence.tolist()]
+    assert blank not in ids
+    assert ids == np.load(os.path.join(out, "ids.npy")).tolist(), f"transcribe(timestamps=True) gives other ids for {path}"
+    with open(os.path.join(out, "text.txt"), encoding="utf-8", newline="") as f:
+        assert hypothesis.text == f.read(), f"transcribe(timestamps=True) gives another text for {path}"
+    stamps = hypothesis.timestamp
+    timestep = [int(t) for t in stamps["timestep"]]
+    tdt = model.decoding._is_tdt
+    duration = [int(d) for d in hypothesis.token_duration] if tdt else None
+    chars, words, segments = stamps["char"], stamps["word"], stamps["segment"]
+    assert len(timestep) == len(chars) == len(ids) and (duration is None or len(duration) == len(ids))
+
+    def pairs(entries, *keys):
+        return [[entry[k] for k in keys] for entry in entries]
+
+    arrays = {
+        "token_timestep": np.array(timestep, dtype=np.int32),
+        "token_offsets": np.array(pairs(chars, "start_offset", "end_offset"), dtype=np.int32).reshape(-1, 2),
+        "token_seconds": np.array(pairs(chars, "start", "end"), dtype=np.float64).reshape(-1, 2),
+        "segment_offsets": np.array(pairs(segments, "start_offset", "end_offset"), dtype=np.int32).reshape(-1, 2),
+        "segment_seconds": np.array(pairs(segments, "start", "end"), dtype=np.float64).reshape(-1, 2),
+    }
+    if tdt:
+        arrays["token_duration"] = np.array(duration, dtype=np.int32)
+    for key, array in arrays.items():
+        np.save(os.path.join(out, f"{key}.npy"), np.ascontiguousarray(array))
+    assert all("\n" not in s["segment"] for s in segments)
+    with open(os.path.join(out, "segments.txt"), "w", encoding="utf-8", newline="") as f:
+        f.write("".join(s["segment"] + "\n" for s in segments))
+    times = {
+        "nemo": NEMO, "model": pin,
+        "segment_seperators": list(model.decoding.segment_seperators), "word_seperator": model.decoding.word_seperator,
+        "segment_gap_threshold": model.decoding.segment_gap_threshold, "set_by_checkpoint": set_by_checkpoint,
+        "supported_punctuation": sorted(model.decoding.supported_punctuation),
+        "tokenizer_type": model.decoding.tokenizer_type,
+        "subsampling_factor": int(model.encoder.subsampling_factor),
+        "window_stride": float(model.cfg.preprocessor.window_stride),
+        "timestep": timestep, "token_duration": duration,
+        "pieces": model.decoding.decode_ids_to_tokens(ids),
+        "char": [dict(c, char=list(c["char"])) for c in chars], "word": words, "segment": segments,
+    }
+    with open(os.path.join(out, "times.json"), "w", encoding="utf-8") as f:
+        json.dump(times, f, ensure_ascii=False, indent=1)
+    print(json.dumps({"dump": out, "tokens": len(ids), "segments": len(segments)}, ensure_ascii=False))
+
+
+# The times come from transcribe() as it runs without the recording wrappers, and after the stages of every file, since
+# transcribe(timestamps=True) changes the model's decoding for good.
+outs = [] if args.times else [dump_stages(path) for path in args.audio]
+model.decoder.predict, model.joint.project_encoder, model.joint.project_prednet, model.joint.joint_after_projection = (
+    predict, project_encoder, project_prednet, joint_after_projection)
+if args.times:
+    root = os.path.join(args.out_dir, args.model)
+    dumps = sorted(os.path.join(root, d) for d in os.listdir(root) if os.path.isfile(os.path.join(root, d, "audio.npy")))
+    assert dumps, f"no dump of this script is under {root}"
+    for out in dumps:
+        # transcribe() reads files; the dump's samples, written as 32-bit float, read back unchanged.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, os.path.basename(out) + ".wav")
+            soundfile.write(path, np.load(os.path.join(out, "audio.npy")), sample_rate, subtype="FLOAT")
+            dump_times(path, out)
+else:
+    for path, out in zip(args.audio, outs):
+        dump_times(path, out)

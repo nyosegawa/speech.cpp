@@ -833,10 +833,12 @@ cd reference/fastconformer
 uv run python dump.py parakeet-tdt_ctc-0.6b-ja out <16 kHz mono WAVE files>
 uv run python dump.py parakeet-tdt-0.6b-v3 out <16 kHz mono WAVE files>
 uv run python dump.py reazonspeech-nemo-v2 out <16 kHz mono WAVE files>
+uv run python dump.py --times reazonspeech-nemo-v2 out   # NeMo's times alone, added to the dumps already there
 cd ../..
 build/fastconformer-frontend-check <model.gguf> reference/fastconformer/out
 build/fastconformer-encoder-check <model.gguf> reference/fastconformer/out [gpu|cpu|device name]
 build/fastconformer-transducer-check <model.gguf> reference/fastconformer/out [gpu|cpu|device name]
+build/fastconformer-times-check <model.gguf> reference/fastconformer/out [gpu|cpu|device name]
 ```
 
 `dump.py` writes the dumps of each model to `out/<model>/<file name>/`, and each check reads those of the model
@@ -906,6 +908,21 @@ the dump's own on 21 of 25 at either rate; NeMo's `transcribe()` of the files, w
 the dump's text on 22 and speech.cpp's on 22. The others differ in a hyphen, a comma, a full stop and a few words of
 the 311 s input: making the files and resampling them back takes away the band above 7.6 kHz, which the 16 kHz audio
 has, and soxr takes away a slightly different one.
+
+`dump.py` also saves the times NeMo's `transcribe(timestamps=True)` gives: the frame each token was emitted on and,
+for TDT, the duration predicted with it, and the spans of the tokens and of the segments in frames and in seconds.
+`fastconformer-times-check` decodes the dump's encoder output and compares the frames, the durations, the tokens'
+spans in frames and in seconds and the segments NeMo's separators give, at the ends of words as NeMo ends them, with
+them: on every dump of the three models, on the CPU with F32 weights and on Metal with F16, all are NeMo's exactly.
+For the Japanese models, whose text has no spaces and so no end of a word before its last token, it also cuts
+segments after `。`, `？`, `！`, `?` and `!` wherever they stand, and checks that each segment ends there, at a
+separator that ends a word, or with the last token. NeMo's beam search records with each token
+the step of its search, the frame plus the tokens before it, so that its times for ReazonSpeech run past the end of
+the audio, to 386.16 s for the 311.22 s input; speech.cpp keeps the frame, and the check compares the step it gives.
+From the audio, every stage ours, the frames are NeMo's but for one token of ReazonSpeech's 9518252661993015549 on
+Metal with F16, one frame early: the two alignments of its tokens differ by 0.007 in log-probability on the CPU in
+float32, and half precision reverses them. None of the checkpoints sets NeMo's separators, which are `.`, `!` and `?`
+by default, and the vocabularies of the Japanese models hold `。` and the ASCII `?` and `!`, not `！` or `？`.
 
 ### Speed
 
