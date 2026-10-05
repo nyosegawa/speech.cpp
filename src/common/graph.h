@@ -7,8 +7,6 @@
 #include "ggml-backend.h"
 #include "ggml.h"
 
-namespace fastconformer {
-
 /**
  * A matrix product that asks for float32 accumulation. Vulkan otherwise accumulates in half precision on
  * GPUs that have it; the CPU and Metal ignore the request (Metal rounds the inputs of its matrix kernel to
@@ -59,4 +57,3 @@ private:
     std::vector<Upload> uploads_;
 };
 
-}  // namespace fastconformer

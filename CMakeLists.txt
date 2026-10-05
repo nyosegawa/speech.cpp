@@ -36,6 +36,7 @@ add_library(speechcommon STATIC
     src/common/wav.cpp
     src/common/args.cpp
     src/common/language.cpp
+    src/common/graph.cpp
 )
 target_include_directories(speechcommon PUBLIC src/common)
 target_link_libraries(speechcommon PUBLIC ggml::ggml)
@@ -56,7 +57,6 @@ target_include_directories(qwen3tts PUBLIC src/families)
 target_link_libraries(qwen3tts PUBLIC speechcommon)
 
 add_library(irodoritts STATIC
-    src/families/irodori-tts/graph.cpp
     src/families/irodori-tts/text-normalizer.cpp
     src/families/irodori-tts/tokenizer.cpp
     src/families/irodori-tts/text-encoder.cpp
@@ -157,7 +157,6 @@ endif()
 
 # FastConformer speech recognition (NVIDIA NeMo): the family and the checks of its stages.
 add_library(fastconformer STATIC
-    src/families/fastconformer/graph.cpp
     src/families/fastconformer/frontend.cpp
     src/families/fastconformer/encoder.cpp
     src/families/fastconformer/ctc.cpp
