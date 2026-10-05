@@ -5,7 +5,6 @@
 
 #include "engine.h"
 #include "irodori-tts/synthesizer.h"
-#include "language.h"
 
 namespace {
 
@@ -21,7 +20,6 @@ public:
             info_.voices.push_back(name);
         }
         info_.name = synth_.model().str("general.name");
-        info_.architecture = "irodori-tts";
         info_.sample_rate = synth_.sample_rate();
         info_.streaming = SPEECH_STREAMING_SENTENCE;
         info_.languages = synth_.model().str_array("speech.languages");
@@ -40,12 +38,6 @@ public:
     void speak(const EngineRequest & request, const AudioCallback & on_audio) override {
         const auto voice = voices_.find(request.voice);
         if (voice == voices_.end()) throw std::runtime_error("no voice is named \"" + request.voice + "\"");
-        // The model is not told a language; a request may still name one, which must be one it speaks.
-        if (!request.language.empty() && request.language != "auto" && !speaks(request.language)) {
-            std::string list;
-            for (const std::string & l : info_.languages) list += (list.empty() ? "" : ", ") + l;
-            throw std::runtime_error("Irodori-TTS speaks " + list + ", not " + request.language);
-        }
         irodori::Request r;
         r.text = request.text;
         r.seed = request.seed;
@@ -58,14 +50,6 @@ public:
     }
 
 private:
-    /** Whether a BCP 47 tag names one of the model's languages. */
-    bool speaks(const std::string & tag) const {
-        for (const std::string & l : info_.languages) {
-            if (bcp47_matches(tag, l)) return true;
-        }
-        return false;
-    }
-
     irodori::Synthesizer synth_;
     int steps_;
     std::map<std::string, irodori::Voice> voices_;

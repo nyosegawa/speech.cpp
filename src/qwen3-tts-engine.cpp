@@ -14,7 +14,6 @@ public:
     Qwen3TtsEngine(const EngineOptions & options, ggml_backend_t backend)
         : synth_(options.model, options.codec, backend, options.context) {
         info_.name = synth_.talker_name();
-        info_.architecture = "qwen3tts-talker";
         info_.sample_rate = synth_.sample_rate();
         info_.streaming = SPEECH_STREAMING_FRAME;
         info_.voices = synth_.ids().speaker_names;
@@ -62,8 +61,5 @@ private:
 }  // namespace
 
 std::unique_ptr<Engine> make_qwen3_tts(const EngineOptions & options, ggml_backend_t backend) {
-    if (!options.voices.empty() || options.steps != 0) {
-        throw std::runtime_error("voices and steps are for Irodori-TTS models; a Qwen3-TTS model speaks with its own speakers");
-    }
     return std::make_unique<Qwen3TtsEngine>(options, backend);
 }

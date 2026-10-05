@@ -1,17 +1,34 @@
-// A worker process that speaks texts for another program over JSON Lines. It runs Qwen3-TTS or Irodori-TTS,
-// chosen by general.architecture of the model's GGUF.
+// A worker process that speaks texts or recognizes speech for another program over JSON Lines. It runs the family
+// that general.architecture of the model's GGUF names: Qwen3-TTS or Irodori-TTS, which speak, or FastConformer,
+// which recognizes speech. The ready message's "task" says which, and the requests follow from it.
 //
 // Reads one JSON object per line from stdin and answers with one JSON object per line on stdout. Nothing else
 // reaches stdout: every log goes to stderr, so a line on stdout that is not a JSON object is a defect.
+//
+// A synthesis worker ("task": "synthesis"):
 //   in : {"id": "...", "text": "...", "voice": "...", "language": "...", "speed": 1.0, "seconds": 2.5,
 //         "durationScale": 1.2}
 //        {"type": "cancel", "id": "..."}
-//   out: {"type": "ready", "model": "...", "architecture": "...", "sampleRate": 24000, "streaming": "frame",
-//         "voices": [...], "languages": [...], "languageSelectable": true, "backend": "MTL0", "version": "0.4.0"}
+//   out: {"type": "ready", "task": "synthesis", "model": "...", "architecture": "...", "sampleRate": 24000,
+//         "streaming": "frame", "voices": [...], "languages": [...], "languageSelectable": true, "backend": "MTL0",
+//         "version": "0.4.0"}
 //        {"type": "chunk", "id": "...", "seq": 0, "pcm": "<base64 int16le mono>"}
 //        {"type": "end", "id": "...", "samples": 123456}
 //        {"type": "error", "id": "...", "error": "..."}
 //        {"type": "fatal", "error": "..."}
+//
+// A recognition worker ("task": "recognition") takes the audio of a request in the chunks a synthesis worker sends,
+// and the request itself in its end:
+//   in : {"type": "chunk", "id": "...", "seq": 0, "pcm": "<base64 int16le mono>"}, seq counting from 0
+//        {"type": "end", "id": "...", "sampleRate": 16000, "language": "..."}
+//        {"type": "cancel", "id": "..."}
+//   out: {"type": "ready", "task": "recognition", "model": "...", "architecture": "fastconformer",
+//         "sampleRate": 16000, "languages": [...], "languageSelectable": false, "backend": "MTL0", "version": "..."}
+//        {"type": "text", "id": "...", "text": "..."}
+//        {"type": "error", "id": "...", "error": "..."}
+// A request is answered once: with its text, or with one error, which comes as soon as one of its lines is refused
+// (a chunk out of order or not base64, an end without a whole-number sampleRate), after which its other lines are
+// dropped. The audio must be at the model's sampleRate; the worker does not resample.
 //
 // Every family lists its languages as BCP 47 tags, and a request's "language", when given, must be one of
 // them or a region or script of one ("ja", "ja-JP"); "auto" or no language leaves the choice to the model.
@@ -25,33 +42,31 @@
 //
 // Requests are served one at a time in arrival order. A cancel takes effect between two chunks, and for
 // Irodori-TTS also between two of the sampler's steps, before the first chunk; a cancelled request sends no
-// end, and one cancelled before it starts is dropped.
+// end, and one cancelled before it starts is dropped. A cancelled recognition request sends no text, whether it
+// was still taking chunks, waiting or being recognized.
 //
-// Every line on stdin gets an answer. A line that is not a request or a cancel the worker can read (not one
-// JSON object, a member that is not a string or a number, no "id", an unknown "type") is answered at once
-// with an error naming the problem, with the "id" when one could be read and without one otherwise. Such an
-// error is the caller's defect, not the model's.
+// Every line on stdin gets an answer, a recognition request's chunks through the answer to the request. A line
+// that is not a message the worker can read (not one JSON object, a member that is not a string or a number, no
+// "id", a "type" the worker's task does not take) is answered at once with an error naming the problem, with the
+// "id" when one could be read and without one otherwise. Such an error is the caller's defect, not the model's.
 //
 // `--devices` instead prints the devices ggml can run on and exits, so that the caller can tell whether
 // the machine has a GPU and how much memory it has before starting a worker:
 //   {"type": "devices", "devices": [{"name": "Vulkan0", "description": "NVIDIA GeForce RTX 2080",
 //                                    "kind": "gpu", "memoryTotal": 8589934592, "memoryFree": 7516192768}]}
 //
-// usage: speech-worker <model.gguf> <codec.gguf> [--device NAME|gpu|cpu] [--seed n]
+// usage: speech-worker <model.gguf> <codec.gguf> [--device NAME|gpu|cpu] [--seed n]    (synthesis)
 //                      [--ctx n]                               (Qwen3-TTS)
 //                      [--voice NAME=FILE]... [--steps n]      (Irodori-TTS; FILE is a WAVE or voice file)
+//        speech-worker <model.gguf> [--device NAME|gpu|cpu]                      (recognition)
 //        speech-worker --devices
 
 #include <algorithm>
 #include <cmath>
-#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
-#include <deque>
-#include <iostream>
 #include <mutex>
 #include <random>
-#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -64,7 +79,9 @@
 #endif
 
 #include "args.h"
+#include "base64.h"
 #include "flat-json.h"
+#include "inbox.h"
 #include "speech.h"
 #include "take-stdout.h"
 
@@ -80,107 +97,12 @@ void emit(const std::string & json) {
     std::fflush(protocol);
 }
 
-std::string base64(const uint8_t * data, size_t n) {
-    static const char * table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve((n + 2) / 3 * 4);
-    for (size_t i = 0; i < n; i += 3) {
-        const uint32_t v = (uint32_t) data[i] << 16 | (i + 1 < n ? (uint32_t) data[i + 1] << 8 : 0) | (i + 2 < n ? data[i + 2] : 0);
-        out += table[(v >> 18) & 63];
-        out += table[(v >> 12) & 63];
-        out += i + 1 < n ? table[(v >> 6) & 63] : '=';
-        out += i + 2 < n ? table[v & 63] : '=';
-    }
-    return out;
-}
-
 /** A JSON array of the strings a getter gives for 0 to count - 1. */
 template <typename Get>
 std::string json_array(size_t count, Get get) {
     std::string out = "[";
     for (size_t i = 0; i < count; i++) out += (i ? "," : "") + json_string(get(i));
     return out + "]";
-}
-
-std::string value(const FlatJson & request, const char * key) {
-    const auto it = request.find(key);
-    return it == request.end() ? "" : it->second.text;
-}
-
-/** A number member of a request, or `absent` when the request leaves it out; a string or a non-finite number throws. */
-double number(const FlatJson & request, const char * key, double absent) {
-    const auto it = request.find(key);
-    if (it == request.end()) return absent;
-    const std::string & text = it->second.text;
-    char * end = nullptr;
-    const double v = std::strtod(text.c_str(), &end);
-    if (it->second.kind != FlatValue::NUMBER || end != text.c_str() + text.size() || !std::isfinite(v)) {
-        throw std::invalid_argument(std::string("\"") + key + "\" is " + json_string(text) + "; give it as a JSON number");
-    }
-    return v;
-}
-
-struct Inbox {
-    std::mutex mutex;
-    std::condition_variable ready;
-    std::deque<FlatJson> requests;
-    std::set<std::string> cancelled;
-    bool closed = false;
-
-    bool is_cancelled(const std::string & id) {
-        std::lock_guard<std::mutex> lock(mutex);
-        return cancelled.count(id) > 0;
-    }
-    void forget(const std::string & id) {
-        std::lock_guard<std::mutex> lock(mutex);
-        cancelled.erase(id);
-    }
-};
-
-/** Why a message is not a request or a cancel the worker can serve, or nothing when it is one. */
-std::string unreadable(const FlatJson & message) {
-    for (const auto & [key, v] : message) {
-        if (v.kind == FlatValue::OTHER) {
-            return "the member " + json_string(key) + " is " + v.text + "; the protocol's members are strings and numbers";
-        }
-    }
-    if (!message.count("id")) return "the message has no \"id\"; every request and cancel needs one";
-    const auto type = message.find("type");
-    if (type != message.end() && type->second.text != "cancel") {
-        return "the message's \"type\" is " + json_string(type->second.text) + "; a request has none and a cancel has \"cancel\"";
-    }
-    return "";
-}
-
-void read_requests(Inbox & inbox) {
-    std::string line;
-    while (std::getline(std::cin, line)) {
-        FlatJson message;
-        std::string problem;
-        try {
-            message = parse_flat_json(line);
-            problem = unreadable(message);
-        } catch (const std::exception & e) {
-            problem = std::string("a line on stdin cannot be read: ") + e.what() + "; send one JSON object per line";
-        }
-        if (!problem.empty()) {
-            const auto id = message.find("id");
-            const bool has_id = id != message.end() && id->second.kind != FlatValue::OTHER;
-            emit("{\"type\":\"error\"," + (has_id ? "\"id\":" + json_string(id->second.text) + "," : std::string()) +
-                 "\"error\":" + json_string(problem) + "}");
-            continue;
-        }
-        std::lock_guard<std::mutex> lock(inbox.mutex);
-        if (value(message, "type") == "cancel") {
-            inbox.cancelled.insert(value(message, "id"));
-        } else {
-            inbox.requests.push_back(message);
-            inbox.ready.notify_one();
-        }
-    }
-    std::lock_guard<std::mutex> lock(inbox.mutex);
-    inbox.closed = true;
-    inbox.ready.notify_one();
 }
 
 void list_devices() {
@@ -203,19 +125,25 @@ struct Options {
     int context = speech_model_default_params().context;
     int steps = 0;
     std::vector<std::pair<std::string, std::string>> voices;
+    bool has_seed = false;
     uint64_t seed = std::random_device{}();
 };
 
 Options parse_options(const std::vector<std::string> & a) {
     Options o;
     o.model = a[1];
-    o.codec = a[2];
-    for (size_t i = 3; i < a.size(); i++) {
+    // A recognition model has no codec, so the second path is there only when it is not an option.
+    size_t first = 2;
+    if (a.size() > 2 && a[2].compare(0, 2, "--") != 0) o.codec = a[first++];
+    for (size_t i = first; i < a.size(); i++) {
         const std::string & key = a[i];
         if (i + 1 >= a.size()) throw std::runtime_error(key + " needs a value");
         const std::string & value = a[++i];
         if (key == "--device" || key == "--backend") o.device = value;
-        else if (key == "--seed") o.seed = std::stoull(value);
+        else if (key == "--seed") {
+            o.seed = std::stoull(value);
+            o.has_seed = true;
+        }
         else if (key == "--ctx") o.context = std::stoi(value);
         else if (key == "--steps") o.steps = std::stoi(value);
         else if (key == "--voice") {
@@ -245,16 +173,22 @@ speech_model * load(const Options & o) {
     return model;
 }
 
-/** The ready message: the model, which the members after "type" describe, and the release of speech.cpp. */
+/**
+ * The ready message: the task, the model, which the members after "type" describe, and the release of speech.cpp. A
+ * recognition model has no streaming, voices or steps, so its message leaves them out.
+ */
 std::string ready_message(const speech_model * m) {
-    std::string out = "{\"type\":\"ready\",\"model\":" + json_string(speech_model_name(m)) +
+    const bool synthesis = speech_model_task(m) == SPEECH_TASK_SYNTHESIS;
+    std::string out = std::string("{\"type\":\"ready\",\"task\":\"") + (synthesis ? "synthesis" : "recognition") +
+                      "\",\"model\":" + json_string(speech_model_name(m)) +
                       ",\"architecture\":" + json_string(speech_model_architecture(m)) +
-                      ",\"sampleRate\":" + std::to_string(speech_model_sample_rate(m)) + ",\"streaming\":\"" +
-                      (speech_model_streaming(m) == SPEECH_STREAMING_FRAME ? "frame" : "sentence") + "\",\"voices\":" +
-                      json_array(speech_model_voice_count(m), [&](size_t i) { return speech_model_voice(m, i); }) +
-                      ",\"languages\":" +
-                      json_array(speech_model_language_count(m), [&](size_t i) { return speech_model_language(m, i); }) +
-                      ",\"languageSelectable\":" + (speech_model_language_selectable(m) ? "true" : "false");
+                      ",\"sampleRate\":" + std::to_string(speech_model_sample_rate(m));
+    if (synthesis) {
+        out += std::string(",\"streaming\":\"") + (speech_model_streaming(m) == SPEECH_STREAMING_FRAME ? "frame" : "sentence") +
+               "\",\"voices\":" + json_array(speech_model_voice_count(m), [&](size_t i) { return speech_model_voice(m, i); });
+    }
+    out += ",\"languages\":" + json_array(speech_model_language_count(m), [&](size_t i) { return speech_model_language(m, i); }) +
+           ",\"languageSelectable\":" + (speech_model_language_selectable(m) ? "true" : "false");
     if (speech_model_steps(m) > 0) out += ",\"steps\":" + std::to_string(speech_model_steps(m));
     return out + ",\"backend\":" + json_string(speech_model_backend(m)) +
            ",\"version\":" + json_string(speech_version()) + "}";
@@ -281,6 +215,42 @@ int on_audio(const float * s, size_t n, void * user_data) {
     return 0;
 }
 
+int collect_text(const char * text, void * user_data) {
+    *static_cast<std::string *>(user_data) += text;
+    return 0;
+}
+
+/** Recognizes one request and answers it, unless it is cancelled before its text is sent. */
+void recognize(Inbox & inbox, speech_model * model, const std::string & id, const Request & request) {
+    // 16-bit samples are scaled as a 16-bit WAVE file is read.
+    std::vector<float> samples(request.pcm.size());
+    for (size_t i = 0; i < samples.size(); i++) samples[i] = (float) request.pcm[i] / 32768.0f;
+    const std::string language = value(request.message, "language");
+    uint64_t rate = 0;
+    whole_number(request.message, "sampleRate", rate);
+    speech_transcription_request r = speech_transcription_request_default();
+    r.samples = samples.data();
+    r.n_samples = samples.size();
+    r.sample_rate = (int) rate;
+    r.language = language.c_str();
+    {
+        std::lock_guard<std::mutex> lock(inbox.mutex);
+        inbox.running = id;
+    }
+    std::string text;
+    const speech_status status = speech_transcribe(model, &r, collect_text, &text);
+    const std::string error = status == SPEECH_ERROR ? speech_last_error() : "";
+    {
+        std::lock_guard<std::mutex> lock(inbox.mutex);
+        inbox.running.clear();
+    }
+    if (status == SPEECH_ERROR) {
+        emit("{\"type\":\"error\",\"id\":" + json_string(id) + ",\"error\":" + json_string(error) + "}");
+    } else if (status == SPEECH_OK && !inbox.is_cancelled(id)) {
+        emit("{\"type\":\"text\",\"id\":" + json_string(id) + ",\"text\":" + json_string(text) + "}");
+    }
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
@@ -304,8 +274,8 @@ int main(int argc, char ** argv) {
         }
         return 0;
     }
-    if (args.size() < 3) {
-        emit("{\"type\":\"fatal\",\"error\":\"expected the model and codec GGUF paths\"}");
+    if (args.size() < 2) {
+        emit("{\"type\":\"fatal\",\"error\":\"expected the model's GGUF path, and the codec's for a synthesis model\"}");
         return 2;
     }
 
@@ -315,6 +285,10 @@ int main(int argc, char ** argv) {
         const Options options = parse_options(args);
         seed = options.seed;
         model = load(options);
+        if (speech_model_task(model) == SPEECH_TASK_RECOGNITION && options.has_seed) {
+            speech_model_free(model);
+            throw std::runtime_error("a speech recognition model samples nothing and takes no seed; leave --seed out");
+        }
     } catch (const std::exception & e) {
         emit("{\"type\":\"fatal\",\"error\":" + json_string(e.what()) + "}");
         return 1;
@@ -322,20 +296,28 @@ int main(int argc, char ** argv) {
     emit(ready_message(model));
 
     Inbox inbox;
-    std::thread reader(read_requests, std::ref(inbox));
+    inbox.task = speech_model_task(model);
+    inbox.model = model;
+    std::thread reader(read_requests, std::ref(inbox), emit);
     reader.detach();
 
     for (;;) {
-        FlatJson request;
+        Request taken;
         {
             std::unique_lock<std::mutex> lock(inbox.mutex);
             inbox.ready.wait(lock, [&] { return !inbox.requests.empty() || inbox.closed; });
             if (inbox.requests.empty()) break;
-            request = inbox.requests.front();
+            taken = std::move(inbox.requests.front());
             inbox.requests.pop_front();
         }
+        const FlatJson & request = taken.message;
         const std::string id = value(request, "id");
         if (inbox.is_cancelled(id)) {
+            inbox.forget(id);
+            continue;
+        }
+        if (inbox.task == SPEECH_TASK_RECOGNITION) {
+            recognize(inbox, model, id, taken);
             inbox.forget(id);
             continue;
         }

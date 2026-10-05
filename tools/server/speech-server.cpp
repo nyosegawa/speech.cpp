@@ -1,13 +1,18 @@
-// An HTTP server that serves one model through OpenAI's speech API, so that any program that speaks HTTP (a web
+// An HTTP server that serves one model through OpenAI's audio API, so that any program that speaks HTTP (a web
 // app, Python with requests, curl) can use speech.cpp without starting the worker. It reaches the model only
-// through the C API.
+// through the C API. A synthesis model answers /v1/audio/speech and a recognition model
+// /v1/audio/transcriptions; the endpoint of the other task is a 404 that names the right one.
 //
 //   POST /v1/audio/speech   OpenAI's create speech: {"model", "input", "voice", "response_format", "speed",
 //                           "stream_format"}, and speech.cpp's own "language", "seed", "seconds" and
 //                           "duration_scale". "wav" answers with the whole file; "pcm" streams 16-bit
 //                           little-endian mono at the model's rate as it is made; "stream_format": "sse" streams
 //                           the same PCM as speech.audio.delta events and ends with speech.audio.done.
-//   GET  /v1/models         the loaded model, with its voices, languages, sample rate and streaming kind.
+//   POST /v1/audio/transcriptions
+//                           OpenAI's create transcription: a multipart/form-data form with "file", a WAV file at the
+//                           model's rate, and "model", "language" and "response_format" ("json" or "text").
+//   GET  /v1/models         the loaded model, with its task, languages and sample rate, and a synthesis model's
+//                           voices and streaming kind.
 //   GET  /health            {"status": "ok"} once the model is loaded, which is before the server listens.
 //
 // A request names the loaded model in "model" or leaves it out, and any other model is a 404. A request
@@ -15,11 +20,11 @@
 // same request with that seed gives the same audio. Errors have OpenAI's shape, {"error": {"message", "type",
 // "param", "code"}}; a request the model cannot follow is a 400 with the library's message.
 //
-// The model speaks one request at a time, in the order they arrive, and the others wait. A client that goes
-// away, while it waits or while its audio streams, cancels its request.
+// The model serves one request at a time, in the order they arrive, and the others wait. A client that goes
+// away, while it waits, while its audio streams or while its audio is recognized, cancels its request.
 //
-// usage: speech-server <model.gguf> <codec.gguf> [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
-//                      [--device NAME|gpu|cpu]
+// usage: speech-server <model.gguf> [<codec.gguf>] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
+//                      [--device NAME|gpu|cpu]                 (the codec for a synthesis model)
 //                      [--ctx n]                               (Qwen3-TTS)
 //                      [--voice NAME=FILE]... [--steps n]      (Irodori-TTS; FILE is a WAVE or voice file)
 
@@ -43,13 +48,11 @@
 
 #include "args.h"
 #include "flat-json.h"
+#include "jobs.h"
 #include "openai-api.h"
 #include "speech.h"
 
 namespace {
-
-using Clock = std::chrono::steady_clock;
-
 
 void send_error(httplib::Response & res, const ApiError & e) {
     res.status = e.status;
@@ -61,15 +64,6 @@ std::string json_array(size_t count, Get get) {
     std::string out = "[";
     for (size_t i = 0; i < count; i++) out += (i ? "," : "") + json_string(get(i));
     return out + "]";
-}
-
-/** The audio of a request as the worker sends it: 16-bit little-endian samples, clamped to [-1, 1] and rounded. */
-void append_pcm(std::string & out, const float * s, size_t n) {
-    for (size_t i = 0; i < n; i++) {
-        const int16_t v = (int16_t) std::lround(std::max(-1.0f, std::min(1.0f, s[i])) * 32767.0f);
-        out += (char) (v & 0xFF);
-        out += (char) ((uint16_t) v >> 8);
-    }
 }
 
 std::string wav_header(size_t data_bytes, int sample_rate) {
@@ -110,11 +104,16 @@ int integer(const std::string & key, const std::string & value) {
 }
 
 Options parse_options(const std::vector<std::string> & a) {
-    if (a.size() < 3) throw std::runtime_error("expected the model and codec GGUF paths: speech-server <model.gguf> <codec.gguf> [options], with the options the README lists");
+    if (a.size() < 2) {
+        throw std::runtime_error("expected the model's GGUF path, and the codec's for a synthesis model: speech-server "
+                                 "<model.gguf> [<codec.gguf>] [options], with the options the README lists");
+    }
     Options o;
     o.model = a[1];
-    o.codec = a[2];
-    for (size_t i = 3; i < a.size(); i++) {
+    // A recognition model has no codec, so the second path is there only when it is not an option.
+    size_t first = 2;
+    if (a.size() > 2 && a[2].compare(0, 2, "--") != 0) o.codec = a[first++];
+    for (size_t i = first; i < a.size(); i++) {
         const std::string & key = a[i];
         if (i + 1 >= a.size()) throw std::runtime_error(key + " needs a value");
         const std::string & value = a[++i];
@@ -153,144 +152,20 @@ speech_model * load(const Options & o) {
 
 /** The model as OpenAI's model object, with what speech.cpp adds to it. */
 std::string model_json(const speech_model * m, long long created) {
+    const bool synthesis = speech_model_task(m) == SPEECH_TASK_SYNTHESIS;
     std::string out = "{\"id\":" + json_string(speech_model_name(m)) + ",\"object\":\"model\",\"created\":" +
-                      std::to_string(created) + ",\"owned_by\":\"speech.cpp\",\"architecture\":" +
-                      json_string(speech_model_architecture(m)) +
-                      ",\"sample_rate\":" + std::to_string(speech_model_sample_rate(m)) + ",\"streaming\":\"" +
-                      (speech_model_streaming(m) == SPEECH_STREAMING_FRAME ? "frame" : "sentence") + "\",\"voices\":" +
-                      json_array(speech_model_voice_count(m), [&](size_t i) { return speech_model_voice(m, i); }) +
-                      ",\"languages\":" +
-                      json_array(speech_model_language_count(m), [&](size_t i) { return speech_model_language(m, i); }) +
-                      ",\"language_selectable\":" + (speech_model_language_selectable(m) ? "true" : "false");
+                      std::to_string(created) + ",\"owned_by\":\"speech.cpp\",\"task\":\"" +
+                      (synthesis ? "synthesis" : "recognition") + "\",\"architecture\":" + json_string(speech_model_architecture(m)) +
+                      ",\"sample_rate\":" + std::to_string(speech_model_sample_rate(m));
+    if (synthesis) {
+        out += std::string(",\"streaming\":\"") + (speech_model_streaming(m) == SPEECH_STREAMING_FRAME ? "frame" : "sentence") +
+               "\",\"voices\":" + json_array(speech_model_voice_count(m), [&](size_t i) { return speech_model_voice(m, i); });
+    }
+    out += ",\"languages\":" + json_array(speech_model_language_count(m), [&](size_t i) { return speech_model_language(m, i); }) +
+           ",\"language_selectable\":" + (speech_model_language_selectable(m) ? "true" : "false");
     if (speech_model_steps(m) > 0) out += ",\"steps\":" + std::to_string(speech_model_steps(m));
     return out + ",\"backend\":" + json_string(speech_model_backend(m)) +
            ",\"version\":" + json_string(speech_version()) + "}";
-}
-
-/**
- * Lets requests take the model in the order they arrive. speech_synthesize() serializes concurrent calls by
- * itself, but in no particular order, and a request must know when it is its turn to tell a client that went
- * away while waiting from one whose synthesis is under way.
- */
-class Turns {
-public:
-    uint64_t take() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return next_++;
-    }
-    void wait(uint64_t ticket) {
-        std::unique_lock<std::mutex> lock(mutex_);
-        changed_.wait(lock, [&] { return serving_ == ticket; });
-    }
-    void pass() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        serving_++;
-        changed_.notify_all();
-    }
-
-private:
-    std::mutex mutex_;
-    std::condition_variable changed_;
-    uint64_t next_ = 0, serving_ = 0;
-};
-
-/** One request's synthesis, which runs on a thread of its own and hands its audio to the HTTP handler. */
-struct Job {
-    speech_model * model;
-    SpeechRequest request;
-    std::mutex mutex;
-    std::condition_variable changed;
-    /** The PCM made and not yet sent. */
-    std::string pending;
-    /** The callback has been called, so the library has accepted the request. */
-    bool accepted = false;
-    bool running = false;
-    bool finished = false;
-    bool abandoned = false;
-    speech_status status = SPEECH_OK;
-    std::string error;
-    size_t samples = 0;
-    Clock::time_point arrived = Clock::now(), first_audio, gone;
-
-    /** Stops the request for a client that went away, whether it waits or speaks. */
-    void abandon() {
-        std::lock_guard<std::mutex> lock(mutex);
-        if (!abandoned) gone = Clock::now();
-        abandoned = true;
-        // Only while this request runs: once it has returned, speech_cancel() would stop the next one.
-        if (running) speech_cancel(model);
-    }
-};
-
-int on_audio(const float * s, size_t n, void * user_data) {
-    Job & job = *static_cast<Job *>(user_data);
-    std::lock_guard<std::mutex> lock(job.mutex);
-    if (job.abandoned) return 1;
-    job.accepted = true;
-    if (n > 0 && job.samples == 0) job.first_audio = Clock::now();
-    append_pcm(job.pending, s, n);
-    job.samples += n;
-    job.changed.notify_all();
-    return 0;
-}
-
-double seconds_since(Clock::time_point t0, Clock::time_point t1) {
-    return std::chrono::duration<double>(t1 - t0).count();
-}
-
-void synthesize(const std::shared_ptr<Job> & job, Turns & turns, uint64_t ticket) {
-    turns.wait(ticket);
-    const Clock::time_point started = Clock::now();
-    {
-        std::lock_guard<std::mutex> lock(job->mutex);
-        job->running = !job->abandoned;
-    }
-    const bool ran = job->running;
-    speech_status status = SPEECH_STOPPED;
-    std::string error;
-    if (ran) {
-        speech_request r = speech_request_default();
-        r.text = job->request.input.c_str();
-        r.voice = job->request.voice.c_str();
-        r.language = job->request.language.c_str();
-        r.seed = job->request.seed;
-        r.speed = job->request.speed;
-        r.seconds = job->request.seconds;
-        r.duration_scale = job->request.duration_scale;
-        status = speech_synthesize(job->model, &r, on_audio, job.get());
-        if (status == SPEECH_ERROR) error = speech_last_error();
-    }
-    {
-        std::lock_guard<std::mutex> lock(job->mutex);
-        job->running = false;
-        job->finished = true;
-        job->status = status;
-        job->error = error;
-        job->changed.notify_all();
-        const Clock::time_point now = Clock::now();
-        char line[256];
-        std::snprintf(line, sizeof line, "speech: voice %s, seed %llu: waited %.3f s", job->request.voice.c_str(),
-                      (unsigned long long) job->request.seed, seconds_since(job->arrived, started));
-        std::string log = line;
-        if (!ran) {
-            log += ", not started: the client went away while it waited";
-        } else {
-            if (job->samples) {
-                std::snprintf(line, sizeof line, ", first audio after %.3f s, %.2f s of audio", seconds_since(started, job->first_audio),
-                              (double) job->samples / speech_model_sample_rate(job->model));
-                log += line;
-            }
-            std::snprintf(line, sizeof line, " in %.3f s", seconds_since(started, now));
-            log += line;
-            if (status == SPEECH_ERROR) log += ", failed: " + error;
-            if (job->abandoned) {
-                std::snprintf(line, sizeof line, ", stopped %.3f s after the client went away", seconds_since(job->gone, now));
-                log += line;
-            }
-        }
-        std::fprintf(stderr, "%s\n", log.c_str());
-    }
-    turns.pass();
 }
 
 /** The interval at which a waiting handler looks whether its client is still there. */
@@ -325,7 +200,12 @@ public:
             }
             res.set_content(model_json(model_, created_), "application/json");
         });
-        http.Post("/v1/audio/speech", [this](const httplib::Request & req, httplib::Response & res) { speech(req, res); });
+        http.Post("/v1/audio/speech", [this](const httplib::Request & req, httplib::Response & res) {
+            if (serves(SPEECH_TASK_SYNTHESIS, req, res)) speech(req, res);
+        });
+        http.Post("/v1/audio/transcriptions", [this](const httplib::Request & req, httplib::Response & res) {
+            if (serves(SPEECH_TASK_RECOGNITION, req, res)) transcription(req, res);
+        });
     }
 
 private:
@@ -333,6 +213,20 @@ private:
     std::vector<std::string> cors_origins_;
     long long created_;
     Turns turns_;
+
+    /**
+     * Whether the model does what the endpoint asks; otherwise answers a 404, as for a path the server does not have,
+     * with a message that names the endpoint of the model's task.
+     */
+    bool serves(speech_task task, const httplib::Request & req, httplib::Response & res) const {
+        if (speech_model_task(model_) == task) return true;
+        const bool synthesis = speech_model_task(model_) == SPEECH_TASK_SYNTHESIS;
+        send_error(res, {404, "This server serves " + std::string(speech_model_name(model_)) + ", a speech " +
+                                  (synthesis ? "synthesis" : "recognition") + " model, which " + req.path + " is not for; " +
+                                  (synthesis ? "POST its text to /v1/audio/speech." : "POST its audio to /v1/audio/transcriptions."),
+                         "", ""});
+        return false;
+    }
 
     /** Adds the CORS headers for an allowed origin, and answers a preflight. */
     httplib::Server::HandlerResponse cors(const httplib::Request & req, httplib::Response & res) {
@@ -357,7 +251,7 @@ private:
     }
 
     void speech(const httplib::Request & req, httplib::Response & res) {
-        auto job = std::make_shared<Job>();
+        auto job = std::make_shared<SpeechJob>();
         job->model = model_;
         try {
             job->request = read_request(req.body, speech_model_name(model_));
@@ -404,11 +298,45 @@ private:
             });
     }
 
+    /** Recognizes the form's WAV file and answers with its text once it is done, as json or text. */
+    void transcription(const httplib::Request & req, httplib::Response & res) {
+        auto job = std::make_shared<TranscriptionJob>();
+        job->model = model_;
+        try {
+            std::vector<FormPart> parts;
+            for (const auto & [name, field] : req.form.fields) parts.push_back({name, field.content, "", false});
+            for (const auto & [name, file] : req.form.files) parts.push_back({name, file.content, file.filename, true});
+            job->request = read_transcription_request(req.is_multipart_form_data(), parts, speech_model_name(model_));
+        } catch (const ApiError & e) {
+            send_error(res, e);
+            return;
+        }
+        const uint64_t ticket = turns_.take();
+        std::thread(transcribe, job, std::ref(turns_), ticket).detach();
+        std::unique_lock<std::mutex> lock(job->mutex);
+        while (!job->finished) {
+            if (job->changed.wait_for(lock, POLL) == std::cv_status::timeout && req.is_connection_closed()) {
+                lock.unlock();
+                job->abandon();
+                return;
+            }
+        }
+        // The library refuses the audio and the language before it recognizes anything. The recognition itself fails
+        // only when the device does, which the status cannot tell apart, so every error is answered as the request's.
+        if (job->status == SPEECH_ERROR) {
+            send_error(res, {400, job->error, "", ""});
+            return;
+        }
+        if (job->status != SPEECH_OK) return;
+        if (job->request.format == "text") res.set_content(job->text, "text/plain; charset=utf-8");
+        else res.set_content(transcription_json(job->text), "application/json");
+    }
+
     /**
      * Sends the audio as it is made. A failure after the stream has begun ends a pcm stream without its last
      * chunk, which the client reads as a broken transfer, and an SSE stream with an error event.
      */
-    static bool stream(Job & job, bool sse, httplib::DataSink & sink) {
+    static bool stream(SpeechJob & job, bool sse, httplib::DataSink & sink) {
         std::unique_lock<std::mutex> lock(job.mutex);
         for (;;) {
             if (!job.pending.empty()) {
@@ -469,7 +397,8 @@ int main(int argc, char ** argv) {
     httplib::Server http;
     // Nagle's algorithm would hold a small chunk of a stream until the client acknowledges the previous one.
     http.set_tcp_nodelay(true);
-    http.set_payload_max_length(1 << 20);
+    // A text to speak fits in 1 MB; a file to recognize may take OpenAI's limit for an upload, 25 MB.
+    http.set_payload_max_length(speech_model_task(model) == SPEECH_TASK_SYNTHESIS ? 1 << 20 : 25 << 20);
     Server server(model, options.cors_origins);
     server.route(http);
     if (!http.bind_to_port(options.host, options.port)) {

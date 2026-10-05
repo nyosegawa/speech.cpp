@@ -77,19 +77,29 @@ add_library(irodoritts STATIC
 target_include_directories(irodoritts PUBLIC src/families)
 target_link_libraries(irodoritts PUBLIC speechcommon)
 
+# FastConformer speech recognition (NVIDIA NeMo): the family.
+add_library(fastconformer STATIC
+    src/families/fastconformer/frontend.cpp
+    src/families/fastconformer/encoder.cpp
+    src/families/fastconformer/ctc.cpp
+    src/families/fastconformer/recognizer.cpp
+)
+target_include_directories(fastconformer PUBLIC src/families)
+target_link_libraries(fastconformer PUBLIC speechcommon)
+
 # The C API, include/speech.h, twice: static for the executables, so that each stays one file, and shared as
 # libspeech for bindings and other programs. On Windows the two would both write speech.lib, the static one as
 # the library and the shared one as its import library, hence speech-static.
-set(SPEECH_SOURCES src/speech.cpp src/qwen3-tts-engine.cpp src/irodori-tts-engine.cpp)
+set(SPEECH_SOURCES src/speech.cpp src/qwen3-tts-engine.cpp src/irodori-tts-engine.cpp src/fastconformer-engine.cpp)
 
 add_library(speech-static STATIC ${SPEECH_SOURCES})
 target_include_directories(speech-static PUBLIC include)
-target_link_libraries(speech-static PUBLIC qwen3tts irodoritts)
+target_link_libraries(speech-static PUBLIC qwen3tts irodoritts fastconformer)
 target_compile_definitions(speech-static PRIVATE SPEECH_VERSION="${PROJECT_VERSION}")
 
 add_library(speech SHARED ${SPEECH_SOURCES})
 target_include_directories(speech PUBLIC include)
-target_link_libraries(speech PRIVATE qwen3tts irodoritts)
+target_link_libraries(speech PRIVATE qwen3tts irodoritts fastconformer)
 target_compile_definitions(speech PRIVATE SPEECH_BUILD_SHARED SPEECH_VERSION="${PROJECT_VERSION}" INTERFACE SPEECH_SHARED)
 set_target_properties(speech PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 # ggml's static libraries are built with default visibility, so the linker is told to export the C API alone.
@@ -104,7 +114,7 @@ endif()
 # vendor/cpp-httplib from yhirose/cpp-httplib at commit cf3693cb5cc0d39b0e6f4122ba89bda9edb5ac6b (v0.59.0), with
 # its license (docs/adr/0008). It reads requests with the worker's JSON parser.
 add_executable(speech-server tools/server/speech-server.cpp)
-target_include_directories(speech-server PRIVATE tools/worker vendor/cpp-httplib)
+target_include_directories(speech-server PRIVATE tools/worker tools/common vendor/cpp-httplib)
 target_link_libraries(speech-server PRIVATE speech-static)
 if (WIN32)
     target_compile_definitions(speech-server PRIVATE NOMINMAX)
@@ -121,6 +131,10 @@ target_link_libraries(speech-worker PRIVATE speech-static)
 add_executable(speech-tts tools/cli/speech-tts.cpp)
 target_include_directories(speech-tts PRIVATE tools/common)
 target_link_libraries(speech-tts PRIVATE speech-static)
+
+add_executable(speech-asr tools/cli/speech-asr.cpp)
+target_include_directories(speech-asr PRIVATE tools/common)
+target_link_libraries(speech-asr PRIVATE speech-static)
 
 # The checks compare each stage with the reference dumps; they are built but not released.
 add_executable(codec-check checks/codec-check.cpp)
@@ -149,7 +163,7 @@ add_executable(irodori-synthesis-check checks/irodori-synthesis-check.cpp)
 target_include_directories(irodori-synthesis-check PRIVATE tools/worker)
 target_link_libraries(irodori-synthesis-check PRIVATE irodoritts)
 
-add_executable(speech-api-check checks/speech-api-check.c)
+add_executable(speech-api-check checks/speech-api-check.c checks/speech-api-recognition.c)
 target_link_libraries(speech-api-check PRIVATE speech)
 # The check compares the version the library reports with the one it was built against.
 target_compile_definitions(speech-api-check PRIVATE SPEECH_EXPECTED_VERSION="${PROJECT_VERSION}")
@@ -160,16 +174,7 @@ else()
     target_link_libraries(speech-api-check PRIVATE Threads::Threads)
 endif()
 
-# FastConformer speech recognition (NVIDIA NeMo): the family and the checks of its stages.
-add_library(fastconformer STATIC
-    src/families/fastconformer/frontend.cpp
-    src/families/fastconformer/encoder.cpp
-    src/families/fastconformer/ctc.cpp
-    src/families/fastconformer/recognizer.cpp
-)
-target_include_directories(fastconformer PUBLIC src/families)
-target_link_libraries(fastconformer PUBLIC speechcommon)
-
+# The checks of FastConformer's stages.
 foreach(stage frontend encoder ctc)
     add_executable(fastconformer-${stage}-check checks/fastconformer-${stage}-check.cpp)
     target_link_libraries(fastconformer-${stage}-check PRIVATE fastconformer)
