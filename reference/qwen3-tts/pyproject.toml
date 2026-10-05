@@ -1,5 +1,5 @@
 [project]
-name = "qwen3-tts-ggml-reference"
+name = "speech-cpp-qwen3-tts-reference"
 version = "0"
 description = "Runs the official Qwen3-TTS to dump reference tensors, and converts its weights to GGUF"
 requires-python = ">=3.12,<3.13"
