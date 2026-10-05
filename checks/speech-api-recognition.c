@@ -211,13 +211,13 @@ int check_recognition(int argc, char ** argv) {
         size_t n = 0, text_size = 0;
         float * samples = read_audio(dumps[d], &n);
         char path[4096];
-        snprintf(path, sizeof path, "%s/ctc_text.txt", dumps[d]);
+        snprintf(path, sizeof path, "%s/text.txt", dumps[d]);
         char * want = read_whole(path, &text_size);
         audio[d] = samples;
         lengths[d] = n;
         texts[d] = want;
         if (!samples || !want) {
-            fprintf(stderr, "FAIL: %s has no audio.npy of float32 samples or no ctc_text.txt\n", dumps[d]);
+            fprintf(stderr, "FAIL: %s has no audio.npy of float32 samples or no text.txt\n", dumps[d]);
             return 1;
         }
         speech_transcription_request r = speech_transcription_request_default();
@@ -230,7 +230,7 @@ int check_recognition(int argc, char ** argv) {
         if (speech_transcribe(model, &r, take_text, &t) != SPEECH_OK) return fail("speech_transcribe");
         const int equal = t.calls == 1 && !strcmp(t.text, want);
         printf("%s: %.2f s of audio in %.3f s, text %s\n", dumps[d], (double) n / rate, now_seconds() - start,
-               equal ? "equal to the dump's CTC text" : "DIFFERS");
+               equal ? "equal to the dump's text" : "DIFFERS");
         if (!equal) printf("  got  %s\n  want %s\n", t.text, want);
         ok = ok && equal;
         if (n < lengths[shortest]) shortest = d;

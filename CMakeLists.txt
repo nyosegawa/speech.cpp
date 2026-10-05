@@ -81,7 +81,9 @@ target_link_libraries(irodoritts PUBLIC speechcommon)
 add_library(fastconformer STATIC
     src/families/fastconformer/frontend.cpp
     src/families/fastconformer/encoder.cpp
-    src/families/fastconformer/ctc.cpp
+    src/families/fastconformer/transducer.cpp
+    src/families/fastconformer/tdt.cpp
+    src/families/fastconformer/detokenizer.cpp
     src/families/fastconformer/recognizer.cpp
 )
 target_include_directories(fastconformer PUBLIC src/families)
@@ -175,7 +177,7 @@ else()
 endif()
 
 # The checks of FastConformer's stages.
-foreach(stage frontend encoder ctc)
+foreach(stage frontend encoder tdt)
     add_executable(fastconformer-${stage}-check checks/fastconformer-${stage}-check.cpp)
     target_link_libraries(fastconformer-${stage}-check PRIVATE fastconformer)
 endforeach()

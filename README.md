@@ -10,7 +10,7 @@ implementation.
 |---|---|---|---|
 | Qwen3-TTS | Qwen3-TTS 12Hz 0.6B and 1.7B CustomVoice | speech synthesis with the named speakers, streamed frame by frame | [sakasegawa/qwen3-tts-ggml](https://huggingface.co/sakasegawa/qwen3-tts-ggml) |
 | Irodori-TTS | Irodori-TTS v4.1-Small-MF and v4.1-Small | Japanese speech synthesis in the voice of a reference recording, a sentence at a time, streamed as the codec decodes it | [sakasegawa/irodori-tts-ggml](https://huggingface.co/sakasegawa/irodori-tts-ggml) |
-| FastConformer | NVIDIA's parakeet-tdt_ctc-0.6b-ja | Japanese speech recognition through its CTC head, an utterance at a time | converted with `reference/fastconformer/convert.py` (below) |
+| FastConformer | NVIDIA's parakeet-tdt_ctc-0.6b-ja | Japanese speech recognition with its TDT decoder, an utterance at a time | converted with `reference/fastconformer/convert.py` (below) |
 
 ## Binaries
 
@@ -702,22 +702,25 @@ whole sampler and the codec's first window, so it grows with the sentence.
 
 Speech recognition with NVIDIA NeMo's [FastConformer](https://arxiv.org/abs/2305.05084) models: a log-mel
 frontend, a subsampling by 8 with depthwise convolutions, conformer layers with relative positional attention,
-and a head that turns the encoder's frames into tokens. Implemented, for
+and a decoder that turns the encoder's frames into tokens. Implemented, for
 [nvidia/parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) (Japanese) with its
-CTC head:
+TDT decoder, the one NeMo's `transcribe()` uses:
 
 - the frontend as NeMo runs it in evaluation (pre-emphasis, a centred STFT, the checkpoint's 80 mel filters, the
   log and the normalization of each mel bin over the utterance), on the host in double precision,
 - the subsampling, the 24 conformer layers with relative positional attention over the whole utterance, and
   the convolution modules, on ggml,
-- the CTC head with greedy decoding, and the SentencePiece pieces turned into text as NeMo's CTC decoding
-  writes it.
+- the TDT decoder: the prediction network (an embedding and two LSTM layers) and the joint on ggml, one step
+  per emitted token, and NeMo's greedy decoding on the host, with the model's durations (0 to 4 frames) and at
+  most 10 tokens on one frame, as configured in the checkpoint,
+- the SentencePiece pieces turned into text as NeMo's decoding writes it.
 
-Not implemented yet: the model's TDT decoder, which NeMo uses by default and which writes a slightly different
-text on some utterances; parakeet-tdt-0.6b-v3 (English, French, German, Italian, Spanish and Portuguese);
-and reazon-research's reazonspeech-nemo-v2 (Japanese, with local attention and an RNN-T head). Why recognition
-goes through this port is in [ADR 0009](docs/adr/0009-speech-recognition-runs-through-a-fastconformer-port.md),
-and how it reaches the C API, the worker, the server and `speech-asr` in
+The checkpoint's CTC head is not converted: NeMo decodes with TDT by default, and the two write a different text
+on some utterances ([ADR 0012](docs/adr/0012-the-recognizer-decodes-with-the-models-default-decoder.md)). Not
+implemented yet: parakeet-tdt-0.6b-v3 (English, French, German, Italian, Spanish and Portuguese) and
+reazon-research's reazonspeech-nemo-v2 (Japanese, with local attention and an RNN-T head). Why recognition goes
+through this port is in [ADR 0009](docs/adr/0009-speech-recognition-runs-through-a-fastconformer-port.md), and how
+it reaches the C API, the worker, the server and `speech-asr` in
 [ADR 0011](docs/adr/0011-speech-recognition-is-a-task-of-every-entry-point.md).
 
 ### Models
@@ -730,7 +733,8 @@ cd reference/fastconformer
 uv run python convert.py parakeet-tdt_ctc-0.6b-ja ../../models --type f16   # parakeet-tdt_ctc-0.6b-ja-f16.gguf, 1.2 GB
 ```
 
-`--type f32` writes the same at 2.4 GB. The weights are NVIDIA's, under CC-BY-4.0.
+`--type f32` writes the same at 2.5 GB. GGUF files converted for speech.cpp 0.5.0, which carry the CTC head
+instead of the TDT decoder, are refused; convert them again. The weights are NVIDIA's, under CC-BY-4.0.
 
 ### Use
 
@@ -741,7 +745,7 @@ speech-server parakeet-tdt_ctc-0.6b-ja-f16.gguf                 # POST /v1/audio
 ```
 
 The model takes 16 kHz mono audio and recognizes `ja`; a request's language is only checked against it
-(`languageSelectable` false), since the CTC head has no input for one.
+(`languageSelectable` false), since the model has no input for one.
 
 ### Accuracy
 
@@ -754,7 +758,7 @@ uv run python dump.py parakeet-tdt_ctc-0.6b-ja out <16 kHz mono WAVE files>
 cd ../..
 build/fastconformer-frontend-check <model.gguf> reference/fastconformer/out
 build/fastconformer-encoder-check <model.gguf> reference/fastconformer/out [gpu|cpu|device name]
-build/fastconformer-ctc-check <model.gguf> reference/fastconformer/out [gpu|cpu|device name]
+build/fastconformer-tdt-check <model.gguf> reference/fastconformer/out [gpu|cpu|device name]
 ```
 
 On three utterances of FLEURS ja_jp's test split (12677001980660723842, 6.36 s; 13903496305700695803, 10.50 s;
@@ -765,18 +769,21 @@ On three utterances of FLEURS ja_jp's test split (12677001980660723842, 6.36 s; 
 | Features (`fastconformer-frontend-check`) | 117 to 127 dB SNR | the same | the same (on the host) |
 | Subsampling (`fastconformer-encoder-check`) | 123 dB | 60 to 61 dB | 68 to 70 dB |
 | Encoder output, after 24 layers | 114 to 118 dB | 55 to 56 dB | 63 to 64 dB |
-| CTC log-probabilities from the dump's encoder output (`fastconformer-ctc-check`) | 129 dB | 75 to 76 dB | 88 dB |
+| Prediction network on the dump's labels (`fastconformer-tdt-check`) | 130 to 133 dB | 57 to 60 dB | 132 to 134 dB with F32, 66 to 70 dB with F16 |
+| Joint log-probabilities on the dump's frames and prediction outputs | 140 dB | 76 dB | 85 to 87 dB |
 | Greedy tokens and text from the dump's encoder output | equal | equal | equal |
 | Text from the audio, every stage ours | equal on all three | equal on all three | equal on all three |
 
-Metal gives the same numbers with F32 and F16 weights, since its matrix kernel rounds both its inputs to half
-precision either way.
+Metal gives the same numbers with F32 and F16 weights for the encoder and the joint, since its matrix kernel
+rounds both its inputs to half precision either way; the prediction network multiplies a single vector, which
+Metal does in float32.
 
 ### Speed
 
-The encoder and the CTC head on the 25.50 s utterance, after a first run, on an Apple M5: 0.21 to 0.22 s on
-Metal with F16 weights and 0.23 to 0.24 s with F32; 4.2 s and 7.0 s on the CPU with ggml's default four
-threads. The frontend adds 13 to 20 ms.
+`speech-asr` on an Apple M5 with F16 weights on Metal, after loading: 0.07 s for the 6.36 s utterance, 0.11 s for
+the 10.50 s one and 0.28 s for the 25.50 s one. Of the last, the encoder takes 0.20 to 0.26 s, the TDT decoding
+0.07 to 0.08 s (107 steps of the prediction network, about 0.6 ms each on the GPU) and the frontend 13 to 15 ms. On
+the CPU with F32 weights and ggml's default four threads it takes 6.3 s, 0.2 to 0.3 s of it the decoding.
 
 ## License
 

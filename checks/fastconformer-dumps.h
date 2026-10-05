@@ -19,9 +19,9 @@ inline std::vector<std::filesystem::path> fastconformer_dumps(const std::string 
     return dumps;
 }
 
-/** A dump's ctc_text.txt: the official CTC text in UTF-8. */
+/** A dump's text.txt: the official text in UTF-8. */
 inline std::string fastconformer_text(const std::filesystem::path & dump) {
-    std::ifstream f(dump / "ctc_text.txt", std::ios::binary);
-    if (!f) throw std::runtime_error("cannot open " + (dump / "ctc_text.txt").u8string());
+    std::ifstream f(dump / "text.txt", std::ios::binary);
+    if (!f) throw std::runtime_error("cannot open " + (dump / "text.txt").u8string());
     return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 }
