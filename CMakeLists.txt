@@ -154,3 +154,19 @@ else()
     find_package(Threads REQUIRED)
     target_link_libraries(speech-api-check PRIVATE Threads::Threads)
 endif()
+
+# FastConformer speech recognition (NVIDIA NeMo): the family and the checks of its stages.
+add_library(fastconformer STATIC
+    src/families/fastconformer/graph.cpp
+    src/families/fastconformer/frontend.cpp
+    src/families/fastconformer/encoder.cpp
+    src/families/fastconformer/ctc.cpp
+    src/families/fastconformer/recognizer.cpp
+)
+target_include_directories(fastconformer PUBLIC src/families)
+target_link_libraries(fastconformer PUBLIC speechcommon)
+
+foreach(stage frontend encoder ctc)
+    add_executable(fastconformer-${stage}-check checks/fastconformer-${stage}-check.cpp)
+    target_link_libraries(fastconformer-${stage}-check PRIVATE fastconformer)
+endforeach()
