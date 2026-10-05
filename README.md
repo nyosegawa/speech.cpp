@@ -10,7 +10,7 @@ implementation.
 |---|---|---|---|
 | Qwen3-TTS | Qwen3-TTS 12Hz 0.6B and 1.7B CustomVoice | speech synthesis with the named speakers, streamed frame by frame | [sakasegawa/qwen3-tts-ggml](https://huggingface.co/sakasegawa/qwen3-tts-ggml) |
 | Irodori-TTS | Irodori-TTS v4.1-Small-MF and v4.1-Small | Japanese speech synthesis in the voice of a reference recording, a sentence at a time, streamed as the codec decodes it | [sakasegawa/irodori-tts-ggml](https://huggingface.co/sakasegawa/irodori-tts-ggml) |
-| FastConformer | NVIDIA's parakeet-tdt_ctc-0.6b-ja | Japanese speech recognition with its TDT decoder, an utterance at a time | converted with `reference/fastconformer/convert.py` (below) |
+| FastConformer | NVIDIA's parakeet-tdt_ctc-0.6b-ja | Japanese speech recognition with its TDT decoder, an utterance at a time | [sakasegawa/parakeet-ggml](https://huggingface.co/sakasegawa/parakeet-ggml) |
 
 ## Binaries
 
@@ -725,8 +725,10 @@ it reaches the C API, the worker, the server and `speech-asr` in
 
 ### Models
 
-`reference/fastconformer/` pins NeMo 3.0.0 with PyTorch 2.10.0 and the checkpoint by revision, size and
-SHA-256, and converts it:
+Recognition needs one file, `parakeet-tdt_ctc-0.6b-ja-f16.gguf` from
+[sakasegawa/parakeet-ggml](https://huggingface.co/sakasegawa/parakeet-ggml), whose card lists its SHA-256. To
+convert it yourself, `reference/fastconformer/` pins NeMo 3.0.0 with PyTorch 2.10.0 and the checkpoint by
+revision, size and SHA-256:
 
 ```sh
 cd reference/fastconformer
