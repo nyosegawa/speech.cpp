@@ -388,6 +388,74 @@ steps, answering with the whole sentence. Memory is the worker's peak memory foo
 rise of the GPU's memory on the RTX 2080, with the F32 codec. The first audio comes after the text, the
 whole sampler and the codec's first window, so it grows with the sentence.
 
+## FastConformer
+
+Speech recognition with NVIDIA NeMo's [FastConformer](https://arxiv.org/abs/2305.05084) models: a log-mel
+frontend, a subsampling by 8 with depthwise convolutions, conformer layers with relative positional attention,
+and a head that turns the encoder's frames into tokens. Implemented, for
+[nvidia/parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) (Japanese) with its
+CTC head:
+
+- the frontend as NeMo runs it in evaluation (pre-emphasis, a centred STFT, the checkpoint's 80 mel filters, the
+  log and the normalization of each mel bin over the utterance), on the host in double precision,
+- the subsampling, the 24 conformer layers with relative positional attention over the whole utterance, and
+  the convolution modules, on ggml,
+- the CTC head with greedy decoding, and the SentencePiece pieces turned into text as NeMo's CTC decoding
+  writes it.
+
+Not implemented yet: the model's TDT decoder, which NeMo uses by default and which writes a slightly different
+text on some utterances; parakeet-tdt-0.6b-v3 (English, French, German, Italian, Spanish and Portuguese);
+reazon-research's reazonspeech-nemo-v2 (Japanese, with local attention and an RNN-T head); and the entry point
+in the C API, the worker and the tools. Why recognition goes through this port is in
+[ADR 0009](docs/adr/0009-speech-recognition-runs-through-a-fastconformer-port.md).
+
+### Models
+
+`reference/fastconformer/` pins NeMo 3.0.0 with PyTorch 2.10.0 and the checkpoint by revision, size and
+SHA-256, and converts it:
+
+```sh
+cd reference/fastconformer
+uv run python convert.py parakeet-tdt_ctc-0.6b-ja ../../models --type f16   # parakeet-tdt_ctc-0.6b-ja-f16.gguf, 1.2 GB
+```
+
+`--type f32` writes the same at 2.4 GB. The weights are NVIDIA's, under CC-BY-4.0.
+
+### Accuracy
+
+`reference/fastconformer/dump.py` runs the official model on the CPU in float32 and saves every stage; the
+checks compare each stage, given the dump's own inputs, with it:
+
+```sh
+cd reference/fastconformer
+uv run python dump.py parakeet-tdt_ctc-0.6b-ja out <16 kHz mono WAVE files>
+cd ../..
+build/fastconformer-frontend-check <model.gguf> reference/fastconformer/out
+build/fastconformer-encoder-check <model.gguf> reference/fastconformer/out [gpu|cpu|device name]
+build/fastconformer-ctc-check <model.gguf> reference/fastconformer/out [gpu|cpu|device name]
+```
+
+On three utterances of FLEURS ja_jp's test split (12677001980660723842, 6.36 s; 13903496305700695803, 10.50 s;
+2630315561484880103, 25.50 s), on an Apple M5:
+
+| Check | CPU, F32 | CPU, F16 | Metal, F32 or F16 |
+|---|---|---|---|
+| Features (`fastconformer-frontend-check`) | 117 to 127 dB SNR | the same | the same (on the host) |
+| Subsampling (`fastconformer-encoder-check`) | 123 dB | 60 to 61 dB | 68 to 70 dB |
+| Encoder output, after 24 layers | 114 to 118 dB | 55 to 56 dB | 63 to 64 dB |
+| CTC log-probabilities from the dump's encoder output (`fastconformer-ctc-check`) | 129 dB | 75 to 76 dB | 88 dB |
+| Greedy tokens and text from the dump's encoder output | equal | equal | equal |
+| Text from the audio, every stage ours | equal on all three | equal on all three | equal on all three |
+
+Metal gives the same numbers with F32 and F16 weights, since its matrix kernel rounds both its inputs to half
+precision either way.
+
+### Speed
+
+The encoder and the CTC head on the 25.50 s utterance, after a first run, on an Apple M5: 0.21 to 0.22 s on
+Metal with F16 weights and 0.23 to 0.24 s with F32; 4.2 s and 7.0 s on the CPU with ggml's default four
+threads. The frontend adds 13 to 20 ms.
+
 ## License
 
 MIT, see [LICENSE](LICENSE). The model weights are their authors': Qwen3-TTS is the Qwen team's, under the
