@@ -95,6 +95,20 @@ elseif (UNIX)
     set_property(TARGET speech APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/speech.map)
 endif()
 
+# The HTTP server is the one program with a dependency besides ggml: cpp-httplib's single header, vendored in
+# vendor/cpp-httplib from yhirose/cpp-httplib at commit cf3693cb5cc0d39b0e6f4122ba89bda9edb5ac6b (v0.59.0), with
+# its license (docs/adr/0008). It reads requests with the worker's JSON parser.
+add_executable(speech-server tools/server/speech-server.cpp)
+target_include_directories(speech-server PRIVATE tools/worker vendor/cpp-httplib)
+target_link_libraries(speech-server PRIVATE speech-static)
+if (WIN32)
+    target_compile_definitions(speech-server PRIVATE NOMINMAX)
+    target_link_libraries(speech-server PRIVATE ws2_32)
+else()
+    find_package(Threads REQUIRED)
+    target_link_libraries(speech-server PRIVATE Threads::Threads)
+endif()
+
 add_executable(speech-worker tools/worker/speech-worker.cpp)
 target_include_directories(speech-worker PRIVATE tools/common)
 target_link_libraries(speech-worker PRIVATE speech-static)

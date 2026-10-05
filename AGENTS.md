@@ -30,6 +30,11 @@ and its check before changing behavior.
 - `checks/` holds one check per ported stage (`*-check.cpp`) that compares the stage with the reference
   dumps, and `speech-api-check.c`, which runs the C API through the shared library. Checks reach into
   `src/` for the stage they check; they are built but not released.
+- `tools/server/` holds `speech-server`, which serves one model over HTTP with OpenAI's speech API
+  (`POST /v1/audio/speech`, `GET /v1/models`, `GET /health`) for programs that speak HTTP. Like the worker it
+  reaches the model only through the C API; `openai-api.h` reads OpenAI's request and writes its errors and
+  stream events, and the server speaks one request at a time in arrival order and cancels the synthesis of a
+  client that goes away.
 - `reference/<model>/` holds, per model, a uv environment that pins the official code, PyTorch and the rest,
   the conversion of the official weights to GGUF, and the scripts that run the official implementation to
   dump reference tensors. Dumps go to `reference/<model>/out/`.
@@ -39,9 +44,11 @@ another one.
 
 ## Code
 
-- C++17 with ggml as a git submodule and no other dependency. Each tool is one executable with the library
-  and ggml linked in statically, so that a release is one file per tool; the shared library `libspeech`
-  exports the C API and nothing else, for bindings and other programs.
+- C++17 with ggml as a git submodule and no other dependency, except cpp-httplib's single header, vendored in
+  `vendor/cpp-httplib/` by commit for `speech-server` alone; the library, `libspeech` and the worker never
+  include it (docs/adr/0008). Each tool is one executable with the library and ggml linked in statically, so
+  that a release is one file per tool; the shared library `libspeech` exports the C API and nothing else, for
+  bindings and other programs.
 - Anything the C API returns is owned by the library, and the header says for how long. A model serves one
   request at a time, and the header says which functions any thread may call.
 - The GGUF layout is this repository's own: `reference/<model>/convert.py` defines the tensor names and
