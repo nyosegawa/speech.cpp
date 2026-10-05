@@ -8,9 +8,9 @@ implementation.
 
 | Family | Model | Task | Converted weights |
 |---|---|---|---|
-| Qwen3-TTS | Qwen3-TTS 12Hz 0.6B and 1.7B CustomVoice | speech synthesis with the named speakers, streamed frame by frame | [sakasegawa/qwen3-tts-ggml](https://huggingface.co/sakasegawa/qwen3-tts-ggml) |
-| Irodori-TTS | Irodori-TTS v4.1-Small-MF and v4.1-Small | Japanese speech synthesis in the voice of a reference recording, a sentence at a time, streamed as the codec decodes it | [sakasegawa/irodori-tts-ggml](https://huggingface.co/sakasegawa/irodori-tts-ggml) |
-| FastConformer | NVIDIA's parakeet-tdt_ctc-0.6b-ja and parakeet-tdt-0.6b-v3 | speech recognition with their TDT decoder, an utterance at a time: Japanese, and 25 European languages the model tells apart itself | converted with `reference/fastconformer/convert.py` (below) |
+| Qwen3-TTS | Qwen3-TTS 12Hz 0.6B and 1.7B CustomVoice | speech synthesis with the named speakers, streamed frame by frame | [sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF), [sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF) |
+| Irodori-TTS | Irodori-TTS v4.1-Small-MF and v4.1-Small | Japanese speech synthesis in the voice of a reference recording, a sentence at a time, streamed as the codec decodes it | [sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF), [sakasegawa/Irodori-TTS-v4.1-Small-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) |
+| FastConformer | NVIDIA's parakeet-tdt_ctc-0.6b-ja and parakeet-tdt-0.6b-v3 | speech recognition with their TDT decoder, an utterance at a time: Japanese, and 25 European languages the model tells apart itself | [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF), [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) |
 
 ## Binaries
 
@@ -539,10 +539,12 @@ refused (docs/adr/0007).
 
 ### Models
 
-A synthesis needs one talker (`qwen3-tts-0.6b-customvoice-q8_0.gguf` or
-`qwen3-tts-1.7b-customvoice-q8_0.gguf`) and the codec (`qwen3-tts-codec-12hz-f16.gguf`) from
-[sakasegawa/qwen3-tts-ggml](https://huggingface.co/sakasegawa/qwen3-tts-ggml). To convert them yourself
-from the official checkpoints:
+A synthesis needs one talker and the codec, which
+[sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF)
+(`qwen3-tts-0.6b-customvoice-q8_0.gguf`) and
+[sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF)
+(`qwen3-tts-1.7b-customvoice-q8_0.gguf`) each hold with `qwen3-tts-codec-12hz-f16.gguf`. To convert them
+yourself from the official checkpoints:
 
 ```sh
 cd reference/qwen3-tts
@@ -608,10 +610,12 @@ generator, so a seed gives other audio than the same seed in the official runtim
 
 ### Models
 
-A synthesis needs one model (`irodori-tts-v4.1-small-mf-f16.gguf` or `irodori-tts-v4.1-small-f16.gguf`) and
-the codec (`semantic-dacvae-japanese-32dim-f32.gguf`) from
-[sakasegawa/irodori-tts-ggml](https://huggingface.co/sakasegawa/irodori-tts-ggml), whose card lists their
-SHA-256. To convert them yourself from the pinned official checkpoints:
+A synthesis needs one model and the codec, which
+[sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF)
+(`irodori-tts-v4.1-small-mf-f16.gguf`) and
+[sakasegawa/Irodori-TTS-v4.1-Small-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) (`irodori-tts-v4.1-small-f16.gguf`)
+each hold with `semantic-dacvae-japanese-32dim-f32.gguf`; their cards list the SHA-256. To convert them yourself
+from the pinned official checkpoints:
 
 ```sh
 cd reference/irodori-tts
@@ -728,8 +732,12 @@ it reaches the C API, the worker, the server and `speech-asr` in
 
 ### Models
 
-`reference/fastconformer/` pins NeMo 3.0.0 with PyTorch 2.10.0 and each checkpoint by revision, size and
-SHA-256, and converts it:
+Recognition needs one file, `parakeet-tdt_ctc-0.6b-ja-f16.gguf` from
+[sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) or
+`parakeet-tdt-0.6b-v3-f16.gguf` from
+[sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF), whose cards list their SHA-256. To
+convert them yourself, `reference/fastconformer/` pins NeMo 3.0.0 with PyTorch 2.10.0 and each checkpoint by
+revision, size and SHA-256:
 
 ```sh
 cd reference/fastconformer
