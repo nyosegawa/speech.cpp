@@ -1,0 +1,50 @@
+// Checks the FastConformer frontend against NeMo's preprocessor: the normalized log-mel features of each dump
+// of reference/fastconformer/dump.py, computed from the dump's own audio.
+//
+// usage: fastconformer-frontend-check <model.gguf> <reference out dir>
+
+#include <cstdio>
+
+#include "args.h"
+#include "backend.h"
+#include "compare.h"
+#include "fastconformer-dumps.h"
+#include "fastconformer/frontend.h"
+#include "ggml-cpu.h"
+#include "npy.h"
+
+using namespace fastconformer;
+
+int main(int argc, char ** argv) {
+    const std::vector<std::string> args = utf8_args(argc, argv);
+    if (args.size() < 3) {
+        std::fprintf(stderr, "usage: %s <model.gguf> <reference out dir>\n", args[0].c_str());
+        return 2;
+    }
+    try {
+        configure_ggml();
+        // The frontend runs on the host; the backend only holds its window and filterbank.
+        ggml_backend_t backend = ggml_backend_cpu_init();
+        bool ok = true;
+        {
+            ModelFile model(args[1], backend);
+            const Frontend frontend(model);
+            for (const auto & d : fastconformer_dumps(args[2])) {
+                const Npy audio = read_npy((d / "audio.npy").u8string());
+                const Npy want = read_npy((d / "features.npy").u8string());
+                const std::vector<float> got = frontend.features(audio.f32);
+                const Diff diff = compare(got, want.f32);
+                std::printf("%s (%lld frames)\n", d.filename().u8string().c_str(), (long long) want.shape[0]);
+                print_diff("  features", diff);
+                // Measured on an Apple M5 on 2026-10-05: 117 to 127 dB, the gap between this double precision and
+                // torch.stft()'s float32. A wrong window, padding, filterbank or normalization falls far below.
+                ok = ok && got.size() == want.f32.size() && want.shape[1] == frontend.mels() && diff.snr_db > 90;
+            }
+        }
+        ggml_backend_free(backend);
+        return ok ? 0 : 1;
+    } catch (const std::exception & e) {
+        std::fprintf(stderr, "error: %s\n", e.what());
+        return 1;
+    }
+}
