@@ -13,18 +13,27 @@ implementation.
 
 ## Binaries
 
-[Releases](https://github.com/nyosegawa/speech.cpp/releases) carry, for macOS arm64 (Metal) and Windows x64
-(Vulkan), `speech-worker-<version>-<platform>.zip` with the worker alone, which is what ASIST bundles, and
-`speech-cpp-tools-<version>-<platform>.zip` with the command-line tool `speech-tts`, the HTTP server
-`speech-server` and the shared library with its header (`libspeech.dylib`, or `speech.dll` with its import
-library `speech.lib`, and `speech.h`), with their
-SHA-256 sums. A release is the tag `v<version>` of the number in the file `VERSION`, which CI checks before it
+[Releases](https://github.com/nyosegawa/speech.cpp/releases) carry, for macOS arm64 (Metal), Windows x64
+(Vulkan) and Linux x64 (Vulkan, and the CPU alone), `speech-worker-<version>-<platform>.zip` with the worker
+alone, which is what ASIST bundles, and `speech-cpp-tools-<version>-<platform>.zip` with the command-line
+tool `speech-tts`, the HTTP server `speech-server` and the shared library with its header (`libspeech.dylib`,
+`libspeech.so`, or `speech.dll` with its import library `speech.lib`, and `speech.h`), with their SHA-256
+sums. A release is the tag `v<version>` of the number in the file `VERSION`, which CI checks before it
 publishes; the library reports the same number through `speech_version()`, and the worker in its `ready`
 message. Versions follow [Semantic Versioning](https://semver.org): while they are 0.x, a release whose
 change a caller must adapt to (the worker protocol, the C API, the GGUF layout, a voice file's form, a tool's
 arguments) raises the minor version, and any other release the patch. The Vulkan build needs no particular driver version; on the first run the GPU driver compiles its
 shaders, which takes seconds and is cached by the driver until it is updated. The Metal build compiles its
 kernels on its first run as well (16 s for an Irodori-TTS worker on an Apple M5, 1.5 s on the runs after).
+
+The Linux binaries (`linux-x64-vulkan` and `linux-x64-cpu`) run on glibc 2.34 or later: Ubuntu 22.04, Debian
+12, Fedora 35, RHEL 9 and the releases after them (docs/adr/0010). They need an x86-64 CPU with AVX2, FMA and
+F16C (Intel Haswell and AMD Excavator or later) and no shared library beyond glibc, since the C++ runtime is
+linked in. The Vulkan build also needs the Vulkan loader, `libvulkan.so.1` (`libvulkan1` on Debian and
+Ubuntu, `vulkan-loader` on Fedora), without which it does not start, and the GPU's Vulkan driver (Mesa's for
+AMD and Intel, NVIDIA's own for NVIDIA). The CPU build needs neither, for a machine without a GPU or its
+driver, and runs on the CPU without `--device`. A Vulkan driver that runs on the CPU, such as Mesa's
+llvmpipe, is not offered as a device.
 
 ## Build
 
@@ -37,6 +46,23 @@ cmake --build build --config Release -j
 
 For Vulkan or CUDA, configure with `-DGGML_VULKAN=ON` (the Vulkan SDK is needed to build) or
 `-DGGML_CUDA=ON` instead.
+
+On Linux the build needs CMake 3.20 or later and GCC or Clang with C++17; it is checked with Ubuntu 22.04's
+CMake 3.22 and GCC 11.4. For Vulkan, the [Vulkan SDK](https://vulkan.lunarg.com/sdk/home#linux) brings the
+loader, the headers, SPIRV-Headers and `glslc` in one archive that needs no installation; CI uses 1.4.357.0:
+
+```sh
+curl -LO https://sdk.lunarg.com/sdk/download/1.4.357.0/linux/vulkansdk-linux-x86_64-1.4.357.0.tar.xz
+tar -xJf vulkansdk-linux-x86_64-1.4.357.0.tar.xz
+source 1.4.357.0/setup-env.sh
+cmake -B build -DGGML_VULKAN=ON
+cmake --build build -j
+```
+
+A build from source is tuned to the CPU it is built on and uses OpenMP, so it needs `libgomp.so.1`; the
+releases are built for any CPU with AVX2 (`-DGGML_NATIVE=OFF`) and with ggml's own threads
+(`-DGGML_OPENMP=OFF`), as `.github/workflows/build.yml` shows. On a machine without a GPU, the CPU build
+(`cmake -B build`) runs the tools on the CPU without `--device`.
 
 The build makes the library twice from the same sources: statically into every executable, so that each
 tool is one file with ggml inside, and as the shared library `libspeech` (`libspeech.dylib`, `libspeech.so`,

@@ -29,6 +29,11 @@ endif()
 if (MSVC)
     add_compile_options(/utf-8)
 endif()
+# On Linux the C++ runtime goes into each executable and libspeech.so, so that a release runs on any
+# distribution with the glibc it was built against, whatever libstdc++ that distribution has.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_link_options(-static-libstdc++ -static-libgcc)
+endif()
 
 add_library(speechcommon STATIC
     src/common/model-file.cpp
