@@ -25,9 +25,11 @@ struct EncodedReference {
 };
 
 /**
- * The latent of a reference voice in a WAVE file as the official runtime makes it: the channels averaged, the
- * loudness normalized, then encoded. The file must be at the codec's sample rate and at most `rules.max_seconds`
- * long; the runtime would resample or cut it, and this throws.
+ * The latent of a reference voice in a WAVE file as the official runtime makes it: the channels averaged, resampled
+ * to the codec's rate, the loudness normalized, then encoded; `sample_rate` is the file's rate before resampling. The
+ * runtime resamples with torchaudio's defaults and this with resample.h's filter, so a file at another rate gives a
+ * latent slightly different from the runtime's. A file longer than `rules.max_seconds`, which the runtime would cut,
+ * throws.
  */
 EncodedReference encode_reference(Codec & codec, const std::string & wav_path, const ReferenceRules & rules);
 

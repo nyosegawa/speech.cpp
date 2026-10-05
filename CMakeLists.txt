@@ -42,6 +42,7 @@ add_library(speechcommon STATIC
     src/common/args.cpp
     src/common/language.cpp
     src/common/graph.cpp
+    src/common/resample.cpp
 )
 target_include_directories(speechcommon PUBLIC src/common)
 target_link_libraries(speechcommon PUBLIC ggml::ggml)
@@ -91,6 +92,7 @@ add_library(fastconformer STATIC
     src/families/fastconformer/tdt.cpp
     src/families/fastconformer/alsd.cpp
     src/families/fastconformer/detokenizer.cpp
+    src/families/fastconformer/times.cpp
     src/families/fastconformer/recognizer.cpp
 )
 target_include_directories(fastconformer PUBLIC src/families)
@@ -146,6 +148,9 @@ target_include_directories(speech-asr PRIVATE tools/common)
 target_link_libraries(speech-asr PRIVATE speech-static)
 
 # The checks compare each stage with the reference dumps; they are built but not released.
+add_executable(resample-check checks/resample-check.cpp)
+target_link_libraries(resample-check PRIVATE speechcommon)
+
 add_executable(codec-check checks/codec-check.cpp)
 target_link_libraries(codec-check PRIVATE qwen3tts)
 
@@ -184,7 +189,7 @@ else()
 endif()
 
 # The checks of FastConformer's stages.
-foreach(stage frontend encoder transducer)
+foreach(stage frontend encoder transducer times)
     add_executable(fastconformer-${stage}-check checks/fastconformer-${stage}-check.cpp)
     target_link_libraries(fastconformer-${stage}-check PRIVATE fastconformer)
 endforeach()

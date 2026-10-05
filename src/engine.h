@@ -62,8 +62,8 @@ public:
     virtual void speak(const EngineRequest & request, const AudioCallback & on_audio);
 
     /**
-     * The text of mono samples at info().sample_rate, whose rate and language src/speech.cpp has checked; nothing
-     * when `stopped` said so.
+     * The text of mono samples, which src/speech.cpp has resampled to info().sample_rate and whose language it has
+     * checked; nothing when `stopped` said so.
      */
     virtual std::optional<std::string> transcribe(const std::vector<float> & samples, const StopCheck & stopped);
 

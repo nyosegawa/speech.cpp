@@ -34,9 +34,14 @@ std::vector<float> Recognizer::encode(const std::vector<float> & features, int64
 Transcript Recognizer::recognize(const std::vector<float> & samples) {
     const std::vector<float> features = frontend_.features(samples);
     Transcript t;
-    t.ids = decode(encode(features, frontend_.frames(samples.size())));
-    t.text = detokenizer_.text(t.ids);
+    t.decoding = decoding(encode(features, frontend_.frames(samples.size())));
+    t.text = detokenizer_.text(t.decoding.ids);
     return t;
+}
+
+double Recognizer::seconds(int64_t frame) const {
+    const double window_stride = (double) frontend_.hop_length() / (double) frontend_.sample_rate();
+    return (double) frame * window_stride * (double) encoder_.subsampling_factor();
 }
 
 }  // namespace fastconformer

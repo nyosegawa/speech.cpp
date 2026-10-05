@@ -9,8 +9,8 @@
 //                           little-endian mono at the model's rate as it is made; "stream_format": "sse" streams
 //                           the same PCM as speech.audio.delta events and ends with speech.audio.done.
 //   POST /v1/audio/transcriptions
-//                           OpenAI's create transcription: a multipart/form-data form with "file", a WAV file at the
-//                           model's rate, and "model", "language" and "response_format" ("json" or "text").
+//                           OpenAI's create transcription: a multipart/form-data form with "file", a WAV file at any
+//                           rate, and "model", "language" and "response_format" ("json" or "text").
 //   GET  /v1/models         the loaded model, with its task, languages and sample rate, and a synthesis model's
 //                           voices and streaming kind.
 //   GET  /health            {"status": "ok"} once the model is loaded, which is before the server listens.

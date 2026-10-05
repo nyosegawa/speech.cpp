@@ -41,7 +41,7 @@ TdtDecoder::TdtDecoder(const ModelFile & m, const PredictionNetwork & prediction
     if (max_symbols_ == 0) throw std::runtime_error("fastconformer.decoder.tdt.max_symbols is 0");
 }
 
-std::vector<int32_t> TdtDecoder::decode(const std::vector<float> & projected, ggml_backend_t backend) const {
+Decoding TdtDecoder::decode(const std::vector<float> & projected, ggml_backend_t backend) const {
     const int hidden = joint_.hidden();
     const int64_t frames = (int64_t) (projected.size() / (size_t) hidden);
     auto frame = [&](int64_t t) {
@@ -51,7 +51,7 @@ std::vector<int32_t> TdtDecoder::decode(const std::vector<float> & projected, gg
     // other runs.
     const Allocator step_allocator = new_allocator(backend), joint_allocator = new_allocator(backend);
 
-    std::vector<int32_t> ids;
+    Decoding d;
     PredictionState state = prediction_.initial_state();
     int32_t label = blank_;
     int64_t t = 0, last_token_frame = -1;
@@ -73,9 +73,10 @@ std::vector<int32_t> TdtDecoder::decode(const std::vector<float> & projected, gg
         std::vector<float> out = Graph::read(logits);
 
         int64_t label_frame;
+        int32_t duration;
         for (;;) {
             label = argmax(out.data(), blank_ + 1);
-            int32_t duration = durations_[(size_t) argmax(out.data() + blank_ + 1, (int) durations_.size())];
+            duration = durations_[(size_t) argmax(out.data() + blank_ + 1, (int) durations_.size())];
             if (label == blank_ && duration == 0) duration = 1;
             label_frame = t;
             t += duration;
@@ -87,12 +88,14 @@ std::vector<int32_t> TdtDecoder::decode(const std::vector<float> & projected, gg
             out = Graph::read(next);
         }
         if (label == blank_) break;
-        ids.push_back(label);
+        d.ids.push_back(label);
+        d.frames.push_back(label_frame);
+        d.durations.push_back(duration);
         tokens_on_frame = label_frame == last_token_frame ? tokens_on_frame + 1 : 1;
         last_token_frame = label_frame;
         if (t < frames && t == label_frame && tokens_on_frame >= max_symbols_) t++;
     }
-    return ids;
+    return d;
 }
 
 }  // namespace fastconformer

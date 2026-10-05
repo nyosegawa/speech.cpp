@@ -46,7 +46,8 @@ and its check before changing behavior.
 - `reference/<model>/` holds, per model, a uv environment that pins the official code, PyTorch and the rest,
   `pins.py`, which pins the checkpoints by revision, the conversion of the official weights to one GGUF file per
   model, and the scripts that run the official implementation to dump reference tensors. Dumps go to
-  `reference/<model>/out/`.
+  `reference/<model>/out/`. `reference/resample/` does the same for the resampler of `src/common/`, against
+  torchaudio.
 
 Keep these boundaries explicit: code does not reach past its module for an operation that belongs to
 another one.

@@ -19,6 +19,8 @@ struct Prediction {
 struct Hypothesis {
     /** The labels, the blank first. */
     std::vector<int32_t> labels;
+    /** The frame each label after the blank was added on. */
+    std::vector<int64_t> frames;
     double score;
     /** The prediction of the labels before the last, whose state the last is fed with; none for the starting blank. */
     std::shared_ptr<const Prediction> from;
@@ -46,7 +48,7 @@ AlsdDecoder::AlsdDecoder(const ModelFile & m, const PredictionNetwork & predicti
     if (!(max_target_ratio_ >= 0)) throw std::runtime_error("fastconformer.decoder.rnnt.max_target_ratio is negative");
 }
 
-std::vector<int32_t> AlsdDecoder::decode(const std::vector<float> & projected, ggml_backend_t backend) const {
+Decoding AlsdDecoder::decode(const std::vector<float> & projected, ggml_backend_t backend) const {
     const int hidden = joint_.hidden(), outputs = joint_.outputs(), predicted = prediction_.hidden();
     const int64_t frames = (int64_t) (projected.size() / (size_t) hidden);
     const int beam = std::min(beam_, blank_);
@@ -61,7 +63,7 @@ std::vector<int32_t> AlsdDecoder::decode(const std::vector<float> & projected, g
     // the same state, which gives the same output.
     std::map<std::vector<int32_t>, std::shared_ptr<const Prediction>> cache;
     using Hypotheses = std::vector<std::shared_ptr<Hypothesis>>;
-    Hypotheses beam_hyps{std::make_shared<Hypothesis>(Hypothesis{{blank_}, 0.0, nullptr})}, finished;
+    Hypotheses beam_hyps{std::make_shared<Hypothesis>(Hypothesis{{blank_}, {}, 0.0, nullptr})}, finished;
     std::vector<double> logp((size_t) outputs);
     std::vector<int> tokens((size_t) blank_);
     for (int64_t i = 0; i < frames + max_labels; i++) {
@@ -118,7 +120,7 @@ std::vector<int32_t> AlsdDecoder::decode(const std::vector<float> & projected, g
             for (int c = 0; c < outputs; c++) sum += std::exp((double) row[c] - top);
             for (int c = 0; c < outputs; c++) logp[(size_t) c] = (double) row[c] - top - std::log(sum);
 
-            auto blank = std::make_shared<Hypothesis>(Hypothesis{h.labels, h.score + logp[(size_t) blank_], h.from});
+            auto blank = std::make_shared<Hypothesis>(Hypothesis{h.labels, h.frames, h.score + logp[(size_t) blank_], h.from});
             expanded.push_back(blank);
             if (at[j] == frames - 1) finished.push_back(blank);
             // topk() over the tokens: the largest first, and the lower id first between equal ones.
@@ -129,7 +131,10 @@ std::vector<int32_t> AlsdDecoder::decode(const std::vector<float> & projected, g
                 const int token = tokens[(size_t) k];
                 std::vector<int32_t> labels = h.labels;
                 labels.push_back(token);
-                expanded.push_back(std::make_shared<Hypothesis>(Hypothesis{std::move(labels), h.score + logp[(size_t) token], predictions[j]}));
+                std::vector<int64_t> emitted = h.frames;
+                emitted.push_back(at[j]);
+                expanded.push_back(
+                    std::make_shared<Hypothesis>(Hypothesis{std::move(labels), std::move(emitted), h.score + logp[(size_t) token], predictions[j]}));
             }
         }
 
@@ -158,11 +163,8 @@ std::vector<int32_t> AlsdDecoder::decode(const std::vector<float> & projected, g
         auto key = [&](const Hypothesis & h) { return score_norm_ ? h.score / (double) h.labels.size() : h.score; };
         std::stable_sort(ranked.begin(), ranked.end(), [&](const auto & a, const auto & b) { return key(*a) > key(*b); });
     }
-    std::vector<int32_t> ids;
-    for (int32_t label : ranked.front()->labels) {
-        if (label != blank_) ids.push_back(label);
-    }
-    return ids;
+    const Hypothesis & best = *ranked.front();
+    return Decoding{std::vector<int32_t>(best.labels.begin() + 1, best.labels.end()), best.frames, {}};
 }
 
 }  // namespace fastconformer

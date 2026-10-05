@@ -10,9 +10,9 @@
  *
  * With a recognition model (transcribe): refuses to load it with voices or steps, loads it, describes it,
  * recognizes the audio of each dump of reference/fastconformer/dump.py and compares the text with the dump's text
- * byte for byte, refuses audio at another rate, no audio, a language the model does not recognize and a request to
- * speak, stops a request whose callback returns nonzero, and stops one with speech_cancel() from another thread while
- * the encoder runs.
+ * byte for byte, refuses audio without a sample rate, no audio, a language the model does not recognize and a request
+ * to speak, stops a request whose callback returns nonzero, and stops one with speech_cancel() from another thread
+ * while the encoder runs.
  *
  * usage: speech-api-check <model.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]...
  *                         [--make-voice <reference.wav> <voice.gguf>]

@@ -71,7 +71,7 @@ const char * const usage =
     "  --duration-scale x      Irodori-TTS: the factor of the predicted length (1)\n"
     "  -v                      also report the model, its voices and languages, and each text's seed\n"
     "  --devices               list the devices and exit\n"
-    "  make-voice              write an Irodori-TTS voice file from a 48 kHz reference WAVE file\n";
+    "  make-voice              write an Irodori-TTS voice file from a reference WAVE file\n";
 
 /** A command line that cannot be run, which exits with 2 and points to --help. */
 struct UsageError : std::runtime_error {
