@@ -1,9 +1,10 @@
 """Drives a recognition speech-worker the way a caller does: waits for ready, sends the audio of each dump of
 reference/fastconformer/dump.py as 16-bit chunks of one second and checks that the text is the dump's text.
 Then checks that the chunks of two requests may interleave and that the requests are answered in the order of their
-ends, that a cancel drops a request whether it is still taking chunks or waiting, that audio at another rate, an
-unknown language and a request to speak are answered with an error, that a refused chunk is the one answer of its
-request, that every line the worker cannot read gets an error, and that every line on stdout is a JSON object.
+ends, that a cancel drops a request whether it is still taking chunks or waiting, that audio at three times the model's
+rate is answered with a text, that a sample rate of 0, an unknown language and a request to speak are answered with an
+error, that a refused chunk is the one answer of its request, that every line the worker cannot read gets an error, and
+that every line on stdout is a JSON object.
 
 usage: python3 tools/worker_recognition_smoke.py <worker> <model.gguf> <dump folder>... [-- worker options...]
 """
@@ -85,12 +86,13 @@ rate = ready["sampleRate"]
 print(f"ready in {time.perf_counter() - t0:.2f} s: {ready['model']} ({ready['architecture']}), rate {rate}, "
       f"languages {ready['languages']}, backend {ready['backend']}, speech.cpp {ready['version']}")
 
-audio = {}
+audio, want_text = {}, {}
 for d in dumps:
     name = os.path.basename(os.path.normpath(d))
     with open(os.path.join(d, "text.txt"), encoding="utf-8") as f:
         want = f.read()
     audio[name] = pcm16(read_npy(os.path.join(d, "audio.npy")))
+    want_text[name] = want
     t1 = time.perf_counter()
     for c in chunks(name, audio[name]):
         send(c)
@@ -149,10 +151,20 @@ m = read()
 assert m["type"] == "text" and m["id"] == "h", m
 print("cancelled while it ran: no text; the next one answered")
 
-for x in chunks("i", short):
+# The short audio with each sample three times, at three times the rate: the library resamples it to the model's.
+tripled = array.array("h")
+tripled.frombytes(short)
+tripled = array.array("h", [x for x in tripled for _ in range(3)]).tobytes()
+for x in chunks("i", tripled):
     send(x)
-send({"type": "end", "id": "i", "sampleRate": 44100})
-expect_error("i", "audio at 44100 Hz")
+send({"type": "end", "id": "i", "sampleRate": rate * 3})
+m = read()
+assert m["type"] == "text" and m["id"] == "i", m
+print(f"audio at {rate * 3} Hz: a text, {'equal to' if m['text'] == want_text[first] else 'unlike'} the dump's text")
+for x in chunks("v", short):
+    send(x)
+send({"type": "end", "id": "v", "sampleRate": 0})
+expect_error("v", "a sample rate of 0")
 for x in chunks("j", short):
     send(x)
 send({"type": "end", "id": "j", "sampleRate": rate, "language": "zz"})

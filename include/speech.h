@@ -137,9 +137,9 @@ typedef struct speech_model_params {
      */
     int context;
     /**
-     * Irodori-TTS, which needs at least one: the voices, `n_voices` of them. A WAVE file is 48 kHz and at most
-     * 120 s; it is encoded with the codec while the model loads. Qwen3-TTS takes none and speaks with its
-     * model's speakers, and a recognition model takes none.
+     * Irodori-TTS, which needs at least one: the voices, `n_voices` of them. A WAVE file is at most 120 s at any
+     * rate; it is resampled to 48 kHz and encoded with the codec while the model loads. Qwen3-TTS takes none and
+     * speaks with its model's speakers, and a recognition model takes none.
      */
     const speech_voice_source * voices;
     size_t n_voices;
@@ -192,7 +192,8 @@ SPEECH_API const char * speech_model_architecture(const speech_model * model);
 SPEECH_API speech_task speech_model_task(const speech_model * model);
 /**
  * The sample rate in Hz of the audio a synthesis model makes (24000 for Qwen3-TTS, 48000 for Irodori-TTS) or a
- * recognition model takes (16000 for FastConformer).
+ * recognition model recognizes (16000 for FastConformer). Audio given at another rate, to recognize or as a voice's
+ * reference, is resampled to it.
  */
 SPEECH_API int speech_model_sample_rate(const speech_model * model);
 /** How a synthesis model streams its audio; SPEECH_STREAMING_NONE for a recognition model. */
@@ -282,8 +283,9 @@ typedef struct speech_transcription_request {
     const float * samples;
     size_t n_samples;
     /**
-     * The rate of the samples in Hz, which must be the model's, speech_model_sample_rate(). Any other rate is an
-     * error: the library does not resample.
+     * The rate of the samples in Hz, any positive rate. Audio at a rate other than the model's,
+     * speech_model_sample_rate(), is resampled to it with torchaudio's windowed sinc at librosa's kaiser_best
+     * settings. Two rates whose ratio in lowest terms has a term above 4096 (44101 Hz and 16000 Hz) are an error.
      */
     int sample_rate;
     /**
@@ -307,11 +309,11 @@ typedef int (*speech_text_callback)(const char * text, void * user_data);
 /**
  * Recognizes the speech in a request's audio, passing its text to `on_text` with `user_data`, and returns once the
  * text is passed (SPEECH_OK), once the callback or speech_cancel() stopped it (SPEECH_STOPPED), or on an error
- * (SPEECH_ERROR). The audio is checked before any work starts: no samples, a rate other than the model's or a language
- * it does not recognize is an error. A synthesis model is an error. FastConformer recognizes the whole audio in one
- * pass, so speech_cancel() takes effect before the encoder starts or once it has run; its time and memory grow with
- * the square of the audio's length for a model that attends over the whole audio (parakeet), and with its length for
- * one that attends locally (reazonspeech-nemo-v2).
+ * (SPEECH_ERROR). The audio is checked before any work starts: no samples, a rate the library cannot resample from or a
+ * language it does not recognize is an error. A synthesis model is an error. FastConformer recognizes the whole audio
+ * in one pass, so speech_cancel() takes effect before the encoder starts or once it has run; its time and memory grow
+ * with the square of the audio's length for a model that attends over the whole audio (parakeet), and with its length
+ * for one that attends locally (reazonspeech-nemo-v2).
  */
 SPEECH_API speech_status speech_transcribe(speech_model * model, const speech_transcription_request * request,
                                            speech_text_callback on_text, void * user_data);
@@ -324,11 +326,11 @@ SPEECH_API speech_status speech_transcribe(speech_model * model, const speech_tr
 SPEECH_API void speech_cancel(speech_model * model);
 
 /**
- * Makes an Irodori-TTS voice file at `voice_path` from the reference WAVE file `wave_path` (48 kHz, at most
- * 120 s): the reference's codec latent, which loads in milliseconds where a WAVE file is encoded at every
- * load. It loads the model and the codec of `params` on its device for the purpose; the voices of `params`
- * are not used. The voice file names the codec and works only with it. On the CPU the latent is the official
- * encoder's to 99 dB SNR; a GPU computes it in less precision.
+ * Makes an Irodori-TTS voice file at `voice_path` from the reference WAVE file `wave_path` (at most 120 s at any rate,
+ * resampled to 48 kHz): the reference's codec latent, which loads in milliseconds where a WAVE file is encoded at every
+ * load. It loads the model and the codec of `params` on its device for the purpose; the voices of `params` are not
+ * used. The voice file names the codec and works only with it. On the CPU the latent is the official encoder's to 99 dB
+ * SNR; a GPU computes it in less precision.
  */
 SPEECH_API speech_status speech_make_voice(const speech_model_params * params, const char * wave_path,
                                            const char * voice_path);
