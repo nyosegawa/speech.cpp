@@ -536,8 +536,9 @@ not add artifacts at the frame boundaries. Implemented:
 Voice cloning, VoiceDesign, the codec encoder and the speaker encoder are out of scope. The model has no
 control of its speaking rate or its length, so a request with a speed other than 1 or with a length is
 refused (docs/adr/0007). A request stops at the model's limit, 8192 frames (655 s of speech), the checkpoint's
-`max_new_tokens`, as the official implementation stops. A text of more than 24565 tokens, what the talker's 32768
-positions leave beside the longest speech and its prompt, is refused.
+`max_new_tokens`, as the official implementation stops. The talker's key/value cache grows with the speech rather
+than holding the longest from the start, so a short sentence does not take the memory of the longest. A text of
+more than 24565 tokens, what the talker's 32768 positions leave beside the longest speech and its prompt, is refused.
 
 ### Models
 

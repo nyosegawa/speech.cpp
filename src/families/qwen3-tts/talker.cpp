@@ -1,5 +1,6 @@
 #include "talker.h"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -46,6 +47,16 @@ namespace {
 
 constexpr int kGraphSize = 8192;
 
+/**
+ * The talker's cache grows in steps of this many positions, starting with room for the prompt and as many frames
+ * (20 s of speech), and doubling as the speech grows.
+ */
+constexpr int64_t kCacheStep = 256;
+
+int64_t round_up(int64_t n, int64_t step) {
+    return (n + step - 1) / step * step;
+}
+
 GraphCtx new_graph() {
     ggml_init_params params = {ggml_tensor_overhead() * kGraphSize + ggml_graph_overhead_custom(kGraphSize, false),
                                nullptr, true};
@@ -88,6 +99,28 @@ Talker::Talker(const ModelFile & m, ggml_backend_t backend) : backend_(backend),
 
 Talker::~Talker() {
     if (allocr_) ggml_gallocr_free(allocr_);
+}
+
+int64_t Talker::cache_capacity() const {
+    return cache_ ? cache_->capacity : 0;
+}
+
+void Talker::resize_cache(int64_t capacity) {
+    auto next = std::make_unique<Cache>(backend_, GGML_TYPE_F16, talker_, capacity);
+    if (n_past_ > 0) {
+        // The positions so far are copied on the device, layer by layer, into the new buffer.
+        GraphCtx g = new_graph();
+        for (int l = 0; l < talker_.n_layer; l++) {
+            for (auto [from, to] : {std::make_pair(cache_->k[l], next->k[l]), std::make_pair(cache_->v[l], next->v[l])}) {
+                ggml_build_forward_expand(g.gf, ggml_cpy(g.ctx, ggml_view_2d(g.ctx, from, from->ne[0], n_past_, from->nb[1], 0),
+                                                         ggml_view_2d(g.ctx, to, to->ne[0], n_past_, to->nb[1], 0)));
+            }
+        }
+        const bool computed = ggml_gallocr_alloc_graph(allocr_, g.gf) && ggml_backend_graph_compute(backend_, g.gf) == GGML_STATUS_SUCCESS;
+        ggml_free(g.ctx);
+        if (!computed) throw std::runtime_error("cannot copy the talker's key/value cache into a larger one");
+    }
+    cache_ = std::move(next);
 }
 
 ggml_tensor * Talker::run_stack(GraphCtx & g, const std::string & prefix, const DecoderShape & s, ggml_tensor * x,
@@ -174,7 +207,9 @@ void Talker::prefill(const std::vector<float> & embeds, int n, int64_t positions
     }
     positions_ = positions;
     n_past_ = 0;
-    if (!cache_ || cache_->capacity != positions) cache_ = std::make_unique<Cache>(backend_, GGML_TYPE_F16, talker_, positions);
+    // A cache that a long utterance grew is given back, so that a model holds what its current utterance needs.
+    const int64_t start = std::min(positions, round_up(n + kCacheStep, kCacheStep));
+    if (cache_capacity() != start) resize_cache(start);
     run_talker(&embeds, nullptr, nullptr, n);
 }
 
@@ -185,6 +220,9 @@ void Talker::step(const int32_t * codes, const std::vector<float> & extra) {
 void Talker::run_talker(const std::vector<float> * embeds, const int32_t * codes, const std::vector<float> * extra,
                         int64_t n) {
     if (n_past_ + n > positions_) throw std::logic_error("the talker was fed past the positions of its utterance");
+    if (n_past_ + n > cache_->capacity) {
+        resize_cache(std::min(positions_, std::max(n_past_ + n, round_up(2 * cache_->capacity, kCacheStep))));
+    }
     const ModelFile & m = m_;
     GraphCtx g = new_graph();
     ggml_context * ctx = g.ctx;
