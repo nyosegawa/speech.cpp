@@ -22,7 +22,7 @@ jobs:
       - name: Stage
         run: |
           mkdir package
-          cp build/speech-worker build/qwen3-tts build/irodori-tts build/libspeech.dylib include/speech.h package/
+          cp build/speech-worker build/speech-tts build/libspeech.dylib include/speech.h package/
       - uses: actions/upload-artifact@v4
         with:
           name: speech-cpp-macos-arm64-metal
@@ -76,7 +76,7 @@ jobs:
       - name: Stage
         run: |
           New-Item -ItemType Directory package
-          Copy-Item build/Release/speech-worker.exe, build/Release/qwen3-tts.exe, build/Release/irodori-tts.exe, build/Release/speech.dll, build/Release/speech.lib, include/speech.h package/
+          Copy-Item build/Release/speech-worker.exe, build/Release/speech-tts.exe, build/Release/speech.dll, build/Release/speech.lib, include/speech.h package/
       - uses: actions/upload-artifact@v4
         with:
           name: speech-cpp-windows-x64-vulkan
