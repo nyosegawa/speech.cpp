@@ -3,7 +3,8 @@
 //
 // Reads one JSON object per line from stdin and answers with one JSON object per line on stdout. Nothing else
 // reaches stdout: every log goes to stderr, so a line on stdout that is not a JSON object is a defect.
-//   in : {"id": "...", "text": "...", "voice": "...", "language": "...", "speed": 1.0}
+//   in : {"id": "...", "text": "...", "voice": "...", "language": "...", "speed": 1.0, "seconds": 2.5,
+//         "durationScale": 1.2}
 //        {"type": "cancel", "id": "..."}
 //   out: {"type": "ready", "model": "...", "architecture": "...", "sampleRate": 24000, "streaming": "frame",
 //         "voices": [...], "languages": [...], "languageSelectable": true, "backend": "MTL0", "version": "0.4.0"}
@@ -19,9 +20,17 @@
 // ("streaming": "sentence"), so a request is one sentence; its voices are the ones given with --voice, the
 // model is not told the language ("languageSelectable": false), and its "steps" is the sampler's.
 //
+// "speed", "seconds" and "durationScale" are the JSON numbers of speech_request's speed, seconds and
+// duration_scale, each optional. Irodori-TTS takes them; Qwen3-TTS answers an error to any but the defaults.
+//
 // Requests are served one at a time in arrival order. A cancel takes effect between two chunks, and for
 // Irodori-TTS also between two of the sampler's steps, before the first chunk; a cancelled request sends no
-// end, and one cancelled before it starts is dropped. `speed` is accepted and has no effect.
+// end, and one cancelled before it starts is dropped.
+//
+// Every line on stdin gets an answer. A line that is not a request or a cancel the worker can read (not one
+// JSON object, a member that is not a string or a number, no "id", an unknown "type") is answered at once
+// with an error naming the problem, with the "id" when one could be read and without one otherwise. Such an
+// error is the caller's defect, not the model's.
 //
 // `--devices` instead prints the devices ggml can run on and exits, so that the caller can tell whether
 // the machine has a GPU and how much memory it has before starting a worker:
@@ -37,6 +46,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <iostream>
 #include <mutex>
@@ -119,7 +129,20 @@ std::string json_array(size_t count, Get get) {
 
 std::string value(const FlatJson & request, const char * key) {
     const auto it = request.find(key);
-    return it == request.end() ? "" : it->second;
+    return it == request.end() ? "" : it->second.text;
+}
+
+/** A number member of a request, or `absent` when the request leaves it out; a string or a non-finite number throws. */
+double number(const FlatJson & request, const char * key, double absent) {
+    const auto it = request.find(key);
+    if (it == request.end()) return absent;
+    const std::string & text = it->second.text;
+    char * end = nullptr;
+    const double v = std::strtod(text.c_str(), &end);
+    if (it->second.kind != FlatValue::NUMBER || end != text.c_str() + text.size() || !std::isfinite(v)) {
+        throw std::invalid_argument(std::string("\"") + key + "\" is " + json_string(text) + "; give it as a JSON number");
+    }
+    return v;
 }
 
 struct Inbox {
@@ -139,18 +162,42 @@ struct Inbox {
     }
 };
 
+/** Why a message is not a request or a cancel the worker can serve, or nothing when it is one. */
+std::string unreadable(const FlatJson & message) {
+    for (const auto & [key, v] : message) {
+        if (v.kind == FlatValue::OTHER) {
+            return "the member " + json_string(key) + " is " + v.text + "; the protocol's members are strings and numbers";
+        }
+    }
+    if (!message.count("id")) return "the message has no \"id\"; every request and cancel needs one";
+    const auto type = message.find("type");
+    if (type != message.end() && type->second.text != "cancel") {
+        return "the message's \"type\" is " + json_string(type->second.text) + "; a request has none and a cancel has \"cancel\"";
+    }
+    return "";
+}
+
 void read_requests(Inbox & inbox) {
     std::string line;
     while (std::getline(std::cin, line)) {
         FlatJson message;
+        std::string problem;
         try {
             message = parse_flat_json(line);
-        } catch (const std::exception &) {
+            problem = unreadable(message);
+        } catch (const std::exception & e) {
+            problem = std::string("a line on stdin cannot be read: ") + e.what() + "; send one JSON object per line";
+        }
+        if (!problem.empty()) {
+            const auto id = message.find("id");
+            const bool has_id = id != message.end() && id->second.kind != FlatValue::OTHER;
+            emit("{\"type\":\"error\"," + (has_id ? "\"id\":" + json_string(id->second.text) + "," : std::string()) +
+                 "\"error\":" + json_string(problem) + "}");
             continue;
         }
         std::lock_guard<std::mutex> lock(inbox.mutex);
-        if (message["type"] == "cancel") {
-            inbox.cancelled.insert(message["id"]);
+        if (value(message, "type") == "cancel") {
+            inbox.cancelled.insert(value(message, "id"));
         } else {
             inbox.requests.push_back(message);
             inbox.ready.notify_one();
@@ -312,17 +359,29 @@ int main(int argc, char ** argv) {
             request = inbox.requests.front();
             inbox.requests.pop_front();
         }
-        const std::string id = request["id"];
+        const std::string id = value(request, "id");
         if (inbox.is_cancelled(id)) {
             inbox.forget(id);
             continue;
         }
         const std::string text = value(request, "text"), voice = value(request, "voice"), language = value(request, "language");
-        speech_request r = {text.c_str(), voice.c_str(), language.c_str(), seed++};
+        speech_request r = speech_request_default();
+        r.text = text.c_str();
+        r.voice = voice.c_str();
+        r.language = language.c_str();
+        r.seed = seed++;
+        std::string error;
+        try {
+            r.speed = number(request, "speed", r.speed);
+            r.seconds = number(request, "seconds", r.seconds);
+            r.duration_scale = number(request, "durationScale", r.duration_scale);
+        } catch (const std::exception & e) {
+            error = e.what();
+        }
         Speaking speaking{inbox, id, 0, 0, {}};
-        const speech_status status = speech_synthesize(model, &r, on_audio, &speaking);
-        if (status == SPEECH_ERROR) {
-            emit("{\"type\":\"error\",\"id\":" + json_string(id) + ",\"error\":" + json_string(speech_last_error()) + "}");
+        if (error.empty() && speech_synthesize(model, &r, on_audio, &speaking) == SPEECH_ERROR) error = speech_last_error();
+        if (!error.empty()) {
+            emit("{\"type\":\"error\",\"id\":" + json_string(id) + ",\"error\":" + json_string(error) + "}");
         } else if (!inbox.is_cancelled(id)) {
             emit("{\"type\":\"end\",\"id\":" + json_string(id) + ",\"samples\":" + std::to_string(speaking.samples) + "}");
         }

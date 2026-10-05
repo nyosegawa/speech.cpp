@@ -1,6 +1,8 @@
 // Checks the speaker encoder and the duration predictor of Irodori-TTS against the official implementation
 // on every dump of reference/irodori-tts/dump.py, each stage from the dump's own inputs: the reference latent
-// for the speaker encoder, and the text and speaker conditions for the duration predictor.
+// for the speaker encoder, and the text and speaker conditions for the duration predictor. The length is
+// checked against the frames the official runtime synthesized, with the dump's seconds, duration scale and
+// speed: a dump with fixed seconds has no prediction, and only its length is checked.
 //
 // usage: irodori-condition-check <model.gguf> <reference out dir> [gpu|cpu|device name]
 
@@ -10,6 +12,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 
 #include "args.h"
@@ -23,13 +26,14 @@ using namespace irodori;
 
 namespace {
 
-/** An integer member of the dump's meta.json. */
-int meta_int(const std::filesystem::path & dir, const std::string & key) {
+/** A number member of the dump's meta.json; a missing one throws unless `absent` gives its value. */
+double meta_number(const std::filesystem::path & dir, const std::string & key, std::optional<double> absent = std::nullopt) {
     std::ifstream f(dir / "meta.json");
     const std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     const size_t at = json.find("\"" + key + "\"");
-    if (at == std::string::npos) throw std::runtime_error(key + " is missing from " + (dir / "meta.json").u8string());
-    return std::stoi(json.substr(json.find(':', at) + 1));
+    if (at != std::string::npos) return std::stod(json.substr(json.find(':', at) + 1));
+    if (!absent) throw std::runtime_error(key + " is missing from " + (dir / "meta.json").u8string());
+    return *absent;
 }
 
 }  // namespace
@@ -74,6 +78,17 @@ int main(int argc, char ** argv) {
                 // and 25 dB with Q8_0. A wrong operation falls far below this bound.
                 ok = ok && ds.snr_db > 20;
             }
+            LengthOptions options;
+            options.seconds = meta_number(d, "seconds", 0.0);
+            options.duration_scale = meta_number(d, "duration_scale", 1.0);
+            options.speed = meta_number(d, "speed", 1.0);
+            const int want = (int) meta_number(d, "latent_frames");
+            if (options.fixed()) {
+                const int frames = duration.length(options, 0).frames;
+                std::printf("  length: %g s at speed %g, %d frames (official %d)\n", options.seconds, options.speed, frames, want);
+                ok = ok && frames == want;
+                continue;
+            }
             const Npy text = read_npy((d / "text_state.npy").u8string());
             const Npy log_frames = read_npy((d / "duration_log_frames.npy").u8string());
             Graph g;
@@ -83,9 +98,9 @@ int main(int argc, char ** argv) {
             g.output(sum);
             g.compute(backend, allocr);
             const float predicted = Graph::read(sum)[0];
-            const int frames = duration.frames(predicted), want = meta_int(d, "latent_frames");
-            std::printf("  duration: log(1 + frames) %.6f (official %.6f), %d frames (official %d)\n", std::log1p(predicted),
-                        log_frames.f32[0], frames, want);
+            const int frames = duration.length(options, predicted).frames;
+            std::printf("  duration: log(1 + frames) %.6f (official %.6f), scale %g at speed %g, %d frames (official %d)\n",
+                        std::log1p(predicted), log_frames.f32[0], options.duration_scale, options.speed, frames, want);
             // F32 and F16 give the official frames; Q8_0 weights move a 27 s text by one frame (40 ms).
             ok = ok && std::abs(frames - want) <= 1;
         }

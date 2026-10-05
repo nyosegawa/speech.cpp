@@ -1,8 +1,9 @@
 /*
  * Checks that the C API alone, through the shared libspeech, does what a program needs: reports the release
  * and API it was built as, lists the devices, optionally makes an Irodori-TTS voice file and loads it, loads a
- * model, describes it, speaks one sentence into a WAVE file, stops a second request with speech_cancel() from
- * another thread before it finishes, and reports an unknown voice as an error. It is written in C so that
+ * model, describes it, speaks one sentence into a WAVE file, takes or refuses the options of speed and length as
+ * the model can or cannot follow them, stops a second request with speech_cancel() from another thread before it
+ * finishes, and reports an unknown voice as an error. It is written in C so that
  * speech.h is checked to be plain C.
  *
  * usage: speech-api-check <model.gguf> <codec.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]...
@@ -189,6 +190,59 @@ static int fail(const char * what) {
     return 1;
 }
 
+/** Whether a request is refused with a message; prints the message. */
+static int refused(speech_model * model, const speech_request * request, const char * what) {
+    Audio none = {NULL, 0, 0};
+    if (speech_synthesize(model, request, collect, &none) != SPEECH_ERROR || speech_last_error()[0] == '\0' || none.n != 0) {
+        fprintf(stderr, "FAIL: %s is not refused with a message\n", what);
+        free(none.samples);
+        return 0;
+    }
+    printf("%s is refused: %s\n", what, speech_last_error());
+    return 1;
+}
+
+/**
+ * Irodori-TTS speaks a fixed length of 1 s in at most 1 s of audio and takes a speed, and refuses a speed out of
+ * its range and seconds with a duration scale; Qwen3-TTS refuses a speed and a length. Returns nonzero on a failure.
+ */
+static int check_length_options(speech_model * model, const speech_request * sentence) {
+    speech_request r = *sentence;
+    if (!strcmp(speech_model_architecture(model), "irodori-tts")) {
+        Audio audio = {NULL, 0, 0};
+        r.seconds = 1;
+        if (speech_synthesize(model, &r, collect, &audio) != SPEECH_OK) return fail("speech_synthesize with seconds");
+        printf("a length of 1 s gave %.3f s of audio\n", (double) audio.n / speech_model_sample_rate(model));
+        if (audio.n == 0 || audio.n > (size_t) speech_model_sample_rate(model)) {
+            fprintf(stderr, "FAIL: a length of 1 s gave %zu samples\n", audio.n);
+            return 1;
+        }
+        r.seconds = 0;
+        r.speed = 1.5;
+        audio.n = 0;
+        if (speech_synthesize(model, &r, collect, &audio) != SPEECH_OK) return fail("speech_synthesize with speed");
+        printf("speed 1.5 gave %.3f s of audio\n", (double) audio.n / speech_model_sample_rate(model));
+        free(audio.samples);
+        r.speed = 5;
+        if (!refused(model, &r, "a speed of 5")) return 1;
+        r.speed = 1;
+        r.seconds = 2;
+        r.duration_scale = 1.2;
+        if (!refused(model, &r, "seconds with a duration scale")) return 1;
+        r.duration_scale = 1;
+        r.seconds = 60;
+        return refused(model, &r, "a length of 60 s") ? 0 : 1;
+    }
+    r.speed = 1.5;
+    if (!refused(model, &r, "a speed on Qwen3-TTS")) return 1;
+    r.speed = 1;
+    r.seconds = 2;
+    if (!refused(model, &r, "a length on Qwen3-TTS")) return 1;
+    r.seconds = 0;
+    r.duration_scale = 0.8;
+    return refused(model, &r, "a duration scale on Qwen3-TTS") ? 0 : 1;
+}
+
 int main(int argc, char ** argv) {
 #ifdef _WIN32
     argv = utf8_argv(&argc);
@@ -276,7 +330,11 @@ int main(int argc, char ** argv) {
     }
 
     const char * voice = made ? "made" : speech_model_voice(model, 0);
-    speech_request request = {"明日の東京は晴れで、最高気温は二十四度の予報です。", voice, "ja", 7};
+    speech_request request = speech_request_default();
+    request.text = "明日の東京は晴れで、最高気温は二十四度の予報です。";
+    request.voice = voice;
+    request.language = "ja";
+    request.seed = 7;
     Audio audio = {NULL, 0, 0};
     if (speech_synthesize(model, &request, collect, &audio) != SPEECH_OK) return fail("speech_synthesize");
     if (audio.n == 0) {
@@ -288,6 +346,8 @@ int main(int argc, char ** argv) {
         return 1;
     }
     printf("spoke %.2f s of audio in the voice %s into %s\n", (double) audio.n / speech_model_sample_rate(model), voice, argv[3]);
+
+    if (check_length_options(model, &request) != 0) return 1;
 
     Cancelling c;
     memset(&c, 0, sizeof c);
@@ -302,7 +362,10 @@ int main(int argc, char ** argv) {
     pthread_t thread;
     pthread_create(&thread, NULL, canceller, &c);
 #endif
-    speech_request longer = {"これは途中で止める長めの文です。止まったら、残りの音声は届きません。", voice, NULL, 8};
+    speech_request longer = speech_request_default();
+    longer.text = "これは途中で止める長めの文です。止まったら、残りの音声は届きません。";
+    longer.voice = voice;
+    longer.seed = 8;
     const speech_status stopped = speech_synthesize(model, &longer, on_cancelling, &c);
 #ifdef _WIN32
     WaitForSingleObject(thread, INFINITE);
@@ -320,7 +383,10 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    speech_request unknown = {"声の名前が違います。", "no-such-voice", NULL, 9};
+    speech_request unknown = speech_request_default();
+    unknown.text = "声の名前が違います。";
+    unknown.voice = "no-such-voice";
+    unknown.seed = 9;
     if (speech_synthesize(model, &unknown, collect, &audio) != SPEECH_ERROR || speech_last_error()[0] == '\0') {
         fprintf(stderr, "FAIL: an unknown voice is not an error with a message\n");
         return 1;

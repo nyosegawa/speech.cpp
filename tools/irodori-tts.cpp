@@ -2,9 +2,11 @@
 // from a reference recording.
 //
 // usage: irodori-tts <model.gguf> <codec.gguf> <voice> <text> <out.wav> [--device NAME] [--seed n] [--steps n]
+//                    [--seconds s | --duration-scale x] [--speed x]
 //        irodori-tts --make-voice <model.gguf> <codec.gguf> <reference.wav> <voice.gguf> [--device NAME]
 //
 // A voice is a reference WAVE file (48 kHz, at most 120 s) or a voice file that --make-voice wrote.
+// --seconds fixes the length, --duration-scale scales the predicted one, and --speed divides either.
 
 #include <chrono>
 #include <cstdio>
@@ -28,17 +30,22 @@ int run(std::vector<std::string> a) {
     std::string device;
     uint64_t seed = 0;
     int steps = 0;
+    LengthOptions length;
     std::vector<std::string> positional;
     for (size_t i = 1; i < a.size(); i++) {
         if (a[i] == "--device" && i + 1 < a.size()) device = a[++i];
         else if (a[i] == "--seed" && i + 1 < a.size()) seed = std::stoull(a[++i]);
         else if (a[i] == "--steps" && i + 1 < a.size()) steps = std::stoi(a[++i]);
+        else if (a[i] == "--seconds" && i + 1 < a.size()) length.seconds = std::stod(a[++i]);
+        else if (a[i] == "--duration-scale" && i + 1 < a.size()) length.duration_scale = std::stod(a[++i]);
+        else if (a[i] == "--speed" && i + 1 < a.size()) length.speed = std::stod(a[++i]);
         else positional.push_back(a[i]);
     }
     const bool make_voice = !positional.empty() && positional[0] == "--make-voice";
     if (positional.size() != 5) {
         std::fprintf(stderr,
                      "usage: %s <model.gguf> <codec.gguf> <voice> <text> <out.wav> [--device NAME] [--seed n] [--steps n]\n"
+                     "                   [--seconds s | --duration-scale x] [--speed x]\n"
                      "       %s --make-voice <model.gguf> <codec.gguf> <reference.wav> <voice.gguf> [--device NAME]\n",
                      a[0].c_str(), a[0].c_str());
         return 2;
@@ -63,6 +70,7 @@ int run(std::vector<std::string> a) {
     r.text = positional[3];
     r.seed = seed;
     r.steps = steps;
+    r.length = length;
     std::vector<float> audio;
     Stats stats;
     t0 = std::chrono::steady_clock::now();

@@ -1,9 +1,33 @@
 #pragma once
 
+#include <cstdint>
+
 #include "graph.h"
 #include "model-file.h"
 
 namespace irodori {
+
+/**
+ * What a request asks of the length of its speech. The runtime takes `seconds` and `duration_scale`;
+ * `speed` is Irodori-TTS-Server's, which divides both by it to serve OpenAI's speech API.
+ */
+struct LengthOptions {
+    /** The length in seconds, or 0 for the length the duration predictor gives. */
+    double seconds = 0;
+    /** The factor of the predicted length, above 0. It cannot be given with `seconds`. */
+    double duration_scale = 1;
+    /** The speaking rate from 0.25 to 4, which divides the length, fixed or predicted. */
+    double speed = 1;
+
+    /** Whether the length is fixed, so that the duration predictor does not run. */
+    bool fixed() const { return seconds > 0; }
+};
+
+/** How long a synthesis is: the latent's frames, and the samples its audio is cut to before the cut where the latent goes flat. */
+struct Length {
+    int frames = 0;
+    int64_t samples = 0;
+};
 
 /**
  * The duration predictor of v4.1: a stack of SwiGLU blocks over the text condition's tokens, each
@@ -19,14 +43,24 @@ public:
     ggml_tensor * build(Graph & g, ggml_tensor * text_state, ggml_tensor * speaker_summary) const;
 
     /**
-     * The latent frames the runtime synthesizes for a predicted sum, through its log1p and expm1, its
-     * rounding to the nearest even, and its bounds of 0.5 s and 30 s.
+     * Throws unless the options are ones the runtime takes, with seconds that, divided by the speed, lie
+     * within the model's bounds of 0.5 s and 30 s. The runtime clamps such seconds into the bounds and
+     * ignores a duration scale given with seconds; both are refused here instead.
      */
-    int frames(float predicted_sum) const;
+    void check(const LengthOptions & options) const;
+
+    /**
+     * The length the runtime synthesizes for checked options and, when they fix no length, the predicted sum.
+     * Fixed seconds give int(seconds * sample rate) samples in the frames that hold them. A prediction goes
+     * through the runtime's float32 log1p and expm1, the scale in double precision, its rounding to the
+     * nearest frame with half to even and its bounds in whole frames, and gives whole frames of samples.
+     */
+    Length length(const LengthOptions & options, float predicted_sum) const;
 
 private:
     const ModelFile & m_;
-    int layers_, min_frames_, max_frames_;
+    int layers_, sample_rate_, hop_, min_frames_, max_frames_;
+    double min_seconds_, max_seconds_;
     float eps_;
 };
 

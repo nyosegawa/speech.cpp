@@ -101,6 +101,7 @@ void Synthesizer::save_voice(const Voice & voice, const std::string & path) cons
 }
 
 size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const AudioSink & sink, Stats * stats) {
+    duration_.check(r.length);
     Stats local;
     Stats & st = stats ? *stats : local;
     const auto start = std::chrono::steady_clock::now();
@@ -119,27 +120,35 @@ size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
         }
         Graph g;
         ggml_tensor * state = text_.build(g, ids);
-        const std::vector<float> summary(voice.speaker.begin(), voice.speaker.begin() + speaker_.dim());
-        ggml_tensor * sum = duration_.build(g, state, g.input(summary, speaker_.dim()));
         g.output(state);
-        g.output(sum);
+        // The runtime runs the duration predictor only when no length is fixed.
+        ggml_tensor * sum = nullptr;
+        if (!r.length.fixed()) {
+            const std::vector<float> summary(voice.speaker.begin(), voice.speaker.begin() + speaker_.dim());
+            sum = duration_.build(g, state, g.input(summary, speaker_.dim()));
+            g.output(sum);
+        }
         g.compute(backend_, allocr_);
         text_state = Graph::read(state);
-        predicted = Graph::read(sum)[0];
+        if (sum) predicted = Graph::read(sum)[0];
     }
-    const int frames = duration_.frames(predicted);
+    const Length length = duration_.length(r.length, predicted);
+    const int frames = length.frames;
     std::vector<float> x;
     {
         Timer t{st.sampling};
         const Conditions c{text_state, tokens, voice.speaker, voice.speaker_tokens};
         const size_t n = (size_t) frames * codec_.latent_dim();
-        if (!r.noise.empty() && r.noise.size() != n) throw std::runtime_error("the given noise does not have the predicted length");
+        if (!r.noise.empty() && r.noise.size() != n) {
+            throw std::runtime_error("the given noise has " + std::to_string(r.noise.size() / codec_.latent_dim()) + " frames and the speech " +
+                                     std::to_string(frames));
+        }
         x = sampler_.sample(c, r.noise.empty() ? gaussian_noise(r.seed, n) : r.noise, frames, r.steps > 0 ? r.steps : sampler_.default_steps(),
                             r.cancelled);
     }
     if (x.empty()) return 0;
     const int flat = flattening_point(x, frames, codec_.latent_dim());
-    int64_t samples = (int64_t) frames * codec_.hop();
+    int64_t samples = length.samples;
     if (flat > 0) samples = std::min(samples, (int64_t) flat * codec_.hop());
 
     size_t emitted = 0;

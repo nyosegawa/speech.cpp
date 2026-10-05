@@ -42,7 +42,7 @@ extern "C" {
  * function does not raise it, so a library of an older release with the same API version may lack a function
  * this header declares.
  */
-#define SPEECH_API_VERSION 1
+#define SPEECH_API_VERSION 2
 
 /** The SPEECH_API_VERSION the library was built with, for a caller that loads it at run time. */
 SPEECH_API int speech_api_version(void);
@@ -180,7 +180,10 @@ SPEECH_API int speech_model_steps(const speech_model * model);
 /** The ggml backend the model runs on, such as MTL0, Vulkan0 or CPU. */
 SPEECH_API const char * speech_model_backend(const speech_model * model);
 
-/** One thing to say. */
+/**
+ * One thing to say. Start from speech_request_default(), so that a field a later version adds keeps its default.
+ * A request that asks a model for what it cannot do is an error; nothing is ignored.
+ */
 typedef struct speech_request {
     /** The text. Irodori-TTS takes one sentence of at most 256 tokens; anything longer is an error. */
     const char * text;
@@ -193,7 +196,27 @@ typedef struct speech_request {
     const char * language;
     /** The seed of the sampling; the same request and seed give the same audio on the same device. */
     uint64_t seed;
+    /**
+     * The speaking rate against the model's own, 1 by default. Irodori-TTS takes 0.25 to 4 and divides the length
+     * by it, whether fixed by `seconds` or predicted and scaled by `duration_scale`, as Irodori-TTS-Server turns
+     * OpenAI's speed into them. Qwen3-TTS has no control of its rate and refuses any speed but 1.
+     */
+    double speed;
+    /**
+     * Irodori-TTS: the length of the speech in seconds, or 0 (the default) for the length its duration predictor
+     * gives. Divided by `speed`, it must lie within 0.5 to 30 s. The audio is at most this long and ends earlier
+     * where the speech falls silent. Qwen3-TTS refuses any length.
+     */
+    double seconds;
+    /**
+     * Irodori-TTS: the factor of the predicted length, above 0 and 1 by default; the scaled length is kept within
+     * 0.5 to 30 s. It cannot be given together with `seconds`. Qwen3-TTS refuses any factor but 1.
+     */
+    double duration_scale;
 } speech_request;
+
+/** The defaults: no text or voice, the model's choice of language, seed 0, speed 1 and the predicted length. */
+SPEECH_API speech_request speech_request_default(void);
 
 /**
  * Receives the audio of a request as it is made: `n_samples` mono samples at the model's sample rate, nominally

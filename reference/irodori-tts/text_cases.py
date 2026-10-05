@@ -7,8 +7,9 @@ usage: uv run python text_cases.py <prompts.json> <out dir>
   long-<i>/          for texts longer than ModernBERT's local window of 64 tokens on each side, the text
                      encoder's outputs as dump.py writes them: input_ids, text_layers and text_state
 
-The texts are the prompts' sentences and texts that reach each rule of the normalization, the byte fallback
-and the added tokens.
+The texts are the prompts' sentences, texts that reach each rule of the normalization, the byte fallback
+and the added tokens, and each of the emoji the runtime reads as a direction (a laugh, a sigh, a whisper), alone,
+in a sentence and all together.
 """
 
 import json
@@ -20,6 +21,7 @@ import numpy as np
 import torch
 
 from irodori_tts.config import ModelConfig, merge_dataclass_overrides
+from irodori_tts.duration import ALLOWED_ANNOTATION_EMOJIS
 from irodori_tts.inference_runtime import _load_checkpoint_for_inference
 from irodori_tts.model import TextToLatentRFDiT
 from irodori_tts.text_normalization import normalize_text
@@ -67,6 +69,9 @@ texts += [
     "…",
     "?!",
 ]
+texts += list(ALLOWED_ANNOTATION_EMOJIS)
+texts += [f"えっと{e}、そうなんだ{e}。" for e in ALLOWED_ANNOTATION_EMOJIS]
+texts += ["".join(ALLOWED_ANNOTATION_EMOJIS)]
 
 with open(os.path.join(out_dir, "text-cases.tsv"), "w") as f:
     for text in texts:

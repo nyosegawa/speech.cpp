@@ -2,17 +2,21 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <stdexcept>
 #include <string>
 
 #include "layers.h"
 
 namespace irodori {
 
-DurationPredictor::DurationPredictor(const ModelFile & m, int sample_rate, int hop) : m_(m) {
+DurationPredictor::DurationPredictor(const ModelFile & m, int sample_rate, int hop) : m_(m), sample_rate_(sample_rate), hop_(hop) {
     layers_ = (int) m.u32("irodori.duration.num_layers");
     eps_ = m.f32("irodori.norm_eps");
-    min_frames_ = std::max(1, (int) std::ceil(m.f32("irodori.min_seconds") * sample_rate / (double) hop));
-    max_frames_ = std::max(1, (int) std::floor(m.f32("irodori.max_seconds") * sample_rate / (double) hop));
+    min_seconds_ = m.f32("irodori.min_seconds");
+    max_seconds_ = m.f32("irodori.max_seconds");
+    min_frames_ = std::max(1, (int) std::ceil(min_seconds_ * sample_rate / (double) hop));
+    max_frames_ = std::max(1, (int) std::floor(max_seconds_ * sample_rate / (double) hop));
 }
 
 ggml_tensor * DurationPredictor::build(Graph & g, ggml_tensor * text_state, ggml_tensor * speaker_summary) const {
@@ -33,11 +37,51 @@ ggml_tensor * DurationPredictor::build(Graph & g, ggml_tensor * text_state, ggml
     return ggml_sum(ctx, per_token);
 }
 
-int DurationPredictor::frames(float predicted_sum) const {
-    // The runtime's float32 round trip through log1p and expm1, then Python's round(), which rounds half to even.
+namespace {
+
+std::string number(double v) {
+    char s[32];
+    std::snprintf(s, sizeof s, "%g", v);
+    return s;
+}
+
+}  // namespace
+
+void DurationPredictor::check(const LengthOptions & o) const {
+    // The range of the speed is Irodori-TTS-Server's, which is OpenAI's for its speech API.
+    if (!(o.speed >= 0.25 && o.speed <= 4)) {
+        throw std::invalid_argument("the speed is " + number(o.speed) + "; Irodori-TTS takes a speed from 0.25 to 4, 1 being its own rate");
+    }
+    if (!(o.duration_scale > 0 && std::isfinite(o.duration_scale))) {
+        throw std::invalid_argument("the duration scale is " + number(o.duration_scale) + "; give a factor above 0, 1 for the predicted length");
+    }
+    if (!(o.seconds >= 0 && std::isfinite(o.seconds))) {
+        throw std::invalid_argument("the length is " + number(o.seconds) + " s; give a length in seconds, or 0 for the predicted one");
+    }
+    if (o.fixed() && o.duration_scale != 1) {
+        throw std::invalid_argument("a request fixes the length in seconds or scales the predicted one, not both; leave out one of them");
+    }
+    const double seconds = o.seconds / o.speed;
+    if (o.fixed() && !(seconds >= min_seconds_ && seconds <= max_seconds_)) {
+        throw std::invalid_argument("a length of " + number(seconds) + " s (seconds divided by speed) is outside the " + number(min_seconds_) +
+                                    " to " + number(max_seconds_) + " s that Irodori-TTS speaks; ask for a length within them");
+    }
+}
+
+Length DurationPredictor::length(const LengthOptions & o, float predicted_sum) const {
+    check(o);
+    // Irodori-TTS-Server divides both the fixed seconds and the duration scale by OpenAI's speed
+    // (Aratako/Irodori-TTS-Server@61012c760f22f7b4a6c21c5c5f8f9e148120b6f9, src/irodori_openai_tts/app.py).
+    if (o.fixed()) {
+        const int64_t samples = std::max<int64_t>(1, (int64_t) (o.seconds / o.speed * sample_rate_));
+        return {(int) ((samples + hop_ - 1) / hop_), samples};
+    }
+    // The bounds are whole frames, so bounding before the rounding gives the same frames as the runtime's
+    // bounding after it, and keeps a large scale from overflowing the conversion to int.
     const float predicted = std::expm1(std::log1p(std::max(predicted_sum, 0.0f)));
-    const int rounded = (int) std::nearbyint((double) predicted);
-    return std::max(min_frames_, std::min(max_frames_, rounded));
+    const double scaled = (double) predicted * (o.duration_scale / o.speed);
+    const int frames = (int) std::nearbyint(std::max((double) min_frames_, std::min((double) max_frames_, scaled)));
+    return {frames, (int64_t) frames * hop_};
 }
 
 }  // namespace irodori

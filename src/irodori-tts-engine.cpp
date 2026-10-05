@@ -50,6 +50,9 @@ public:
         r.text = request.text;
         r.seed = request.seed;
         r.steps = steps_;
+        r.length.seconds = request.seconds;
+        r.length.duration_scale = request.duration_scale;
+        r.length.speed = request.speed;
         r.cancelled = [&] { return !on_audio(nullptr, 0); };
         synth_.synthesize(r, voice->second, on_audio);
     }
