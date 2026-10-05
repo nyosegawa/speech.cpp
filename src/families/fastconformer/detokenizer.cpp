@@ -67,4 +67,13 @@ bool Detokenizer::punctuation(int32_t id) const {
     return std::find(punctuation_.begin(), punctuation_.end(), alone) != punctuation_.end();
 }
 
+std::vector<bool> Detokenizer::word_starts(const std::vector<int32_t> & ids) const {
+    std::vector<bool> starts;
+    for (int32_t id : ids) {
+        const std::string alone = piece_text(id, true);
+        starts.push_back(alone != pieces_[(size_t) id] && !punctuation(id));
+    }
+    return starts;
+}
+
 }  // namespace fastconformer

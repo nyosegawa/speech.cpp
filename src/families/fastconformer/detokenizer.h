@@ -31,6 +31,13 @@ public:
      */
     bool punctuation(int32_t id) const;
 
+    /**
+     * Whether each token begins a word as get_words_offsets() tells it for a SentencePiece vocabulary: its piece
+     * differs from its text decoded alone, as a piece with a leading "▁" and the unknown piece do, and it is not a
+     * punctuation mark, which NeMo adds to the word before it.
+     */
+    std::vector<bool> word_starts(const std::vector<int32_t> & ids) const;
+
 private:
     /** The piece of `id` as DecodeIds() writes it when the text before it is `empty` or not. */
     std::string piece_text(int32_t id, bool empty) const;

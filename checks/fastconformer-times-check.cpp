@@ -1,8 +1,9 @@
 // Checks FastConformer's recognition times against NeMo's transcribe(timestamps=True) on each dump of
 // reference/fastconformer/dump.py: the frame the decoding emitted each token on and, for TDT, the duration it
 // predicted, from the dump's encoder output and from the dump's audio; each token's span in frames and in seconds;
-// and the segments with NeMo's separators, their spans and their texts. It then prints the segments with the marks
-// that end a Japanese sentence added to the separators. The dumps are those of the model, in
+// and the segments NeMo's separators give, without breaks, their spans and their texts. For a Japanese model it then
+// prints the segments with the breaks that end a Japanese sentence and checks that each ends in a break, at a
+// separator that ends a word, or with the last token. The dumps are those of the model, in
 // <reference out dir>/<its general.name>/.
 //
 // usage: fastconformer-times-check <model.gguf> <reference out dir> [gpu|cpu|device name]
@@ -27,10 +28,20 @@ using namespace fastconformer;
 namespace {
 
 /** NeMo's segment_seperators by default; dump.py records in times.json that no checkpoint sets its own. */
-const std::vector<std::string> kNemoSeparators = {".", "!", "?"};
+const std::vector<std::string> kNemoSeparators = {".", "?", "!"};
 
-/** NeMo's separators with the full stop, exclamation and question marks that end a Japanese sentence. */
-const std::vector<std::string> kJapaneseSeparators = {".", "!", "?", "\xe3\x80\x82", "\xef\xbc\x81", "\xef\xbc\x9f"};
+/**
+ * The breaks of a model whose languages are written without spaces: the full stop, question and exclamation marks of
+ * Japanese, and the ASCII question and exclamation marks the Japanese models write.
+ */
+const std::vector<std::string> kJapaneseBreaks = {"\xe3\x80\x82", "\xef\xbc\x9f", "\xef\xbc\x81", "?", "!"};
+
+bool ends_with(const std::string & text, const std::vector<std::string> & marks) {
+    for (const std::string & m : marks) {
+        if (text.size() >= m.size() && text.compare(text.size() - m.size(), m.size(), m) == 0) return true;
+    }
+    return false;
+}
 
 /** The lines of a dump's segments.txt, one segment's text each. */
 std::vector<std::string> read_lines(const std::filesystem::path & path) {
@@ -103,6 +114,8 @@ int main(int argc, char ** argv) {
             Recognizer recognizer(args[1], backend);
             const Detokenizer & detokenizer = recognizer.detokenizer();
             const bool tdt = recognizer.model().str("fastconformer.decoder") == "tdt";
+            const std::vector<std::string> languages = recognizer.model().str_array("speech.languages");
+            const bool japanese = languages == std::vector<std::string>{"ja"};
             ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
             for (const auto & d : fastconformer_dumps(args[2], recognizer.model())) {
                 const Npy encoded = read_npy((d / "encoded.npy").u8string());
@@ -152,9 +165,10 @@ int main(int argc, char ** argv) {
 
                 // The tokens' texts and the segments NeMo's separators give.
                 const std::vector<std::string> texts = detokenizer.token_texts(decoding.ids);
+                const std::vector<bool> word_starts = detokenizer.word_starts(decoding.ids);
                 std::string joined;
                 for (const std::string & t : texts) joined += t;
-                const std::vector<Segment> segs = segments(texts, nemo, kNemoSeparators);
+                const std::vector<Segment> segs = segments(texts, word_starts, nemo, kNemoSeparators, {});
                 bool same_segments = joined == want_text && segs.size() == want_segments.size();
                 for (size_t k = 0; same_segments && k < segs.size(); k++) {
                     same_segments = segs[k].span.start == segment_offsets.i32[2 * k] && segs[k].span.end == segment_offsets.i32[2 * k + 1] &&
@@ -185,11 +199,20 @@ int main(int argc, char ** argv) {
                     ok = false;
                 }
 
-                // The segments with the Japanese marks added, at the frames the tokens were emitted on.
-                const std::vector<Segment> japanese = segments(texts, spans, kJapaneseSeparators);
-                std::printf("  segments with %s added: %zu\n", "\xe3\x80\x82\xef\xbc\x81\xef\xbc\x9f", japanese.size());
-                for (const Segment & s : japanese) {
-                    std::printf("    %8.2f %8.2f  %s\n", recognizer.seconds(s.span.start), recognizer.seconds(s.span.end), s.text.c_str());
+                // The segments with the breaks, at the frames the tokens were emitted on.
+                if (japanese) {
+                    const std::vector<Segment> broken = segments(texts, word_starts, spans, kNemoSeparators, kJapaneseBreaks);
+                    bool ends = true;
+                    for (size_t k = 0; k + 1 < broken.size(); k++) {
+                        ends = ends && (ends_with(broken[k].text, kJapaneseBreaks) ||
+                                        (ends_with(broken[k].text, kNemoSeparators) && word_starts[broken[k].end]));
+                    }
+                    std::printf("  segments with breaks: %zu, each %s\n", broken.size(),
+                                ends ? "ending in a break, at a separator that ends a word or with the last token" : "NOT ending where it should");
+                    for (const Segment & s : broken) {
+                        std::printf("    %8.2f %8.2f  %s\n", recognizer.seconds(s.span.start), recognizer.seconds(s.span.end), s.text.c_str());
+                    }
+                    ok = ok && ends;
                 }
             }
             ggml_gallocr_free(allocr);

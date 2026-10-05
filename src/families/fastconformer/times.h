@@ -33,15 +33,16 @@ struct Segment {
 };
 
 /**
- * The segments of tokens with the texts `texts`, as they stand in the text, and the spans `spans`: runs that end with
- * a token whose text ends in one of `separators`, or with the last token. A segment spans from the start of its first
- * token to the end of its last, and its text is theirs, so that the texts of the segments joined are the text.
- *
- * NeMo's get_segment_offsets() ends a segment at a word, a run of tokens up to a space, that ends in a separator. The
- * two agree where a separator ends a word; a separator within a word, as in "1.000", "z.B." or "?!", ends a segment
- * here and not in NeMo, and in Japanese, which has no spaces, NeMo ends none before the last token.
+ * The segments of tokens with the texts `texts`, as they stand in the text, the word starts `word_starts`
+ * (Detokenizer::word_starts()) and the spans `spans`. A segment ends with a word whose text ends in one of
+ * `separators`, as get_segment_offsets() ends it: the word's last character is a separator of one character, or the
+ * word is a separator; so "1.000", "z.B." and "?!" are not cut within. It also ends with any token whose text ends in
+ * one of `breaks`, wherever it stands, for a text written without spaces, in which NeMo's words run to the end. The
+ * last token ends the last segment. A segment spans from the start of its first token to the end of its last, and its
+ * text is theirs, so that the texts of the segments joined are the text.
  */
-std::vector<Segment> segments(const std::vector<std::string> & texts, const std::vector<Span> & spans,
-                              const std::vector<std::string> & separators);
+std::vector<Segment> segments(const std::vector<std::string> & texts, const std::vector<bool> & word_starts,
+                              const std::vector<Span> & spans, const std::vector<std::string> & separators,
+                              const std::vector<std::string> & breaks);
 
 }  // namespace fastconformer
