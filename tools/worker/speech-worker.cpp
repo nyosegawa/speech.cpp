@@ -61,42 +61,17 @@
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
-#else
-#include <unistd.h>
 #endif
 
 #include "args.h"
 #include "flat-json.h"
 #include "speech.h"
+#include "take-stdout.h"
 
 namespace {
 
 std::mutex out_mutex;
 FILE * protocol = stdout;
-
-/**
- * Keeps the caller's stdout for the protocol alone. The stream moves to a descriptor of its own and
- * descriptor 1 then writes to stderr, so whatever ggml, a GPU driver or a system framework prints to stdout
- * lands among the logs instead of between two messages. On Windows, _dup2() onto descriptor 1 also sets the
- * process's standard output handle, which code writing with WriteFile() reads.
- */
-FILE * take_stdout() {
-    std::fflush(stdout);
-#ifdef _WIN32
-    const int fd = _dup(_fileno(stdout));
-    if (fd < 0 || _dup2(_fileno(stderr), _fileno(stdout)) != 0) {
-        throw std::runtime_error("cannot send stdout to stderr");
-    }
-    _setmode(fd, _O_BINARY);
-    FILE * stream = _fdopen(fd, "wb");
-#else
-    const int fd = dup(STDOUT_FILENO);
-    if (fd < 0 || dup2(STDERR_FILENO, STDOUT_FILENO) < 0) throw std::runtime_error("cannot send stdout to stderr");
-    FILE * stream = fdopen(fd, "w");
-#endif
-    if (!stream) throw std::runtime_error("cannot open a stream on the protocol's descriptor");
-    return stream;
-}
 
 void emit(const std::string & json) {
     std::lock_guard<std::mutex> lock(out_mutex);

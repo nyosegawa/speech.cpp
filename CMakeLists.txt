@@ -96,13 +96,12 @@ elseif (UNIX)
 endif()
 
 add_executable(speech-worker tools/worker/speech-worker.cpp)
+target_include_directories(speech-worker PRIVATE tools/common)
 target_link_libraries(speech-worker PRIVATE speech-static)
 
-add_executable(qwen3-tts tools/qwen3-tts.cpp)
-target_link_libraries(qwen3-tts PRIVATE qwen3tts)
-
-add_executable(irodori-tts tools/irodori-tts.cpp)
-target_link_libraries(irodori-tts PRIVATE irodoritts)
+add_executable(speech-tts tools/cli/speech-tts.cpp)
+target_include_directories(speech-tts PRIVATE tools/common)
+target_link_libraries(speech-tts PRIVATE speech-static)
 
 # The checks compare each stage with the reference dumps; they are built but not released.
 add_executable(codec-check checks/codec-check.cpp)
