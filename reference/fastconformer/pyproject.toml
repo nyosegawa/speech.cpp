@@ -1,0 +1,18 @@
+[project]
+name = "speech-cpp-fastconformer-reference"
+version = "0"
+description = "Runs NVIDIA NeMo's FastConformer speech recognition models to dump reference tensors, and converts their weights to GGUF"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  # The asr extra, since ASRModel.restore_from() needs Lightning, Hydra and SentencePiece, which asr-only
+  # leaves out.
+  "nemo-toolkit[asr]==3.0.0",
+  "torch==2.10.0",
+  "torchaudio==2.10.0",
+  "numpy",
+  "soundfile",
+  "gguf",
+]
+
+[tool.uv]
+package = false

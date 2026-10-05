@@ -41,6 +41,7 @@ add_library(speechcommon STATIC
     src/common/wav.cpp
     src/common/args.cpp
     src/common/language.cpp
+    src/common/graph.cpp
 )
 target_include_directories(speechcommon PUBLIC src/common)
 target_link_libraries(speechcommon PUBLIC ggml::ggml)
@@ -61,7 +62,6 @@ target_include_directories(qwen3tts PUBLIC src/families)
 target_link_libraries(qwen3tts PUBLIC speechcommon)
 
 add_library(irodoritts STATIC
-    src/families/irodori-tts/graph.cpp
     src/families/irodori-tts/text-normalizer.cpp
     src/families/irodori-tts/tokenizer.cpp
     src/families/irodori-tts/text-encoder.cpp
@@ -100,14 +100,27 @@ elseif (UNIX)
     set_property(TARGET speech APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/speech.map)
 endif()
 
+# The HTTP server is the one program with a dependency besides ggml: cpp-httplib's single header, vendored in
+# vendor/cpp-httplib from yhirose/cpp-httplib at commit cf3693cb5cc0d39b0e6f4122ba89bda9edb5ac6b (v0.59.0), with
+# its license (docs/adr/0008). It reads requests with the worker's JSON parser.
+add_executable(speech-server tools/server/speech-server.cpp)
+target_include_directories(speech-server PRIVATE tools/worker vendor/cpp-httplib)
+target_link_libraries(speech-server PRIVATE speech-static)
+if (WIN32)
+    target_compile_definitions(speech-server PRIVATE NOMINMAX)
+    target_link_libraries(speech-server PRIVATE ws2_32)
+else()
+    find_package(Threads REQUIRED)
+    target_link_libraries(speech-server PRIVATE Threads::Threads)
+endif()
+
 add_executable(speech-worker tools/worker/speech-worker.cpp)
+target_include_directories(speech-worker PRIVATE tools/common)
 target_link_libraries(speech-worker PRIVATE speech-static)
 
-add_executable(qwen3-tts tools/qwen3-tts.cpp)
-target_link_libraries(qwen3-tts PRIVATE qwen3tts)
-
-add_executable(irodori-tts tools/irodori-tts.cpp)
-target_link_libraries(irodori-tts PRIVATE irodoritts)
+add_executable(speech-tts tools/cli/speech-tts.cpp)
+target_include_directories(speech-tts PRIVATE tools/common)
+target_link_libraries(speech-tts PRIVATE speech-static)
 
 # The checks compare each stage with the reference dumps; they are built but not released.
 add_executable(codec-check checks/codec-check.cpp)
@@ -146,3 +159,18 @@ else()
     find_package(Threads REQUIRED)
     target_link_libraries(speech-api-check PRIVATE Threads::Threads)
 endif()
+
+# FastConformer speech recognition (NVIDIA NeMo): the family and the checks of its stages.
+add_library(fastconformer STATIC
+    src/families/fastconformer/frontend.cpp
+    src/families/fastconformer/encoder.cpp
+    src/families/fastconformer/ctc.cpp
+    src/families/fastconformer/recognizer.cpp
+)
+target_include_directories(fastconformer PUBLIC src/families)
+target_link_libraries(fastconformer PUBLIC speechcommon)
+
+foreach(stage frontend encoder ctc)
+    add_executable(fastconformer-${stage}-check checks/fastconformer-${stage}-check.cpp)
+    target_link_libraries(fastconformer-${stage}-check PRIVATE fastconformer)
+endforeach()

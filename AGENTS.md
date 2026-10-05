@@ -12,10 +12,9 @@ and its check before changing behavior.
 
 ## Architecture
 
-- `include/speech.h` is the C API and the way into the library for every program and binding (`qwen3-tts`
-  and `irodori-tts` still call their family directly): plain C, opaque handles, UTF-8 strings, errors as
-  return codes with the message from `speech_last_error()`, and no C++ exception or type crossing it.
-  A change a caller notices raises `SPEECH_API_VERSION`.
+- `include/speech.h` is the C API and the way into the library for every program and binding: plain C,
+  opaque handles, UTF-8 strings, errors as return codes with the message from `speech_last_error()`, and no
+  C++ exception or type crossing it. A change a caller notices raises `SPEECH_API_VERSION`.
 - `src/speech.cpp` implements the C API over `src/engine.h`, the interface of one family behind it, with one
   engine per family (`src/<family>-engine.cpp`) that turns the API's options and requests into the family's.
   `speech_model_load()` chooses the family from `general.architecture` of the model's GGUF.
@@ -24,13 +23,19 @@ and its check before changing behavior.
   of the C API, the worker protocol or the command line.
 - `src/common/` holds what two families use in the same role. Code moves there when a second family needs
   it, not before, and never as a framework for families that do not exist yet.
-- `tools/` holds the programs for users: the worker in `tools/worker/` and a command-line tool per family
-  that speaks a text into a WAV file. The worker reaches the models only through the C API. Its protocol is
-  JSON Lines, one JSON object per line on stdin and stdout, and is the contract of every program that starts
-  it, ASIST among them: stdout carries the protocol and nothing else, and every log goes to stderr.
+- `tools/` holds the programs for users: the worker in `tools/worker/` and the command-line tool `speech-tts`
+  in `tools/cli/`, which speaks text into a WAVE file or to stdout, with what both use in `tools/common/`.
+  Every tool reaches the models only through the C API. The worker's protocol is JSON Lines, one JSON object
+  per line on stdin and stdout, and is the contract of every program that starts it, ASIST among them:
+  stdout carries the protocol and nothing else, and every log goes to stderr.
 - `checks/` holds one check per ported stage (`*-check.cpp`) that compares the stage with the reference
   dumps, and `speech-api-check.c`, which runs the C API through the shared library. Checks reach into
   `src/` for the stage they check; they are built but not released.
+- `tools/server/` holds `speech-server`, which serves one model over HTTP with OpenAI's speech API
+  (`POST /v1/audio/speech`, `GET /v1/models`, `GET /health`) for programs that speak HTTP. Like the worker it
+  reaches the model only through the C API; `openai-api.h` reads OpenAI's request and writes its errors and
+  stream events, and the server speaks one request at a time in arrival order and cancels the synthesis of a
+  client that goes away.
 - `reference/<model>/` holds, per model, a uv environment that pins the official code, PyTorch and the rest,
   the conversion of the official weights to GGUF, and the scripts that run the official implementation to
   dump reference tensors. Dumps go to `reference/<model>/out/`.
@@ -40,9 +45,11 @@ another one.
 
 ## Code
 
-- C++17 with ggml as a git submodule and no other dependency. Each tool is one executable with the library
-  and ggml linked in statically, so that a release is one file per tool; the shared library `libspeech`
-  exports the C API and nothing else, for bindings and other programs.
+- C++17 with ggml as a git submodule and no other dependency, except cpp-httplib's single header, vendored in
+  `vendor/cpp-httplib/` by commit for `speech-server` alone; the library, `libspeech` and the worker never
+  include it (docs/adr/0008). Each tool is one executable with the library and ggml linked in statically, so
+  that a release is one file per tool; the shared library `libspeech` exports the C API and nothing else, for
+  bindings and other programs.
 - Anything the C API returns is owned by the library, and the header says for how long. A model serves one
   request at a time, and the header says which functions any thread may call.
 - The GGUF layout is this repository's own: `reference/<model>/convert.py` defines the tensor names and
@@ -70,7 +77,7 @@ another one.
   C++ stream through `std::filesystem::u8path()`: `fopen()` and a stream opened on a `std::string` read the
   path in the ANSI code page on Windows, so a path with any character outside ASCII is not found.
 - A Linux release runs on glibc 2.34 and needs no shared library but glibc's and, in the Vulkan build,
-  `libvulkan.so.1`; CI fails a build that needs more (docs/adr/0008). It is built on the oldest Ubuntu GitHub
+  `libvulkan.so.1`; CI fails a build that needs more (docs/adr/0010). It is built on the oldest Ubuntu GitHub
   hosts, with libstdc++ linked in and ggml's OpenMP off.
 - Model weights, reference dumps and audio are never committed; `.gitignore` covers `models/`,
   `reference/*/out/`, `*.gguf` and `*.wav`.
@@ -118,7 +125,8 @@ settled a choice or turned an approach down for good; if so, the record goes int
 
 - Build with `cmake -B build && cmake --build build -j`, and run the checks the change touches before
   committing code. A change to the C API or the worker also runs `speech-api-check` and
-  `tools/worker_smoke.py` for both families.
+  `tools/worker_smoke.py` for both families, and a change to `speech-tts` runs `tools/speech_tts_smoke.py`
+  for both.
 - Never commit on main. Every change reaches main through a pull request, one coherent unit each: a
   model's stage, a fix, a refactor or a documentation change.
 - Commit messages and pull request titles are one English sentence in the imperative, without a prefix

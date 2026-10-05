@@ -22,7 +22,7 @@ jobs:
       - name: Stage
         run: |
           mkdir package
-          cp build/speech-worker build/qwen3-tts build/irodori-tts build/libspeech.dylib include/speech.h package/
+          cp build/speech-worker build/speech-server build/speech-tts build/libspeech.dylib include/speech.h package/
       - uses: actions/upload-artifact@v4
         with:
           name: speech-cpp-macos-arm64-metal
@@ -76,7 +76,7 @@ jobs:
       - name: Stage
         run: |
           New-Item -ItemType Directory package
-          Copy-Item build/Release/speech-worker.exe, build/Release/qwen3-tts.exe, build/Release/irodori-tts.exe, build/Release/speech.dll, build/Release/speech.lib, include/speech.h package/
+          Copy-Item build/Release/speech-worker.exe, build/Release/speech-server.exe, build/Release/speech-tts.exe, build/Release/speech.dll, build/Release/speech.lib, include/speech.h package/
       - uses: actions/upload-artifact@v4
         with:
           name: speech-cpp-windows-x64-vulkan
@@ -84,7 +84,7 @@ jobs:
 
   # Linux x64 twice: with Vulkan, for a GPU of any vendor, and for the CPU alone, which needs no Vulkan loader
   # to start. The binaries are built on the oldest Ubuntu GitHub hosts and run on glibc 2.34 or later
-  # (docs/adr/0008).
+  # (docs/adr/0010).
   linux:
     runs-on: ubuntu-22.04
     strategy:
@@ -97,7 +97,7 @@ jobs:
       # The oldest glibc the binaries run on; the check below fails a build that needs a newer one.
       GLIBC_FLOOR: '2.34'
       # The programs the archives carry besides libspeech.so and speech.h.
-      TOOLS: speech-worker qwen3-tts irodori-tts
+      TOOLS: speech-worker speech-tts speech-server
       # As on Windows, ggml is built once, installed with static libraries, and restored from the cache while
       # its commit, the runner's Ubuntu, the Vulkan SDK, GCC and these options stay the same. libspeech.so
       # links ggml's static libraries, so they are position-independent, and OpenMP is off so that nothing
