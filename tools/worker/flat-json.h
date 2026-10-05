@@ -7,11 +7,17 @@
 #include <stdexcept>
 #include <string>
 
+/** A member's value: a string's text, or a number as it was written. */
+struct FlatValue {
+    std::string text;
+    bool number = false;
+};
+
 /**
  * A flat JSON object of string and number members, which is all the worker protocol sends. Nested
  * values, arrays, true, false and null are rejected rather than skipped.
  */
-using FlatJson = std::map<std::string, std::string>;
+using FlatJson = std::map<std::string, FlatValue>;
 
 namespace flat_json {
 
@@ -75,12 +81,12 @@ inline FlatJson parse_flat_json(const std::string & s) {
         i++;
         skip();
         if (i < s.size() && s[i] == '"') {
-            out[key] = flat_json::parse_string(s, i);
+            out[key] = {flat_json::parse_string(s, i), false};
         } else {
             const size_t start = i;
             while (i < s.size() && (std::isdigit((unsigned char) s[i]) || s[i] == '-' || s[i] == '+' || s[i] == '.' || s[i] == 'e' || s[i] == 'E')) i++;
             if (i == start) throw std::runtime_error("member " + key + " is neither a string nor a number");
-            out[key] = s.substr(start, i - start);
+            out[key] = {s.substr(start, i - start), true};
         }
         skip();
         if (i < s.size() && s[i] == ',') { i++; continue; }

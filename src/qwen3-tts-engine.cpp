@@ -37,6 +37,15 @@ public:
     }
 
     void speak(const EngineRequest & request, const AudioCallback & on_audio) override {
+        // The official implementation has no control of the rate or the length: the talker decides when the
+        // speech ends. Changing the audio's rate afterwards would change its pitch or add the artifacts of a
+        // time stretch, so such a request is refused.
+        if (request.speed != 1) {
+            throw std::invalid_argument("Qwen3-TTS cannot change its speaking rate; leave speed out or give 1");
+        }
+        if (request.seconds != 0 || request.duration_scale != 1) {
+            throw std::invalid_argument("Qwen3-TTS cannot set the length of its speech; leave seconds and the duration scale out");
+        }
         SynthesisRequest r;
         r.text = request.text;
         r.speaker = request.voice;

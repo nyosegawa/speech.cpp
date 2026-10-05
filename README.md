@@ -86,7 +86,10 @@ if (speech_model_load(&params, &model) != SPEECH_OK) {
     fprintf(stderr, "%s\n", speech_last_error());
     return 1;
 }
-speech_request request = {"明日の東京は晴れです。", "bright", NULL, 42};
+speech_request request = speech_request_default();
+request.text = "明日の東京は晴れです。";
+request.voice = "bright";
+request.seed = 42;
 speech_status status = speech_synthesize(model, &request, on_audio, NULL);
 speech_model_free(model);
 ```
@@ -99,7 +102,10 @@ speech_model_free(model);
   languages, whether the language reaches the model, its steps and its backend.
 - **Requests.** `speech_synthesize()` speaks a text in a voice, in a language or `auto`, from a seed, and
   passes the audio to the callback as it is made. It returns `SPEECH_OK`, `SPEECH_STOPPED` when the callback
-  or `speech_cancel()` stopped it, or `SPEECH_ERROR`.
+  or `speech_cancel()` stopped it, or `SPEECH_ERROR`. A request starts from `speech_request_default()`, so
+  that fields a later version adds keep their defaults. Its `speed`, `seconds` and `duration_scale` set the
+  speaking rate and the length where the model can follow them (Irodori-TTS, below); a model that cannot
+  refuses them with an error rather than ignoring them, as Qwen3-TTS does with any speed but 1 and any length.
 - **Voice files.** `speech_make_voice()` writes an Irodori-TTS voice file from a reference WAVE file.
 - **Errors.** A function that can fail returns `SPEECH_ERROR`, and `speech_last_error()` gives the message
   on the same thread. No C++ exception crosses the API.
@@ -111,7 +117,9 @@ speech_model_free(model);
   independent.
 - **Versions.** `speech_version()` gives the release the library was built from (`"0.4.0"`).
   `SPEECH_API_VERSION` and `speech_api_version()` give the version of the API, raised when a change is one an
-  existing caller notices; a function added to the API does not raise it.
+  existing caller notices; a function added to the API does not raise it. It is 2 since `speech_request`
+  gained `speed`, `seconds` and `duration_scale`: a program built against version 1 passes a smaller
+  `speech_request`, so it must be rebuilt and start its requests from `speech_request_default()`.
 
 Link `libspeech` (on Windows, define `SPEECH_SHARED` and link `speech.lib`), or, within this CMake project,
 the target `speech` (shared) or `speech-static`.
@@ -146,14 +154,22 @@ The messages, one JSON object per line:
 | Direction | Message |
 |---|---|
 | out | `{"type":"ready","model":"Irodori-TTS-v4.1-Small-MF","architecture":"irodori-tts","sampleRate":48000,"streaming":"sentence","voices":["bright","calm"],"languages":["ja"],"languageSelectable":false,"steps":4,"backend":"MTL0","version":"0.4.0"}`, `version` being the release of speech.cpp |
-| in | `{"id":"1","text":"明日の東京は晴れです。","voice":"bright"}`, with `"language"` and `"speed"` optional |
+| in | `{"id":"1","text":"明日の東京は晴れです。","voice":"bright"}`, with `"language"`, `"speed"`, `"seconds"` and `"durationScale"` optional |
 | out | `{"type":"chunk","id":"1","seq":0,"pcm":"<base64 of 16-bit little-endian mono PCM at sampleRate>"}`, one or more |
 | out | `{"type":"end","id":"1","samples":278400}` |
 | out | `{"type":"error","id":"1","error":"..."}` when a request cannot be spoken |
 | out | `{"type":"fatal","error":"..."}` when the worker cannot start |
 | in | `{"type":"cancel","id":"1"}`: the request stops between two chunks (Irodori-TTS also between two of its sampler's steps, before the first chunk) and sends no `end`; a request cancelled before it starts is dropped |
 
-Requests are served one at a time in arrival order. `speed` is accepted and has no effect.
+Requests are served one at a time in arrival order.
+
+`speed`, `seconds` and `durationScale` are JSON numbers, the `speed`, `seconds` and `duration_scale` of the C
+API's request. `speed` is the speaking rate against the model's own (1); `seconds` fixes the length of the
+speech, and 0 or no `seconds` leaves it to the model; `durationScale` scales the length the model predicts
+(1). A model that cannot follow one of them answers the request with an `error` instead of ignoring it, and so
+does a value that is not a number or lies out of its range. Irodori-TTS takes all three (see Length and speed
+below). Qwen3-TTS refuses any `speed` but 1 and any `seconds` or `durationScale`: its official implementation
+has no control of either (docs/adr/0007).
 
 `languages` lists the languages as BCP 47 tags. A request's `language`, when given, must be one of them or
 a region or script of one (`ja`, `ja-JP`, `zh-Hant`), or `auto`; `auto` or no `language` leaves the choice
@@ -201,7 +217,9 @@ not add artifacts at the frame boundaries. Implemented:
 - the Qwen2 byte-level BPE tokenizer and the CustomVoice prompt,
 - sampling as in transformers' `generate()` (temperature, top-k, top-p, repetition penalty).
 
-Voice cloning, VoiceDesign, the codec encoder and the speaker encoder are out of scope.
+Voice cloning, VoiceDesign, the codec encoder and the speaker encoder are out of scope. The model has no
+control of its speaking rate or its length, so a request with a speed other than 1 or with a length is
+refused (docs/adr/0007).
 
 ### Models
 
@@ -259,14 +277,17 @@ duration predictor. Implemented, for v4.1-Small-MF (4 MeanFlow steps) and v4.1-S
 runtime's guidance, text 3.0 and speaker 5.0 while t ≥ 0.5):
 
 - the official text normalization, with NFKC from Unicode 13.0 as the official runtime's Python has it,
+  which keeps the 56 emoji the model reads as directions (🤭 a giggle, 😮‍💨 a sigh, 👂 a whisper and the
+  rest of the runtime's `ALLOWED_ANNOTATION_EMOJIS`),
 - the SentencePiece Unigram tokenizer with byte fallback, and ModernBERT-ja with its projector,
 - the reference's loudness normalization and the codec encoder, in windows of 100 frames,
-- the speaker encoder, the duration predictor, the DiT and both samplers,
+- the speaker encoder, the duration predictor with the runtime's `seconds` and `duration_scale`, the DiT and
+  both samplers,
 - the tail cut where the latent goes flat, and the codec decoder, a first window of 12 frames (0.48 s) and
   then 48 at a time, each window giving the samples of decoding the whole latent at once.
 
-Not implemented: captions (VoiceDesign), speaker-inversion embeddings, SilentCipher's watermark,
-`duration_scale`, and resampling a reference that is not at 48 kHz. The noise comes from speech.cpp's own
+Not implemented: captions (VoiceDesign), speaker-inversion embeddings, SilentCipher's watermark, and
+resampling a reference that is not at 48 kHz. The noise comes from speech.cpp's own
 generator, so a seed gives other audio than the same seed in the official runtime.
 
 ### Models
@@ -290,8 +311,28 @@ table below with 2.99% CER in F32 and in F16, and 3.81% in Q8_0, which garbled o
 
 ```sh
 build/irodori-tts irodori-tts-v4.1-small-mf-f16.gguf semantic-dacvae-japanese-32dim-f32.gguf \
-    bright-young-woman-10s.voice.gguf "明日の東京は晴れです。" out.wav [--device NAME] [--seed n] [--steps n]
+    bright-young-woman-10s.voice.gguf "明日の東京は晴れです。" out.wav [--device NAME] [--seed n] [--steps n] \
+    [--seconds s | --duration-scale x] [--speed x]
 ```
+
+### Length and speed
+
+The duration predictor sets the length of a sentence before the DiT makes it. A request may change it as the
+official runtime's request does, and the C API, the worker and `irodori-tts` take the same three options:
+
+- `seconds` fixes the length: the latent has the frames that hold `int(seconds × 48000)` samples, and the
+  audio is cut there. The duration predictor does not run. It must lie within 0.5 to 30 s; the runtime
+  clamps a length outside them with a warning, speech.cpp refuses it.
+- `duration_scale` (`durationScale` in the worker) multiplies the predicted frames before they are rounded and
+  kept within 0.5 to 30 s, as in the runtime. It must be above 0, and it cannot be given with `seconds`,
+  which the runtime would let override it without a word.
+- `speed`, from 0.25 to 4, divides both: the length is `seconds / speed`, or the prediction scaled by
+  `duration_scale / speed`. This is what [Irodori-TTS-Server](https://github.com/Aratako/Irodori-TTS-Server)
+  does with the `speed` of OpenAI's speech API, in the same range, so a request gets the length it would get
+  there.
+
+The audio may end before the length where the latent goes flat, as in the runtime. The frames are the
+official runtime's for every combination the dumps cover (`irodori-condition-check`, `irodori-synthesis-check`).
 
 ### Accuracy
 
@@ -300,11 +341,11 @@ saves every stage; the check tools compare each stage, given the dump's own inpu
 
 | Check | CPU, F32 | Metal, F32 | Vulkan, F16 model and F32 codec |
 |---|---|---|---|
-| Normalization and tokenizer, 51 texts (`irodori-text-check`) | all equal | all equal | all equal |
+| Normalization and tokenizer, 164 texts with the 56 direction emoji (`irodori-text-check`) | all equal | all equal | all equal on the 51 texts without them |
 | Text condition (`irodori-text-check`) | 118 to 123 dB SNR | 65 to 123 dB | 65 to 74 dB |
 | Reference latent (`irodori-codec-check`) | 99 dB | 40 dB | 33 dB |
 | Speaker condition (`irodori-condition-check`) | 111 dB | 51 dB | 51 dB |
-| Predicted length | the official frames on every dump | the same | the same |
+| Length, predicted, scaled, fixed and at a speed (`irodori-condition-check`) | the official frames on every dump | the same | the same on the dumps without options |
 | DiT steps, MF and RF (`irodori-dit-check`) | 95 dB or more | 46 dB or more | 63 dB or more (MF) |
 | Sampled latent, MF / RF 40 steps | 86 to 122 dB / 109 to 111 dB | 36 to 67 dB / 59 to 67 dB | 66 dB (MF, 27 frames) |
 | Decoded audio (`irodori-codec-check`) | 119 dB | 68 dB | 68 dB |

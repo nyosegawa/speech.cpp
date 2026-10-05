@@ -32,6 +32,8 @@ struct EngineInfo {
 struct EngineRequest {
     std::string text, voice, language;
     uint64_t seed = 0;
+    /** As speech_request has them: 1, 0 and 1 leave the rate and the length to the model. */
+    double speed = 1, seconds = 0, duration_scale = 1;
 };
 
 /**

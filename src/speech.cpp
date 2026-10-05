@@ -194,6 +194,13 @@ const char * speech_model_backend(const speech_model * model) {
     return ggml_backend_name(model->backend);
 }
 
+speech_request speech_request_default(void) {
+    speech_request r = {};
+    r.speed = 1;
+    r.duration_scale = 1;
+    return r;
+}
+
 speech_status speech_synthesize(speech_model * model, const speech_request * request, speech_audio_callback on_audio,
                                 void * user_data) {
     return guarded([&] {
@@ -207,6 +214,9 @@ speech_status speech_synthesize(speech_model * model, const speech_request * req
         r.voice = request->voice;
         r.language = text_or_empty(request->language);
         r.seed = request->seed;
+        r.speed = request->speed;
+        r.seconds = request->seconds;
+        r.duration_scale = request->duration_scale;
         std::lock_guard<std::mutex> lock(model->speaking);
         model->cancelled = false;
         bool stopped = false;

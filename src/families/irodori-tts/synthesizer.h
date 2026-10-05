@@ -29,6 +29,7 @@ struct Request {
     uint64_t seed = 0;
     /** The sampler's steps; 0 takes the model's default (4 for MeanFlow, 40 for RF). */
     int steps = 0;
+    LengthOptions length;
     /** The sampler's starting point, row-major [frames, latent_dim], instead of noise from the seed. */
     std::vector<float> noise;
     /**

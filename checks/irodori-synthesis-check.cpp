@@ -1,7 +1,7 @@
 // Checks the whole synthesis of Irodori-TTS against the official runtime: for every dump of
 // reference/irodori-tts/dump.py made with the same model, the dump's text spoken in the voice of the dump's
-// reference latent from the dump's noise, against the audio the official synthesize() returned, the cut
-// at the tail included.
+// reference latent from the dump's noise and with its seconds, duration scale and speed, against the audio
+// the official synthesize() returned, the cut at the tail included.
 //
 // usage: irodori-synthesis-check <model.gguf> <codec.gguf> <reference out dir> [gpu|cpu|device name]
 
@@ -32,6 +32,14 @@ std::string meta_string(const std::filesystem::path & dir, const std::string & k
     return flat_json::parse_string(json, at);
 }
 
+/** A number member of the dump's meta.json, or `absent` when it has none. */
+double meta_number(const std::filesystem::path & dir, const std::string & key, double absent) {
+    std::ifstream f(dir / "meta.json");
+    const std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    const size_t at = json.find("\"" + key + "\"");
+    return at == std::string::npos ? absent : std::stod(json.substr(json.find(':', at) + 1));
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
@@ -60,6 +68,9 @@ int main(int argc, char ** argv) {
             Request r;
             r.text = meta_string(d, "text");
             r.noise = read_npy((d / "noise.npy").u8string()).f32;
+            r.length.seconds = meta_number(d, "seconds", 0);
+            r.length.duration_scale = meta_number(d, "duration_scale", 1);
+            r.length.speed = meta_number(d, "speed", 1);
             std::vector<float> audio;
             Stats stats;
             try {

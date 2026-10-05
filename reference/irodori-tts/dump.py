@@ -1,9 +1,15 @@
 """Runs the official Irodori-TTS on the CPU in float32 and saves the tensors the C++ port is checked against.
 
 usage: uv run python dump.py <mf|rf> <out dir> <text> <reference.wav> [--seed n]
+                             [--seconds s | --duration-scale x] [--speed x]
 
 mf is v4.1-Small-MF with its 4 MeanFlow steps; rf is v4.1-Small with 40 Euler steps and the runtime's
 default guidance (text 3.0 and speaker 5.0, each against a branch without it, while t >= 0.5).
+
+--seconds fixes the length and --duration-scale scales the predicted one, as the runtime's request takes
+them. --speed is OpenAI's speed, which Irodori-TTS-Server divides both by before it calls the runtime;
+meta.json keeps the three as given. With --seconds the duration predictor does not run, and its two files
+are not written.
 
 The official runtime.synthesize() runs once with its stages wrapped, so what is saved is what it computed.
 The finer stages (the text encoder's layers, the speaker encoder, each DiT block of the first step, the
@@ -57,7 +63,12 @@ parser.add_argument("out_dir")
 parser.add_argument("text")
 parser.add_argument("reference")
 parser.add_argument("--seed", type=int, default=0)
+parser.add_argument("--seconds", type=float, default=0.0)
+parser.add_argument("--duration-scale", type=float, default=1.0)
+parser.add_argument("--speed", type=float, default=1.0)
 args = parser.parse_args()
+# The runtime ignores a duration scale given with seconds; speech.cpp refuses that request.
+assert not (args.seconds > 0 and args.duration_scale != 1.0), "give --seconds or --duration-scale, not both"
 os.makedirs(args.out_dir, exist_ok=True)
 torch.set_grad_enabled(False)
 
@@ -101,7 +112,11 @@ wrap(model, "predict_duration_log_frames", lambda a, k, out: saved.update(
 wrap(model, "forward_with_encoded_conditions", lambda a, k, out: calls["velocity"].append((k, out)))
 wrap(codec, "decode_latent", lambda a, k, out: calls["decode"].append((a[0], out)))
 
-result = runtime.synthesize(ir.SamplingRequest(text=args.text, ref_wav=args.reference, seed=args.seed))
+# Irodori-TTS-Server's mapping of OpenAI's speed
+# (Aratako/Irodori-TTS-Server@61012c760f22f7b4a6c21c5c5f8f9e148120b6f9, src/irodori_openai_tts/app.py).
+seconds = args.seconds / args.speed if args.seconds > 0 else None
+result = runtime.synthesize(ir.SamplingRequest(text=args.text, ref_wav=args.reference, seed=args.seed, seconds=seconds,
+                                               duration_scale=args.duration_scale / args.speed))
 normalized_text = normalize_text(args.text).strip()
 
 # Text: the runtime pads to 256 tokens; the port runs the valid ones only.
@@ -201,6 +216,7 @@ meta = {
     "code": CODE, "model": MODELS[args.model], "codec": CODEC, "seed": args.seed,
     "text": args.text, "normalized_text": normalized_text, "tokens": n,
     "reference": os.path.basename(args.reference),
+    "seconds": args.seconds, "duration_scale": args.duration_scale, "speed": args.speed,
     "latent_frames": int(z.shape[1]), "audio_samples": int(result.audio.shape[-1]),
     "unpadded_text_max_abs_diff": unpadded_error,
     "messages": result.messages,
