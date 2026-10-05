@@ -6,9 +6,10 @@
  * Changes the sample rate of mono audio as torchaudio.functional.resample() does with the parameters its
  * documentation gives for librosa's kaiser_best: a rational polyphase windowed sinc with 64 zero crossings on each
  * side, cut off at 0.9475937167399596 of the lower rate's Nyquist frequency, under a Kaiser window of beta
- * 14.769656459379492, computed in double precision. The output has torchaudio's length, ceil(n · to / from) as
- * torchaudio rounds it, and the audio is padded with zeros at both ends as torchaudio pads it. At equal rates the
- * samples pass through unchanged.
+ * 14.769656459379492, which torchaudio rounds to float32 together with the window's peak i0(beta), and otherwise
+ * computed in double precision. The output has torchaudio's length, ceil(n · to / from) as torchaudio rounds it,
+ * and the audio is padded with zeros at both ends as torchaudio pads it. At equal rates the samples pass through
+ * unchanged.
  */
 class Resampler {
 public:
