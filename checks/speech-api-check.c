@@ -1,19 +1,29 @@
 /*
- * Checks that the C API alone, through the shared libspeech, does what a program needs: reports the release
- * and API it was built as, lists the devices, optionally makes an Irodori-TTS voice file and loads it, loads a
- * model, describes it, speaks one sentence into a WAVE file, takes or refuses the options of speed and length as
- * the model can or cannot follow them, stops a second request with speech_cancel() from another thread before it
- * finishes, and reports an unknown voice as an error. It is written in C so that
+ * Checks that the C API alone, through the shared libspeech, does what a program needs. It is written in C so that
  * speech.h is checked to be plain C.
+ *
+ * With a synthesis model: reports the release and API it was built as, lists the devices, refuses to load the model
+ * without its codec, optionally makes an Irodori-TTS voice file and loads it, loads the model, describes it, speaks
+ * one sentence into a WAVE file, takes or refuses the options of speed and length as the model can or cannot follow
+ * them, stops a second request with speech_cancel() from another thread before it finishes, reports an unknown voice
+ * as an error, and refuses to recognize speech.
+ *
+ * With a recognition model (transcribe): refuses to load it with a codec, voices or steps, loads it, describes it,
+ * recognizes the audio of each dump of reference/fastconformer/dump.py and compares the text with the dump's CTC text
+ * byte for byte, refuses audio at another rate, no audio, a language the model does not recognize and a request to
+ * speak, stops a request whose callback returns nonzero, and stops one with speech_cancel() from another thread while
+ * the encoder runs.
  *
  * usage: speech-api-check <model.gguf> <codec.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]...
  *                         [--make-voice <reference.wav> <voice.gguf>]
+ *        speech-api-check transcribe <model.gguf> <dump folder>... [--device NAME]
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "speech-api-check.h"
 #include "speech.h"
 
 #ifdef _WIN32
@@ -62,14 +72,14 @@ static char ** utf8_argv(int * argc) {
     return argv;
 }
 
-static FILE * open_utf8(const char * path) {
-    wchar_t wide[4096];
-    if (!MultiByteToWideChar(CP_UTF8, 0, path, -1, wide, 4096)) return NULL;
-    return _wfopen(wide, L"wb");
+FILE * open_utf8(const char * path, const char * mode) {
+    wchar_t wide[4096], wide_mode[8];
+    if (!MultiByteToWideChar(CP_UTF8, 0, path, -1, wide, 4096) || !MultiByteToWideChar(CP_UTF8, 0, mode, -1, wide_mode, 8)) return NULL;
+    return _wfopen(wide, wide_mode);
 }
 #else
-static FILE * open_utf8(const char * path) {
-    return fopen(path, "wb");
+FILE * open_utf8(const char * path, const char * mode) {
+    return fopen(path, mode);
 }
 #endif
 
@@ -85,7 +95,7 @@ static void put_u16(FILE * f, unsigned v) {
 
 /** Writes 16-bit mono PCM; returns 0 when the file cannot be written. */
 static int write_wav(const char * path, const Audio * a, int rate) {
-    FILE * f = open_utf8(path);
+    FILE * f = open_utf8(path, "wb");
     if (!f) return 0;
     const unsigned bytes = (unsigned) (a->n * 2);
     fwrite("RIFF", 1, 4, f);
@@ -185,7 +195,7 @@ static void * canceller(void * user_data) {
     return 0;
 }
 
-static int fail(const char * what) {
+int fail(const char * what) {
     fprintf(stderr, "FAIL: %s: %s\n", what, speech_last_error());
     return 1;
 }
@@ -247,11 +257,13 @@ int main(int argc, char ** argv) {
 #ifdef _WIN32
     argv = utf8_argv(&argc);
 #endif
+    const int recognition = argc > 1 && !strcmp(argv[1], "transcribe");
     if (argc < 4) {
         fprintf(stderr,
                 "usage: %s <model.gguf> <codec.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]... "
-                "[--make-voice <reference.wav> <voice.gguf>]\n",
-                argv[0]);
+                "[--make-voice <reference.wav> <voice.gguf>]\n"
+                "       %s transcribe <model.gguf> <dump folder>... [--device NAME]\n",
+                argv[0], argv[0]);
         return 2;
     }
     if (speech_api_version() != SPEECH_API_VERSION) {
@@ -263,6 +275,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
     printf("speech.cpp %s, API version %d\n", speech_version(), speech_api_version());
+    if (recognition) return check_recognition(argc - 2, argv + 2);
 
     speech_model_params params = speech_model_default_params();
     params.model_path = argv[1];
@@ -317,7 +330,20 @@ int main(int argc, char ** argv) {
     params.n_voices = n_voices;
 
     speech_model * model = NULL;
+    {
+        speech_model_params without_codec = params;
+        without_codec.codec_path = NULL;
+        if (speech_model_load(&without_codec, &model) != SPEECH_ERROR || model || !strstr(speech_last_error(), "codec_path")) {
+            fprintf(stderr, "FAIL: a synthesis model without its codec is not an error that names codec_path\n");
+            return 1;
+        }
+        printf("a synthesis model without its codec is refused: %s\n", speech_last_error());
+    }
     if (speech_model_load(&params, &model) != SPEECH_OK) return fail("speech_model_load");
+    if (speech_model_task(model) != SPEECH_TASK_SYNTHESIS) {
+        fprintf(stderr, "FAIL: a synthesis model reports the task %d\n", (int) speech_model_task(model));
+        return 1;
+    }
     printf("%s (%s) on %s: %d Hz, streaming by %s, steps %d, language selectable %d\n", speech_model_name(model),
            speech_model_architecture(model), speech_model_backend(model), speech_model_sample_rate(model),
            speech_model_streaming(model) == SPEECH_STREAMING_FRAME ? "frame" : "sentence", speech_model_steps(model),
@@ -392,6 +418,19 @@ int main(int argc, char ** argv) {
         return 1;
     }
     printf("an unknown voice is an error: %s\n", speech_last_error());
+
+    {
+        const float silence[1600] = {0};
+        speech_transcription_request r = speech_transcription_request_default();
+        r.samples = silence;
+        r.n_samples = 1600;
+        r.sample_rate = speech_model_sample_rate(model);
+        if (speech_transcribe(model, &r, ignore_text, NULL) != SPEECH_ERROR || speech_last_error()[0] == '\0') {
+            fprintf(stderr, "FAIL: speech_transcribe() on a synthesis model is not an error with a message\n");
+            return 1;
+        }
+        printf("speech_transcribe() on a synthesis model is an error: %s\n", speech_last_error());
+    }
 
     speech_model_free(model);
     free(audio.samples);

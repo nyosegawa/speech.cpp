@@ -4,8 +4,8 @@
 
 speech.cpp runs speech models in C++ on [ggml](https://github.com/ggml-org/ggml), on macOS arm64 with Metal,
 Windows x64 with Vulkan and Linux x64 with Vulkan or the CPU alone, as a library with one C API,
-`include/speech.h`, for any program that speaks text: ASIST's worker, other tools, bindings and other people's
-applications. Each model's official
+`include/speech.h`, for any program that speaks text or recognizes speech: ASIST's worker, other tools, bindings
+and other people's applications. Each model's official
 implementation is the reference: every stage of a port is checked against tensors dumped from it.
 README.md is the documentation for users; `docs/adr/` keeps the decisions. Read the relevant implementation
 and its check before changing behavior.
@@ -17,25 +17,30 @@ and its check before changing behavior.
   C++ exception or type crossing it. A change a caller notices raises `SPEECH_API_VERSION`.
 - `src/speech.cpp` implements the C API over `src/engine.h`, the interface of one family behind it, with one
   engine per family (`src/<family>-engine.cpp`) that turns the API's options and requests into the family's.
-  `speech_model_load()` chooses the family from `general.architecture` of the model's GGUF.
+  One table in `src/speech.cpp` lists the families: the `general.architecture` of their GGUF files, their task
+  (synthesis or recognition), the fields of `speech_model_params` they take and their engine.
+  `speech_model_load()` chooses the family from the table, and adding a family is adding its line.
 - `src/families/<family>/` holds the code of one architecture, whichever weights it is given: `qwen3-tts/`
-  runs Qwen3-TTS 0.6B and 1.7B. A family reads its GGUF files and turns text into audio; it knows nothing
-  of the C API, the worker protocol or the command line.
+  runs Qwen3-TTS 0.6B and 1.7B. A family reads its GGUF files and turns text into audio or audio into text;
+  it knows nothing of the C API, the worker protocol or the command line.
 - `src/common/` holds what two families use in the same role. Code moves there when a second family needs
   it, not before, and never as a framework for families that do not exist yet.
-- `tools/` holds the programs for users: the worker in `tools/worker/` and the command-line tool `speech-tts`
-  in `tools/cli/`, which speaks text into a WAVE file or to stdout, with what both use in `tools/common/`.
+- `tools/` holds the programs for users: the worker in `tools/worker/` and the command-line tools in
+  `tools/cli/`, `speech-tts`, which speaks text into a WAVE file or to stdout, and `speech-asr`, which writes the
+  text of WAVE files to stdout, with what they share in `tools/common/`.
   Every tool reaches the models only through the C API. The worker's protocol is JSON Lines, one JSON object
   per line on stdin and stdout, and is the contract of every program that starts it, ASIST among them:
-  stdout carries the protocol and nothing else, and every log goes to stderr.
+  stdout carries the protocol and nothing else, and every log goes to stderr. Its `ready` message names the model's
+  task, and the requests it takes follow from the task.
 - `checks/` holds one check per ported stage (`*-check.cpp`) that compares the stage with the reference
-  dumps, and `speech-api-check.c`, which runs the C API through the shared library. Checks reach into
+  dumps, and `speech-api-check`, which runs the C API through the shared library with a synthesis model and,
+  with `transcribe`, with a recognition model (`speech-api-recognition.c`). Checks reach into
   `src/` for the stage they check; they are built but not released.
-- `tools/server/` holds `speech-server`, which serves one model over HTTP with OpenAI's speech API
-  (`POST /v1/audio/speech`, `GET /v1/models`, `GET /health`) for programs that speak HTTP. Like the worker it
-  reaches the model only through the C API; `openai-api.h` reads OpenAI's request and writes its errors and
-  stream events, and the server speaks one request at a time in arrival order and cancels the synthesis of a
-  client that goes away.
+- `tools/server/` holds `speech-server`, which serves one model over HTTP with OpenAI's audio API
+  (`POST /v1/audio/speech` for a synthesis model, `POST /v1/audio/transcriptions` for a recognition model,
+  `GET /v1/models`, `GET /health`) for programs that speak HTTP. Like the worker it reaches the model only
+  through the C API; `openai-api.h` reads OpenAI's requests and writes its errors and stream events, and
+  `jobs.h` runs one request at a time in arrival order and cancels the request of a client that goes away.
 - `reference/<model>/` holds, per model, a uv environment that pins the official code, PyTorch and the rest,
   the conversion of the official weights to GGUF, and the scripts that run the official implementation to
   dump reference tensors. Dumps go to `reference/<model>/out/`.
@@ -125,8 +130,9 @@ settled a choice or turned an approach down for good; if so, the record goes int
 
 - Build with `cmake -B build && cmake --build build -j`, and run the checks the change touches before
   committing code. A change to the C API or the worker also runs `speech-api-check` and
-  `tools/worker_smoke.py` for both families, and a change to `speech-tts` runs `tools/speech_tts_smoke.py`
-  for both.
+  `tools/worker_smoke.py` for both synthesis families, and `speech-api-check transcribe` and
+  `tools/worker_recognition_smoke.py` for FastConformer; a change to `speech-tts` runs
+  `tools/speech_tts_smoke.py` for both synthesis families.
 - Never commit on main. Every change reaches main through a pull request, one coherent unit each: a
   model's stage, a fix, a refactor or a documentation change.
 - Commit messages and pull request titles are one English sentence in the imperative, without a prefix

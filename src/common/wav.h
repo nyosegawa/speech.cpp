@@ -16,5 +16,8 @@ struct Wav {
 /** Reads 16-, 24- or 32-bit integer PCM or 32-bit float WAVE; anything else throws. */
 Wav read_wav(const std::string & path);
 
+/** The same for a WAVE file's bytes, which `path` names in a message. */
+Wav parse_wav(const std::string & file, const std::string & path);
+
 /** Writes mono 16-bit PCM, clipping to [-1, 1]. */
 void write_wav(const std::string & path, const std::vector<float> & samples, int sample_rate);

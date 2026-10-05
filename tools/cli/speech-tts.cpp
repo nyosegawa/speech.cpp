@@ -46,6 +46,7 @@
 
 #include "args.h"
 #include "ggml.h"
+#include "list-devices.h"
 #include "speech.h"
 #include "take-stdout.h"
 
@@ -284,19 +285,6 @@ private:
     FILE * file_ = nullptr;
     bool kept_ = false;
 };
-
-void list_devices(FILE * out) {
-    for (size_t i = 0; i < speech_device_count(); i++) {
-        speech_device d;
-        if (speech_device_get(i, &d) != SPEECH_OK) throw std::runtime_error(speech_last_error());
-        // An accelerator (BLAS) runs with the CPU and is not a device to choose.
-        if (d.kind == SPEECH_DEVICE_ACCEL) continue;
-        const char * kind = d.kind == SPEECH_DEVICE_GPU ? "gpu" : d.kind == SPEECH_DEVICE_IGPU ? "igpu" : "cpu";
-        std::fprintf(out, "%-10s %-5s %s, %.1f GB, %.1f GB free\n", d.name, kind, d.description, d.memory_total / 1e9,
-                     d.memory_free / 1e9);
-    }
-    std::fflush(out);
-}
 
 int make_voice(const std::vector<std::string> & a) {
     const Options o = parse_options(a, 2);

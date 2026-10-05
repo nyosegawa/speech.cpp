@@ -8,14 +8,18 @@
 #include <iterator>
 #include <random>
 #include <string>
+#include <vector>
 
+#include "base64.h"
 #include "flat-json.h"
 #include "speech.h"
+#include "wav.h"
 
-// OpenAI's speech API as speech.cpp reads and writes it: the create speech request, the error object, and the
-// events of an SSE stream. The shapes follow OpenAI's API reference, components CreateSpeechRequest, Error,
-// SpeechAudioDeltaEvent and SpeechAudioDoneEvent of github.com/openai/openai-openapi at commit 31af4fc
-// (2026-10-05).
+// OpenAI's audio API as speech.cpp reads and writes it: the create speech request, the create transcription request,
+// the error object, and the events of an SSE stream. The shapes follow OpenAI's API reference, components
+// CreateSpeechRequest, CreateTranscriptionRequest, CreateTranscriptionResponseJson, AudioResponseFormat, Error,
+// SpeechAudioDeltaEvent and SpeechAudioDoneEvent and the path /audio/transcriptions of
+// github.com/openai/openai-openapi at commit 31af4fc (2026-10-05).
 
 /** An answer that is not audio: an HTTP status and an error in OpenAI's shape. */
 struct ApiError {
@@ -35,20 +39,6 @@ inline std::string error_object(const ApiError & e) {
 
 inline std::string error_json(const ApiError & e) {
     return "{\"error\":" + error_object(e) + "}";
-}
-
-inline std::string base64(const uint8_t * data, size_t n) {
-    static const char * table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve((n + 2) / 3 * 4);
-    for (size_t i = 0; i < n; i += 3) {
-        const uint32_t v = (uint32_t) data[i] << 16 | (i + 1 < n ? (uint32_t) data[i + 1] << 8 : 0) | (i + 2 < n ? data[i + 2] : 0);
-        out += table[(v >> 18) & 63];
-        out += table[(v >> 12) & 63];
-        out += i + 1 < n ? table[(v >> 6) & 63] : '=';
-        out += i + 2 < n ? table[v & 63] : '=';
-    }
-    return out;
 }
 
 /** A create speech request as read from its JSON body. */
@@ -174,4 +164,80 @@ inline std::string sse_done(size_t samples) {
  */
 inline std::string sse_error(const ApiError & e) {
     return sse_event("{\"type\":\"error\",\"error\":" + error_object(e) + "}");
+}
+
+/** One part of a multipart/form-data body: a field, or a file when it has a filename. */
+struct FormPart {
+    std::string name, content, filename;
+    bool file = false;
+};
+
+/** A create transcription request as read from its form, with the file's audio decoded. */
+struct TranscriptionRequest {
+    std::vector<float> samples;
+    int sample_rate = 0;
+    std::string language;
+    std::string format = "json";
+};
+
+/**
+ * Reads a create transcription request from the parts of its form. The file is decoded as WAV, the one format
+ * speech.cpp reads, and its channels are averaged; any other file is refused, as is a member speech.cpp does not
+ * follow (prompt, temperature, timestamps and the rest) and a member given twice. The model's name, which "model"
+ * may give, is the one `/v1/models` lists. Anything it cannot read throws an ApiError.
+ */
+inline TranscriptionRequest read_transcription_request(bool multipart, const std::vector<FormPart> & parts,
+                                                       const std::string & model_name) {
+    if (!multipart) {
+        throw ApiError{400, "The body is not multipart/form-data. Send the audio as the form's \"file\", as OpenAI's create "
+                       "transcription takes it.", "", ""};
+    }
+    static const char * known[] = {"file", "model", "language", "response_format"};
+    const FormPart * given[4] = {};
+    for (const FormPart & part : parts) {
+        const auto k = std::find_if(std::begin(known), std::end(known), [&](const char * name) { return part.name == name; });
+        if (k == std::end(known)) {
+            throw ApiError{400, "Unrecognized request argument supplied: " + part.name + ". speech.cpp takes file, model, language "
+                           "and response_format.", part.name, "unknown_parameter"};
+        }
+        const FormPart *& slot = given[k - std::begin(known)];
+        if (slot) throw ApiError{400, "\"" + part.name + "\" is given twice; give it once.", part.name, "invalid_value"};
+        slot = &part;
+    }
+    const FormPart * file = given[0], * model = given[1], * language = given[2], * format = given[3];
+    if (model && model->content != model_name) {
+        throw ApiError{404, "The model " + json_string(model->content) + " is not served here; this server serves " +
+                       json_string(model_name) + ". Name it in \"model\" or leave \"model\" out.", "model", "model_not_found"};
+    }
+    if (!file) throw ApiError{400, "The request has no \"file\"; it is required.", "file", "missing_required_parameter"};
+    if (!file->file) throw ApiError{400, "\"file\" is a field; send it as a file, with a filename.", "file", "invalid_type"};
+    TranscriptionRequest r;
+    if (format) r.format = format->content;
+    if (r.format != "json" && r.format != "text") {
+        throw ApiError{400, "The response_format " + json_string(r.format) + " is not supported; speech.cpp answers with \"json\" "
+                       "or \"text\", since it gives neither timestamps nor speakers.", "response_format", "unsupported_value"};
+    }
+    if (language) r.language = language->content;
+    const std::string & bytes = file->content;
+    if (bytes.size() < 12 || bytes.compare(0, 4, "RIFF") != 0 || bytes.compare(8, 4, "WAVE") != 0) {
+        throw ApiError{400, "The file " + json_string(file->filename) + " is not a WAV file. speech.cpp reads WAV alone (16-, 24- "
+                       "or 32-bit PCM or 32-bit float); convert the audio first, for example with ffmpeg -i in.mp3 out.wav.",
+                       "file", "unsupported_value"};
+    }
+    try {
+        const Wav wav = parse_wav(bytes, file->filename);
+        r.samples = wav.mono();
+        r.sample_rate = wav.sample_rate;
+    } catch (const std::exception & e) {
+        throw ApiError{400, std::string("The file cannot be read: ") + e.what() + ".", "file", "invalid_value"};
+    }
+    return r;
+}
+
+/**
+ * A transcription in OpenAI's json format. OpenAI's also carries the usage, in tokens or in seconds billed, which
+ * speech.cpp does not count, so it carries the text alone.
+ */
+inline std::string transcription_json(const std::string & text) {
+    return "{\"text\":" + json_string(text) + "}";
 }

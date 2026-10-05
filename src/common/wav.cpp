@@ -31,18 +31,23 @@ std::vector<float> Wav::mono() const {
 Wav read_wav(const std::string & path) {
     std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
     if (!f) throw std::runtime_error("cannot open " + path);
-    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    if (bytes.size() < 12 || std::memcmp(bytes.data(), "RIFF", 4) != 0 || std::memcmp(bytes.data() + 8, "WAVE", 4) != 0) {
+    return parse_wav(std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()), path);
+}
+
+Wav parse_wav(const std::string & file, const std::string & path) {
+    const auto * bytes = reinterpret_cast<const uint8_t *>(file.data());
+    const size_t size_of_file = file.size();
+    if (size_of_file < 12 || std::memcmp(bytes, "RIFF", 4) != 0 || std::memcmp(bytes + 8, "WAVE", 4) != 0) {
         throw std::runtime_error(path + " is not a WAVE file");
     }
     uint16_t format = 0, bits = 0;
     Wav wav;
     const uint8_t * data = nullptr;
     size_t data_size = 0;
-    for (size_t at = 12; at + 8 <= bytes.size();) {
-        const uint8_t * chunk = bytes.data() + at;
+    for (size_t at = 12; at + 8 <= size_of_file;) {
+        const uint8_t * chunk = bytes + at;
         const size_t size = u32(chunk + 4);
-        if (at + 8 + size > bytes.size()) throw std::runtime_error(path + " ends inside a chunk");
+        if (at + 8 + size > size_of_file) throw std::runtime_error(path + " ends inside a chunk");
         if (std::memcmp(chunk, "fmt ", 4) == 0 && size >= 16) {
             format = u16(chunk + 8);
             wav.channels = u16(chunk + 10);

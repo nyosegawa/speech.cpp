@@ -5,17 +5,19 @@
 #include <stdint.h>
 
 /*
- * The C API of speech.cpp: speech synthesis with Qwen3-TTS and Irodori-TTS on ggml.
+ * The C API of speech.cpp on ggml: speech synthesis with Qwen3-TTS and Irodori-TTS, and speech recognition with
+ * FastConformer. A model does one of the two (speech_model_task()): speech_synthesize() runs a synthesis model and
+ * speech_transcribe() a recognition model, and either function given a model of the other task is an error.
  *
  * Every string passed in or returned is UTF-8, paths included. A function that can fail returns a
  * speech_status, and speech_last_error() then gives the message. No pointer the library returns is ever freed
  * by the caller except through the function named for it. Nothing the caller passes in is kept after the
  * call returns, unless the declaration says otherwise.
  *
- * Threads: a model serves one request at a time, so speech_synthesize() calls on the same model from several
- * threads run one after another; speech_cancel() and the speech_model_* getters may be called from any thread
- * at any time while the model exists. Different models are independent of each other. Loading and freeing a
- * model, listing devices and making a voice file may run on any thread.
+ * Threads: a model serves one request at a time, so speech_synthesize() or speech_transcribe() calls on the same
+ * model from several threads run one after another; speech_cancel() and the speech_model_* getters may be called
+ * from any thread at any time while the model exists. Different models are independent of each other. Loading and
+ * freeing a model, listing devices and making a voice file may run on any thread.
  *
  * The library sets ggml up for the whole process when it first touches a device: ggml's warnings and errors go
  * to stderr and its other messages are dropped, and on macOS Metal runs without Metal 4's tensor API.
@@ -57,7 +59,7 @@ SPEECH_API const char * speech_version(void);
 typedef enum speech_status {
     /** The call did what it was asked. */
     SPEECH_OK = 0,
-    /** speech_synthesize(): the callback or speech_cancel() stopped the request before it finished. */
+    /** speech_synthesize() or speech_transcribe(): the callback or speech_cancel() stopped the request. */
     SPEECH_STOPPED = 1,
     /** The call failed; speech_last_error() says why. */
     SPEECH_ERROR = -1
@@ -97,6 +99,14 @@ SPEECH_API size_t speech_device_count(void);
 /** Fills `device` with the device at `index`, which is below speech_device_count(). */
 SPEECH_API speech_status speech_device_get(size_t index, speech_device * device);
 
+/** What a model does. */
+typedef enum speech_task {
+    /** Text to audio, through speech_synthesize(): Qwen3-TTS and Irodori-TTS. */
+    SPEECH_TASK_SYNTHESIS = 0,
+    /** Audio to text, through speech_transcribe(): FastConformer. */
+    SPEECH_TASK_RECOGNITION = 1
+} speech_task;
+
 /** A voice given to an Irodori-TTS model: the name requests use and a reference WAVE file or a voice file. */
 typedef struct speech_voice_source {
     const char * name;
@@ -105,40 +115,51 @@ typedef struct speech_voice_source {
 
 /**
  * What speech_model_load() loads. Start from speech_model_default_params(), so that a field a later version
- * adds keeps its default.
+ * adds keeps its default. A family takes only the fields it has a use for: a field it does not take, given a value
+ * other than its default, is an error that names the field, and so is a codec missing where the family needs one.
  */
 typedef struct speech_model_params {
     /** The model's GGUF file; its general.architecture chooses the family. */
     const char * model_path;
-    /** The codec's GGUF file. */
+    /**
+     * The codec's GGUF file, which Qwen3-TTS and Irodori-TTS need. A recognition model (FastConformer) has no codec
+     * and takes NULL or "".
+     */
     const char * codec_path;
     /**
      * The device as speech_device.name gives it, "cpu" for the CPU, or "gpu", NULL or "" for the first GPU.
      * A device that does not exist or does not start is an error; the model is never moved to another one.
      */
     const char * device;
-    /** Qwen3-TTS: the talker's context in positions (2048 by default, about 160 s of speech). */
+    /**
+     * Qwen3-TTS: the talker's context in positions (2048 by default, about 160 s of speech). The other families have
+     * no context to set and take only the default.
+     */
     int context;
     /**
      * Irodori-TTS, which needs at least one: the voices, `n_voices` of them. A WAVE file is 48 kHz and at most
      * 120 s; it is encoded with the codec while the model loads. Qwen3-TTS takes none and speaks with its
-     * model's speakers.
+     * model's speakers, and a recognition model takes none.
      */
     const speech_voice_source * voices;
     size_t n_voices;
-    /** Irodori-TTS: the sampler's steps, or 0 for the model's default (4 for MeanFlow, 40 for RF). */
+    /**
+     * Irodori-TTS: the sampler's steps, or 0 for the model's default (4 for MeanFlow, 40 for RF). The other families
+     * have no steps and take only 0.
+     */
     int steps;
 } speech_model_params;
 
 /** The defaults: no paths, the first GPU, a context of 2048, no voices and the model's own steps. */
 SPEECH_API speech_model_params speech_model_default_params(void);
 
-/** A loaded model, its codec, its voices and the device they run on. */
+/** A loaded model, its codec and voices where it has them, and the device they run on. */
 typedef struct speech_model speech_model;
 
 /**
- * Loads a model and its codec on the device and runs a short synthesis, so that the GPU's kernels are
- * compiled before the first request. On success `*model` is a model that speech_model_free() frees; on
+ * Loads a model, and its codec where it has one, on the device, and runs a short synthesis or recognition, so that
+ * the GPU's kernels are compiled before the first request. general.architecture of the model's GGUF chooses the
+ * family. On success `*model` is a model that speech_model_free() frees; on
  * failure it is NULL.
  */
 SPEECH_API speech_status speech_model_load(const speech_model_params * params, speech_model ** model);
@@ -151,31 +172,48 @@ typedef enum speech_streaming {
     /** Qwen3-TTS: frame by frame from the first frame on, so audio starts before the rest is made. */
     SPEECH_STREAMING_FRAME = 0,
     /** Irodori-TTS: a request's latent is made whole, then decoded and passed window by window. */
-    SPEECH_STREAMING_SENTENCE = 1
+    SPEECH_STREAMING_SENTENCE = 1,
+    /** A recognition model, which makes no audio. */
+    SPEECH_STREAMING_NONE = 2
 } speech_streaming;
 
 /*
  * What a model is. The strings belong to the model and live until speech_model_free().
  */
 
-/** The model's general.name, such as Qwen3-TTS-12Hz-0.6B-CustomVoice or Irodori-TTS-v4.1-Small-MF. */
+/**
+ * The model's general.name, such as Qwen3-TTS-12Hz-0.6B-CustomVoice, Irodori-TTS-v4.1-Small-MF or
+ * parakeet-tdt_ctc-0.6b-ja.
+ */
 SPEECH_API const char * speech_model_name(const speech_model * model);
-/** The family's architecture: "qwen3tts-talker" or "irodori-tts". */
+/** The family's architecture: "qwen3tts-talker", "irodori-tts" or "fastconformer". */
 SPEECH_API const char * speech_model_architecture(const speech_model * model);
-/** The sample rate of the audio in Hz: 24000 for Qwen3-TTS, 48000 for Irodori-TTS. */
+/** Whether the model speaks (speech_synthesize()) or recognizes speech (speech_transcribe()). */
+SPEECH_API speech_task speech_model_task(const speech_model * model);
+/**
+ * The sample rate in Hz of the audio a synthesis model makes (24000 for Qwen3-TTS, 48000 for Irodori-TTS) or a
+ * recognition model takes (16000 for FastConformer).
+ */
 SPEECH_API int speech_model_sample_rate(const speech_model * model);
+/** How a synthesis model streams its audio; SPEECH_STREAMING_NONE for a recognition model. */
 SPEECH_API speech_streaming speech_model_streaming(const speech_model * model);
-/** The number of voices: Qwen3-TTS's speakers in alphabetical order, or Irodori-TTS's voices in the order given. */
+/**
+ * The number of voices: Qwen3-TTS's speakers in alphabetical order, or Irodori-TTS's voices in the order given. A
+ * recognition model has none.
+ */
 SPEECH_API size_t speech_model_voice_count(const speech_model * model);
 /** The name of the voice at `index`, or NULL when `index` is not below speech_model_voice_count(). */
 SPEECH_API const char * speech_model_voice(const speech_model * model, size_t index);
-/** The number of languages the model speaks. */
+/** The number of languages the model speaks or recognizes. */
 SPEECH_API size_t speech_model_language_count(const speech_model * model);
 /** The language at `index` as a BCP 47 tag, such as "ja", or NULL past the last one. */
 SPEECH_API const char * speech_model_language(const speech_model * model, size_t index);
-/** Whether a request's language reaches the model (1, Qwen3-TTS) or is only checked against its languages (0). */
+/**
+ * Whether a request's language reaches the model (1, Qwen3-TTS) or is only checked against its languages (0,
+ * Irodori-TTS and FastConformer).
+ */
 SPEECH_API int speech_model_language_selectable(const speech_model * model);
-/** The sampler's steps a request runs (Irodori-TTS), or 0 for a family without steps. */
+/** The sampler's steps a request runs (Irodori-TTS), or 0 for a family without steps, recognition models among them. */
 SPEECH_API int speech_model_steps(const speech_model * model);
 /** The ggml backend the model runs on, such as MTL0, Vulkan0 or CPU. */
 SPEECH_API const char * speech_model_backend(const speech_model * model);
@@ -230,15 +268,57 @@ typedef int (*speech_audio_callback)(const float * samples, size_t n_samples, vo
 /**
  * Speaks a request, passing its audio to `on_audio` with `user_data` and returning once it is all passed
  * (SPEECH_OK), once the callback or speech_cancel() stopped it (SPEECH_STOPPED), or on an error (SPEECH_ERROR),
- * after which no more audio comes. A stopped request passes no more audio.
+ * after which no more audio comes. A stopped request passes no more audio. A recognition model is an error.
  */
 SPEECH_API speech_status speech_synthesize(speech_model * model, const speech_request * request,
                                            speech_audio_callback on_audio, void * user_data);
 
 /**
- * Stops the request the model is speaking when it is called, as the callback would by returning nonzero; a
- * request that starts later, waiting ones included, is not affected. Callable from any thread. A call of the
- * callback already under way when it returns is the last one.
+ * One piece of audio to recognize. Start from speech_transcription_request_default(), so that a field a later version
+ * adds keeps its default. A request that asks a model for what it cannot do is an error; nothing is ignored.
+ */
+typedef struct speech_transcription_request {
+    /** `n_samples` mono samples, nominally within [-1, 1]; at least one is needed. */
+    const float * samples;
+    size_t n_samples;
+    /**
+     * The rate of the samples in Hz, which must be the model's, speech_model_sample_rate(). Any other rate is an
+     * error: the library does not resample.
+     */
+    int sample_rate;
+    /**
+     * A BCP 47 tag of one of the model's languages or a region or script of one ("ja", "ja-JP"), or "auto", NULL or
+     * "" to leave the choice to the model. Any other language is an error.
+     */
+    const char * language;
+} speech_transcription_request;
+
+/** The defaults: no samples, a sample rate of 0 (to be set) and the model's choice of language. */
+SPEECH_API speech_transcription_request speech_transcription_request_default(void);
+
+/**
+ * Receives the text of a request: UTF-8, NUL-terminated, valid only during the call. FastConformer calls it once,
+ * with the text of the whole audio. Returning nonzero stops the request, which then returns SPEECH_STOPPED and passes
+ * no more text. It runs on the thread that called speech_transcribe() and must not call speech_transcribe() or
+ * speech_model_free() on the same model.
+ */
+typedef int (*speech_text_callback)(const char * text, void * user_data);
+
+/**
+ * Recognizes the speech in a request's audio, passing its text to `on_text` with `user_data`, and returns once the
+ * text is passed (SPEECH_OK), once the callback or speech_cancel() stopped it (SPEECH_STOPPED), or on an error
+ * (SPEECH_ERROR). The audio is checked before any work starts: no samples, a rate other than the model's or a language
+ * it does not recognize is an error. A synthesis model is an error. FastConformer recognizes the whole audio in one
+ * pass, so speech_cancel() takes effect before the encoder starts or once it has run, and its time and memory grow
+ * with the square of the audio's length.
+ */
+SPEECH_API speech_status speech_transcribe(speech_model * model, const speech_transcription_request * request,
+                                           speech_text_callback on_text, void * user_data);
+
+/**
+ * Stops the request the model is speaking or recognizing when it is called, as the callback would by returning
+ * nonzero; a request that starts later, waiting ones included, is not affected. Callable from any thread. A call of
+ * the callback already under way when it returns is the last one.
  */
 SPEECH_API void speech_cancel(speech_model * model);
 
