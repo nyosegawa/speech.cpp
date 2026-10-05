@@ -1,4 +1,4 @@
-"""Writes tokenizer cases for tools/tokenizer-check: one line per text, the text's UTF-8 in hex, a tab,
+"""Writes tokenizer cases for checks/tokenizer-check: one line per text, the text's UTF-8 in hex, a tab,
 and the ids the model's own tokenizer.json gives.
 
 usage: uv run python tokenizer_cases.py <model dir> <out.tsv>
