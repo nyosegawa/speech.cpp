@@ -922,7 +922,8 @@ for TDT, the duration predicted with it, and the spans of the tokens and of the 
 spans in frames and in seconds and the segments NeMo's separators give, at the ends of words as NeMo ends them, with
 them: on every dump of the three models, on the CPU with F32 weights and on Metal with F16, all are NeMo's exactly.
 For the Japanese models, whose text has no spaces and so no end of a word before its last token, it also cuts
-segments after `。`, `？`, `！`, `?` and `!` wherever they stand, and checks that each segment ends there, at a
+segments as the recognizer does with their files' `fastconformer.segment.breaks`, after `。`, `？`, `！`, `?` and `!`
+wherever they stand, and checks that each segment ends there, at a
 separator that ends a word, or with the last token. NeMo's beam search records with each token
 the step of its search, the frame plus the tokens before it, so that its times for ReazonSpeech run past the end of
 the audio, to 386.16 s for the 311.22 s input; speech.cpp keeps the frame, and the check compares the step it gives.

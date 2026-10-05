@@ -15,6 +15,8 @@ Recognizer::Recognizer(const std::string & path, ggml_backend_t backend)
       joint_(model_),
       decoder_(make_decoder(model_, prediction_, joint_)),
       detokenizer_(model_),
+      separators_(model_.str_array("fastconformer.segment.separators")),
+      breaks_(model_.str_array("fastconformer.segment.breaks")),
       allocr_(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))) {
     if (!allocr_) throw std::runtime_error("cannot create a graph allocator");
 }
@@ -37,6 +39,11 @@ Transcript Recognizer::recognize(const std::vector<float> & samples) {
     t.decoding = decoding(encode(features, frontend_.frames(samples.size())));
     t.text = detokenizer_.text(t.decoding.ids);
     return t;
+}
+
+std::vector<Segment> Recognizer::segments(const Decoding & decoding) const {
+    return fastconformer::segments(detokenizer_.token_texts(decoding.ids), detokenizer_.word_starts(decoding.ids),
+                                   token_spans(decoding, detokenizer_), separators_, breaks_);
 }
 
 double Recognizer::seconds(int64_t frame) const {
