@@ -17,7 +17,11 @@ implementation.
 (Vulkan), `speech-worker-<version>-<platform>.zip` with the worker alone, which is what ASIST bundles, and
 `speech-cpp-tools-<version>-<platform>.zip` with the command-line tools and the shared library with its
 header (`libspeech.dylib`, or `speech.dll` with its import library `speech.lib`, and `speech.h`), with their
-SHA-256 sums. The Vulkan build needs no particular driver version; on the first run the GPU driver compiles its
+SHA-256 sums. A release is the tag `v<version>` of the number in the file `VERSION`, which CI checks before it
+publishes; the library reports the same number through `speech_version()`, and the worker in its `ready`
+message. Versions follow [Semantic Versioning](https://semver.org): while they are 0.x, a release whose
+change a caller must adapt to (the worker protocol, the C API, the GGUF layout, a voice file's form, a tool's
+arguments) raises the minor version, and any other release the patch. The Vulkan build needs no particular driver version; on the first run the GPU driver compiles its
 shaders, which takes seconds and is cached by the driver until it is updated. The Metal build compiles its
 kernels on its first run as well (16 s for an Irodori-TTS worker on an Apple M5, 1.5 s on the runs after).
 
@@ -105,17 +109,21 @@ speech_model_free(model);
 - **Threads.** A model speaks one request at a time; concurrent `speech_synthesize()` calls on it wait for
   each other. `speech_cancel()` and the getters may be called from any thread. Separate models are
   independent.
-- **Versions.** `SPEECH_API_VERSION` and `speech_api_version()` give the version of the API, raised when a
-  change is one an existing caller notices.
+- **Versions.** `speech_version()` gives the release the library was built from (`"0.4.0"`).
+  `SPEECH_API_VERSION` and `speech_api_version()` give the version of the API, raised when a change is one an
+  existing caller notices; a function added to the API does not raise it.
 
 Link `libspeech` (on Windows, define `SPEECH_SHARED` and link `speech.lib`), or, within this CMake project,
 the target `speech` (shared) or `speech-static`.
 
 ## The worker
 
-`speech-worker` is the process ASIST starts, a program on the C API like any other. It reads one JSON
-request per line on stdin and answers on stdout, each line prefixed with `ASIST_JSON:`, and runs the family
-that `general.architecture` of the model GGUF names.
+`speech-worker` is a process that another program starts to speak texts, as ASIST does, and a program on the
+C API like any other. It speaks [JSON Lines](https://jsonlines.org): it reads one JSON request per line on
+stdin and answers with one JSON object per line on stdout, and runs the family that `general.architecture`
+of the model GGUF names. Nothing else is written to stdout: every log goes to stderr, and so does anything
+ggml, a system library or the GPU driver prints to stdout. A caller treats a line on stdout that is not a JSON
+object as a defect of the worker and fails, rather than skipping it.
 
 ```sh
 speech-worker qwen3-tts-0.6b-customvoice-q8_0.gguf qwen3-tts-codec-12hz-f16.gguf
@@ -137,7 +145,7 @@ The messages, one JSON object per line:
 
 | Direction | Message |
 |---|---|
-| out | `{"type":"ready","model":"Irodori-TTS-v4.1-Small-MF","architecture":"irodori-tts","sampleRate":48000,"streaming":"sentence","voices":["bright","calm"],"languages":["ja"],"languageSelectable":false,"steps":4,"backend":"MTL0"}` |
+| out | `{"type":"ready","model":"Irodori-TTS-v4.1-Small-MF","architecture":"irodori-tts","sampleRate":48000,"streaming":"sentence","voices":["bright","calm"],"languages":["ja"],"languageSelectable":false,"steps":4,"backend":"MTL0","version":"0.4.0"}`, `version` being the release of speech.cpp |
 | in | `{"id":"1","text":"明日の東京は晴れです。","voice":"bright"}`, with `"language"` and `"speed"` optional |
 | out | `{"type":"chunk","id":"1","seq":0,"pcm":"<base64 of 16-bit little-endian mono PCM at sampleRate>"}`, one or more |
 | out | `{"type":"end","id":"1","samples":278400}` |

@@ -24,8 +24,9 @@ and its check before changing behavior.
 - `src/common/` holds what two families use in the same role. Code moves there when a second family needs
   it, not before, and never as a framework for families that do not exist yet.
 - `tools/` holds the programs for users: the worker in `tools/worker/` and a command-line tool per family
-  that speaks a text into a WAV file. The worker reaches the models only through the C API; its protocol
-  (the `ASIST_JSON:` lines) is ASIST's contract.
+  that speaks a text into a WAV file. The worker reaches the models only through the C API. Its protocol is
+  JSON Lines, one JSON object per line on stdin and stdout, and is the contract of every program that starts
+  it, ASIST among them: stdout carries the protocol and nothing else, and every log goes to stderr.
 - `checks/` holds one check per ported stage (`*-check.cpp`) that compares the stage with the reference
   dumps, and `speech-api-check.c`, which runs the C API through the shared library. Checks reach into
   `src/` for the stage they check; they are built but not released.
@@ -119,8 +120,12 @@ settled a choice or turned an approach down for good; if so, the record goes int
 - Commit messages and pull request titles are one English sentence in the imperative, without a prefix
   such as `feat:`; the body says what changed, why, and how it was checked.
 - The user merges pull requests, with a squash, once CI passes. An agent merges only when told to.
-- A tag `v*` builds the release in CI. Releases and tags are never deleted or moved: ASIST pins them by
-  SHA-256.
+- The release's number is written in `VERSION` and nowhere else; CMake reads it, and `speech_version()` and
+  the worker's `ready` report it. Versions follow Semantic Versioning: while they are 0.x, a change a caller
+  notices and must adapt to (the worker protocol, the C API, the GGUF layout, a voice file's form, a tool's
+  arguments) raises the minor version, and anything else that is released raises the patch.
+- The tag `v<VERSION>` builds the release in CI, which refuses a tag that differs from `VERSION`. Releases and
+  tags are never deleted or moved: ASIST pins them by SHA-256.
 - Converted GGUF files go to Hugging Face only with the user's approval, one repository per family
   (sakasegawa/qwen3-tts-ggml, sakasegawa/irodori-tts-ggml), with the licenses of what it holds. A changed
   file goes up under the same name, and its card's SHA-256 changes with it.

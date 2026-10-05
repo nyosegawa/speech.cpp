@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
-project(speech-cpp C CXX)
+# VERSION holds the release's number and nothing else does; the library reports it through speech_version().
+file(STRINGS VERSION SPEECH_VERSION LIMIT_COUNT 1)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS VERSION)
+project(speech-cpp VERSION ${SPEECH_VERSION} LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -77,11 +80,12 @@ set(SPEECH_SOURCES src/speech.cpp src/qwen3-tts-engine.cpp src/irodori-tts-engin
 add_library(speech-static STATIC ${SPEECH_SOURCES})
 target_include_directories(speech-static PUBLIC include)
 target_link_libraries(speech-static PUBLIC qwen3tts irodoritts)
+target_compile_definitions(speech-static PRIVATE SPEECH_VERSION="${PROJECT_VERSION}")
 
 add_library(speech SHARED ${SPEECH_SOURCES})
 target_include_directories(speech PUBLIC include)
 target_link_libraries(speech PRIVATE qwen3tts irodoritts)
-target_compile_definitions(speech PRIVATE SPEECH_BUILD_SHARED INTERFACE SPEECH_SHARED)
+target_compile_definitions(speech PRIVATE SPEECH_BUILD_SHARED SPEECH_VERSION="${PROJECT_VERSION}" INTERFACE SPEECH_SHARED)
 set_target_properties(speech PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 # ggml's static libraries are built with default visibility, so the linker is told to export the C API alone.
 if (APPLE)
@@ -129,6 +133,8 @@ target_link_libraries(irodori-synthesis-check PRIVATE irodoritts)
 
 add_executable(speech-api-check checks/speech-api-check.c)
 target_link_libraries(speech-api-check PRIVATE speech)
+# The check compares the version the library reports with the one it was built against.
+target_compile_definitions(speech-api-check PRIVATE SPEECH_EXPECTED_VERSION="${PROJECT_VERSION}")
 if (WIN32)
     target_link_libraries(speech-api-check PRIVATE shell32)
 else()

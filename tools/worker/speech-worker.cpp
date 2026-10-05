@@ -1,11 +1,12 @@
-// The JSON-lines worker ASIST runs for its local speech synthesis. It runs Qwen3-TTS or Irodori-TTS, chosen
-// by general.architecture of the model's GGUF.
+// A worker process that speaks texts for another program over JSON Lines. It runs Qwen3-TTS or Irodori-TTS,
+// chosen by general.architecture of the model's GGUF.
 //
-// Reads one JSON object per line from stdin and answers on stdout, each line prefixed with `ASIST_JSON:`.
+// Reads one JSON object per line from stdin and answers with one JSON object per line on stdout. Nothing else
+// reaches stdout: every log goes to stderr, so a line on stdout that is not a JSON object is a defect.
 //   in : {"id": "...", "text": "...", "voice": "...", "language": "...", "speed": 1.0}
 //        {"type": "cancel", "id": "..."}
 //   out: {"type": "ready", "model": "...", "architecture": "...", "sampleRate": 24000, "streaming": "frame",
-//         "voices": [...], "languages": [...], "languageSelectable": true, "backend": "MTL0"}
+//         "voices": [...], "languages": [...], "languageSelectable": true, "backend": "MTL0", "version": "0.4.0"}
 //        {"type": "chunk", "id": "...", "seq": 0, "pcm": "<base64 int16le mono>"}
 //        {"type": "end", "id": "...", "samples": 123456}
 //        {"type": "error", "id": "...", "error": "..."}
@@ -50,6 +51,8 @@
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#else
+#include <unistd.h>
 #endif
 
 #include "args.h"
@@ -59,13 +62,37 @@
 namespace {
 
 std::mutex out_mutex;
+FILE * protocol = stdout;
+
+/**
+ * Keeps the caller's stdout for the protocol alone. The stream moves to a descriptor of its own and
+ * descriptor 1 then writes to stderr, so whatever ggml, a GPU driver or a system framework prints to stdout
+ * lands among the logs instead of between two messages. On Windows, _dup2() onto descriptor 1 also sets the
+ * process's standard output handle, which code writing with WriteFile() reads.
+ */
+FILE * take_stdout() {
+    std::fflush(stdout);
+#ifdef _WIN32
+    const int fd = _dup(_fileno(stdout));
+    if (fd < 0 || _dup2(_fileno(stderr), _fileno(stdout)) != 0) {
+        throw std::runtime_error("cannot send stdout to stderr");
+    }
+    _setmode(fd, _O_BINARY);
+    FILE * stream = _fdopen(fd, "wb");
+#else
+    const int fd = dup(STDOUT_FILENO);
+    if (fd < 0 || dup2(STDERR_FILENO, STDOUT_FILENO) < 0) throw std::runtime_error("cannot send stdout to stderr");
+    FILE * stream = fdopen(fd, "w");
+#endif
+    if (!stream) throw std::runtime_error("cannot open a stream on the protocol's descriptor");
+    return stream;
+}
 
 void emit(const std::string & json) {
     std::lock_guard<std::mutex> lock(out_mutex);
-    std::fwrite("ASIST_JSON:", 1, 11, stdout);
-    std::fwrite(json.data(), 1, json.size(), stdout);
-    std::fputc('\n', stdout);
-    std::fflush(stdout);
+    std::fwrite(json.data(), 1, json.size(), protocol);
+    std::fputc('\n', protocol);
+    std::fflush(protocol);
 }
 
 std::string base64(const uint8_t * data, size_t n) {
@@ -196,7 +223,7 @@ speech_model * load(const Options & o) {
     return model;
 }
 
-/** The ready message, whose members after "type" describe the model. */
+/** The ready message: the model, which the members after "type" describe, and the release of speech.cpp. */
 std::string ready_message(const speech_model * m) {
     std::string out = "{\"type\":\"ready\",\"model\":" + json_string(speech_model_name(m)) +
                       ",\"architecture\":" + json_string(speech_model_architecture(m)) +
@@ -207,7 +234,8 @@ std::string ready_message(const speech_model * m) {
                       json_array(speech_model_language_count(m), [&](size_t i) { return speech_model_language(m, i); }) +
                       ",\"languageSelectable\":" + (speech_model_language_selectable(m) ? "true" : "false");
     if (speech_model_steps(m) > 0) out += ",\"steps\":" + std::to_string(speech_model_steps(m));
-    return out + ",\"backend\":" + json_string(speech_model_backend(m)) + "}";
+    return out + ",\"backend\":" + json_string(speech_model_backend(m)) +
+           ",\"version\":" + json_string(speech_version()) + "}";
 }
 
 /** What the audio callback needs of one request. */
@@ -238,6 +266,12 @@ int main(int argc, char ** argv) {
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stdin), _O_BINARY);
 #endif
+    try {
+        protocol = take_stdout();
+    } catch (const std::exception & e) {
+        emit("{\"type\":\"fatal\",\"error\":" + json_string(e.what()) + "}");
+        return 1;
+    }
     const std::vector<std::string> args = utf8_args(argc, argv);
     if (args.size() == 2 && args[1] == "--devices") {
         try {

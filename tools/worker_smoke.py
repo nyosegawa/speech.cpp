@@ -1,6 +1,6 @@
-"""Drives speech-worker the way ASIST's main process does: waits for ready, sends two requests in its first
-voice, cancels the second after its first chunk, sends a third, and checks each answer. Writes the first
-answer to a WAV.
+"""Drives speech-worker the way a caller does: waits for ready, sends two requests in its first voice, cancels
+the second after its first chunk, sends a third, and checks each answer and that every line on stdout is a
+JSON object. Writes the first answer to a WAV.
 
 usage: python3 tools/worker_smoke.py <out.wav> <worker> <model.gguf> <codec.gguf> [worker options...]
 """
@@ -18,15 +18,19 @@ t0 = time.perf_counter()
 
 
 def read():
-    while True:
-        line = proc.stdout.readline()
-        if not line:
-            raise SystemExit("the worker exited")
-        line = line.decode("utf-8").rstrip("\n")
-        if line.endswith("\r"):
-            raise SystemExit("a line ends with \\r")
-        if line.startswith("ASIST_JSON:"):
-            return json.loads(line[len("ASIST_JSON:"):])
+    line = proc.stdout.readline()
+    if not line:
+        raise SystemExit("the worker exited")
+    line = line.decode("utf-8").rstrip("\n")
+    if line.endswith("\r"):
+        raise SystemExit("a line ends with \\r")
+    try:
+        message = json.loads(line)
+    except json.JSONDecodeError:
+        message = None
+    if not isinstance(message, dict):
+        raise SystemExit(f"a line on stdout is not a JSON object: {line!r}")
+    return message
 
 
 def send(obj):
@@ -39,7 +43,7 @@ assert ready["type"] == "ready", ready
 voice = ready["voices"][0]
 print(f"ready in {time.perf_counter() - t0:.2f} s: {ready['model']} ({ready['architecture']}), rate {ready['sampleRate']}, "
       f"streaming by {ready['streaming']}, {len(ready['voices'])} voices, languages {ready['languages']}, "
-      f"backend {ready.get('backend')}")
+      f"backend {ready['backend']}, speech.cpp {ready['version']}")
 
 t1 = time.perf_counter()
 send({"id": "a", "text": "明日の東京は晴れで、最高気温は二十四度の予報です。", "voice": voice, "speed": 1.0})
@@ -75,6 +79,9 @@ print(f"d: error as expected: {m['error']}")
 
 proc.stdin.close()
 proc.wait(timeout=30)
+rest = proc.stdout.read()
+if rest:
+    raise SystemExit(f"the worker wrote after its last answer: {rest[:200]!r}")
 with wave.open(out_wav, "wb") as w:
     w.setnchannels(1)
     w.setsampwidth(2)
