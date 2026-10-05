@@ -99,9 +99,10 @@ answers `--speed`, `--seconds` and `--duration-scale` with an error.
 audio and to its end, and the real-time factor, with the sums when stdin gave several lines. Nothing else is
 written unless `-v` asks for it. With `-o -`, stdout carries the WAVE and nothing else, as the worker's
 stdout carries its protocol alone. The audio is written as it is made, so a player reading the pipe starts
-before the rest is made; a pipe cannot seek back to the header, so its RIFF and data sizes stay `0xFFFFFFFF`
-there, as ffmpeg writes them to a pipe, and players and ffmpeg read to the end of the stream. Into a file,
-`> out.wav` included, the sizes are set once the audio is complete.
+before the rest is made. Into a regular file, `> out.wav` included, the RIFF and data sizes are set once the
+audio is complete. Anywhere else, a pipe or a file appended to with `>>`, the header cannot be written again
+in place, so the sizes stay `0xFFFFFFFF`, as ffmpeg writes them to a pipe, and players and ffmpeg read to the
+end of the stream.
 
 A run that fails exits with 1 (2 for a command line it cannot run) and a message that names what failed,
 and removes the WAVE file it was writing, so a file it leaves is always complete. Text on stdin is UTF-8;

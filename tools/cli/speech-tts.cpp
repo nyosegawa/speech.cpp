@@ -4,8 +4,9 @@
 // one WAVE in order; the seed rises by one from each line to the next, as in the worker.
 //
 // The WAVE is 16-bit mono PCM at the model's rate, written as the audio is made, so that a player reading
-// stdout starts before the rest is made. Where the output cannot seek (a pipe), its RIFF and data sizes stay
-// 0xFFFFFFFF, as ffmpeg writes them to a pipe; elsewhere they are set once the audio is complete.
+// stdout starts before the rest is made. In a regular file that the WAVE starts at the beginning of, its RIFF
+// and data sizes are set once the audio is complete; anywhere else (a pipe, a console, a file appended to)
+// they stay 0xFFFFFFFF, as ffmpeg writes them to a pipe.
 //
 // usage: speech-tts <model.gguf> <codec.gguf> -o <out.wav|-> [options] [text]
 //          --device NAME|gpu|cpu   --seed n   --voice-name NAME   --language TAG
@@ -33,8 +34,14 @@
 #include <vector>
 
 #ifdef _WIN32
+#define NOMINMAX
 #include <fcntl.h>
 #include <io.h>
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 #include "args.h"
@@ -169,11 +176,30 @@ Options parse_options(const std::vector<std::string> & a, size_t first) {
     return o;
 }
 
+/**
+ * Whether a write at the stream's offset 0 lands at the start of what it holds: a regular file not opened for
+ * appending. Whether fseek() succeeds cannot tell: on a pipe on Windows, MSVC's fseek() returns 0 with an
+ * undefined result, and a header written after it lands at the end of the stream.
+ */
+bool rewritable(FILE * file) {
+#ifdef _WIN32
+    const HANDLE handle = (HANDLE) _get_osfhandle(_fileno(file));
+    return handle != INVALID_HANDLE_VALUE && GetFileType(handle) == FILE_TYPE_DISK;
+#else
+    struct stat st;
+    const int fd = fileno(file);
+    const int flags = fcntl(fd, F_GETFL);
+    return fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && flags >= 0 && !(flags & O_APPEND);
+#endif
+}
+
 /** Writes 16-bit mono PCM as a WAVE stream, converting the samples as the worker does. */
 class WavWriter {
 public:
     WavWriter(FILE * file, int sample_rate) : file_(file), sample_rate_(sample_rate) {
-        seekable_ = std::fseek(file_, 0, SEEK_CUR) == 0;
+        // A WAVE that starts past the file's beginning, after `>>` onto a file with content, has its header
+        // elsewhere than offset 0.
+        rewritable_ = rewritable(file_) && std::ftell(file_) == 0;
         header(UINT32_MAX, UINT32_MAX);
     }
 
@@ -185,11 +211,13 @@ public:
         bytes_ += n * sizeof(int16_t);
     }
 
-    /** Sets the sizes where the stream can seek back to them, and flushes. */
+    /** Sets the sizes where the header can be written again in place, and flushes. */
     void finish() {
         if (bytes_ > UINT32_MAX - 36) throw std::runtime_error("the audio is longer than a WAVE file can hold; speak less text at a time");
-        if (seekable_) {
-            if (std::fseek(file_, 0, SEEK_SET) != 0) throw std::runtime_error("cannot seek back to the WAVE header");
+        if (rewritable_) {
+            if (std::fseek(file_, 0, SEEK_SET) != 0 || std::ftell(file_) != 0) {
+                throw std::runtime_error("cannot seek back to the WAVE header to set its sizes");
+            }
             header((uint32_t) bytes_ + 36, (uint32_t) bytes_);
         }
         if (std::fflush(file_) != 0) throw std::runtime_error("cannot write the WAVE file");
@@ -224,7 +252,7 @@ private:
 
     FILE * file_;
     int sample_rate_;
-    bool seekable_ = false;
+    bool rewritable_ = false;
     uint64_t bytes_ = 0;
     std::vector<int16_t> pcm_;
 };
