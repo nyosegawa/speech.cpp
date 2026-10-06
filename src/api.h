@@ -38,7 +38,7 @@ const Family & family_of(const std::string & path);
 struct FileInfo {
     const Family * family = nullptr;
     std::shared_ptr<const ModelFile> file;
-    std::string name;
+    ModelIdentity identity;
     int sample_rate = 0;
     std::vector<std::string> languages;
     FamilyInfo described;

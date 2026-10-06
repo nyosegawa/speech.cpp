@@ -6,11 +6,18 @@ OpenAI's audio API over HTTP and run the worker process that [ASIST](https://git
 targets Metal, Vulkan and CUDA; it is checked on Metal, on Vulkan (NVIDIA) and on the CPU. Every stage of a port is
 checked against the official implementation.
 
-| Family | Model | Task | Converted weights |
-|---|---|---|---|
-| Qwen3-TTS | Qwen3-TTS 12Hz 0.6B and 1.7B CustomVoice | speech synthesis with the named speakers, streamed frame by frame | [sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF), [sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF) |
-| Irodori-TTS | Irodori-TTS v4.1-Small-MF and v4.1-Small | Japanese speech synthesis in the voice of a reference recording, a sentence at a time, streamed as the codec decodes it | [sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF), [sakasegawa/Irodori-TTS-v4.1-Small-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) |
-| FastConformer | NVIDIA's parakeet-tdt_ctc-0.6b-ja and parakeet-tdt-0.6b-v3, reazon-research's reazonspeech-nemo-v2 | speech recognition with the decoder NeMo uses for each, a recording at a time: Japanese, 25 European languages the model tells apart itself, and Japanese recordings of many minutes | [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF), [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF), [sakasegawa/reazonspeech-nemo-v2-GGUF](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) |
+| Organization | Model line | Models | Family | Task | Converted weights |
+|---|---|---|---|---|---|
+| Qwen | Qwen3-TTS-12Hz | 0.6B and 1.7B CustomVoice | `qwen3-tts` | speech synthesis with the named speakers, streamed frame by frame | [sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF), [sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF) |
+| Aratako | Irodori-TTS | v4.1-Small-MF and v4.1-Small | `irodori-tts` | Japanese speech synthesis in the voice of a reference recording, a sentence at a time, streamed as the codec decodes it | [sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF), [sakasegawa/Irodori-TTS-v4.1-Small-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) |
+| nvidia | parakeet-tdt_ctc | 0.6b-ja | `fastconformer` | Japanese speech recognition with its TDT decoder, a recording at a time | [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) |
+| nvidia | parakeet-tdt | 0.6b-v3 | `fastconformer` | speech recognition of 25 European languages, which the model tells apart itself, with its TDT decoder | [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) |
+| reazon-research | reazonspeech-nemo | v2 | `fastconformer` | Japanese speech recognition of recordings of many minutes, with its RNN-T decoder's beam search | [sakasegawa/reazonspeech-nemo-v2-GGUF](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) |
+
+The organization and the model line are the model file's `general.organization` and `general.basename`. The family
+is its `general.architecture`, which the model information calls `architecture`: the code that runs the file, which
+several model lines can share, as `fastconformer` runs both parakeet lines and ReazonSpeech. Each family's section below
+says what it implements.
 
 ## Binaries
 
@@ -101,25 +108,25 @@ the C API alone (docs/adr/0017):
 
 ```sh
 # One sentence to a file, with a Qwen3-TTS speaker
-speech tts qwen3-tts-0.6b-customvoice-q8_0.gguf --voice ono_anna --seed 42 -o out.wav "明日の東京は晴れです。"
+speech tts Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf --voice ono_anna --seed 42 -o out.wav "明日の東京は晴れです。"
 
 # A text file, one sentence per line, into one WAVE file, in the voice of a reference recording
-speech tts irodori-tts-v4.1-small-mf-f16.gguf --add-voice bright=bright-young-woman-10s.voice.gguf --voice bright \
+speech tts Irodori-TTS-848M-MF-v4.1-F16.gguf --add-voice bright=bright-young-woman-10s.voice.gguf --voice bright \
     -o story.wav < story.txt
 
 # Straight into a player, which starts as the first audio arrives
-echo "こんにちは。" | speech tts irodori-tts-v4.1-small-mf-f16.gguf \
+echo "こんにちは。" | speech tts Irodori-TTS-848M-MF-v4.1-F16.gguf \
     --add-voice bright=bright-young-woman-10s.voice.gguf --voice bright -o - | ffplay -nodisp -autoexit -
 
 # An Irodori-TTS voice file from a reference recording (Irodori-TTS voices, below)
-speech voice irodori-tts-v4.1-small-mf-f16.gguf bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf
+speech voice Irodori-TTS-848M-MF-v4.1-F16.gguf bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf
 
 # The text of recordings, and their segments with their times as JSON Lines
-speech asr parakeet-tdt_ctc-0.6b-ja-f16.gguf meeting.wav
-speech asr parakeet-tdt_ctc-0.6b-ja-f16.gguf --timestamps --format json one.wav two.wav > texts.jsonl
+speech asr parakeet-tdt_ctc-0.6B-ja-F16.gguf meeting.wav
+speech asr parakeet-tdt_ctc-0.6B-ja-F16.gguf --timestamps --format json one.wav two.wav > texts.jsonl
 
 # What a model file holds, without loading it
-speech info irodori-tts-v4.1-small-mf-f16.gguf
+speech info Irodori-TTS-848M-MF-v4.1-F16.gguf
 ```
 
 A model is one GGUF file, its codec included (GGUF files, below).
@@ -208,11 +215,13 @@ voices, below). `--device` defaults to `cpu` here, the one device whose latent i
 speech info MODEL [--json] [--meta]
 ```
 
-Prints the model's information without loading it: its name, architecture and layout, task and rate, languages,
-voices, each option with its type, default, range or choices and whether it steers, the longest text and the sizes.
-`--json` prints the model information as JSON instead (Model information as JSON, below), the object that the worker's
-`ready` and the server's `/v1/models` carry. `--meta` adds every metadata entry of the GGUF file: as `key = value` in
-text, an array of more than eight items shortened with its length given, and whole as a `meta` object in JSON.
+Prints the model's information without loading it: its name and the rest of its identity (organization, model line,
+size label, finetune and version, license, source and weight type), its architecture and layout, task and rate,
+languages, voices, each option with its type, default, range or choices and whether it steers, the longest text and the
+sizes. `--json` prints the model information as JSON instead (Model information as JSON, below), the object that the
+worker's `ready` and the server's `/v1/models` carry. `--meta` adds every metadata entry of the GGUF file: as
+`key = value` in text, an array of more than eight items shortened with its length given, and whole as a `meta` object
+in JSON.
 
 ### `speech devices`
 
@@ -294,7 +303,7 @@ static int check(speech_status status) {
 
 speech_model * model = NULL;
 speech_request * request = NULL;
-if (check(speech_model_load("irodori-tts-v4.1-small-mf-f16.gguf", NULL, &model)) &&
+if (check(speech_model_load("Irodori-TTS-848M-MF-v4.1-F16.gguf", NULL, &model)) &&
     check(speech_voice_add(model, "bright", "bright-young-woman-10s.voice.gguf")) &&
     check(speech_request_new(model, &request)) &&
     check(speech_request_set_text(request, "明日の東京は晴れです。")) &&
@@ -314,7 +323,7 @@ and of one that recognizes the speech in mono samples at any rate, with the time
 ```c
 speech_model * model = NULL;
 speech_request * request = NULL;
-if (check(speech_model_load("parakeet-tdt_ctc-0.6b-ja-f16.gguf", NULL, &model)) &&
+if (check(speech_model_load("parakeet-tdt_ctc-0.6B-ja-F16.gguf", NULL, &model)) &&
     check(speech_request_new(model, &request)) &&
     check(speech_request_set_audio(request, samples, n_samples, 48000)) &&
     check(speech_request_set_bool(request, SPEECH_OPT_TIMESTAMPS, 1)) &&
@@ -341,9 +350,12 @@ speech_model_free(model);
   compiles its kernels before the first request (off by default; `speech worker` and `speech serve` turn it on). A device asked for by `gpu` or by name that is not there or does not start is an error, and no other
   device takes its place.
 - **Model information.** `speech_model_info_open()` reads what a model file says of its model from its metadata,
-  without its weights and without a device: its name, architecture and layout, task and sample rate, languages,
-  voices, whether it takes voice files and the codec they must carry, the longest text, the options it takes with
-  their types, defaults, ranges and choices (Options, below), its sizes, and every metadata entry as JSON.
+  without its weights and without a device: its name and the rest of its identity, from the GGUF specification's
+  general keys (`speech_model_info_organization()`, `_basename()`, `_size_label()`, `_finetune()`, `_version()`,
+  `_license()`, `_source()` and `_weight_type()`; GGUF files, below), its architecture and layout, task and sample
+  rate, languages, voices, whether it takes voice files and the codec they must carry, the longest text, the options
+  it takes with their types, defaults, ranges and choices (Options, below), its sizes, and every metadata entry as
+  JSON.
   `speech_model_get_info()` gives the same of a loaded model as it is at the call, with the device it runs on, the
   threads in effect and the voices added since. `speech_model_info_text_tokens()` counts a text's tokens as a
   synthesis counts them against the longest text, so that a caller can split a long text before it sends it, and
@@ -424,7 +436,7 @@ nothing else.
 | Option | Type | Neutral | Qwen3-TTS | Irodori-TTS | FastConformer |
 |---|---|---|---|---|---|
 | `voice` | string | none | required; one of the speakers (`speech.voices`); steers | required; one of the voices added since loading; steers | not taken |
-| `language` | string | `auto` | default `auto`; one of `speech.languages`; steers | default `auto`; one of `speech.languages` (`ja`); checked | default `auto`; one of `speech.languages`; checked |
+| `language` | string | `auto` | default `auto`; one of `general.languages`; steers | default `auto`; one of `general.languages` (`ja`); checked | default `auto`; one of `general.languages`; checked |
 | `seed` | int | none | 0 to 2^53 - 1; drawn when not set | 0 to 2^53 - 1; drawn when not set | not taken |
 | `speed` | float | 1 | not taken | 0.25 to 4 (`irodori-tts.length.min_speed`, `max_speed`), default 1 | not taken |
 | `seconds` | float | none | not taken | 0.5 to 30 (`irodori-tts.length.min_seconds`, `max_seconds`), no default | not taken |
@@ -464,6 +476,13 @@ server's model object as `speech`, so every program that shows a model shows the
 ```json
 {
   "name": "Qwen3-TTS-12Hz-0.6B-CustomVoice",
+  "organization": "Qwen",
+  "basename": "Qwen3-TTS-12Hz",
+  "size_label": "0.6B",
+  "finetune": "CustomVoice",
+  "license": "Apache-2.0",
+  "source": {"repository": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice", "revision": "85e237c12c027371202489a0ec509ded67b5e4b5"},
+  "weight_type": "Q8_0",
   "architecture": "qwen3-tts",
   "layout": 1,
   "task": "synthesis",
@@ -482,13 +501,19 @@ server's model object as `speech`, so every program that shows a model shows the
     {"name": "seed", "type": "int", "required": false, "steers": true, "minimum": 0, "maximum": 9007199254740991},
     {"name": "max_seconds", "type": "float", "required": false, "steers": true, "exclusive_minimum": 0, "maximum": 655.36}
   ],
-  "file_bytes": 1213534080,
+  "file_bytes": 1213534464,
   "weight_bytes": 1208175044,
   "device": "MTL0",
   "threads": 0
 }
 ```
 
+- `organization`, `basename`, `size_label`, `finetune`, `version`, `license`, `source` and `weight_type` are the
+  model's identity, from the GGUF specification's general keys of its file (GGUF files, below). `finetune` and
+  `version` are left out for a model whose name has none; `source` is the repository the file was converted from and
+  the revision converted; `weight_type` is the type that holds most of the weights, `F32`, `F16` or `Q8_0`.
+- `architecture` is the family: the code that runs the file, which several model lines share, as `fastconformer` runs
+  parakeet and ReazonSpeech. `layout` is the version of the family's layout that the file has.
 - `incremental` is true for a model that passes audio while it is still generating the rest (Qwen3-TTS), so that its
   first audio does not wait on the length of the text, and false for one that makes a request's whole speech before
   it decodes it (Irodori-TTS).
@@ -502,7 +527,7 @@ server's model object as `speech`, so every program that shows a model shows the
 - `device` and `threads` are there for a loaded model alone. `threads` is the number of CPU threads in effect: the
   number the load parameters set, or the library's default, for a model on the CPU, and 0 for a model on a GPU.
   Setting threads is never an error, since with the device `auto` a caller cannot know where the model will run.
-- The example is `qwen3-tts-0.6b-customvoice-q8_0.gguf` loaded on Metal, with two of its nine voices shown.
+- The example is `Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf` loaded on Metal, with two of its nine voices shown.
 
 ## The worker protocol 2
 
@@ -519,10 +544,10 @@ speech worker MODEL [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--
 ```
 
 ```sh
-speech worker qwen3-tts-0.6b-customvoice-q8_0.gguf
-speech worker irodori-tts-v4.1-small-mf-f16.gguf \
+speech worker Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf
+speech worker Irodori-TTS-848M-MF-v4.1-F16.gguf \
     --add-voice bright=bright-young-woman-10s.voice.gguf --add-voice calm=calm-reference.wav
-speech worker parakeet-tdt_ctc-0.6b-ja-f16.gguf
+speech worker parakeet-tdt_ctc-0.6B-ja-F16.gguf
 ```
 
 ### Lines
@@ -679,7 +704,7 @@ Irodori-TTS has no voices of its own; it speaks in the voice of a reference. A v
   refused; make them again from their WAVE files.
 
 ```sh
-speech voice irodori-tts-v4.1-small-mf-f16.gguf bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf
+speech voice Irodori-TTS-848M-MF-v4.1-F16.gguf bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf
 ```
 
 For the 10.7 s reference bright-young-woman-10s.wav, the voice file is 35 KB against the WAVE file's 1 MB,
@@ -700,10 +725,10 @@ speech serve MODEL [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]... 
 ```
 
 ```sh
-speech serve qwen3-tts-0.6b-customvoice-q8_0.gguf
-speech serve irodori-tts-v4.1-small-mf-f16.gguf \
+speech serve Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf
+speech serve Irodori-TTS-848M-MF-v4.1-F16.gguf \
     --add-voice bright=bright-young-woman-10s.voice.gguf --port 8080 --cors-origin http://localhost:5173
-speech serve parakeet-tdt_ctc-0.6b-ja-f16.gguf
+speech serve parakeet-tdt_ctc-0.6B-ja-F16.gguf
 ```
 
 | Option | Meaning |
@@ -845,11 +870,32 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav -F respo
 
 ## Files on Hugging Face
 
-Each Hugging Face repository of converted weights (one per upstream model, named after it with `-GGUF`) holds, beside
-each GGUF file, a file of the same name with `.json` added: the output of `speech info --json` for it, made at release.
-A program can show a model's voices, languages, options and sizes, and choose which file to download, without
-downloading the model file; once it loads the model, the worker's `ready` carries the same object with the device, the
-threads and the voices added, and a program that pinned the JSON compares the two.
+A converted file is named under GGUF's naming convention (ggml's `docs/gguf.md`) from its general keys (GGUF files,
+below): `<basename>-<size label>-<finetune>-<version>-<type>.gguf` without the parts the model has none of, as gguf-py's
+`naming_convention()` writes it. Where the model's name gives no size, the size label is the parameters of the file's
+tensors, counted and rounded as gguf-py counts them. Each Hugging Face repository of converted weights, one per upstream
+repository and named after it with `-GGUF`, holds the file of the type released, its codec inside it; the converter
+writes the other types as well:
+
+| Upstream repository | Converted repository | Released file | Other types the converter writes |
+|---|---|---|---|
+| [Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice) | [sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF) | `Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf` | `Qwen3-TTS-12Hz-0.6B-CustomVoice-F16.gguf`, `Qwen3-TTS-12Hz-0.6B-CustomVoice-F32.gguf` |
+| [Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice) | [sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF) | `Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf` | `Qwen3-TTS-12Hz-1.7B-CustomVoice-F16.gguf`, `Qwen3-TTS-12Hz-1.7B-CustomVoice-F32.gguf` |
+| [Aratako/Irodori-TTS-v4.1-Small-MF](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small-MF) | [sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF) | `Irodori-TTS-848M-MF-v4.1-F16.gguf` | `Irodori-TTS-848M-MF-v4.1-Q8_0.gguf`, `Irodori-TTS-848M-MF-v4.1-F32.gguf` |
+| [Aratako/Irodori-TTS-v4.1-Small](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small) | [sakasegawa/Irodori-TTS-v4.1-Small-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) | `Irodori-TTS-841M-v4.1-F16.gguf` | `Irodori-TTS-841M-v4.1-Q8_0.gguf`, `Irodori-TTS-841M-v4.1-F32.gguf` |
+| [nvidia/parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) | [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | `parakeet-tdt_ctc-0.6B-ja-F16.gguf` | `parakeet-tdt_ctc-0.6B-ja-F32.gguf` |
+| [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) | `parakeet-tdt-0.6B-v3-F16.gguf` | `parakeet-tdt-0.6B-v3-F32.gguf` |
+| [reazon-research/reazonspeech-nemo-v2](https://huggingface.co/reazon-research/reazonspeech-nemo-v2) | [sakasegawa/reazonspeech-nemo-v2-GGUF](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) | `reazonspeech-nemo-619M-v2-F16.gguf` | `reazonspeech-nemo-619M-v2-F32.gguf` |
+
+Irodori-TTS's names give Small, a word, where the convention's size label is a number, so their size label is counted:
+848M for v4.1-Small-MF, whose DiT has MeanFlow's 7.2M parameters more, and 841M for v4.1-Small, each with its codec.
+reazonspeech-nemo-v2's name gives no size, and its label is 619M.
+
+Beside each GGUF file, a repository holds a file of the same name with `.json` added: the output of
+`speech info --json` for it, made at release. A program can show a model's identity, voices, languages, options and
+sizes, and choose which file to download, without downloading the model file; once it loads the model, the worker's
+`ready` carries the same object with the device, the threads and the voices added, and a program that pinned the JSON
+compares the two.
 
 ## Qwen3-TTS
 
@@ -875,16 +921,16 @@ more than 24565 tokens, what the talker's 32768 positions leave beside the longe
 
 A synthesis needs one file per model, the codec inside it:
 [sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF)
-holds `qwen3-tts-0.6b-customvoice-q8_0.gguf` and
+holds `Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf` and
 [sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF)
-`qwen3-tts-1.7b-customvoice-q8_0.gguf`. The repositories get these files with the release of 0.7.0; until then
+`Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf`. The repositories get these files with the release of 0.7.0; until then
 they hold the talker and the separate codec of earlier releases, which this one refuses. To convert them yourself
 from the official checkpoints, which `reference/qwen3-tts/pins.py` pins by revision:
 
 ```sh
 cd reference/qwen3-tts
-uv run python convert.py 0.6b ../../models --type q8_0    # qwen3-tts-0.6b-customvoice-q8_0.gguf, 1.2 GB
-uv run python convert.py 1.7b ../../models --type q8_0    # qwen3-tts-1.7b-customvoice-q8_0.gguf, 2.3 GB
+uv run python convert.py 0.6b ../../models --type q8_0    # Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf, 1.2 GB
+uv run python convert.py 1.7b ../../models --type q8_0    # Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf, 2.3 GB
 ```
 
 `--type` also takes `f16` and `f32`, whose files are 4.1 GB for 0.6B and 8.1 GB for 1.7B. The codec's large weights
@@ -953,17 +999,17 @@ at another rate, above).
 
 A synthesis needs one file per model, the codec inside it:
 [sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF)
-holds `irodori-tts-v4.1-small-mf-f16.gguf` and
+holds `Irodori-TTS-848M-MF-v4.1-F16.gguf` and
 [sakasegawa/Irodori-TTS-v4.1-Small-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF)
-`irodori-tts-v4.1-small-f16.gguf`, and their cards list the SHA-256. The repositories get these files with the
+`Irodori-TTS-841M-v4.1-F16.gguf`, and their cards list the SHA-256. The repositories get these files with the
 release of 0.7.0; until then they hold the model and the separate codec of earlier releases, which this one refuses.
 To convert them yourself from the official checkpoints and codec, which `reference/irodori-tts/pins.py` pins by
 revision:
 
 ```sh
 cd reference/irodori-tts
-uv run python convert.py mf ../../models --type f16       # irodori-tts-v4.1-small-mf-f16.gguf, 1.9 GB
-uv run python convert.py rf ../../models --type f16       # irodori-tts-v4.1-small-f16.gguf, 1.9 GB
+uv run python convert.py mf ../../models --type f16       # Irodori-TTS-848M-MF-v4.1-F16.gguf, 1.9 GB
+uv run python convert.py rf ../../models --type f16       # Irodori-TTS-841M-v4.1-F16.gguf, 1.9 GB
 ```
 
 `--type` also takes `f32` (3.4 GB) and `q8_0` (1.2 GB). The codec stays float32 in every type, as the released
@@ -973,7 +1019,7 @@ F16, and 3.81% in Q8_0, which garbled one phrase.
 ### Use
 
 ```sh
-build/speech tts irodori-tts-v4.1-small-mf-f16.gguf --add-voice bright=bright-young-woman-10s.voice.gguf --voice bright \
+build/speech tts Irodori-TTS-848M-MF-v4.1-F16.gguf --add-voice bright=bright-young-woman-10s.voice.gguf --voice bright \
     -o out.wav "明日の東京は晴れです。" [--device NAME] [--seed N] [--steps N] [--seconds S | --duration-scale X] [--speed X]
 ```
 
@@ -1099,11 +1145,11 @@ worker, the server and the command line in [ADR 0011](docs/adr/0011-speech-recog
 
 ### Models
 
-Recognition needs one file per model: `parakeet-tdt_ctc-0.6b-ja-f16.gguf` from
+Recognition needs one file per model: `parakeet-tdt_ctc-0.6B-ja-F16.gguf` from
 [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF),
-`parakeet-tdt-0.6b-v3-f16.gguf` from
+`parakeet-tdt-0.6B-v3-F16.gguf` from
 [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) or
-`reazonspeech-nemo-v2-f16.gguf` from
+`reazonspeech-nemo-619M-v2-F16.gguf` from
 [sakasegawa/reazonspeech-nemo-v2-GGUF](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF), whose cards
 list their SHA-256. The repositories get these files in layout 1 with the release of 0.7.0; until then they hold
 the files of earlier releases, which this one refuses. To convert them yourself, `reference/fastconformer/` pins NeMo
@@ -1111,9 +1157,9 @@ the files of earlier releases, which this one refuses. To convert them yourself,
 
 ```sh
 cd reference/fastconformer
-uv run python convert.py parakeet-tdt_ctc-0.6b-ja ../../models --type f16   # parakeet-tdt_ctc-0.6b-ja-f16.gguf, 1.2 GB
-uv run python convert.py parakeet-tdt-0.6b-v3 ../../models --type f16       # parakeet-tdt-0.6b-v3-f16.gguf, 1.3 GB
-uv run python convert.py reazonspeech-nemo-v2 ../../models --type f16       # reazonspeech-nemo-v2-f16.gguf, 1.2 GB
+uv run python convert.py parakeet-tdt_ctc-0.6b-ja ../../models --type f16   # parakeet-tdt_ctc-0.6B-ja-F16.gguf, 1.2 GB
+uv run python convert.py parakeet-tdt-0.6b-v3 ../../models --type f16       # parakeet-tdt-0.6B-v3-F16.gguf, 1.3 GB
+uv run python convert.py reazonspeech-nemo-v2 ../../models --type f16       # reazonspeech-nemo-619M-v2-F16.gguf, 1.2 GB
 ```
 
 `--type f32` writes the same at 2.5 GB. The converter refuses a checkpoint with an option the C++ does not run
@@ -1125,11 +1171,11 @@ are reazon-research's, under the Apache License 2.0.
 ### Use
 
 ```sh
-speech asr parakeet-tdt_ctc-0.6b-ja-f16.gguf utterance.wav     # the text on stdout
-speech asr parakeet-tdt-0.6b-v3-f16.gguf --timestamps utterance.wav
-speech asr reazonspeech-nemo-v2-f16.gguf meeting.wav            # a recording of minutes, whole
-speech worker parakeet-tdt_ctc-0.6b-ja-f16.gguf                 # a recognition worker (The worker protocol 2, above)
-speech serve parakeet-tdt-0.6b-v3-f16.gguf                      # POST /v1/audio/transcriptions
+speech asr parakeet-tdt_ctc-0.6B-ja-F16.gguf utterance.wav        # the text on stdout
+speech asr parakeet-tdt-0.6B-v3-F16.gguf --timestamps utterance.wav
+speech asr reazonspeech-nemo-619M-v2-F16.gguf meeting.wav         # a recording of minutes, whole
+speech worker parakeet-tdt_ctc-0.6B-ja-F16.gguf                    # a recognition worker (The worker protocol 2, above)
+speech serve parakeet-tdt-0.6B-v3-F16.gguf                         # POST /v1/audio/transcriptions
 ```
 
 The models recognize 16 kHz mono audio, to which the library resamples audio at another rate. parakeet-tdt_ctc-0.6b-ja
@@ -1287,22 +1333,35 @@ cannot run with: heads that do not divide their width or are of an odd width, wh
 outside the vocabulary or table it indexes, or a stride the codec does not take. A key whose meaning the tables
 leave empty means what the official configuration's field of the same name means.
 
+The model's identity and languages are in the GGUF specification's own keys (ggml's `docs/gguf.md`, "Standardized
+key-value pairs"), under the names it gives them, and the file is named under its naming convention (Files on Hugging
+Face, above), so that tools that read GGUF metadata show them. The rest is speech.cpp's own, under `speech.` and the
+family's architecture; only speech.cpp runs these files.
+
 ### Keys of every model file
 
 | Key | Type | Meaning | Source |
 |---|---|---|---|
-| `general.architecture` | string | the family: `qwen3-tts`, `irodori-tts` or `fastconformer` | the converter |
+| `general.architecture` | string | the family, the code that runs the file: `qwen3-tts`, `irodori-tts` or `fastconformer` | the converter |
 | `general.name` | string | the model's name | the pinned repository's name (`Qwen3-TTS-12Hz-0.6B-CustomVoice`, `Irodori-TTS-v4.1-Small-MF`, `parakeet-tdt-0.6b-v3`) |
-| `general.license` | string | SPDX identifier | the model card |
-| `general.source.url` | string | `https://huggingface.co/<repository>/tree/<revision>` | the pin |
+| `general.organization` | string | the organization that publishes the model | the pinned repository's namespace (`Qwen`, `Aratako`, `nvidia`, `reazon-research`) |
+| `general.basename` | string | the model line, which the file's name begins with | the repository's name through the converter's table of names (`Qwen3-TTS-12Hz`, `Irodori-TTS`, `parakeet-tdt_ctc`, `parakeet-tdt`, `reazonspeech-nemo`) |
+| `general.size_label` | string | the number of parameters with its scale, B or M | the repository's name (`0.6B`, `1.7B`), or, where it gives none, the parameters of the file's tensors as gguf-py's `size_label()` rounds them (`848M`, `841M`, `619M`) |
+| `general.finetune` | string | what the model was trained toward beyond its line; present where its name gives it | the repository's name (`CustomVoice`, `MF`, `ja`) |
+| `general.version` | string | present where the model's name gives one | the repository's name (`v4.1`, `v3`, `v2`) |
+| `general.license` | string | SPDX expression | the model card |
+| `general.source.repo_url` | string | the repository converted, `https://huggingface.co/<repository>` | the pin |
+| `general.source.url` | string | the revision converted: `<general.source.repo_url>/tree/<revision>`, since the specification has no key of its own for a revision | the pin |
+| `general.file_type` | u32 | the type that holds most of the tensors' bytes, as gguf-py's `LlamaFileType` numbers it: 0 (F32), 1 (F16) or 7 (Q8_0); a file whose tensors say otherwise is refused | the converter's `--type` |
+| `general.quantization_version` | u32 | the version of ggml's quantized blocks (2); present when the file holds a quantized tensor | gguf-py's `GGML_QUANT_VERSION` |
+| `general.languages` | [string] | ISO 639 two-letter codes, sorted, which requests and the model information give as BCP 47 tags | Qwen3-TTS: the names of `codec_language_id` through the converter's table of codes, dialects left out; the others: the model card |
 | `speech.layout` | u32 | 1, the version of the family's layout | the converter |
 | `speech.requires` | string | `0.7.0`, the first release whose reader takes this layout | the converter's table of layouts |
 | `speech.task` | string | `synthesis` or `recognition`; must be the family's | the converter |
 | `speech.sample_rate` | u32 | the rate of the audio made or recognized | Qwen3-TTS: `speech_tokenizer/config.json` `output_sample_rate`; Irodori-TTS: the DACVAE's `sample_rate`; FastConformer: the featurizer's `sample_rate` |
-| `speech.languages` | [string] | BCP 47 tags, sorted | Qwen3-TTS: the names of `codec_language_id` through the converter's tag table, dialects left out; the others: the model card |
 | `speech.language_use` | string | `steers` or `checked`; must be what the family does | `steers` for qwen3-tts, `checked` for the others |
 | `speech.voices` | [string] | the built-in voices' names; present for qwen3-tts alone | `talker_config.spk_id`'s names, sorted |
-| `speech.voice_languages` | [string] | each voice's language, aligned with `speech.voices` | the model card's "Native Language" column through the tag table (Dylan's and Eric's dialects are `zh`) |
+| `speech.voice_languages` | [string] | each voice's language, aligned with `speech.voices` | the model card's "Native Language" column through the table of codes (Dylan's and Eric's dialects are `zh`) |
 | `speech.voice_genders` | [string] | `female` or `male`, aligned | the model card's "Voice Description" column |
 | `speech.voice_descriptions` | [string] | the description, aligned | the model card's "Voice Description" column |
 
@@ -1325,10 +1384,10 @@ From the checkpoint's `config.json` (`talker_config`, its `code_predictor_config
 | `qwen3-tts.code_predictor.rms_norm_eps`, `rope_theta` | f32 | | `code_predictor_config` |
 | `qwen3-tts.text.tts_bos_token_id`, `tts_eos_token_id`, `tts_pad_token_id`, `im_start_token_id`, `im_end_token_id`, `assistant_token_id` | u32 | | `config.json` |
 | `qwen3-tts.text.newline_token_id` | u32 | the token of "\n" in the chat template (198) | `vocab.json`'s id of `Ċ`, the byte-level form of "\n" |
-| `qwen3-tts.language_ids` | [i32] | the codec id of each of `speech.languages`, aligned | `talker_config.codec_language_id` |
+| `qwen3-tts.language_ids` | [i32] | the codec id of each of `general.languages`, aligned | `talker_config.codec_language_id` |
 | `qwen3-tts.speaker_ids` | [i32] | the codec id of each of `speech.voices`, aligned | `talker_config.spk_id` |
 | `qwen3-tts.dialect_ids` | [i32] | the codec id of the dialect each voice speaks, or −1, aligned | `talker_config.spk_is_dialect` through `codec_language_id` |
-| `qwen3-tts.dialect_language` | string | the language in which, as with `auto`, a voice with a dialect speaks it (`zh`) | the official prompt's `language.lower() in ["chinese", "auto"]` through the tag table |
+| `qwen3-tts.dialect_language` | string | the language in which, as with `auto`, a voice with a dialect speaks it (`zh`) | the official prompt's `language.lower() in ["chinese", "auto"]` through the table of codes |
 | `qwen3-tts.generation.min_frames` | u32 | frames before the end of speech may be sampled (2) | the official `generate()`'s `min_new_tokens` |
 | `qwen3-tts.generation.max_frames` | u32 | the model's limit in frames (8192) | `generation_config.json` `max_new_tokens` |
 | `qwen3-tts.generation.talker.do_sample` | bool | | `generation_config.json` `do_sample` |

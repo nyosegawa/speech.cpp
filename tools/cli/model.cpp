@@ -98,6 +98,17 @@ void print_info(const speech_model_info * m, bool meta, FILE * out) {
     const auto row = [&](const std::string & label, const std::string & value) {
         text += label + std::string(label.size() < 15 ? 15 - label.size() : 1, ' ') + value + "\n";
     };
+    const char * finetune = speech_model_info_finetune(m), * version = speech_model_info_version(m);
+    const char * repository = nullptr, * revision = nullptr;
+    check(speech_model_info_source(m, &repository, &revision));
+    row("organization", speech_model_info_organization(m));
+    row("basename", speech_model_info_basename(m));
+    row("size label", speech_model_info_size_label(m));
+    if (finetune) row("finetune", finetune);
+    if (version) row("version", version);
+    row("license", speech_model_info_license(m));
+    row("source", std::string(repository) + " at " + revision);
+    row("weight type", speech_model_info_weight_type(m));
     row("architecture", std::string(speech_model_info_architecture(m)) + ", layout " + std::to_string(speech_model_info_layout(m)));
     row("task", std::string(task_name(speech_model_info_task(m))) + " at " + std::to_string(speech_model_info_sample_rate(m)) + " Hz" +
                     (synthesis ? speech_model_info_incremental(m) ? ", passing audio while it makes the rest" : ", making the whole speech before its audio" : ""));
@@ -205,8 +216,9 @@ Command info_command() {
     c.summary = "print a model file's information without loading it";
     c.description =
         "Prints what the model file says of its model, read from its metadata without its weights or a device: its name,\n"
-        "architecture and layout, task and rate, languages, voices, each option with its type, default, range or choices,\n"
-        "the longest text and the sizes.";
+        "organization, basename, size label, finetune and version, license, source and weight type, its architecture\n"
+        "(the family that runs it) and layout, task and rate, languages, voices, each option with its type, default,\n"
+        "range or choices, the longest text and the sizes.";
     c.flags = {
         {"--json", "", false, "print the model information as the JSON object that the worker's ready message carries"},
         {"--meta", "", false, "add every metadata entry of the GGUF file, whole as a \"meta\" object in JSON"},

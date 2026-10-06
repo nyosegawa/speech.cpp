@@ -57,9 +57,15 @@ std::string info_json(const speech_model_info & info) {
     const FileInfo & f = *info.file;
     const FamilyInfo & d = f.described;
     const bool synthesis = f.family->task == SPEECH_TASK_SYNTHESIS;
-    std::string out = "{\"name\":" + json_string(f.name) + ",\"architecture\":" + json_string(f.family->layout.architecture) +
-                      ",\"layout\":" + std::to_string(f.file->layout_version()) + ",\"task\":\"" + task_name(f.family->task) +
-                      "\",\"sample_rate\":" + std::to_string(f.sample_rate);
+    const ModelIdentity & id = f.identity;
+    std::string out = "{\"name\":" + json_string(id.name) + ",\"organization\":" + json_string(id.organization) +
+                      ",\"basename\":" + json_string(id.basename) + ",\"size_label\":" + json_string(id.size_label);
+    if (id.finetune) out += ",\"finetune\":" + json_string(*id.finetune);
+    if (id.version) out += ",\"version\":" + json_string(*id.version);
+    out += ",\"license\":" + json_string(id.license) + ",\"source\":{\"repository\":" + json_string(id.repository) +
+           ",\"revision\":" + json_string(id.revision) + "},\"weight_type\":" + json_string(id.weight_type) +
+           ",\"architecture\":" + json_string(f.family->layout.architecture) + ",\"layout\":" + std::to_string(f.file->layout_version()) +
+           ",\"task\":\"" + task_name(f.family->task) + "\",\"sample_rate\":" + std::to_string(f.sample_rate);
     if (synthesis) out += std::string(",\"incremental\":") + (d.incremental ? "true" : "false");
     out += ",\"languages\":" + string_array(f.languages.size(), [&](size_t i) { return f.languages[i]; });
     if (synthesis) {
@@ -100,7 +106,7 @@ const OptionSpec & taken(const speech_model_info * info, speech_option option, s
     const OptionSpec * s = info->file->spec(option);
     const char * name = speech_option_name(option);
     if (!s) {
-        throw ApiError(SPEECH_ERROR_UNSUPPORTED, info->file->name + " does not take the option " + (name ? name : std::to_string(option)), name);
+        throw ApiError(SPEECH_ERROR_UNSUPPORTED, info->file->identity.name + " does not take the option " + (name ? name : std::to_string(option)), name);
     }
     if (speech_option_type(option) != type) {
         throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, std::string("the option ") + name + " is of the type " + type_name(speech_option_type(option)) +
@@ -159,7 +165,46 @@ void speech_model_info_free(speech_model_info * info) {
 }
 
 const char * speech_model_info_name(const speech_model_info * info) {
-    return info ? info->file->name.c_str() : nullptr;
+    return info ? info->file->identity.name.c_str() : nullptr;
+}
+
+const char * speech_model_info_organization(const speech_model_info * info) {
+    return info ? info->file->identity.organization.c_str() : nullptr;
+}
+
+const char * speech_model_info_basename(const speech_model_info * info) {
+    return info ? info->file->identity.basename.c_str() : nullptr;
+}
+
+const char * speech_model_info_size_label(const speech_model_info * info) {
+    return info ? info->file->identity.size_label.c_str() : nullptr;
+}
+
+const char * speech_model_info_finetune(const speech_model_info * info) {
+    return info && info->file->identity.finetune ? info->file->identity.finetune->c_str() : nullptr;
+}
+
+const char * speech_model_info_version(const speech_model_info * info) {
+    return info && info->file->identity.version ? info->file->identity.version->c_str() : nullptr;
+}
+
+const char * speech_model_info_license(const speech_model_info * info) {
+    return info ? info->file->identity.license.c_str() : nullptr;
+}
+
+speech_status speech_model_info_source(const speech_model_info * info, const char ** repository, const char ** revision) {
+    return guarded([&] {
+        require(info, "info");
+        require(repository, "repository");
+        require(revision, "revision");
+        *repository = info->file->identity.repository.c_str();
+        *revision = info->file->identity.revision.c_str();
+        return SPEECH_OK;
+    });
+}
+
+const char * speech_model_info_weight_type(const speech_model_info * info) {
+    return info ? info->file->identity.weight_type.c_str() : nullptr;
 }
 
 const char * speech_model_info_architecture(const speech_model_info * info) {
@@ -228,7 +273,7 @@ speech_status speech_model_info_text_tokens(const speech_model_info * info, cons
         require(text, "text", "text");
         require(n_tokens, "n_tokens");
         if (!info->file->described.count_tokens) {
-            throw ApiError(SPEECH_ERROR_UNSUPPORTED, info->file->name + " recognizes speech and has no text to count");
+            throw ApiError(SPEECH_ERROR_UNSUPPORTED, info->file->identity.name + " recognizes speech and has no text to count");
         }
         *n_tokens = info->file->described.count_tokens(text);
         return SPEECH_OK;

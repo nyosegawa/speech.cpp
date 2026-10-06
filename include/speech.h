@@ -314,10 +314,66 @@ SPEECH_API speech_status speech_model_info_open(const char * path, speech_model_
 /** Frees information. NULL is ignored. */
 SPEECH_API void speech_model_info_free(speech_model_info * info);
 
-/** The model's name from its file, such as "Qwen3-TTS-12Hz-0.6B-CustomVoice" or "parakeet-tdt-0.6b-v3". */
+/*
+ * The model's identity, from the GGUF specification's general keys of its file, named in parentheses. The name of a
+ * converted file is made of them under GGUF's naming convention: <basename>-<size label>-<finetune>-<version>-<weight
+ * type>.gguf, without the parts the model has none of.
+ */
+
+/**
+ * The model's name (general.name), the name of the repository it was converted from, such as
+ * "Qwen3-TTS-12Hz-0.6B-CustomVoice" or "parakeet-tdt-0.6b-v3".
+ */
 SPEECH_API const char * speech_model_info_name(const speech_model_info * info);
 
-/** The architecture of the model's family, the file's general.architecture, such as "irodori-tts". */
+/**
+ * The organization that publishes the model (general.organization), the namespace of the repository it was converted
+ * from, such as "Qwen" or "nvidia".
+ */
+SPEECH_API const char * speech_model_info_organization(const speech_model_info * info);
+
+/**
+ * The model's line (general.basename), such as "Qwen3-TTS-12Hz" or "parakeet-tdt". Models of several lines can run in
+ * one family (speech_model_info_architecture()).
+ */
+SPEECH_API const char * speech_model_info_basename(const speech_model_info * info);
+
+/**
+ * The model's size (general.size_label): the one its name gives, such as "0.6B", or, where its name gives none, the
+ * parameters of the file's tensors counted and rounded, such as "619M".
+ */
+SPEECH_API const char * speech_model_info_size_label(const speech_model_info * info);
+
+/**
+ * What the model was trained toward beyond its line (general.finetune), such as "CustomVoice" or "ja", or NULL for a
+ * model that has none.
+ */
+SPEECH_API const char * speech_model_info_finetune(const speech_model_info * info);
+
+/** The model's version as its name gives it (general.version), such as "v3", or NULL for a model whose name has none. */
+SPEECH_API const char * speech_model_info_version(const speech_model_info * info);
+
+/** The license of the model's weights as an SPDX expression (general.license), such as "Apache-2.0". */
+SPEECH_API const char * speech_model_info_license(const speech_model_info * info);
+
+/**
+ * The repository the model file was converted from, as a URL (general.source.repo_url), such as
+ * "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice", and the revision of it that was converted, a commit's
+ * hash (general.source.url, which is "<repository>/tree/<revision>").
+ */
+SPEECH_API speech_status speech_model_info_source(const speech_model_info * info, const char ** repository,
+                                                  const char ** revision);
+
+/**
+ * The type that holds most of the bytes of the model's weights (general.file_type), as ggml names it in capitals:
+ * "F32", "F16" or "Q8_0". The rest, such as the norms and the biases, is in other types.
+ */
+SPEECH_API const char * speech_model_info_weight_type(const speech_model_info * info);
+
+/**
+ * The architecture of the model's family (general.architecture), such as "irodori-tts": the code that runs the file,
+ * which models of several lines share, as "fastconformer" runs parakeet and ReazonSpeech.
+ */
 SPEECH_API const char * speech_model_info_architecture(const speech_model_info * info);
 
 /** The version of the family's file layout that the file has. */
@@ -342,7 +398,10 @@ SPEECH_API int speech_model_info_incremental(const speech_model_info * info);
 /** The number of languages the model speaks or recognizes. */
 SPEECH_API size_t speech_model_info_language_count(const speech_model_info * info);
 
-/** The language at `index` as a BCP 47 tag, such as "ja". */
+/**
+ * The language at `index` as a BCP 47 tag, such as "ja": the file's general.languages, whose ISO 639 two-letter codes
+ * are BCP 47 tags.
+ */
 SPEECH_API const char * speech_model_info_language(const speech_model_info * info, size_t index);
 
 /**

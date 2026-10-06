@@ -78,7 +78,7 @@ std::vector<int32_t> strides(const ModelFile & m, const std::string & key) {
 /** Reads every key of the layout, checks the ones that must agree, and names the tensors they call for. */
 std::vector<TensorSpec> tensors(const ModelFile & m) {
     check_model_keys(m, "synthesis", "steers");
-    const std::vector<std::string> languages = m.str_array("speech.languages");
+    const std::vector<std::string> languages = m.str_array("general.languages");
     const std::vector<std::string> voices = m.str_array("speech.voices");
     const size_t n = voices.size();
     require(n > 0 && std::is_sorted(voices.begin(), voices.end()), m, "speech.voices is empty or not sorted");
@@ -89,7 +89,7 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
             "speech.voice_languages, speech.voice_genders and speech.voice_descriptions do not each have one entry per voice");
     for (size_t i = 0; i < n; i++) {
         require(std::count(languages.begin(), languages.end(), voice_languages[i]) == 1, m,
-                "the voice " + voices[i] + " speaks " + voice_languages[i] + ", which is not one of speech.languages");
+                "the voice " + voices[i] + " speaks " + voice_languages[i] + ", which is not one of general.languages");
         require(genders[i] == "female" || genders[i] == "male", m, "the gender of the voice " + voices[i] + " is neither female nor male");
     }
 
@@ -121,7 +121,7 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
             "qwen3-tts.dialect_ids holds an id that is neither -1 nor in the talker's vocabulary");
     const std::string dialect_language = m.str(p + "dialect_language");
     require(std::count(languages.begin(), languages.end(), dialect_language) == 1, m,
-            "qwen3-tts.dialect_language is " + dialect_language + ", which is not one of speech.languages");
+            "qwen3-tts.dialect_language is " + dialect_language + ", which is not one of general.languages");
     const uint32_t min_frames = m.u32(p + "generation.min_frames");
     const int max_frames = m.size(p + "generation.max_frames");
     require(min_frames <= (uint32_t) max_frames && (int64_t) max_frames + kPromptRows < m.size(p + "talker.max_position_embeddings"), m,

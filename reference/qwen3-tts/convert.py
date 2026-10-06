@@ -2,8 +2,9 @@
 
 usage: uv run python convert.py <0.6b|1.7b> <out dir> [--type f32|f16|q8_0]
 
-Writes qwen3-tts-<size>-customvoice-<type>.gguf in layout 1: the talker, the code predictor, the text embedding, the
-tokenizer and the 12Hz codec's decoder, with every constant the C++ reads. --type applies to the talker's and the code
+Writes Qwen3-TTS-12Hz-<0.6B|1.7B>-CustomVoice-<F32|F16|Q8_0>.gguf, named under GGUF's naming convention, in layout 1:
+the talker, the code predictor, the text embedding, the tokenizer and the 12Hz codec's decoder, with every constant the
+C++ reads and the model's identity in the GGUF specification's general keys. --type applies to the talker's and the code
 predictor's matrices; the codec's large weights are float16 in an F16 or Q8_0 file and float32 in an F32 one, and
 norms, biases and the rest stay float32.
 
@@ -21,7 +22,7 @@ import re
 
 import numpy as np
 import yaml
-from gguf import GGMLQuantizationType, GGUFValueType, GGUFWriter
+from gguf import GGML_QUANT_VERSION, GGMLQuantizationType, GGUFValueType, GGUFWriter, LlamaFileType, naming_convention
 from gguf.quants import quantize
 from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSForConditionalGeneration
 from safetensors import safe_open
@@ -34,12 +35,17 @@ ARCH = "qwen3-tts"
 RELEASES = {1: "0.7.0"}
 LAYOUT = max(RELEASES)
 
-# The BCP 47 tag of each language the checkpoint names. Its dialects have none: a dialect is spoken only by
-# its speakers, when the language is Chinese or left to the model.
+# The ISO 639 two-letter code of each language the checkpoint names, which requests give as a BCP 47 tag. Its dialects
+# have none: a dialect is spoken only by its speakers, when the language is Chinese or left to the model.
 LANGUAGE_TAGS = {"chinese": "zh", "english": "en", "french": "fr", "german": "de", "italian": "it",
                  "japanese": "ja", "korean": "ko", "portuguese": "pt", "russian": "ru", "spanish": "es"}
 # The SPDX identifier of each license a model card names.
 LICENSES = {"apache-2.0": "Apache-2.0"}
+# The parts of the models' names under GGUF's naming convention (ggml's docs/gguf.md) besides the size: 12Hz, the
+# codec's frame rate, belongs to the line, and CustomVoice is what the line was fine-tuned toward.
+BASENAME, FINETUNE = "Qwen3-TTS-12Hz", "CustomVoice"
+# The type of most of a file's weights by its --type, as general.file_type gives it.
+FILE_TYPES = {"f32": LlamaFileType.ALL_F32, "f16": LlamaFileType.MOSTLY_F16, "q8_0": LlamaFileType.MOSTLY_Q8_0}
 
 parser = argparse.ArgumentParser()
 parser.add_argument("model", choices=sorted(MODELS))
@@ -57,7 +63,10 @@ cp_cfg = talker_cfg["code_predictor_config"]
 codec_dir = os.path.join(model_dir, "speech_tokenizer")
 codec_top = json.load(open(os.path.join(codec_dir, "config.json")))
 codec_cfg = codec_top["decoder_config"]
-assert {"0b6": "0.6b", "1b7": "1.7b"}[config["tts_model_size"]] == args.model
+size_label = {"0b6": "0.6B", "1b7": "1.7B"}[config["tts_model_size"]]
+assert size_label.lower() == args.model
+model_name = pin["repository"].split("/")[1]
+assert model_name == f"{BASENAME}-{size_label}-{FINETUNE}", f"{model_name} is not named {BASENAME}, its size and {FINETUNE}"
 assert config["tts_model_type"] == "custom_voice", "only CustomVoice checkpoints are supported"
 assert config["tokenizer_type"] == "qwen3_tts_tokenizer_12hz"
 assert codec_cfg["num_key_value_heads"] == codec_cfg["num_attention_heads"], "the C++ runs a codec with as many key/value heads as heads"
@@ -98,7 +107,7 @@ def load(path):
     return {k: f.get_tensor(k).float().numpy() for k in f.keys()}
 
 
-path = os.path.join(args.out_dir, f"qwen3-tts-{args.model}-customvoice-{args.type}.gguf")
+path = os.path.join(args.out_dir, naming_convention(None, BASENAME, FINETUNE, None, size_label, args.type) + ".gguf")
 w = GGUFWriter(path, ARCH)
 
 
@@ -107,20 +116,29 @@ def add_array(key, values, element):
     w.add_key_value(key, list(values), GGUFValueType.ARRAY, sub_type=element)
 
 
-w.add_name(pin["repository"].split("/")[1])
+languages = talker_cfg["codec_language_id"]
+dialects = {d for d in talker_cfg["spk_is_dialect"].values() if d}
+unknown = [language for language in languages if language not in LANGUAGE_TAGS and language not in dialects]
+assert not unknown, f"no ISO 639 code for the languages {unknown}"
+tags = sorted((LANGUAGE_TAGS[language], language) for language in languages if language in LANGUAGE_TAGS)
+
+repository = f"https://huggingface.co/{pin['repository']}"
+w.add_name(model_name)
+w.add_organization(pin["repository"].split("/")[0])
+w.add_basename(BASENAME)
+w.add_size_label(size_label)
+w.add_finetune(FINETUNE)
 w.add_license(LICENSES[license_id])
-w.add_source_url(f"https://huggingface.co/{pin['repository']}/tree/{pin['revision']}")
+w.add_source_url(f"{repository}/tree/{pin['revision']}")
+w.add_source_repo_url(repository)
+w.add_file_type(FILE_TYPES[args.type])
+if args.type == "q8_0":
+    w.add_quantization_version(GGML_QUANT_VERSION)
+w.add_languages([tag for tag, _ in tags])
 w.add_uint32("speech.layout", LAYOUT)
 w.add_string("speech.requires", RELEASES[LAYOUT])
 w.add_string("speech.task", "synthesis")
 w.add_uint32("speech.sample_rate", int(codec_top["output_sample_rate"]))
-
-languages = talker_cfg["codec_language_id"]
-dialects = {d for d in talker_cfg["spk_is_dialect"].values() if d}
-unknown = [name for name in languages if name not in LANGUAGE_TAGS and name not in dialects]
-assert not unknown, f"no BCP 47 tag for the languages {unknown}"
-tags = sorted((LANGUAGE_TAGS[name], name) for name in languages if name in LANGUAGE_TAGS)
-add_array("speech.languages", [tag for tag, _ in tags], GGUFValueType.STRING)
 w.add_string("speech.language_use", "steers")
 voices = sorted(talker_cfg["spk_id"])
 assert sorted(voice_rows) == voices, f"the model card lists the speakers {sorted(voice_rows)}, the checkpoint {voices}"

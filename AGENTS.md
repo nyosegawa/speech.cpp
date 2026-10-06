@@ -77,11 +77,15 @@ another one.
   request at a time, and the header says which functions any thread may call.
 - The GGUF layout is this repository's own (docs/adr/0015): one file per model, its codec included, written by
   `reference/<model>/convert.py` and read by the family's `layout.cpp`, with `speech.layout` naming its version.
-  Every key is required and has one type, and the tensors are exactly the ones the keys call for. A change of
-  layout changes the converter, the reader and README.md's tables in the same commit, and a change a reader of
-  the previous layout cannot read raises `speech.layout`, adds the release that reads it to the converter's table
-  and brings the previous layout up in the family's one upgrade function. Every model constant lives in the
-  file, from the checkpoint or, where it has none, from the official code, and the converter says where.
+  The model's identity and languages are in the GGUF specification's own `general.` keys (ggml's `docs/gguf.md`),
+  under the names it gives them, and the converter names the file from them by its naming convention; no key of
+  speech.cpp's own holds a fact the specification has a key for. Every key is required, but for `general.finetune`
+  and `general.version` where a model has none and `general.quantization_version` where it is not quantized, and has
+  one type, and the tensors are exactly the ones the keys call for. A change of layout changes the converter, the
+  reader and README.md's tables in the same commit, and a change a reader of the previous layout cannot read raises
+  `speech.layout`, adds the release that reads it to the converter's table and brings the previous layout up in the
+  family's one upgrade function. Every model constant lives in the file, from the checkpoint or, where it has none,
+  from the official code, and the converter says where.
 - Do not add fallback behavior; fail loudly rather than degrade silently. A GGUF without a key or tensor, a key
   of another type, a tensor the keys do not call for, a layout the reader does not know,
   a text longer than the model takes, a WAVE format that is not understood and a device that does not
@@ -174,10 +178,11 @@ settled a choice or turned an approach down for good; if so, the record goes int
   tags are never deleted or moved: callers such as ASIST pin them by SHA-256.
 - Converted GGUF files go to Hugging Face only with the user's approval, one repository for each upstream
   repository, named after it with `-GGUF` (sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF for
-  Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice). A repository holds one file per model and type, the codec inside it, and
-  the licenses of what it holds; its card says that only speech.cpp reads it. Beside each GGUF file goes the output
-  of `speech info --json` for it, under the file's name with `.json` added. A changed file goes up under the same
-  name, with its JSON made again, and its card's SHA-256 changes with it.
+  Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice). A repository holds one file per model and type, the codec inside it, under
+  the name its converter gives it (Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf), and the licenses of what it holds;
+  its card says that only speech.cpp reads it. Beside each GGUF file goes the output of `speech info --json` for it,
+  under the file's name with `.json` added. A changed file goes up under the same name, with its JSON made again, and
+  its card's SHA-256 changes with it.
 - The tag's archives, `speech-<VERSION>-<platform>.zip`, are the ones CI builds and checks on every run; a change to
   what they hold changes the packaging steps of `.github/workflows/build.yml` and README.md's Binaries together.
 - When a change alters what a user does or sees (the C API, the command line's arguments, the worker protocol, the

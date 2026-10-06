@@ -106,7 +106,7 @@ void check(const speech_request & request, speech_option option, speech_type typ
     const OptionSpec * spec = file.spec(option);
     if (!spec) {
         if (neutral(option, value)) return;
-        throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.name + " does not take the option " + name +
+        throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.identity.name + " does not take the option " + name +
                                                      (option == SPEECH_OPT_SPEED || option == SPEECH_OPT_DURATION_SCALE ? " but at 1" : "") +
                                                      "; leave it out",
                        name);
@@ -119,7 +119,7 @@ void check(const speech_request & request, speech_option option, speech_type typ
             std::string range = std::isfinite(spec->minimum) ? (spec->minimum_exclusive ? "above " : "from ") + bound(spec->minimum) : "";
             if (std::isfinite(spec->maximum)) range += (range.empty() ? "up " : " ") + std::string("to ") + bound(spec->maximum);
             const std::string given = type == SPEECH_TYPE_INT ? std::to_string(std::get<int64_t>(value)) : number(std::get<double>(value));
-            throw ApiError(SPEECH_ERROR_OUT_OF_RANGE, std::string("the option ") + name + " is " + given + "; " + file.name + " takes it " + range,
+            throw ApiError(SPEECH_ERROR_OUT_OF_RANGE, std::string("the option ") + name + " is " + given + "; " + file.identity.name + " takes it " + range,
                            name);
         }
     }
@@ -129,7 +129,7 @@ void check(const speech_request & request, speech_option option, speech_type typ
             std::vector<std::string> names;
             for (const VoiceInfo & v : file.described.voices) names.push_back(v.name);
             for (const VoiceInfo & v : request.model->added()) names.push_back(v.name);
-            throw ApiError(SPEECH_ERROR_OUT_OF_RANGE, file.name + " has no voice named \"" + voice + "\"; " +
+            throw ApiError(SPEECH_ERROR_OUT_OF_RANGE, file.identity.name + " has no voice named \"" + voice + "\"; " +
                                                           (names.empty() ? "add one with speech_voice_add()" : "its voices are " + joined(names)),
                            name);
         }
@@ -140,7 +140,7 @@ void check(const speech_request & request, speech_option option, speech_type typ
         for (const std::string & language : file.languages) {
             if (bcp47_matches(tag, language)) return;
         }
-        throw ApiError(SPEECH_ERROR_OUT_OF_RANGE, file.name + (file.family->task == SPEECH_TASK_SYNTHESIS ? " speaks " : " recognizes ") +
+        throw ApiError(SPEECH_ERROR_OUT_OF_RANGE, file.identity.name + (file.family->task == SPEECH_TASK_SYNTHESIS ? " speaks " : " recognizes ") +
                                                       joined(file.languages) + ", not \"" + tag + "\"; give one of them, a region or script of one, or auto",
                        name);
     }
@@ -171,7 +171,7 @@ RequestValues run_values(const speech_request & request) {
         if (set != request.values.end()) {
             values.set(spec.option, set->second);
         } else if (spec.required) {
-            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, file.name + " needs the option " + speech_option_name(spec.option) + "; set it",
+            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, file.identity.name + " needs the option " + speech_option_name(spec.option) + "; set it",
                            speech_option_name(spec.option));
         } else if (spec.default_value) {
             values.set(spec.option, *spec.default_value);
@@ -242,7 +242,7 @@ RequestValues take(speech_request * request, speech_task task, const char * othe
     require(request, "request");
     const FileInfo & file = *request->model->file;
     if (file.family->task != task) {
-        throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.name + " is a model of speech " + task_name(file.family->task) + "; use " + other);
+        throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.identity.name + " is a model of speech " + task_name(file.family->task) + "; use " + other);
     }
     if (request->ran) throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the request has run; make a new one for the next");
     if (task == SPEECH_TASK_SYNTHESIS && !request->text) {
@@ -296,7 +296,7 @@ speech_status speech_request_set_text(speech_request * request, const char * tex
         require(request, "request");
         const FileInfo & file = *request->model->file;
         if (file.family->task != SPEECH_TASK_SYNTHESIS) {
-            throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.name + " recognizes speech and takes no text; give it audio", "text");
+            throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.identity.name + " recognizes speech and takes no text; give it audio", "text");
         }
         require(text, "text", "text");
         if (!*text) throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the text is empty; give a text to speak", "text");
@@ -311,7 +311,7 @@ speech_status speech_request_set_audio(speech_request * request, const float * s
         require(request, "request");
         const FileInfo & file = *request->model->file;
         if (file.family->task != SPEECH_TASK_RECOGNITION) {
-            throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.name + " speaks text and takes no audio; give it a text", "audio");
+            throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.identity.name + " speaks text and takes no audio; give it a text", "audio");
         }
         if (n_samples == 0) throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the audio has no samples; give at least one", "audio");
         require(samples, "samples", "audio");

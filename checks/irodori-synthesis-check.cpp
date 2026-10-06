@@ -55,11 +55,11 @@ int main(int argc, char ** argv) {
         ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
         std::printf("backend: %s\n", ggml_backend_name(backend));
         Synthesizer synth(args[1], backend);
-        const std::string source = synth.model().str("general.source.url");
+        const std::string repository = synth.model().str("general.source.repo_url");
         std::vector<std::filesystem::path> dumps;
         for (const auto & e : std::filesystem::directory_iterator(std::filesystem::u8path(args[2]))) {
             if (std::filesystem::exists(e.path() / "audio.npy") &&
-                source.find("huggingface.co/" + meta_string(e.path(), "repository", "model") + "/tree/") != std::string::npos) {
+                repository == "https://huggingface.co/" + meta_string(e.path(), "repository", "model")) {
                 dumps.push_back(e.path());
             }
         }
