@@ -259,7 +259,9 @@ before it starts a worker:
   `reference/qwen3-asr/`, whose texts it compares byte for byte.
 - `reference/<model>/` pins the official implementation in a uv environment and the checkpoints by revision,
   converts the weights to one GGUF file per model (GGUF files, below) and dumps the tensors the checks compare with;
-  `reference/resample/` dumps torchaudio's resampling, which `resample-check` compares the library's with.
+  `reference/resample/` dumps torchaudio's resampling, which `resample-check` compares the library's with, and
+  `reference/unicode/` writes the Unicode tables of `src/common/` and the normalizations of Python 3.10 and of the
+  tokenizers library, which `unicode-check` compares the library's with (Unicode normalization, below).
 
 ## Audio at another rate
 
@@ -286,6 +288,27 @@ build/resample-check reference/resample/out
 The official implementations resample each in their own way, NeMo's `transcribe()` with librosa's soxr and the
 Irodori-TTS runtime with torchaudio's defaults, so audio at another rate gives a text or a voice slightly different
 from theirs.
+
+## Unicode normalization
+
+The library normalizes text as each model's reference does, with the tables of the version of Unicode the reference
+has: Irodori-TTS takes NFKC with those of Unicode 13.0, as its runtime's Python 3.10 does, and Qwen3-TTS and Qwen3-ASR
+bring the text they tokenize to NFC with those of Unicode 9.0, as the normalizer of their tokenizers does in the
+tokenizers library, whose unicode-normalization-alignments crate has 9.0. Text that is not in NFC, such as Japanese
+copied from a macOS file name, whose voiced marks stand apart, gets the tokens of its NFC. The two versions differ only
+on characters assigned after 9.0, and one set of tables holds both. `unicode-check` compares the library's NFC and
+NFKC in both versions with the tokenizers library's and Python 3.10's on 3626 texts, which hold every code point that
+a normalization changes or orders, every mark beside one of each combining class, every pair of a canonical
+decomposition with and without a mark between them, every Hangul syllable and jamo, and random sequences of them; all
+are equal.
+
+```sh
+cd reference/unicode
+uv run python gen_unicode.py ../../src/common/unicode-data.inc
+uv run python normalization_cases.py out
+cd ../..
+build/unicode-check reference/unicode/out/normalization-cases.tsv
+```
 
 ## The C API
 
@@ -984,12 +1007,21 @@ of every stage; the check tools compare against them.
 | Codec decoder, one frame at a time against whole, CPU | 133 dB SNR |
 | Codec decoder on Metal | error at -63 dB of the voice |
 | Talker and code predictor, F32, teacher forcing (`talker-check`) | argmax matches on every frame; greedy decode gives the same 54 frames |
-| Tokenizer (`tokenizer-check`) | encodes 19 texts and decodes 1033 sequences of ids as the model's `tokenizer.json` does |
+| Tokenizer (`tokenizer-check`) | encodes 27 texts, 8 of which NFC changes, and decodes 1191 sequences of ids as the model's `tokenizer.json` does |
 | Talker's prompt of 5137 rows in blocks of 512 against one block, F32 (`qwen3-decoder-check`) | the same keys, values and logits on the CPU; on Metal, 1.9e-2 at most for a cached row and 2.0e-3 for the logits, with the same argmax |
 
 The tokenizer follows the pre-tokenizer of the `tokenizer.json` that ships with the model. The official
 package loads it through transformers 4.57.3 with `fix_mistral_regex=True`, which swaps in Mistral's
-pattern; the two differ on Latin words in mixed case, contractions and `/`.
+pattern; the two differ on Latin words in mixed case, contractions and `/`. Before it splits a text, the tokenizer
+brings it to NFC, as the normalizer of `tokenizer.json` does (Unicode normalization, above).
+`reference/qwen3-tts/tokenizer_cases.py` writes the cases from the model's own tokenizer:
+
+```sh
+cd reference/qwen3-tts
+uv run python tokenizer_cases.py <Qwen3-TTS checkpoint dir> out/tokenizer-cases.tsv out/decode-cases.tsv
+cd ../..
+build/tokenizer-check <model.gguf> reference/qwen3-tts/out/tokenizer-cases.tsv reference/qwen3-tts/out/decode-cases.tsv
+```
 
 ### Speed
 
@@ -1358,7 +1390,8 @@ with its windowed encoder, and qwen-asr 0.0.6's code for what transformers leave
 - the prompt as qwen-asr writes it: the checkpoint's chat template with a system turn that holds the request's
   `prompt`, empty without one, the audio's tokens in the user turn, and for a forced `language` the prefill
   `language <Name><asr_text>`, which steers the model; the text on either side of the audio is tokenized with the
-  pre-tokenizer of the checkpoint's tokenizer, split first at its added tokens,
+  pre-tokenizer of the checkpoint's tokenizer, split first at its added tokens, and the text between them brought to
+  NFC as the tokenizers library brings it (Unicode normalization, above),
 - the decoder: the Qwen3 stack it shares with Qwen3-TTS's talker, its output tied to the token embeddings, a
   key/value cache in F16 that grows with the request, and the prompt read 512 rows at a time,
 - greedy decoding until an end token or 4096 new tokens, the limit of the model's `generate()`, at which the result
@@ -1368,8 +1401,7 @@ with its windowed encoder, and qwen-asr 0.0.6's code for what transformers leave
 - audio over 1200 s cut as qwen-asr cuts it (Long audio, below).
 
 Not implemented: timestamps, which need Qwen3-ForcedAligner-0.6B, a second model (a request takes `timestamps` only as
-false); the language the model writes, which the result does not carry; qwen-asr's streaming. The official tokenizer
-brings the prompt to NFC first, and speech.cpp tokenizes it as given, so a prompt not in NFC gets other tokens.
+false); the language the model writes, which the result does not carry; qwen-asr's streaming.
 
 ### Models
 
@@ -1429,7 +1461,10 @@ uv run python dump.py Qwen3-ASR-0.6B out
 uv run python dump.py Qwen3-ASR-1.7B out
 uv run python parse_cases.py out    # outputs with qwen-asr's parse of each, for qwen3-asr-decoder-check
 uv run python split_cases.py out    # synthetic audio with qwen-asr's split of each, for qwen3-asr-split-check
+# texts and ids with the checkpoint's own tokenizer, for tokenizer-check; the folder is the one pins.py downloads to
+uv run python ../qwen3-tts/tokenizer_cases.py <checkpoint dir> out/tokenizer-cases.tsv out/decode-cases.tsv
 cd ../..
+build/tokenizer-check <model.gguf> reference/qwen3-asr/out/tokenizer-cases.tsv reference/qwen3-asr/out/decode-cases.tsv
 build/qwen3-asr-frontend-check <model.gguf> reference/qwen3-asr/out
 build/qwen3-asr-encoder-check <model.gguf> reference/qwen3-asr/out [gpu|cpu|device name]
 build/qwen3-asr-decoder-check <model.gguf> reference/qwen3-asr/out [gpu|cpu|device name]
@@ -1446,6 +1481,7 @@ On an Apple M5, for the 0.6B and the 1.7B model:
 
 | Check | CPU, F32 | Metal, F32 or F16 | CPU, Q8_0 | Metal, Q8_0 |
 |---|---|---|---|---|
+| Tokenizer, 29 texts, 10 of which NFC changes and 2 with added tokens, and 1263 sequences of ids (`tokenizer-check`) | equal | equal | equal | equal |
 | Features (`qwen3-asr-frontend-check`) | 123.5 to 143.6 dB SNR | the same (on the host) | the same | the same |
 | Projector output from the dump's features (`qwen3-asr-encoder-check`) | 85.6 to 111.0 dB, 94.4 to 112.5 dB | 44.4 to 70.6 dB, 50.2 to 68.6 dB with F32; 49.8 to 66.7 dB, 50.7 to 64.8 dB with F16 | 20.2 to 33.2 dB, 24.3 to 33.0 dB | 20.4 to 38.2 dB, 17.1 to 38.3 dB |
 | Prompt ids (`qwen3-asr-decoder-check`) | the dump's, all 80 | the same | the same | the same |

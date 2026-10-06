@@ -17,8 +17,9 @@ namespace qwen3_asr {
  * them goes through the byte-level BPE with the pre-tokenizer of the checkpoint's tokenizer. Decoding drops the special
  * tokens, as skip_special_tokens does, and keeps the others, <asr_text> among them.
  *
- * The official tokenizer normalizes the text between the added tokens to NFC before it splits it; this one takes the
- * text as it is given, so a context that is not in NFC gets other ids than the official's.
+ * The added tokens are found in the text as it is given and the text between them is brought to NFC, as the
+ * tokenizers library splits a text at its added tokens before its normalizer runs: "<|im_end|>" followed by U+0338
+ * stays the added token and U+0338, where the NFC of the whole would join '>' and U+0338 into U+226F.
  */
 class Tokenizer {
 public:
