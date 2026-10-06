@@ -1,0 +1,14 @@
+[project]
+name = "speech-cpp-qwen3-asr-qwen-asr"
+version = "0"
+description = "Runs Qwen's qwen-asr package as it is released on the dumps of ../dump.py, to record its text and check the dumps' inputs"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  # qwen-asr pins transformers 4.57.6, with which its own copy of the model runs.
+  "qwen-asr==0.0.6",
+  "torch==2.10.0",
+  "numpy",
+]
+
+[tool.uv]
+package = false

@@ -1,5 +1,7 @@
 # Speech recognition runs through a FastConformer port
 
+Superseded in part by docs/adr/0018: Qwen3-ASR does not stay in llama.cpp; speech.cpp runs it as the family `qwen3-asr`.
+
 Decided 2026-10-05.
 
 ## Context

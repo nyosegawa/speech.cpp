@@ -1,0 +1,22 @@
+[project]
+name = "speech-cpp-qwen3-asr-reference"
+version = "0"
+description = "Runs Qwen3-ASR through transformers' own implementation, with qwen-asr's audio handling, prompt and parse, to dump reference tensors"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "transformers==5.18.0",
+  # Only qwen_asr/inference/utils.py is imported: the audio normalization, the split of long audio, the language
+  # names and the parse of the output, none of which needs transformers.
+  "qwen-asr==0.0.6",
+  "torch==2.10.0",
+  "numpy",
+  "soundfile",
+  "huggingface_hub",
+  "safetensors",
+]
+
+[tool.uv]
+package = false
+# qwen-asr 0.0.6 requires transformers 4.57.6 for its own copy of the model, which does not import with 5.18 and
+# which this environment does not run.
+override-dependencies = ["transformers==5.18.0"]
