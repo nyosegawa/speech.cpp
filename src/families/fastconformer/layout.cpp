@@ -30,7 +30,6 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
     check_model_keys(m, "recognition", "checked");
     const std::string p = "fastconformer.";
     const int n_fft = m.size(p + "frontend.n_fft"), mels = m.size(p + "frontend.n_mels");
-    require((n_fft & (n_fft - 1)) == 0, m, "fastconformer.frontend.n_fft is not a power of two");
     m.size(p + "frontend.hop_length");
     for (const char * key : {"preemphasis", "log_guard", "std_guard"}) m.f32(p + "frontend." + key);
     const int d = m.size(p + "encoder.d_model"), heads = m.size(p + "encoder.num_heads"), kernel = m.size(p + "encoder.conv_kernel");

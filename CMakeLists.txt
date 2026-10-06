@@ -43,6 +43,7 @@ add_library(speechcommon STATIC
     src/common/language.cpp
     src/common/graph.cpp
     src/common/resample.cpp
+    src/common/fft.cpp
     src/common/log.cpp
     src/common/qwen3-decoder.cpp
     src/common/qwen2-tokenizer.cpp

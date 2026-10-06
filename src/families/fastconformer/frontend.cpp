@@ -18,27 +18,6 @@ std::vector<double> read_tensor(const ModelFile & m, const std::string & name) {
     return std::vector<double>(f.begin(), f.end());
 }
 
-/** An in-place radix-2 FFT; the size is a power of two and `twiddles` holds exp(-2 pi i k / size) for k < size / 2. */
-void fft(std::vector<std::complex<double>> & x, const std::vector<std::complex<double>> & twiddles) {
-    const size_t n = x.size();
-    for (size_t i = 1, j = 0; i < n; i++) {
-        size_t bit = n >> 1;
-        for (; j & bit; bit >>= 1) j ^= bit;
-        j ^= bit;
-        if (i < j) std::swap(x[i], x[j]);
-    }
-    for (size_t len = 2; len <= n; len <<= 1) {
-        const size_t stride = n / len;
-        for (size_t i = 0; i < n; i += len) {
-            for (size_t k = 0; k < len / 2; k++) {
-                const std::complex<double> u = x[i + k], v = x[i + k + len / 2] * twiddles[k * stride];
-                x[i + k] = u + v;
-                x[i + k + len / 2] = u - v;
-            }
-        }
-    }
-}
-
 }  // namespace
 
 Frontend::Frontend(const ModelFile & m)
@@ -48,7 +27,8 @@ Frontend::Frontend(const ModelFile & m)
       mels_((int) m.u32("fastconformer.frontend.n_mels")),
       preemphasis_(m.f32("fastconformer.frontend.preemphasis")),
       log_guard_(m.f32("fastconformer.frontend.log_guard")),
-      std_guard_(m.f32("fastconformer.frontend.std_guard")) {
+      std_guard_(m.f32("fastconformer.frontend.std_guard")),
+      fft_(n_fft_) {
     const std::vector<double> w = read_tensor(m, "frontend.window");
     const int64_t window = (int64_t) w.size();
     window_.assign(n_fft_, 0.0);
@@ -63,7 +43,6 @@ Frontend::Frontend(const ModelFile & m)
         while (last > first && filterbank_[(size_t) b * bins + last - 1] == 0) last--;
         bands_.push_back({first, last});
     }
-    for (int k = 0; k < n_fft_ / 2; k++) twiddles_.push_back(std::polar(1.0, -2 * 3.14159265358979323846 * k / n_fft_));
 }
 
 int64_t Frontend::frames(size_t samples) const {
@@ -87,17 +66,17 @@ std::vector<float> Frontend::features(const std::vector<float> & samples) const 
     const int bins = n_fft_ / 2 + 1;
     const int64_t n = (int64_t) x.size();
     std::vector<double> mel((size_t) (frames * mels_));
-    std::vector<std::complex<double>> buffer(n_fft_);
+    std::vector<std::complex<double>> frame(n_fft_), spectrum(n_fft_);
     std::vector<double> power(bins);
     for (int64_t f = 0; f < frames; f++) {
         // center=True with pad_mode="constant": the signal has n_fft / 2 zeros before it.
         const int64_t start = f * hop_ - n_fft_ / 2;
         for (int k = 0; k < n_fft_; k++) {
             const int64_t i = start + k;
-            buffer[k] = i >= 0 && i < n ? x[i] * window_[k] : 0.0;
+            frame[k] = i >= 0 && i < n ? x[i] * window_[k] : 0.0;
         }
-        fft(buffer, twiddles_);
-        for (int k = 0; k < bins; k++) power[k] = std::norm(buffer[k]);
+        fft_.transform(frame.data(), spectrum.data());
+        for (int k = 0; k < bins; k++) power[k] = std::norm(spectrum[k]);
         for (int m = 0; m < mels_; m++) {
             double sum = 0;
             for (int k = bands_[m].first; k < bands_[m].second; k++) sum += filterbank_[(size_t) m * bins + k] * power[k];

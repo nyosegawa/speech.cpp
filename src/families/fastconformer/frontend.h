@@ -4,6 +4,7 @@
 #include <utility>
 #include <vector>
 
+#include "fft.h"
 #include "model-file.h"
 
 namespace fastconformer {
@@ -41,7 +42,7 @@ private:
     std::vector<double> filterbank_;
     /** The bins [first, second) where each mel filter is not zero. */
     std::vector<std::pair<int, int>> bands_;
-    std::vector<std::complex<double>> twiddles_;
+    Fft fft_;
 };
 
 }  // namespace fastconformer
