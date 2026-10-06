@@ -34,8 +34,8 @@ than the products at 400 positions.
 The decoder chooses its attention once, when the model loads, from what its device computes, and logs the choice. On
 a GPU whose backend computes ggml_flash_attn_ext for the stack's heads and cache type (`ggml_backend_supports_op`), it
 attends with flash attention: it reads a whole number of blocks of 64 positions, with a mask that hides the positions
-past each row, and its cache keeps the values a row per position, in a buffer cleared when it is made, since the mask
-hides a position whose key or value was never written but cannot hide a NaN there. On the CPU, and on a GPU whose
+past each row, and its cache keeps the values a row per position, the positions not yet written set to zero on the
+device, since the mask hides a position whose key or value was never written but cannot hide a NaN there. On the CPU, and on a GPU whose
 backend does not compute flash attention, it attends with the two products over transposed values, as before. The
 choice is no fallback after a failure: it is made from the device's capability before anything runs, and the decoder
 checks take an argument that forces either attention, so that both are checked on a GPU.
