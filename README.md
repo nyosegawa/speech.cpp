@@ -914,8 +914,11 @@ control of its speaking rate or its length, so a request with a speed other than
 refused (docs/adr/0007). A request stops at its `max_seconds`, when it sets one, and at the model's limit, 8192
 frames (655 s of speech), the checkpoint's `max_new_tokens`, as the official implementation stops; the result says
 which (docs/adr/0016). The talker's key/value cache grows with the speech rather
-than holding the longest from the start, so a short sentence does not take the memory of the longest. A text of
-more than 24565 tokens, what the talker's 32768 positions leave beside the longest speech and its prompt, is refused.
+than holding the longest from the start, so a short sentence does not take the memory of the longest, and the talker
+reads its prompt 512 rows at a time, each against the rows before it, so that the memory of a long text grows with its
+length rather than its square: a prompt of 5137 rows takes 0.18 GB to compute, where reading it whole took 1.8 GB.
+A text of more than 24565 tokens, what the talker's 32768 positions leave beside the longest speech and its prompt,
+is refused.
 
 ### Models
 
@@ -957,6 +960,7 @@ of every stage; the check tools compare against them.
 | Codec decoder on Metal | error at -63 dB of the voice |
 | Talker and code predictor, F32, teacher forcing (`talker-check`) | argmax matches on every frame; greedy decode gives the same 54 frames |
 | Tokenizer (`tokenizer-check`) | encodes 19 texts and decodes 1033 sequences of ids as the model's `tokenizer.json` does |
+| Talker's prompt of 5137 rows in blocks of 512 against one block, F32 (`qwen3-decoder-check`) | the same keys, values and logits on the CPU; on Metal, 1.9e-2 at most for a cached row and 2.0e-3 for the logits, with the same argmax |
 
 The tokenizer follows the pre-tokenizer of the `tokenizer.json` that ships with the model. The official
 package loads it through transformers 4.57.3 with `fix_mistral_regex=True`, which swaps in Mistral's

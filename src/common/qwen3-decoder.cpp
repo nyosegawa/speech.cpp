@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <stdexcept>
 #include <utility>
 
@@ -101,13 +102,15 @@ struct Qwen3Decoder::Cache {
 };
 
 Qwen3Decoder::Qwen3Decoder(const ModelFile & m, ggml_backend_t backend, std::string tensors, const Qwen3Shape & shape,
-                           int64_t max_positions, ggml_type cache_type)
+                           int64_t max_positions, ggml_type cache_type, int64_t block_rows)
     : backend_(backend),
       m_(m),
       tensors_(std::move(tensors)),
       shape_(shape),
       max_positions_(max_positions),
-      cache_type_(cache_type) {
+      cache_type_(cache_type),
+      block_rows_(block_rows) {
+    if (block_rows_ < 1) throw std::logic_error("a decoder runs at least one row in a graph");
     allocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
 }
 
@@ -117,6 +120,28 @@ Qwen3Decoder::~Qwen3Decoder() {
 
 int64_t Qwen3Decoder::cache_capacity() const {
     return cache_ ? cache_->capacity : 0;
+}
+
+size_t Qwen3Decoder::graph_bytes() const {
+    return ggml_gallocr_get_buffer_size(allocr_, 0);
+}
+
+void Qwen3Decoder::read_cache(int layer, std::vector<float> & keys, std::vector<float> & values) const {
+    const int64_t kv_dim = (int64_t) shape_.n_kv_head * shape_.head_dim, capacity = cache_->capacity;
+    const auto as_floats = [&](const ggml_tensor * t, int64_t count) {
+        std::vector<uint8_t> raw(ggml_row_size(t->type, count));
+        ggml_backend_tensor_get(t, raw.data(), 0, raw.size());
+        std::vector<float> out((size_t) count);
+        if (t->type == GGML_TYPE_F32) std::memcpy(out.data(), raw.data(), raw.size());
+        else ggml_get_type_traits(t->type)->to_float(raw.data(), out.data(), count);
+        return out;
+    };
+    keys = as_floats(cache_->k[layer], n_past_ * kv_dim);
+    const std::vector<float> transposed = as_floats(cache_->v[layer], capacity * kv_dim);
+    values.resize((size_t) (n_past_ * kv_dim));
+    for (int64_t p = 0; p < n_past_; p++) {
+        for (int64_t c = 0; c < kv_dim; c++) values[p * kv_dim + c] = transposed[c * capacity + p];
+    }
 }
 
 void Qwen3Decoder::resize_cache(int64_t positions) {
@@ -154,7 +179,7 @@ ggml_tensor * Qwen3Decoder::layers(Graph & g, ggml_tensor * x, int64_t rows) {
     std::vector<int32_t> positions(rows);
     for (int64_t i = 0; i < rows; i++) positions[i] = (int32_t) (n_past_ + i);
     ggml_tensor * pos = g.input(positions, rows);
-    // A row sees the positions before the run and the run's rows up to itself.
+    // A row sees the positions before its block and the rows of its block up to itself.
     ggml_tensor * mask = nullptr;
     if (rows > 1) {
         std::vector<float> causal((size_t) (n_kv * rows));
@@ -205,21 +230,25 @@ void Qwen3Decoder::run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head) {
     if (n_past_ + n > cache_->capacity) {
         resize_cache(std::min(positions_, std::max(n_past_ + n, round_up(2 * cache_->capacity, kCacheStep))));
     }
-    Graph g(kGraphSize);
-    ggml_tensor * x = layers(g, rows(g, 0, n), n);
-    ggml_tensor * hidden = nullptr, * logits = nullptr;
-    if (head) {
-        ggml_context * ctx = g.ctx();
-        ggml_tensor * last = ggml_view_2d(ctx, x, shape_.hidden, 1, x->nb[1], (n - 1) * x->nb[1]);
-        hidden = ggml_mul(ctx, ggml_rms_norm(ctx, last, shape_.rms_eps), m_.tensor(tensors_ + ".norm"));
-        logits = ggml_mul_mat(ctx, head, hidden);
-        g.output(hidden);
-        g.output(logits);
+    for (int64_t from = 0; from < n; from += block_rows_) {
+        const int64_t count = std::min(block_rows_, n - from);
+        Graph g(kGraphSize);
+        ggml_tensor * x = layers(g, rows(g, from, count), count);
+        ggml_tensor * hidden = nullptr, * logits = nullptr;
+        // A block whose output nobody reads computes only what the cache keeps: its last layer's keys and values.
+        if (head && from + count == n) {
+            ggml_context * ctx = g.ctx();
+            ggml_tensor * last = ggml_view_2d(ctx, x, shape_.hidden, 1, x->nb[1], (count - 1) * x->nb[1]);
+            hidden = ggml_mul(ctx, ggml_rms_norm(ctx, last, shape_.rms_eps), m_.tensor(tensors_ + ".norm"));
+            logits = ggml_mul_mat(ctx, head, hidden);
+            g.output(hidden);
+            g.output(logits);
+        }
+        g.compute(backend_, allocr_);
+        if (hidden) {
+            hidden_ = Graph::read(hidden);
+            logits_ = Graph::read(logits);
+        }
+        n_past_ += count;
     }
-    g.compute(backend_, allocr_);
-    if (hidden) {
-        hidden_ = Graph::read(hidden);
-        logits_ = Graph::read(logits);
-    }
-    n_past_ += n;
 }

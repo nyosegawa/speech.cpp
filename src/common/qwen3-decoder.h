@@ -31,8 +31,19 @@ struct Qwen3Shape {
  */
 Qwen3Shape read_qwen3_shape(const ModelFile & m, const std::string & prefix);
 
-/** Builds rows [from, from + rows) of a run's input, [hidden, rows], in the graph `g` that computes them. */
+/** Builds rows [from, from + rows) of a run's input, [hidden, rows], in the graph `g` of the block that holds them. */
 using Qwen3Rows = std::function<ggml_tensor *(Graph & g, int64_t from, int64_t rows)>;
+
+/**
+ * The rows one graph of a run computes at most. Each row of a block holds a score for every position before it, so a
+ * block's scores take block rows × positions × heads × 4 bytes, against the square of the positions in one graph: for
+ * the longest prompt of Qwen3-TTS's talker, 24,576 rows, 0.8 GB where one graph needs 39 GB. On an Apple M5, blocks of
+ * 128 to 1024 rows prefilled 5,137 rows equally fast, in 7.0 s with the 1.7B talker on Metal and in 39 to 42 s with
+ * the 0.6B on the CPU, both in Q8_0, against 9.7 s and 86 to 99 s in one graph (2026-10-06). ggml_flash_attn_ext would
+ * hold no scores at all, but it reads the values a row per position, where the cache keeps them transposed for the
+ * steps.
+ */
+constexpr int64_t kQwen3BlockRows = 512;
 
 /**
  * A Qwen3 decoder stack of a model file: in each layer, RMSNorm, attention with grouped key/value heads, RMSNorm of
@@ -41,18 +52,20 @@ using Qwen3Rows = std::function<ggml_tensor *(Graph & g, int64_t from, int64_t r
  * ffn_norm, ffn_gate, ffn_up and ffn_down, and `<tensors>.norm`.
  *
  * It runs one sequence at a time and keeps the keys and values of the sequence's positions in a cache that grows with
- * the sequence. The caller builds a run's input rows, embeddings it computed or rows the graph looks up from ids,
- * and names the output matrix whose logits the run's last row gives: a head of the model's own, or the input
- * embeddings where the model ties its head to them.
+ * the sequence. The rows of a run go through in blocks, each block attending to the positions before it and causally
+ * to its own rows, so that the memory of a long run grows with its rows rather than with their square. The caller
+ * builds a run's input rows, embeddings it computed or rows the graph looks up from ids, and names the output matrix
+ * whose logits the run's last row gives: a head of the model's own, or the input embeddings where the model ties its
+ * head to them.
  */
 class Qwen3Decoder {
 public:
     /**
      * The stack `tensors` of `m`, which outlives it, of shape `shape`, for sequences of at most `max_positions`
-     * positions, with a cache of `cache_type`.
+     * positions, with a cache of `cache_type`, running blocks of at most `block_rows` rows.
      */
     Qwen3Decoder(const ModelFile & m, ggml_backend_t backend, std::string tensors, const Qwen3Shape & shape,
-                 int64_t max_positions, ggml_type cache_type);
+                 int64_t max_positions, ggml_type cache_type, int64_t block_rows = kQwen3BlockRows);
     ~Qwen3Decoder();
     Qwen3Decoder(const Qwen3Decoder &) = delete;
     Qwen3Decoder & operator=(const Qwen3Decoder &) = delete;
@@ -63,6 +76,8 @@ public:
     int64_t n_past() const { return n_past_; }
     /** The positions the cache holds before it grows. */
     int64_t cache_capacity() const;
+    /** The bytes the device holds for computing a graph: what the largest graph so far took. */
+    size_t graph_bytes() const;
 
     /**
      * Starts a sequence of at most `positions` positions whose first run has `first` rows. The cache gets room for
@@ -81,6 +96,12 @@ public:
     const std::vector<float> & hidden() const { return hidden_; }
     const std::vector<float> & logits() const { return logits_; }
 
+    /**
+     * The keys and the values the cache holds for layer `layer` at the n_past() positions, as float32 a row per
+     * position, [n_past, kv heads * head dim] each: what a check compares row by row.
+     */
+    void read_cache(int layer, std::vector<float> & keys, std::vector<float> & values) const;
+
 private:
     struct Cache;
 
@@ -95,6 +116,7 @@ private:
     const Qwen3Shape shape_;
     const int64_t max_positions_;
     const ggml_type cache_type_;
+    const int64_t block_rows_;
 
     std::unique_ptr<Cache> cache_;
     ggml_gallocr_t allocr_ = nullptr;
