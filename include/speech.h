@@ -306,7 +306,8 @@ typedef struct speech_model_info speech_model_info;
 
 /**
  * Reads the information of the model file at `path` without loading its weights or touching a device. The file is
- * checked as far as the information needs: its architecture, its layout and the keys the information reads.
+ * checked as loading checks it, short of reading the weights: its architecture and layout, every key by its type and
+ * value, and every tensor's name, shape and type.
  */
 SPEECH_API speech_status speech_model_info_open(const char * path, speech_model_info ** info);
 
