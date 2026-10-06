@@ -3,7 +3,9 @@
 #include <cstdint>
 #include <functional>
 #include <initializer_list>
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -69,6 +71,8 @@ public:
     /** A loaded tensor; one the file does not hold or that was not loaded throws. */
     ggml_tensor * tensor(const std::string & name) const;
 
+    /** Whether the file has `key`, for a key that a file has only where its model has a value for it. */
+    bool has(const std::string & key) const;
     uint32_t u32(const std::string & key) const;
     /**
      * A u32 key that sizes the model, such as a width or a number of heads: 0 throws, and so does a value past the
@@ -106,6 +110,8 @@ public:
     uint64_t file_bytes() const;
     /** The bytes of every tensor the file holds, as it stores them. */
     uint64_t weight_bytes() const;
+    /** The bytes of the tensors the file holds in each type, as it stores them. */
+    std::map<ggml_type, uint64_t> type_bytes() const;
     /** The number of metadata entries, the key of the one at `index`, and its value as JSON text. */
     size_t meta_count() const;
     std::string meta_key(size_t index) const;
@@ -134,9 +140,35 @@ private:
 };
 
 /**
- * Reads and checks the keys every model file has: general.name, general.license, general.source.url,
- * speech.sample_rate, speech.languages, and speech.task and speech.language_use, which must be the family's `task`
- * and `language_use`.
+ * What a model file says of the model it holds in the GGUF specification's general keys (ggml's docs/gguf.md): its
+ * names, its license, where it was converted from, and the type of its weights.
+ */
+struct ModelIdentity {
+    /** general.name, the name of the upstream repository. */
+    std::string name;
+    /** general.organization, and general.basename and general.size_label, which the file's name begins with. */
+    std::string organization, basename, size_label;
+    /** general.finetune and general.version, which a model whose name has none does not have. */
+    std::optional<std::string> finetune, version;
+    /** general.license, an SPDX expression. */
+    std::string license;
+    /** general.source.repo_url, and the revision that general.source.url, `<repository>/tree/<revision>`, names. */
+    std::string repository, revision;
+    /** The type general.file_type names, which holds most of the tensors' bytes: "F32", "F16" or "Q8_0". */
+    std::string weight_type;
+};
+
+/**
+ * Reads and checks the general keys of a model file's identity: every one but general.finetune and general.version
+ * is required, and none is an empty string. general.file_type must name the type that holds most of the tensors'
+ * bytes, and a file with a quantized tensor must have general.quantization_version.
+ */
+ModelIdentity read_identity(const ModelFile & file);
+
+/**
+ * Reads and checks the keys every model file has: its identity (read_identity()), general.languages, ISO 639
+ * two-letter codes sorted without repeats, speech.sample_rate, and speech.task and speech.language_use, which must be
+ * the family's `task` and `language_use`.
  */
 void check_model_keys(const ModelFile & file, const char * task, const char * language_use);
 

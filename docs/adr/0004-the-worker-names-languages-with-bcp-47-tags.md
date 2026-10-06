@@ -1,6 +1,6 @@
 # The worker names languages with BCP 47 tags
 
-Superseded in part by docs/adr/0015: the tags are `speech.languages`, and `general.languages` and `talker.language_tags` are gone.
+Superseded in part by docs/adr/0015: the file holds the languages in `general.languages` alone, as the GGUF specification's ISO 639 two-letter codes, which are BCP 47 tags, and `speech.languages` and `talker.language_tags` are gone.
 
 Decided 2026-10-01.
 

@@ -2,7 +2,7 @@
 check, and checks what every subcommand shares: --version, --help, the exit codes and the form of a failure.
 
 For every model: `speech info` in text, in JSON equal to the model information of the worker's ready (without the
-device and the threads) and with --meta; `speech devices` in text and JSON; usage errors (exit 2) and a library error
+device and the threads) and with --meta, the identity in both as the general keys of --meta give it; `speech devices` in text and JSON; usage errors (exit 2) and a library error
 (exit 1, "speech: <code> (<option>): <message>"). For a synthesis model: `speech tts`'s WAVE byte for byte against the
 worker's audio of the same lines and seed, into a file, into a regular file through stdout, and appended to a file with
 content and through a pipe into cat, where the header cannot be written again in place and keeps its sizes at
@@ -75,15 +75,24 @@ assert info == {k: v for k, v in loaded.items() if k not in ("device", "threads"
 meta = json.loads(run("info", model, "--json", "--meta").stdout)
 assert {k: v for k, v in meta.items() if k != "meta"} == info and meta["meta"]["general.architecture"] == info["architecture"], meta.keys()
 assert meta["meta"]["speech.layout"] == info["layout"] and meta["meta"]["general.name"] == info["name"]
+identity = ["organization", "basename", "size_label", "finetune", "version", "license"]
+assert all(info.get(m) == meta["meta"].get("general." + m) for m in identity), {m: info.get(m) for m in identity}
+source = info["source"]
+assert meta["meta"]["general.source.repo_url"] == source["repository"], source
+assert meta["meta"]["general.source.url"] == f"{source['repository']}/tree/{source['revision']}", source
+assert {0: "F32", 1: "F16", 7: "Q8_0"}[meta["meta"]["general.file_type"]] == info["weight_type"], info["weight_type"]
 text = run("info", model, "--meta").stdout.decode()
 assert text.splitlines()[0] == info["name"] and f"general.architecture = \"{info['architecture']}\"" in text, text[:300]
+shown = [info[m] for m in identity if m in info] + [source["repository"], source["revision"], info["weight_type"]]
+assert all(v in text.split("\n\n")[0] for v in shown), f"speech info does not show {[v for v in shown if v not in text]}"
 longest = max((v for v in meta["meta"].values() if isinstance(v, list)), key=len, default=[])
 if len(longest) > 8:
     assert f"({len(longest)} items)" in text, "a long array is not shortened"
 devices = json.loads(run("devices", "--json").stdout)["devices"]
 listed = [line.split()[0] for line in run("devices").stdout.decode().splitlines()]
 assert [d["name"] for d in devices] == listed and all(d["kind"] in ("cpu", "gpu", "igpu") for d in devices), devices
-print(f"info: the worker's model information without device and threads, with --meta {len(meta['meta'])} entries; devices: {listed}")
+print(f"info: the worker's model information without device and threads, with --meta {len(meta['meta'])} entries, the identity "
+      f"{', '.join(str(v) for v in shown)} as the general keys give it; devices: {listed}")
 
 for command in [["tts", model, "-o", "x.wav", "--steps", "4x", "あ"], ["tts", model, "あ"], ["tts", model, "-o", "x.wav", "--bogus", "あ"],
                 ["tts", model, "-o", "x.wav", "--seed=abc", "あ"], ["asr", model, "--timestamps=1", "x.wav"],
