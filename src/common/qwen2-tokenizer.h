@@ -16,7 +16,8 @@
  * transformers 4.57.3, which the official Qwen3-TTS package pins, replaces that pre-tokenizer with Mistral's when
  * the model is loaded with fix_mistral_regex=True, as the package does; the two split text of Latin
  * letters in mixed case, contractions and '/' differently. This follows tokenizer.json, which is what
- * the model was trained with. The text is expected in NFC; the caller normalizes it.
+ * the model was trained with. Its normalizer brings the text to NFC before the pre-tokenizer splits it, by the tables
+ * of Unicode 9.0 that the tokenizers library has, and so does this.
  */
 class Qwen2Tokenizer {
 public:
@@ -38,7 +39,7 @@ public:
      */
     std::string decode(const std::vector<int32_t> & ids) const;
 
-    /** The pieces the pre-tokenizer splits `text` into, as UTF-8. */
+    /** The pieces the pre-tokenizer splits the NFC of `text` into, as UTF-8. */
     std::vector<std::string> pre_tokenize(const std::string & text) const;
 
 private:

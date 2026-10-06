@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "error.h"
+#include "unicode.h"
 #include "utf8.h"
 
 namespace {
@@ -110,7 +111,7 @@ Qwen2Tokenizer::Qwen2Tokenizer(const ModelFile & m, const std::string & prefix) 
 }
 
 std::vector<std::string> Qwen2Tokenizer::pre_tokenize(const std::string & text) const {
-    const std::vector<uint32_t> cps = code_points(text);
+    const std::vector<uint32_t> cps = nfc(code_points(text), UnicodeVersion::V9);
     std::vector<std::string> pieces;
     for (size_t i = 0; i < cps.size();) {
         const size_t len = match_at(cps, i);

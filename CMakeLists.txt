@@ -189,8 +189,9 @@ target_link_libraries(codec-check PRIVATE qwen3tts)
 add_executable(talker-check checks/talker-check.cpp)
 target_link_libraries(talker-check PRIVATE qwen3tts)
 
+# The tokenizer of a Qwen3-TTS or a Qwen3-ASR file, each its family's.
 add_executable(tokenizer-check checks/tokenizer-check.cpp)
-target_link_libraries(tokenizer-check PRIVATE qwen3tts)
+target_link_libraries(tokenizer-check PRIVATE qwen3tts qwen3asr)
 
 # The decoder's runs in blocks, on the talker of a Qwen3-TTS file.
 add_executable(qwen3-decoder-check checks/qwen3-decoder-check.cpp)

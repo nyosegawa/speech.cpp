@@ -184,8 +184,10 @@ assert all(re.fullmatch("[a-z]{2,3}", tag) for tag in tags)
 assert sorted(names[tag] for tag in tags if len(tag) == 3) == ["Cantonese", "Filipino"], "a language has a code longer than its shortest"
 
 # The tokenizer: the Qwen2 byte-level BPE with the added tokens, which encoding splits text at and decoding skips when
-# they are special.
+# they are special. The tokenizers library matches an added token that is not "normalized" in the text as given, and
+# brings the text between such tokens to NFC, which the C++ does for every added token.
 tokenizer = AutoTokenizer.from_pretrained(folder)
+assert json.loads(tokenizer.backend_tokenizer.to_str())["normalizer"] == {"type": "NFC"}
 tokenizer_config = read_json("tokenizer_config.json")
 added = {int(i): token for i, token in tokenizer_config["added_tokens_decoder"].items()}
 vocab = read_json("vocab.json")
@@ -194,7 +196,8 @@ for token, i in vocab.items():
     tokens[i] = token
 for i, token in added.items():
     tokens[i] = token["content"]
-assert all(tokens) and not any(token["lstrip"] or token["rstrip"] or token["single_word"] for token in added.values())
+assert all(tokens) and not any(token["lstrip"] or token["rstrip"] or token["single_word"] or token["normalized"]
+                               for token in added.values())
 with open(os.path.join(folder, "merges.txt"), encoding="utf-8") as f:
     merges = [line.rstrip("\n") for line in f if line.strip() and not line.startswith("#version")]
 added_ids = sorted(added)
