@@ -511,7 +511,8 @@ program on the C API like any other. It speaks [JSON Lines](https://jsonlines.or
 and on stdout, UTF-8, and nothing else on stdout. Every log goes to stderr, and so does anything ggml, a system library
 or the GPU driver prints to stdout; a caller treats a line on stdout that is not a JSON object as a defect of the worker
 and fails, rather than skipping it. The worker serves one model, one request or peek at a time, in the order they
-become complete.
+become complete; `info` and `count_tokens`, which only read the model's information, are answered as they arrive,
+also while a request runs.
 
 ```
 speech worker MODEL [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup]
@@ -556,8 +557,8 @@ message added, an option added to the vocabulary, or a member added to the model
 | `transcribe` | `id`, `sample_rate`, option members | recognition | `progress`, then one terminal message |
 | `peek` | `id`, `sample_rate`, option members | recognition | one `partial`; the request stays open |
 | `add_voice` | `id`, `name`, `path` | synthesis models that take voice files | one terminal message |
-| `info` | `id` | any | one terminal message |
-| `count_tokens` | `id`, `text` | synthesis | one terminal message |
+| `info` | `id` | any | one terminal message, at once |
+| `count_tokens` | `id`, `text` | synthesis | one terminal message, at once |
 | `cancel` | `id` | any | none of its own |
 
 - `id` is a non-empty string, unique among the requests that have not had their terminal message.
@@ -567,6 +568,9 @@ message added, an option added to the vocabulary, or a member added to the model
 - `pcm`, in both directions, is base64 of 16-bit little-endian mono samples. Audio from the worker is at the model's
   `sample_rate`, each sample `round(clamp(x, −1, 1) × 32767)`; audio to the worker is read as `x / 32768`.
 - `path` of `add_voice` is a voice file or a WAVE file (Irodori-TTS voices, below).
+- `info` and `count_tokens` are answered as they arrive rather than in turn, so a caller can count the tokens of the
+  next text while a synthesis runs. `info` gives the voices added so far: one sent before an `add_voice` has had its
+  `end` may not list that voice yet.
 - `peek`, for live captions, asks for the text of a recognition request that is still collecting chunks. It takes the
   members `transcribe` takes, and they apply to that peek alone: it recognizes the chunks that came before it as a
   `transcribe` with those members would, answers one `partial`, and leaves the request collecting, so that more chunks
@@ -579,9 +583,9 @@ message added, an option added to the vocabulary, or a member added to the model
   square of the audio's length (docs/adr/0013).
 - `cancel` of a request that is collecting chunks or waiting ends it with `cancelled` at once. One that is running
   stops at the next point where its work can stop, between two chunks, two of Irodori-TTS's sampler steps or two
-  stages of a recognition, and ends with `cancelled`; `add_voice`, `info` and `count_tokens` cannot be stopped once
-  they run and end with their answer. A cancel of an id that no request in flight has, because its request was
-  answered or never sent, is ignored and changes nothing later.
+  stages of a recognition, and ends with `cancelled`; `add_voice` cannot be stopped once it runs and ends with its
+  answer. A cancel of an id that no request in flight has, because its request was answered or never sent, is ignored
+  and changes nothing later.
 - Once a recognition request has had its `error` or its `cancelled` while it collected chunks, its later `chunk` lines
   are dropped up to and including its `transcribe` line, which frees its id, or until a chunk 0 under its id starts a
   new request; a caller that cancels need not send the `transcribe`.

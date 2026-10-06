@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <deque>
+#include <functional>
 #include <istream>
 #include <map>
 #include <mutex>
@@ -34,7 +35,7 @@ private:
 /** An error object of the protocol: {"code", "option", "message"}, the option null when `option` is empty. */
 std::string error_object(const std::string & code, const std::string & option, const std::string & message);
 
-/** What the worker runs in turn. */
+/** What the worker runs in turn, or for info and count_tokens answers at once. */
 struct Job {
     enum class Kind { Synthesize, Transcribe, Peek, AddVoice, Info, CountTokens };
     Kind kind = Kind::Info;
@@ -53,8 +54,12 @@ struct Job {
 
 class Inbox {
 public:
-    Inbox(Protocol & protocol, speech_task task, std::string model_name)
-        : protocol_(protocol), task_(task), model_name_(std::move(model_name)) {}
+    /**
+     * `at_once` gives the terminal message of an info or a count_tokens, which only read the model's information and
+     * so are answered as they arrive rather than in turn behind a running request.
+     */
+    Inbox(Protocol & protocol, speech_task task, std::string model_name, std::function<std::string(const Job &)> at_once)
+        : protocol_(protocol), task_(task), model_name_(std::move(model_name)), at_once_(std::move(at_once)) {}
 
     /** Reads stdin's lines until it closes, answering at once those it refuses, and queues the rest. */
     void read(std::istream & in);
@@ -95,6 +100,7 @@ private:
     Protocol & protocol_;
     speech_task task_;
     std::string model_name_;
+    std::function<std::string(const Job &)> at_once_;
     std::mutex mutex_;
     std::condition_variable ready_;
     std::deque<Job> queue_;

@@ -9,7 +9,8 @@ partial with an error; that the chunks of two requests may interleave and the re
 their transcribes; cancels while a request collects chunks (whose later lines are dropped and whose id a chunk 0 starts
 again), while it waits and while it runs; that audio at three times the model's rate is recognized; each error with its
 code and option (a chunk out of order, not base64 or of odd bytes, a sample rate missing or 0, an unknown language or
-member, audio missing, the other task's messages); info and the model information of ready; progress for a recording
+member, audio missing, the other task's messages); info, also answered while a recognition runs, and the model
+information of ready; progress for a recording
 longer than a minute; and the error of a request still collecting chunks when stdin closes.
 
 usage: python3 tools/worker_recognition_smoke.py <speech> <model.gguf> <dump folder>... [-- worker options...]
@@ -145,11 +146,17 @@ for x in chunks("q", short_pcm):
 w.send({"type": "peek", "id": "q", "sample_rate": rate})
 w.send({"type": "cancel", "id": "q"})
 assert [m["type"] for m in w.until("q")] == ["cancelled"]
-w.terminal("long", "end")
-w.request({"type": "info", "id": "after-q"})
+# info reads the model's information alone, so it is answered while the recognition runs.
+w.request({"type": "info", "id": "busy-info"})
+busy_info = w.terminal("busy-info", "end")
+long_end = w.terminal("long", "end")
+assert busy_info["model"] == info and busy_info["_at"] < long_end["_at"], "info waited for the running recognition"
+# A request queued behind the dropped peek ends after it, and nothing came for q.
+send_audio("after-q", short_pcm)
 w.terminal("after-q", "end")
 assert not any(m.get("id") == "q" for m in w.backlog), w.backlog
-print("a peek of a request cancelled while it collected chunks was dropped; the request had its cancelled alone")
+print("a peek of a request cancelled while it collected chunks was dropped; the request had its cancelled alone; info sent "
+      "while a recognition ran was answered before it ended")
 
 # Two requests whose chunks interleave are answered in the order of their transcribes.
 a, b = chunks("a", short_pcm), chunks("b", short_pcm)

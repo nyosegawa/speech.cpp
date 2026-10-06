@@ -296,6 +296,10 @@ void Inbox::request(Job::Kind kind, const std::string & type, const std::string 
         }
         (name == "text" ? job.text : name == "name" ? job.name : job.path) = *value;
     }
+    if (kind == Job::Kind::Info || kind == Job::Kind::CountTokens) {
+        protocol_.line(at_once_(job));
+        return;
+    }
     job.serial = open(id, Pending::State::Waiting).serial;
     queue(std::move(job));
 }

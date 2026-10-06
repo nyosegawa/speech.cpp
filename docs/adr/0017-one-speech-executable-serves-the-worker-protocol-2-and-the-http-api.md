@@ -54,9 +54,11 @@ terminal message:
   up to and including its `transcribe` line, or until a chunk 0 under its id starts a new request. A caller that
   cancels need not send the `transcribe`, and may reuse the id at once.
 - A request still collecting chunks when stdin closes gets an `error`, since no `transcribe` can follow.
-- `add_voice`, `info` and `count_tokens` wait their turn as every request does. A cancel stops one while it waits; once
-  it runs it ends with its answer, since the library has no way to stop it, and a voice that was added is reported as
-  added.
+- `info` and `count_tokens` only read the model's information, which any thread may read while a request runs, so
+  they are answered as they arrive rather than in turn: a caller counts the tokens of its next text while the current
+  one speaks. `info` therefore gives the voices added so far.
+- `add_voice` waits its turn as every request does. A cancel stops it while it waits; once it runs it ends with its
+  answer, since the library has no way to stop it, and a voice that was added is reported as added.
 - A `synthesize` to a recognition model, and a `chunk`, `transcribe` or `peek` to a synthesis model, are refused by
   the worker for their type, `unsupported` with the option `type`, before any request is made.
 - A usage error of `speech worker` is answered with `fatal` on stdout as well as on stderr, so that a caller reading the

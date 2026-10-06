@@ -15,8 +15,9 @@
 // speech worker: serves one model over the worker protocol 2, JSON Lines on stdin and stdout, for another program
 // that starts it, ASIST among them. Its stdout carries the protocol and nothing else. It loads the model, warmed up
 // unless --no-warmup, adds the voices of --add-voice and says `ready` with the model's information, or `fatal` when it
-// cannot; then it runs the requests one at a time in the order they become complete, each answered by exactly one
-// terminal message, `end`, `error` or `cancelled`, and exits with 0 once stdin closes and every request is answered.
+// cannot; then it runs the requests one at a time in the order they become complete, but for info and count_tokens,
+// which it answers as they arrive, each answered by exactly one terminal message, `end`, `error` or `cancelled`, and
+// exits with 0 once stdin closes and every request is answered.
 
 namespace {
 
@@ -134,25 +135,33 @@ void recognize(Inbox & inbox, Protocol & protocol, speech_model * model, const s
     else inbox.finish(job, answer);
 }
 
-/** Runs add_voice, info or count_tokens, which a cancel no longer stops once they run. */
-void answer(Inbox & inbox, speech_model * model, const speech_model_info * info, const Job & job) {
+/** Runs add_voice, which a cancel no longer stops once it runs. */
+void add_voice(Inbox & inbox, speech_model * model, const Job & job) {
     if (!inbox.start(job, nullptr)) return;
-    std::string terminal = "{\"type\":\"end\",\"id\":" + json_string(job.id);
+    std::string terminal = "{\"type\":\"end\",\"id\":" + json_string(job.id) + "}";
     try {
-        if (job.kind == Job::Kind::AddVoice) {
-            check(speech_voice_add(model, job.name.c_str(), job.path.c_str()));
-        } else if (job.kind == Job::Kind::Info) {
-            terminal += std::string(",\"model\":") + speech_model_info_json(model_info(model).get());
-        } else {
-            size_t tokens = 0;
-            check(speech_model_info_text_tokens(info, job.text.c_str(), &tokens));
-            terminal += ",\"tokens\":" + std::to_string(tokens);
-        }
-        terminal += "}";
+        check(speech_voice_add(model, job.name.c_str(), job.path.c_str()));
     } catch (const std::exception & e) {
         terminal = error_line(job.id, e);
     }
     inbox.finish(job, terminal);
+}
+
+/**
+ * The terminal message of an info, the model's information with the voices added so far, or of a count_tokens. Both
+ * read information, which any thread may read while a request runs, so the reader answers them as they arrive.
+ */
+std::string answer_at_once(const speech_model * model, const speech_model_info * info, const Job & job) {
+    try {
+        if (job.kind == Job::Kind::Info) {
+            return "{\"type\":\"end\",\"id\":" + json_string(job.id) + ",\"model\":" + speech_model_info_json(model_info(model).get()) + "}";
+        }
+        size_t tokens = 0;
+        check(speech_model_info_text_tokens(info, job.text.c_str(), &tokens));
+        return "{\"type\":\"end\",\"id\":" + json_string(job.id) + ",\"tokens\":" + std::to_string(tokens) + "}";
+    } catch (const std::exception & e) {
+        return error_line(job.id, e);
+    }
 }
 
 int run_worker(const CommandLine & line, FILE * out) {
@@ -166,7 +175,9 @@ int run_worker(const CommandLine & line, FILE * out) {
     protocol.line("{\"type\":\"ready\",\"protocol\":2,\"version\":" + json_string(speech_version()) + ",\"model\":" + speech_model_info_json(m) + "}");
     std::fprintf(stderr, "speech worker: %s on %s, ready\n", speech_model_info_name(m), speech_model_info_device(m));
 
-    Inbox & inbox = *new Inbox(protocol, speech_model_info_task(m), speech_model_info_name(m));
+    const speech_model * loaded = model.get();
+    Inbox & inbox = *new Inbox(protocol, speech_model_info_task(m), speech_model_info_name(m),
+                               [loaded, m](const Job & job) { return answer_at_once(loaded, m, job); });
     std::thread reader([&inbox] { inbox.read(std::cin); });
     reader.detach();
     for (Job job; inbox.take(job);) {
@@ -174,7 +185,7 @@ int run_worker(const CommandLine & line, FILE * out) {
             case Job::Kind::Synthesize: synthesize(inbox, protocol, model.get(), job); break;
             case Job::Kind::Transcribe:
             case Job::Kind::Peek: recognize(inbox, protocol, model.get(), m, job); break;
-            default: answer(inbox, model.get(), m, job); break;
+            default: add_voice(inbox, model.get(), job); break;
         }
     }
     inbox.close_collecting();

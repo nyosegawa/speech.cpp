@@ -2,7 +2,7 @@
 worker_client.py: one JSON object per line, and one terminal message per request and nothing after it.
 
 It checks ready (protocol 2, the release, and the model information of `speech info --json` with the device, the
-threads and the voices of --add-voice), info and count_tokens; that a seed repeats the audio and a drawn seed is
+threads and the voices of --add-voice), info and count_tokens, also answered while a synthesis runs; that a seed repeats the audio and a drawn seed is
 reported and repeats it too; cancels while a request waits, while it runs, of an unknown id, and after an end, whose id
 a later request then reuses; a second request under an id in flight; each error with its code and option (members the
 message does not have, values of the wrong type, out of range or not taken, a missing text, lines that are not JSON
@@ -103,6 +103,26 @@ w.send({"type": "synthesize", "id": "x", "text": "二つ目。", "voice": voice}
 m = w.error_without_id("invalid_argument", "id")
 w.terminal("x", "end")
 print(f"a second request under x: an error without an id ({m['error']['message'][:60]}...); x answered")
+
+# count_tokens and info read the model's information alone, so they are answered while a synthesis runs.
+w.request({"type": "synthesize", "id": "busy", "text": LONG, "voice": voice})
+while (m := w.next_for("busy"))["type"] == "progress":
+    pass
+assert m["type"] == "chunk", short(m)
+w.request({"type": "count_tokens", "id": "busy-count", "text": TEXT})
+w.request({"type": "info", "id": "busy-info"})
+ended = []
+while "busy" not in ended:
+    m = w.read()
+    if m["type"] in ("end", "error", "cancelled"):
+        assert m["type"] == "end", short(m)
+        ended.append(m["id"])
+        if m["id"] == "busy-count":
+            assert m["tokens"] == count["tokens"], short(m)
+        if m["id"] == "busy-info":
+            assert m["model"] == info, short(m)
+assert ended == ["busy-count", "busy-info", "busy"], ended
+print("count_tokens and info sent while a synthesis ran: answered before it ended")
 
 expect_error({"type": "synthesize", "id": "e1", "text": "あ。", "voice": voice, "bogus": 1}, "invalid_argument", "bogus")
 expect_error({"type": "synthesize", "id": "e2", "text": "あ。", "voice": voice, "speed": "fast"}, "invalid_argument", "speed")
