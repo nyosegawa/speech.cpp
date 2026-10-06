@@ -160,8 +160,9 @@ settled a choice or turned an approach down for good; if so, the record goes int
 - Build with `cmake -B build && cmake --build build -j`, and run the checks the change touches before
   committing code. A change to the C API or the worker also runs `speech-api-check` and
   `tools/worker_smoke.py` for both synthesis families, and `speech-api-check transcribe` and
-  `tools/worker_recognition_smoke.py` for FastConformer; a change to the server runs `tools/server_smoke.py`, and one
-  to the command line or the parser `tools/speech_cli_smoke.py`, with a model of each family.
+  `tools/worker_recognition_smoke.py` for both recognition families; a change to the server runs
+  `tools/server_smoke.py`, and one to the command line or the parser `tools/speech_cli_smoke.py`, with a model
+  of each family.
 - Never commit on main. Every change reaches main through a pull request, one coherent unit each: a
   model's stage, a fix, a refactor or a documentation change.
 - Commit messages and pull request titles are one English sentence in the imperative, without a prefix
