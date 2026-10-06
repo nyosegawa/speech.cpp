@@ -58,7 +58,8 @@ constexpr ggml_type kCacheType = GGML_TYPE_F16;
  */
 class Recognizer {
 public:
-    Recognizer(const std::string & path, ggml_backend_t backend);
+    /** The model of the file `path` on `backend`, its decoder attending as `attention` says or as it chooses. */
+    Recognizer(const std::string & path, ggml_backend_t backend, std::optional<Qwen3Attention> attention = std::nullopt);
 
     /**
      * Recognizes mono samples at sample_rate(). `progress` hears how far the work has come, from 0 to 1: of each part

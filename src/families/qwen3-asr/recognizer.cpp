@@ -22,11 +22,11 @@ struct Timer {
 
 }  // namespace
 
-Recognizer::Recognizer(const std::string & path, ggml_backend_t backend)
+Recognizer::Recognizer(const std::string & path, ggml_backend_t backend, std::optional<Qwen3Attention> attention)
     : model_(path, backend, layout),
       frontend_(model_),
       encoder_(model_, backend),
-      decoder_(model_, backend, kCacheType),
+      decoder_(model_, backend, kCacheType, attention),
       tokenizer_(model_),
       prompt_(model_, tokenizer_),
       transcript_(model_),

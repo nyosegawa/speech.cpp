@@ -59,6 +59,16 @@ ggml_tensor * Graph::input(const std::vector<int32_t> & data, int64_t ne0) {
     return t;
 }
 
+ggml_tensor * Graph::half_input(const std::vector<float> & data, int64_t ne0, int64_t ne1) {
+    ggml_tensor * t = ggml_new_tensor_2d(ctx_, GGML_TYPE_F16, ne0, ne1);
+    if ((int64_t) data.size() != ggml_nelements(t)) throw std::runtime_error("an input's data does not fit its shape");
+    ggml_set_input(t);
+    Upload u{t, std::vector<uint8_t>(ggml_nbytes(t))};
+    ggml_fp32_to_fp16_row(data.data(), reinterpret_cast<ggml_fp16_t *>(u.bytes.data()), ggml_nelements(t));
+    uploads_.push_back(std::move(u));
+    return t;
+}
+
 ggml_tensor * Graph::zeros(int64_t ne0, int64_t ne1) {
     return input(std::vector<float>((size_t) (ne0 * ne1), 0.0f), ne0, ne1);
 }

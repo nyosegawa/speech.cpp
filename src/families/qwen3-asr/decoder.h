@@ -28,8 +28,11 @@ struct Generation {
  */
 class Decoder {
 public:
-    /** The decoder of the model file `m`, which outlives it, computing on `backend` with a cache of `cache_type`. */
-    Decoder(const ModelFile & m, ggml_backend_t backend, ggml_type cache_type);
+    /**
+     * The decoder of the model file `m`, which outlives it, computing on `backend` with a cache of `cache_type`, attending
+     * as `attention` says or, without it, as qwen3_attention() chooses.
+     */
+    Decoder(const ModelFile & m, ggml_backend_t backend, ggml_type cache_type, std::optional<Qwen3Attention> attention = std::nullopt);
     ~Decoder();
     Decoder(const Decoder &) = delete;
     Decoder & operator=(const Decoder &) = delete;
@@ -64,6 +67,7 @@ public:
     int64_t max_positions() const { return stack_.max_positions(); }
     int64_t max_new_tokens() const { return max_new_tokens_; }
     int hidden() const { return stack_.shape().hidden; }
+    Qwen3Attention attention() const { return stack_.attention(); }
 
 private:
     const ModelFile & m_;

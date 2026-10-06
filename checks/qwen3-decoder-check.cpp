@@ -11,7 +11,9 @@
 // prefill of 5,137 rows of the 0.6B talker in blocks and one in a single block each part from the F32 file's logits by
 // 6e-2 and from each other by 5e-2 (2026-10-06).
 //
-// usage: qwen3-decoder-check <qwen3-tts model F32.gguf> <text file> [gpu|cpu] [block rows]
+// The two decoders attend as they choose on the device, or as the last argument forces them.
+//
+// usage: qwen3-decoder-check <qwen3-tts model F32.gguf> <text file> [gpu|cpu] [block rows] [flash|products]
 
 #include <algorithm>
 #include <chrono>
@@ -20,6 +22,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -39,10 +42,11 @@ constexpr int kSteps = 16;
 /**
  * The largest relative error of a row that the order of summation explains on the CPU, and on a GPU. With 5,137 rows in
  * blocks of 512 against one block, the 0.6B and the 1.7B talker in F32 wrote the same caches and gave the same logits
- * on the CPU of an Apple M5; on its Metal, which rounds the inputs of a matrix product to half precision, a cached row
- * parted by 1.9e-2 at most, growing through the middle layers from 0 in the first two, and the logits by 2.0e-3. Hiding
- * from each block the position before it moved a cached row by 5.1e-1 or more on both, and counting the positions after
- * the first block from one too many by 3.1e-1 or more (2026-10-06).
+ * on the CPU of an Apple M5; on its Metal, attending with the two products, whose matrix kernel rounds its inputs to
+ * half precision, a cached row parted by 1.9e-2 at most, growing through the middle layers from 0 in the first two, and
+ * the logits by 2.0e-3. Hiding from each block the position before it moved a cached row by 5.1e-1 or more on both, and
+ * counting the positions after the first block from one too many by 3.1e-1 or more (2026-10-06). With flash attention
+ * on that Metal, 3,665 rows of the 0.6B talker in blocks gave the same caches and logits as one block (2026-10-07).
  */
 constexpr double kCpuTolerance = 1e-4;
 constexpr double kGpuTolerance = 1e-1;
@@ -71,13 +75,14 @@ struct Worst {
 
 int main(int argc, char ** argv) {
     const std::vector<std::string> args = utf8_args(argc, argv);
-    if (args.size() < 3) {
-        std::fprintf(stderr, "usage: %s <qwen3-tts model F32.gguf> <text file> [gpu|cpu] [block rows]\n", args[0].c_str());
+    if (args.size() < 3 || (args.size() > 5 && args[5] != "flash" && args[5] != "products")) {
+        std::fprintf(stderr, "usage: %s <qwen3-tts model F32.gguf> <text file> [gpu|cpu] [block rows] [flash|products]\n", args[0].c_str());
         return 2;
     }
     ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
     const int64_t block_rows = args.size() > 4 ? std::stoll(args[4]) : kQwen3BlockRows;
-    std::printf("backend: %s\n", ggml_backend_name(backend));
+    std::optional<Qwen3Attention> attention;
+    if (args.size() > 5) attention = args[5] == "flash" ? Qwen3Attention::Flash : Qwen3Attention::Products;
     const ModelFile model(args[1], backend, qwen3_tts_layout);
     if (read_identity(model).weight_type != "F32") {
         std::fprintf(stderr, "%s holds %s weights; give the check an F32 file\n", args[1].c_str(), read_identity(model).weight_type.c_str());
@@ -104,8 +109,9 @@ int main(int argc, char ** argv) {
     };
     ggml_tensor * head = model.tensor("talker.codec_head");
     const int64_t max_positions = model.u32("qwen3-tts.talker.max_position_embeddings");
-    Qwen3Decoder whole(model, backend, "talker", shape, max_positions, GGML_TYPE_F16, prefill);
-    Qwen3Decoder blocks(model, backend, "talker", shape, max_positions, GGML_TYPE_F16, block_rows);
+    Qwen3Decoder whole(model, backend, "talker", shape, max_positions, GGML_TYPE_F16, prefill, attention);
+    Qwen3Decoder blocks(model, backend, "talker", shape, max_positions, GGML_TYPE_F16, block_rows, attention);
+    std::printf("backend: %s, %s\n", ggml_backend_name(backend), qwen3_attention_name(blocks.attention()));
 
     double seconds[2];
     Qwen3Decoder * decoders[2] = {&whole, &blocks};
