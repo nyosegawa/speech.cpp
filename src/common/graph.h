@@ -52,6 +52,12 @@ public:
      */
     void copy(ggml_tensor * src, ggml_tensor * dst);
 
+    /**
+     * Puts `t`, and what it needs that the graph does not hold yet, into the graph now, rather than where the first node
+     * that reads it is added: the graph runs its nodes in the order they were put in.
+     */
+    void expand(ggml_tensor * t);
+
     /** Allocates the graph with `allocr`, uploads the inputs and computes it on `backend`. */
     void compute(ggml_backend_t backend, ggml_gallocr_t allocr);
 

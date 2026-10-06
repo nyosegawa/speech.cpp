@@ -113,8 +113,11 @@ public:
 private:
     struct Cache;
 
-    /** Builds the layers over the `rows` rows of `x` that follow the n_past() positions, writing their keys and values. */
-    ggml_tensor * layers(Graph & g, ggml_tensor * x, int64_t rows);
+    /**
+     * Builds the layers over the `rows` rows of `x` that follow the n_past() positions, writing their keys and values,
+     * and returns their output, or with `output` false none, the last layer stopping at its keys and values.
+     */
+    ggml_tensor * layers(Graph & g, ggml_tensor * x, int64_t rows, bool output);
     /** Moves the cache to one with room for `positions` positions, keeping the n_past() it holds. */
     void resize_cache(int64_t positions);
 

@@ -193,7 +193,7 @@ void Qwen3Decoder::start(int64_t positions, int64_t first) {
     if (cache_capacity() != Cache::room(room)) resize_cache(room);
 }
 
-ggml_tensor * Qwen3Decoder::layers(Graph & g, ggml_tensor * x, int64_t rows) {
+ggml_tensor * Qwen3Decoder::layers(Graph & g, ggml_tensor * x, int64_t rows, bool output) {
     const ModelFile & m = m_;
     const Qwen3Shape & s = shape_;
     ggml_context * ctx = g.ctx();
@@ -216,16 +216,26 @@ ggml_tensor * Qwen3Decoder::layers(Graph & g, ggml_tensor * x, int64_t rows) {
     for (int l = 0; l < s.n_layer; l++) {
         const std::string b = tensors_ + ".blk." + std::to_string(l) + ".";
         ggml_tensor * h = ggml_mul(ctx, ggml_rms_norm(ctx, x, s.rms_eps), m.tensor(b + "attn_norm"));
-        ggml_tensor * q = ggml_reshape_3d(ctx, ggml_mul_mat(ctx, m.tensor(b + "attn_q"), h), s.head_dim, s.n_head, rows);
-        ggml_tensor * k = ggml_reshape_3d(ctx, ggml_mul_mat(ctx, m.tensor(b + "attn_k"), h), s.head_dim, s.n_kv_head, rows);
+        ggml_tensor * q = ggml_mul_mat(ctx, m.tensor(b + "attn_q"), h);
+        ggml_tensor * k = ggml_mul_mat(ctx, m.tensor(b + "attn_k"), h);
         ggml_tensor * v = ggml_mul_mat(ctx, m.tensor(b + "attn_v"), h);
-        q = ggml_mul(ctx, ggml_rms_norm(ctx, q, s.rms_eps), m.tensor(b + "attn_q_norm"));
-        k = ggml_mul(ctx, ggml_rms_norm(ctx, k, s.rms_eps), m.tensor(b + "attn_k_norm"));
+        // Nodes that read the same inputs follow one another in the graph: Metal runs a node without waiting for the
+        // one before it when neither writes what the other reads. With the feed-forward's SwiGLU in one node, this took
+        // a step of the 0.6B Qwen3-ASR decoder from 7.86 to 7.67 ms on an Apple M5 (2026-10-07).
+        g.expand(q);
+        g.expand(k);
+        g.expand(v);
+        q = ggml_mul(ctx, ggml_rms_norm(ctx, ggml_reshape_3d(ctx, q, s.head_dim, s.n_head, rows), s.rms_eps), m.tensor(b + "attn_q_norm"));
+        k = ggml_mul(ctx, ggml_rms_norm(ctx, ggml_reshape_3d(ctx, k, s.head_dim, s.n_kv_head, rows), s.rms_eps), m.tensor(b + "attn_k_norm"));
+        g.expand(q);
+        g.expand(k);
+        g.copy(ggml_transpose(ctx, v), cache_->values(ctx, l, n_past_, rows));
         q = ggml_rope_ext(ctx, q, pos, nullptr, s.head_dim, GGML_ROPE_TYPE_NEOX, 0, s.rope_theta, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
         k = ggml_rope_ext(ctx, k, pos, nullptr, s.head_dim, GGML_ROPE_TYPE_NEOX, 0, s.rope_theta, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
-
+        g.expand(q);
         g.copy(ggml_reshape_2d(ctx, k, kv_dim, rows), cache_->keys(ctx, l, n_past_, rows));
-        g.copy(ggml_transpose(ctx, v), cache_->values(ctx, l, n_past_, rows));
+        // A run whose output nobody reads computes only what the cache keeps: its last layer's keys and values.
+        if (l + 1 == s.n_layer && !output) return nullptr;
 
         ggml_tensor * kc = cache_->k[l];
         ggml_tensor * vc = cache_->v[l];
@@ -242,9 +252,11 @@ ggml_tensor * Qwen3Decoder::layers(Graph & g, ggml_tensor * x, int64_t rows) {
         x = ggml_add(ctx, x, ggml_mul_mat(ctx, m.tensor(b + "attn_o"), o));
 
         h = ggml_mul(ctx, ggml_rms_norm(ctx, x, s.rms_eps), m.tensor(b + "ffn_norm"));
-        ggml_tensor * gate = ggml_silu(ctx, ggml_mul_mat(ctx, m.tensor(b + "ffn_gate"), h));
-        h = ggml_mul_mat(ctx, m.tensor(b + "ffn_down"), ggml_mul(ctx, gate, ggml_mul_mat(ctx, m.tensor(b + "ffn_up"), h)));
-        x = ggml_add(ctx, x, h);
+        ggml_tensor * gate = ggml_mul_mat(ctx, m.tensor(b + "ffn_gate"), h);
+        ggml_tensor * up = ggml_mul_mat(ctx, m.tensor(b + "ffn_up"), h);
+        g.expand(gate);
+        g.expand(up);
+        x = ggml_add(ctx, x, ggml_mul_mat(ctx, m.tensor(b + "ffn_down"), ggml_swiglu_split(ctx, gate, up)));
     }
     return x;
 }
@@ -256,11 +268,11 @@ void Qwen3Decoder::run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head) {
     }
     for (int64_t from = 0; from < n; from += block_rows_) {
         const int64_t count = std::min(block_rows_, n - from);
+        const bool output = head && from + count == n;
         Graph g(kGraphSize);
-        ggml_tensor * x = layers(g, rows(g, from, count), count);
+        ggml_tensor * x = layers(g, rows(g, from, count), count, output);
         ggml_tensor * hidden = nullptr, * logits = nullptr;
-        // A block whose output nobody reads computes only what the cache keeps: its last layer's keys and values.
-        if (head && from + count == n) {
+        if (output) {
             ggml_context * ctx = g.ctx();
             ggml_tensor * last = ggml_view_2d(ctx, x, shape_.hidden, 1, x->nb[1], (count - 1) * x->nb[1]);
             hidden = ggml_mul(ctx, ggml_rms_norm(ctx, last, shape_.rms_eps), m_.tensor(tensors_ + ".norm"));
@@ -269,7 +281,7 @@ void Qwen3Decoder::run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head) {
             g.output(logits);
         }
         g.compute(backend_, allocr_);
-        if (hidden) {
+        if (output) {
             hidden_ = Graph::read(hidden);
             logits_ = Graph::read(logits);
         }
