@@ -1,6 +1,6 @@
 # Speech recognition is a task of every entry point
 
-Superseded in part by docs/adr/0015: the codec is inside the model file and Qwen3-TTS's limit comes from it, so the family table no longer says whether a family needs a codec or takes a context.
+Superseded in part by docs/adr/0014, 0015 and 0016: requests are objects checked against the options each model declares and loading takes no family's fields (0014), the codec is inside the model file and Qwen3-TTS's limit comes from it (0015), and audio at any rate is resampled and a recognition's result carries its tokens and segments with their times (0016).
 
 Decided 2026-10-05.
 

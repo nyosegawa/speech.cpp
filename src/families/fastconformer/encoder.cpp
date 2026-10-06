@@ -5,6 +5,8 @@
 #include <limits>
 #include <stdexcept>
 
+#include "error.h"
+
 namespace fastconformer {
 
 /*
@@ -28,15 +30,15 @@ Encoder::Encoder(const ModelFile & m)
     if (local_) {
         context_ = (int) m.u32("fastconformer.encoder.attention_context");
         global_tokens_ = (int) m.u32("fastconformer.encoder.global_tokens");
-        if (context_ == 0) throw std::runtime_error("fastconformer.encoder.attention_context is 0");
-        if (global_tokens_ == 0) throw std::runtime_error("fastconformer.encoder.global_tokens is 0; the local attention runs with one global token or more");
+        if (context_ == 0) throw Error(Fault::File, "fastconformer.encoder.attention_context is 0");
+        if (global_tokens_ == 0) throw Error(Fault::File, "fastconformer.encoder.global_tokens is 0; the local attention runs with one global token or more");
     }
     const uint32_t factor = m.u32("fastconformer.encoder.subsampling_factor");
     sub_layers_ = 0;
     for (uint32_t f = factor; f > 1; f /= 2) sub_layers_++;
-    if (factor < 2 || (1u << sub_layers_) != factor) throw std::runtime_error("fastconformer.encoder.subsampling_factor is not a power of two");
-    if (d_model_ % heads_ != 0) throw std::runtime_error("fastconformer.encoder.d_model is not a multiple of fastconformer.encoder.num_heads");
-    if (conv_kernel_ % 2 != 1) throw std::runtime_error("fastconformer.encoder.conv_kernel is not odd");
+    if (factor < 2 || (1u << sub_layers_) != factor) throw Error(Fault::File, "fastconformer.encoder.subsampling_factor is not a power of two");
+    if (d_model_ % heads_ != 0) throw Error(Fault::File, "fastconformer.encoder.d_model is not a multiple of fastconformer.encoder.num_heads");
+    if (conv_kernel_ % 2 != 1) throw Error(Fault::File, "fastconformer.encoder.conv_kernel is not odd");
 }
 
 int64_t Encoder::subsampled_frames(int64_t frames) const {

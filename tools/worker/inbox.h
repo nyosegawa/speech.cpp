@@ -72,15 +72,21 @@ struct Collecting {
 
 struct Inbox {
     speech_task task;
-    speech_model * model;
     std::mutex mutex;
     std::condition_variable ready;
     std::deque<Request> requests;
     std::set<std::string> cancelled;
     std::map<std::string, Collecting> collecting;
-    /** The recognition request under way, which a cancel also stops in the library. */
+    /** The request under way and its id, which a cancel also stops in the library. */
     std::string running;
+    speech_request * request = nullptr;
     bool closed = false;
+
+    /** Notes a cancel of `id` and stops its request when it is under way; the caller holds the mutex. */
+    void cancel(const std::string & id) {
+        cancelled.insert(id);
+        if (running == id && request) speech_request_cancel(request);
+    }
 
     bool is_cancelled(const std::string & id) {
         std::lock_guard<std::mutex> lock(mutex);
@@ -124,9 +130,8 @@ inline std::string unreadable(const FlatJson & message, speech_task task) {
 inline std::string take_recognition(Inbox & inbox, const FlatJson & message) {
     const std::string id = value(message, "id"), type = value(message, "type");
     if (type == "cancel") {
-        inbox.cancelled.insert(id);
+        inbox.cancel(id);
         inbox.collecting.erase(id);
-        if (inbox.running == id) speech_cancel(inbox.model);
         return "";
     }
     if (inbox.cancelled.count(id)) {
@@ -204,7 +209,7 @@ inline void read_requests(Inbox & inbox, void (*emit)(const std::string & json))
             if (inbox.task == SPEECH_TASK_RECOGNITION) {
                 problem = take_recognition(inbox, message);
             } else if (value(message, "type") == "cancel") {
-                inbox.cancelled.insert(value(message, "id"));
+                inbox.cancel(value(message, "id"));
             } else {
                 inbox.requests.push_back({message, {}});
                 inbox.ready.notify_one();

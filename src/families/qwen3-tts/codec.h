@@ -11,6 +11,9 @@
 /** The residual units of each decoder block, of dilations 1, 3 and 9, as the official module builds them. */
 constexpr int kCodecResidualUnits = 3;
 
+/** The samples the codec of a model file decodes from one frame: the product of its strides (1920). */
+int codec_samples_per_frame(const ModelFile & m);
+
 /**
  * The 12Hz codec decoder: 16 codes per frame in, 1920 samples of 24 kHz audio per frame out.
  *

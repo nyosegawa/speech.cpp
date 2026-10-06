@@ -24,7 +24,7 @@ int main(int argc, char ** argv) {
         return 2;
     }
     try {
-        configure_ggml();
+        start_ggml();
         // The frontend runs on the host; the backend only holds its window and filterbank.
         ggml_backend_t backend = ggml_backend_cpu_init();
         bool ok = true;

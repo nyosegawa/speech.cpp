@@ -2,12 +2,15 @@
 
 #include <cstring>
 #include <stdexcept>
+#include <string>
+
+#include "error.h"
 
 Graph::Graph(int max_nodes) {
     ggml_init_params params = {ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false),
                                nullptr, true};
     ctx_ = ggml_init(params);
-    if (!ctx_) throw std::runtime_error("cannot create a ggml context");
+    if (!ctx_) throw Error(Fault::OutOfMemory, "cannot create a ggml context");
     gf_ = ggml_new_graph_custom(ctx_, max_nodes, false);
 }
 
@@ -45,9 +48,11 @@ void Graph::output(ggml_tensor * t) {
 }
 
 void Graph::compute(ggml_backend_t backend, ggml_gallocr_t allocr) {
-    if (!ggml_gallocr_alloc_graph(allocr, gf_)) throw std::runtime_error("cannot allocate a graph");
+    if (!ggml_gallocr_alloc_graph(allocr, gf_)) throw Error(Fault::OutOfMemory, "cannot allocate the memory of a graph on the device");
     for (const Upload & u : uploads_) ggml_backend_tensor_set(u.tensor, u.bytes.data(), 0, u.bytes.size());
-    if (ggml_backend_graph_compute(backend, gf_) != GGML_STATUS_SUCCESS) throw std::runtime_error("a graph failed to compute");
+    if (ggml_backend_graph_compute(backend, gf_) != GGML_STATUS_SUCCESS) {
+        throw Error(Fault::Device, std::string("the device ") + ggml_backend_name(backend) + " failed to compute a graph");
+    }
 }
 
 std::vector<float> Graph::read(const ggml_tensor * t) {

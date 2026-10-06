@@ -1,5 +1,7 @@
 # Irodori-TTS runs both v4.1-Small-MF and v4.1-Small
 
+Superseded in part by docs/adr/0014: the sampler's steps are an option of each request, which the worker's `--steps` sets.
+
 Decided 2026-10-01.
 
 ## Context

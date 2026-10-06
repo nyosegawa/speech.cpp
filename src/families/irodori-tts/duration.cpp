@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "error.h"
 #include "layers.h"
 
 namespace irodori {
@@ -53,22 +54,30 @@ std::string number(double v) {
 
 void DurationPredictor::check(const LengthOptions & o) const {
     if (!(o.speed >= min_speed_ && o.speed <= max_speed_)) {
-        throw std::invalid_argument("the speed is " + number(o.speed) + "; Irodori-TTS takes a speed from " + number(min_speed_) + " to " +
-                                    number(max_speed_) + ", 1 being its own rate");
+        throw Error(Fault::OutOfRange, "the speed is " + number(o.speed) + "; Irodori-TTS takes a speed from " + number(min_speed_) + " to " +
+                                           number(max_speed_) + ", 1 being its own rate",
+                    "speed");
     }
     if (!(o.duration_scale > 0 && std::isfinite(o.duration_scale))) {
-        throw std::invalid_argument("the duration scale is " + number(o.duration_scale) + "; give a factor above 0, 1 for the predicted length");
+        throw Error(Fault::OutOfRange, "the duration scale is " + number(o.duration_scale) + "; give a factor above 0, 1 for the predicted length",
+                    "duration_scale");
     }
-    if (!(o.seconds >= 0 && std::isfinite(o.seconds))) {
-        throw std::invalid_argument("the length is " + number(o.seconds) + " s; give a length in seconds, or 0 for the predicted one");
+    if (o.seconds == 0) return;
+    if (!(o.seconds >= min_seconds_ && o.seconds <= max_seconds_)) {
+        throw Error(Fault::OutOfRange, "the length is " + number(o.seconds) + " s; Irodori-TTS speaks from " + number(min_seconds_) + " to " +
+                                           number(max_seconds_) + " s",
+                    "seconds");
     }
-    if (o.fixed() && o.duration_scale != 1) {
-        throw std::invalid_argument("a request fixes the length in seconds or scales the predicted one, not both; leave out one of them");
+    if (o.duration_scale != 1) {
+        throw Error(Fault::InvalidArgument,
+                    "a request fixes the length in seconds or scales the predicted one, not both; leave out seconds or the duration scale",
+                    "seconds");
     }
     const double seconds = o.seconds / o.speed;
-    if (o.fixed() && !(seconds >= min_seconds_ && seconds <= max_seconds_)) {
-        throw std::invalid_argument("a length of " + number(seconds) + " s (seconds divided by speed) is outside the " + number(min_seconds_) +
-                                    " to " + number(max_seconds_) + " s that Irodori-TTS speaks; ask for a length within them");
+    if (!(seconds >= min_seconds_ && seconds <= max_seconds_)) {
+        throw Error(Fault::OutOfRange, "a length of " + number(seconds) + " s (seconds divided by speed) is outside the " + number(min_seconds_) +
+                                           " to " + number(max_seconds_) + " s that Irodori-TTS speaks; ask for a length within them",
+                    "seconds");
     }
 }
 
@@ -80,12 +89,21 @@ Length DurationPredictor::length(const LengthOptions & o, float predicted_sum) c
         const int64_t samples = std::max<int64_t>(1, (int64_t) (o.seconds / o.speed * sample_rate_));
         return {(int) ((samples + hop_ - 1) / hop_), samples};
     }
-    // The bounds are whole frames, so bounding before the rounding gives the same frames as the runtime's
-    // bounding after it, and keeps a large scale from overflowing the conversion to int.
     const float predicted = std::expm1(std::log1p(std::max(predicted_sum, 0.0f)));
-    const double scaled = (double) predicted * (o.duration_scale / o.speed);
-    const int frames = (int) std::nearbyint(std::max((double) min_frames_, std::min((double) max_frames_, scaled)));
-    return {frames, (int64_t) frames * hop_};
+    if (o.duration_scale == 1 && o.speed == 1) {
+        // The bounds are whole frames, so bounding before the rounding gives the frames of the runtime's bounding after it.
+        const int frames = (int) std::nearbyint(std::max((double) min_frames_, std::min((double) max_frames_, (double) predicted)));
+        return {frames, (int64_t) frames * hop_};
+    }
+    const double frames = std::nearbyint((double) predicted * (o.duration_scale / o.speed));
+    if (!(frames >= min_frames_ && frames <= max_frames_)) {
+        const double seconds_per_frame = (double) hop_ / sample_rate_;
+        throw Error(Fault::OutOfRange, "the predicted length of " + number(predicted * seconds_per_frame) + " s, times the duration scale and over " +
+                                           "the speed, is " + number(frames * seconds_per_frame) + " s, outside the " + number(min_seconds_) +
+                                           " to " + number(max_seconds_) + " s that Irodori-TTS speaks; ask for a length within them",
+                    o.duration_scale != 1 ? "duration_scale" : "speed");
+    }
+    return {(int) frames, (int64_t) frames * hop_};
 }
 
 }  // namespace irodori

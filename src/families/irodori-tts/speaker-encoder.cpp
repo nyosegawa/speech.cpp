@@ -3,6 +3,8 @@
 #include <stdexcept>
 #include <string>
 
+#include "error.h"
+
 #include "layers.h"
 
 namespace irodori {
@@ -26,7 +28,7 @@ ggml_tensor * SpeakerEncoder::build(Graph & g, const std::vector<float> & latent
     ggml_context * ctx = g.ctx();
     const Layers l{ctx, m_, eps_};
     const int64_t patches = (int64_t) latent.size() / latent_dim_ / patch_;
-    if (patches == 0) throw std::runtime_error("the reference is shorter than one patch of the speaker encoder");
+    if (patches == 0) throw Error(Fault::OutOfRange, "the reference is shorter than one patch of the speaker encoder");
     const int head_dim = dim_ / heads_;
     // A patch is its frames one after another, which the row-major latent already is.
     const std::vector<float> whole(latent.begin(), latent.begin() + patches * patch_ * latent_dim_);

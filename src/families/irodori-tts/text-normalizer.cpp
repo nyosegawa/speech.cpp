@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "error.h"
+
 namespace irodori {
 
 namespace {
@@ -129,11 +131,11 @@ std::vector<uint32_t> decode_utf8(const std::string & s) {
     for (size_t i = 0; i < s.size();) {
         const unsigned char c = (unsigned char) s[i];
         const int len = c < 0x80 ? 1 : (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3 : (c >> 3) == 30 ? 4 : 0;
-        if (len == 0 || i + len > s.size()) throw std::runtime_error("the text is not valid UTF-8");
+        if (len == 0 || i + len > s.size()) throw Error(Fault::InvalidArgument, "the text is not valid UTF-8", "text");
         uint32_t cp = len == 1 ? c : len == 2 ? (c & 0x1F) : len == 3 ? (c & 0x0F) : (c & 0x07);
         for (int k = 1; k < len; k++) {
             const unsigned char cc = (unsigned char) s[i + k];
-            if ((cc >> 6) != 2) throw std::runtime_error("the text is not valid UTF-8");
+            if ((cc >> 6) != 2) throw Error(Fault::InvalidArgument, "the text is not valid UTF-8", "text");
             cp = (cp << 6) | (cc & 0x3F);
         }
         out.push_back(cp);

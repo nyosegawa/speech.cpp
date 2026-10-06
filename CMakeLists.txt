@@ -43,6 +43,7 @@ add_library(speechcommon STATIC
     src/common/language.cpp
     src/common/graph.cpp
     src/common/resample.cpp
+    src/common/log.cpp
 )
 target_include_directories(speechcommon PUBLIC src/common)
 target_link_libraries(speechcommon PUBLIC ggml::ggml)
@@ -78,6 +79,7 @@ add_library(irodoritts STATIC
     src/families/irodori-tts/dit.cpp
     src/families/irodori-tts/sampler.cpp
     src/families/irodori-tts/synthesizer.cpp
+    src/families/irodori-tts/voice-file.cpp
 )
 target_include_directories(irodoritts PUBLIC src/families)
 target_link_libraries(irodoritts PUBLIC speechcommon)
@@ -101,7 +103,8 @@ target_link_libraries(fastconformer PUBLIC speechcommon)
 # The C API, include/speech.h, twice: static for the executables, so that each stays one file, and shared as
 # libspeech for bindings and other programs. On Windows the two would both write speech.lib, the static one as
 # the library and the shared one as its import library, hence speech-static.
-set(SPEECH_SOURCES src/speech.cpp src/qwen3-tts-engine.cpp src/irodori-tts-engine.cpp src/fastconformer-engine.cpp)
+set(SPEECH_SOURCES src/speech.cpp src/info.cpp src/request.cpp src/qwen3-tts-engine.cpp src/irodori-tts-engine.cpp
+    src/fastconformer-engine.cpp)
 
 add_library(speech-static STATIC ${SPEECH_SOURCES})
 target_include_directories(speech-static PUBLIC include)
@@ -113,6 +116,11 @@ target_include_directories(speech PUBLIC include)
 target_link_libraries(speech PRIVATE qwen3tts irodoritts fastconformer)
 target_compile_definitions(speech PRIVATE SPEECH_BUILD_SHARED SPEECH_VERSION="${PROJECT_VERSION}" INTERFACE SPEECH_SHARED)
 set_target_properties(speech PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+# The shared library's SOVERSION is the C API's major version, which speech.h defines and nothing else repeats.
+file(STRINGS include/speech.h SPEECH_API_MAJOR_LINE REGEX "^#define SPEECH_API_VERSION_MAJOR [0-9]+$")
+string(REGEX REPLACE "^#define SPEECH_API_VERSION_MAJOR ([0-9]+)$" "\\1" SPEECH_API_VERSION_MAJOR "${SPEECH_API_MAJOR_LINE}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS include/speech.h)
+set_target_properties(speech PROPERTIES SOVERSION ${SPEECH_API_VERSION_MAJOR})
 # ggml's static libraries are built with default visibility, so the linker is told to export the C API alone.
 if (APPLE)
     target_link_options(speech PRIVATE "LINKER:-exported_symbol,_speech_*")
@@ -177,7 +185,7 @@ add_executable(irodori-synthesis-check checks/irodori-synthesis-check.cpp)
 target_include_directories(irodori-synthesis-check PRIVATE tools/worker)
 target_link_libraries(irodori-synthesis-check PRIVATE irodoritts)
 
-add_executable(speech-api-check checks/speech-api-check.c checks/speech-api-recognition.c)
+add_executable(speech-api-check checks/speech-api-check.c checks/speech-api-recognition.c checks/speech-api-common.c)
 target_link_libraries(speech-api-check PRIVATE speech)
 # The check compares the version the library reports with the one it was built against.
 target_compile_definitions(speech-api-check PRIVATE SPEECH_EXPECTED_VERSION="${PROJECT_VERSION}")

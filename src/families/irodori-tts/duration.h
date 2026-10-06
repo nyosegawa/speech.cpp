@@ -43,17 +43,20 @@ public:
     ggml_tensor * build(Graph & g, ggml_tensor * text_state, ggml_tensor * speaker_summary) const;
 
     /**
-     * Throws unless the options are ones the runtime takes, with a speed within the model's bounds and seconds that,
-     * divided by the speed, lie within the model's bounds of the length. The runtime clamps such seconds into the
-     * bounds and ignores a duration scale given with seconds; both are refused here instead.
+     * Throws, naming the option at fault, unless the options are ones the runtime takes: a speed within the model's
+     * bounds, a duration scale above 0, and seconds within the model's bounds of the length that, divided by the
+     * speed, still lie within them. The runtime clamps such seconds into the bounds and ignores a duration scale given
+     * with seconds; both are refused here instead.
      */
     void check(const LengthOptions & options) const;
 
     /**
      * The length the runtime synthesizes for checked options and, when they fix no length, the predicted sum.
      * Fixed seconds give int(seconds * sample rate) samples in the frames that hold them. A prediction goes
-     * through the runtime's float32 log1p and expm1, the scale in double precision, its rounding to the
-     * nearest frame with half to even and its bounds in whole frames, and gives whole frames of samples.
+     * through the runtime's float32 log1p and expm1, the scale in double precision and its rounding to the
+     * nearest frame with half to even, and gives whole frames of samples. At a scale and a speed of 1 the frames are
+     * kept within the model's bounds of the length, as the runtime keeps them; a prediction that a scale or a speed
+     * takes outside them throws, naming the scale, or the speed when the scale is 1.
      */
     Length length(const LengthOptions & options, float predicted_sum) const;
 

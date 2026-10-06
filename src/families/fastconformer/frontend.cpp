@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "error.h"
 namespace fastconformer {
 
 namespace {
@@ -12,7 +13,7 @@ namespace {
 std::vector<double> read_tensor(const ModelFile & m, const std::string & name, int64_t n) {
     ggml_tensor * t = m.tensor(name);
     if (t->type != GGML_TYPE_F32 || ggml_nelements(t) != n) {
-        throw std::runtime_error(name + " in " + m.path() + " is not float32 with " + std::to_string(n) + " values");
+        throw Error(Fault::File, name + " in " + m.path() + " is not float32 with " + std::to_string(n) + " values");
     }
     std::vector<float> f(n);
     ggml_backend_tensor_get(t, f.data(), 0, ggml_nbytes(t));
@@ -50,9 +51,9 @@ Frontend::Frontend(const ModelFile & m)
       preemphasis_(m.f32("fastconformer.frontend.preemphasis")),
       log_guard_(m.f32("fastconformer.frontend.log_guard")),
       std_guard_(m.f32("fastconformer.frontend.std_guard")) {
-    if (n_fft_ <= 0 || (n_fft_ & (n_fft_ - 1)) != 0) throw std::runtime_error("fastconformer.frontend.n_fft is not a power of two");
+    if (n_fft_ <= 0 || (n_fft_ & (n_fft_ - 1)) != 0) throw Error(Fault::File, "fastconformer.frontend.n_fft of " + m.path() + " is not a power of two");
     const int64_t window = ggml_nelements(m.tensor("frontend.window"));
-    if (window > n_fft_) throw std::runtime_error("frontend.window is longer than fastconformer.frontend.n_fft");
+    if (window > n_fft_) throw Error(Fault::File, "frontend.window of " + m.path() + " is longer than fastconformer.frontend.n_fft");
     const std::vector<double> w = read_tensor(m, "frontend.window", window);
     window_.assign(n_fft_, 0.0);
     // torch.stft() centres a window shorter than n_fft in it.
@@ -78,8 +79,9 @@ std::vector<float> Frontend::features(const std::vector<float> & samples) const 
     const int64_t frames = this->frames(samples.size());
     // normalize_batch() divides by frames - 1.
     if (frames < 2) {
-        throw std::runtime_error("the audio has " + std::to_string(samples.size()) + " samples; recognition needs at least " +
-                                 std::to_string(2 * hop_));
+        throw Error(Fault::OutOfRange, "the audio has " + std::to_string(samples.size()) + " samples at " + std::to_string(sample_rate_) +
+                                           " Hz; recognition needs at least " + std::to_string(2 * hop_),
+                    "audio");
     }
     // Pre-emphasis in float32, as FilterbankFeatures.forward() computes it.
     std::vector<float> x(samples.size());

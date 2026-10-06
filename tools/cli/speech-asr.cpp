@@ -23,6 +23,7 @@
 
 #include "args.h"
 #include "list-devices.h"
+#include "load-model.h"
 #include "speech.h"
 #include "take-stdout.h"
 #include "wav.h"
@@ -85,30 +86,21 @@ Options parse_options(const std::vector<std::string> & a) {
     return o;
 }
 
-int write_text(const char * text, void * user_data) {
-    std::string & out = *static_cast<std::string *>(user_data);
-    out += text;
-    return 0;
-}
-
 int transcribe(const std::vector<std::string> & a, FILE * out) {
     const Options o = parse_options(a);
     if (o.positional.size() < 2) throw UsageError("give the model's GGUF file and at least one WAVE file");
 
-    speech_model_params params = speech_model_default_params();
-    params.model_path = o.positional[0].c_str();
-    params.device = o.device.c_str();
-    speech_model * model = nullptr;
     const auto t0 = Clock::now();
-    if (speech_model_load(&params, &model) != SPEECH_OK) throw std::runtime_error(speech_last_error());
-    std::unique_ptr<speech_model, decltype(&speech_model_free)> owned(model, speech_model_free);
-    std::fprintf(stderr, "load %.2f s: %s on %s\n", seconds_since(t0), speech_model_name(model), speech_model_backend(model));
+    const Model model = load_model(o.positional[0], o.device, {});
+    const ModelInfo info = model_info(model.get());
+    const speech_model_info * m = info.get();
+    std::fprintf(stderr, "load %.2f s: %s on %s\n", seconds_since(t0), speech_model_info_name(m), speech_model_info_device(m));
     if (o.verbose) {
         std::string languages;
-        for (size_t i = 0; i < speech_model_language_count(model); i++) {
-            languages += (i ? ", " : "") + std::string(speech_model_language(model, i));
+        for (size_t i = 0; i < speech_model_info_language_count(m); i++) {
+            languages += (i ? ", " : "") + std::string(speech_model_info_language(m, i));
         }
-        std::fprintf(stderr, "speech.cpp %s, %d Hz, languages: %s\n", speech_version(), speech_model_sample_rate(model), languages.c_str());
+        std::fprintf(stderr, "speech.cpp %s, %d Hz, languages: %s\n", speech_version(), speech_model_info_sample_rate(m), languages.c_str());
     }
 
     const bool several = o.positional.size() > 2;
@@ -117,17 +109,17 @@ int transcribe(const std::vector<std::string> & a, FILE * out) {
         const std::string & path = o.positional[i];
         const Wav wav = read_wav(path);
         const std::vector<float> samples = wav.mono();
-        speech_transcription_request r = speech_transcription_request_default();
-        r.sample_rate = wav.sample_rate;
-        r.samples = samples.data();
-        r.n_samples = samples.size();
-        r.language = o.language.c_str();
-        std::string text;
+        speech_request * raw = nullptr;
+        if (speech_request_new(model.get(), &raw) != SPEECH_OK) throw_last_error();
+        const std::unique_ptr<speech_request, decltype(&speech_request_free)> r(raw, speech_request_free);
         const auto start = Clock::now();
-        if (speech_transcribe(model, &r, write_text, &text) != SPEECH_OK) {
+        if (speech_request_set_audio(raw, samples.data(), samples.size(), wav.sample_rate) != SPEECH_OK ||
+            (!o.language.empty() && speech_request_set_string(raw, SPEECH_OPT_LANGUAGE, o.language.c_str()) != SPEECH_OK) ||
+            speech_transcribe(raw) != SPEECH_OK) {
             throw std::runtime_error(path + ": " + speech_last_error());
         }
-        const double took = seconds_since(start), audio = (double) samples.size() / r.sample_rate;
+        const std::string text = speech_result_text(speech_request_result(raw));
+        const double took = seconds_since(start), audio = (double) samples.size() / wav.sample_rate;
         std::fprintf(out, "%s\n", text.c_str());
         std::fflush(out);
         std::fprintf(stderr, "%s: %.2f s of audio in %.3f s, RTF %.3f\n", path.c_str(), audio, took, took / audio);

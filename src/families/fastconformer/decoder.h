@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -17,13 +18,22 @@ struct Decoding {
     std::vector<int32_t> durations;
 };
 
+/**
+ * Told the fraction of the encoder's frames a decoding has passed, as it goes; answering false stops the decoding,
+ * which returns the tokens it has found.
+ */
+using DecodingProgress = std::function<bool(double done)>;
+
 /** A decoding of the transducer's outputs into tokens, the one NeMo's transcribe() runs for the model by default. */
 class Decoder {
 public:
     virtual ~Decoder() = default;
 
-    /** The tokens of `projected`, the encoder's output through Joint::project_encoder(), [T, hidden] row-major. */
-    virtual Decoding decode(const std::vector<float> & projected, ggml_backend_t backend) const = 0;
+    /**
+     * The tokens of `projected`, the encoder's output through Joint::project_encoder(), [T, hidden] row-major, telling
+     * `progress`, when it is given, how far the decoding has come.
+     */
+    virtual Decoding decode(const std::vector<float> & projected, ggml_backend_t backend, const DecodingProgress & progress) const = 0;
 
     virtual int blank() const = 0;
 };

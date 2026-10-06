@@ -48,6 +48,7 @@
 #include "args.h"
 #include "flat-json.h"
 #include "jobs.h"
+#include "load-model.h"
 #include "openai-api.h"
 #include "speech.h"
 
@@ -131,35 +132,33 @@ Options parse_options(const std::vector<std::string> & a) {
     return o;
 }
 
-speech_model * load(const Options & o) {
-    std::vector<speech_voice_source> voices;
-    for (const auto & [name, path] : o.voices) voices.push_back({name.c_str(), path.c_str()});
-    speech_model_params params = speech_model_default_params();
-    params.model_path = o.model.c_str();
-    params.device = o.device.c_str();
-    params.voices = voices.data();
-    params.n_voices = voices.size();
-    params.steps = o.steps;
-    speech_model * model = nullptr;
-    if (speech_model_load(&params, &model) != SPEECH_OK) throw std::runtime_error(speech_last_error());
-    return model;
+/** Refuses steps that the model does not take or that are out of its range, before the server listens. */
+void check_steps(speech_model * model, const speech_model_info * info, int steps) {
+    if (steps == 0) return;
+    if (!speech_model_info_takes(info, SPEECH_OPT_STEPS)) {
+        throw std::runtime_error(std::string(speech_model_info_name(info)) + " has no sampler steps; leave --steps out");
+    }
+    speech_request * r = nullptr;
+    if (speech_request_new(model, &r) != SPEECH_OK) throw_last_error();
+    const std::unique_ptr<speech_request, decltype(&speech_request_free)> owned(r, speech_request_free);
+    if (speech_request_set_int(r, SPEECH_OPT_STEPS, steps) != SPEECH_OK) throw_last_error();
 }
 
 /** The model as OpenAI's model object, with what speech.cpp adds to it. */
-std::string model_json(const speech_model * m, long long created) {
-    const bool synthesis = speech_model_task(m) == SPEECH_TASK_SYNTHESIS;
-    std::string out = "{\"id\":" + json_string(speech_model_name(m)) + ",\"object\":\"model\",\"created\":" +
+std::string model_json(const speech_model_info * m, int steps, long long created) {
+    const bool synthesis = speech_model_info_task(m) == SPEECH_TASK_SYNTHESIS;
+    std::string out = "{\"id\":" + json_string(speech_model_info_name(m)) + ",\"object\":\"model\",\"created\":" +
                       std::to_string(created) + ",\"owned_by\":\"speech.cpp\",\"task\":\"" +
-                      (synthesis ? "synthesis" : "recognition") + "\",\"architecture\":" + json_string(speech_model_architecture(m)) +
-                      ",\"sample_rate\":" + std::to_string(speech_model_sample_rate(m));
+                      (synthesis ? "synthesis" : "recognition") + "\",\"architecture\":" + json_string(speech_model_info_architecture(m)) +
+                      ",\"sample_rate\":" + std::to_string(speech_model_info_sample_rate(m));
     if (synthesis) {
-        out += std::string(",\"streaming\":\"") + (speech_model_streaming(m) == SPEECH_STREAMING_FRAME ? "frame" : "sentence") +
-               "\",\"voices\":" + json_array(speech_model_voice_count(m), [&](size_t i) { return speech_model_voice(m, i); });
+        out += std::string(",\"streaming\":\"") + (speech_model_info_incremental(m) ? "frame" : "sentence") +
+               "\",\"voices\":" + json_array(speech_model_info_voice_count(m), [&](size_t i) { return speech_model_info_voice_name(m, i); });
     }
-    out += ",\"languages\":" + json_array(speech_model_language_count(m), [&](size_t i) { return speech_model_language(m, i); }) +
-           ",\"language_selectable\":" + (speech_model_language_selectable(m) ? "true" : "false");
-    if (speech_model_steps(m) > 0) out += ",\"steps\":" + std::to_string(speech_model_steps(m));
-    return out + ",\"backend\":" + json_string(speech_model_backend(m)) +
+    out += ",\"languages\":" + json_array(speech_model_info_language_count(m), [&](size_t i) { return speech_model_info_language(m, i); }) +
+           ",\"language_selectable\":" + (speech_model_info_option_steers(m, SPEECH_OPT_LANGUAGE) ? "true" : "false");
+    if (steps > 0) out += ",\"steps\":" + std::to_string(steps);
+    return out + ",\"backend\":" + json_string(speech_model_info_device(m)) +
            ",\"version\":" + json_string(speech_version()) + "}";
 }
 
@@ -168,8 +167,9 @@ constexpr auto POLL = std::chrono::milliseconds(50);
 
 class Server {
 public:
-    Server(speech_model * model, std::vector<std::string> cors_origins)
-        : model_(model), cors_origins_(std::move(cors_origins)), created_((long long) std::time(nullptr)) {}
+    Server(speech_model * model, int steps, std::vector<std::string> cors_origins)
+        : model_(model), info_(model_info(model)), steps_(steps), cors_origins_(std::move(cors_origins)),
+          created_((long long) std::time(nullptr)) {}
 
     void route(httplib::Server & http) {
         http.set_pre_routing_handler([this](const httplib::Request & req, httplib::Response & res) { return cors(req, res); });
@@ -186,14 +186,14 @@ public:
             res.set_content("{\"status\":\"ok\"}", "application/json");
         });
         http.Get("/v1/models", [this](const httplib::Request &, httplib::Response & res) {
-            res.set_content("{\"object\":\"list\",\"data\":[" + model_json(model_, created_) + "]}", "application/json");
+            res.set_content("{\"object\":\"list\",\"data\":[" + model_json(info_.get(), effective_steps(), created_) + "]}", "application/json");
         });
         http.Get("/v1/models/(.+)", [this](const httplib::Request & req, httplib::Response & res) {
-            if (req.matches[1] != speech_model_name(model_)) {
+            if (req.matches[1] != name()) {
                 send_error(res, {404, "The model " + json_string(req.matches[1]) + " does not exist.", "model", "model_not_found"});
                 return;
             }
-            res.set_content(model_json(model_, created_), "application/json");
+            res.set_content(model_json(info_.get(), effective_steps(), created_), "application/json");
         });
         http.Post("/v1/audio/speech", [this](const httplib::Request & req, httplib::Response & res) {
             if (serves(SPEECH_TASK_SYNTHESIS, req, res)) speech(req, res);
@@ -205,18 +205,26 @@ public:
 
 private:
     speech_model * model_;
+    /** The information of the model, whose voices are all added before the server listens. */
+    ModelInfo info_;
+    int steps_;
     std::vector<std::string> cors_origins_;
     long long created_;
     Turns turns_;
+
+    std::string name() const { return speech_model_info_name(info_.get()); }
+    speech_task task() const { return speech_model_info_task(info_.get()); }
+    int sample_rate() const { return speech_model_info_sample_rate(info_.get()); }
+    int effective_steps() const { return (int) steps_in_effect(info_.get(), steps_); }
 
     /**
      * Whether the model does what the endpoint asks; otherwise answers a 404, as for a path the server does not have,
      * with a message that names the endpoint of the model's task.
      */
-    bool serves(speech_task task, const httplib::Request & req, httplib::Response & res) const {
-        if (speech_model_task(model_) == task) return true;
-        const bool synthesis = speech_model_task(model_) == SPEECH_TASK_SYNTHESIS;
-        send_error(res, {404, "This server serves " + std::string(speech_model_name(model_)) + ", a speech " +
+    bool serves(speech_task wanted, const httplib::Request & req, httplib::Response & res) const {
+        if (task() == wanted) return true;
+        const bool synthesis = task() == SPEECH_TASK_SYNTHESIS;
+        send_error(res, {404, "This server serves " + name() + ", a speech " +
                                   (synthesis ? "synthesis" : "recognition") + " model, which " + req.path + " is not for; " +
                                   (synthesis ? "POST its text to /v1/audio/speech." : "POST its audio to /v1/audio/transcriptions."),
                          "", ""});
@@ -248,8 +256,10 @@ private:
     void speech(const httplib::Request & req, httplib::Response & res) {
         auto job = std::make_shared<SpeechJob>();
         job->model = model_;
+        job->steps = steps_;
+        job->sample_rate = sample_rate();
         try {
-            job->request = read_request(req.body, speech_model_name(model_));
+            job->asked = read_request(req.body, name());
         } catch (const ApiError & e) {
             send_error(res, e);
             return;
@@ -259,7 +269,7 @@ private:
 
         // A wav is sent whole, so it waits for the end; a stream waits until the library has accepted the
         // request, so that a request it refuses is answered with a 400 instead of a stream that breaks off.
-        const bool whole = job->request.format == "wav";
+        const bool whole = job->asked.format == "wav";
         {
             std::unique_lock<std::mutex> lock(job->mutex);
             while (!job->finished && (whole || !job->accepted)) {
@@ -272,18 +282,18 @@ private:
             // The library checks a request before it calls back, so an error before then is the request's, and one
             // after it is the synthesis's.
             if (job->finished && job->status != SPEECH_OK && (whole || !job->accepted)) {
-                if (job->status == SPEECH_ERROR) send_error(res, {job->accepted ? 500 : 400, job->error, "", ""});
+                if (job->status < 0) send_error(res, {job->accepted ? 500 : 400, job->error, "", ""});
                 return;
             }
         }
-        const int rate = speech_model_sample_rate(model_);
+        const int rate = sample_rate();
         res.set_header("X-Sample-Rate", std::to_string(rate));
-        res.set_header("X-Speech-Seed", std::to_string(job->request.seed));
+        res.set_header("X-Speech-Seed", std::to_string(job->asked.seed));
         if (whole) {
             res.set_content(wav_header(job->pending.size(), rate) + job->pending, "audio/wav");
             return;
         }
-        const bool sse = job->request.sse;
+        const bool sse = job->asked.sse;
         if (sse) res.set_header("Cache-Control", "no-cache");
         res.set_chunked_content_provider(
             sse ? "text/event-stream" : "audio/pcm",
@@ -301,7 +311,7 @@ private:
             std::vector<FormPart> parts;
             for (const auto & [name, field] : req.form.fields) parts.push_back({name, field.content, "", false});
             for (const auto & [name, file] : req.form.files) parts.push_back({name, file.content, file.filename, true});
-            job->request = read_transcription_request(req.is_multipart_form_data(), parts, speech_model_name(model_));
+            job->asked = read_transcription_request(req.is_multipart_form_data(), parts, name());
         } catch (const ApiError & e) {
             send_error(res, e);
             return;
@@ -318,12 +328,12 @@ private:
         }
         // The library refuses the audio and the language before it recognizes anything. The recognition itself fails
         // only when the device does, which the status cannot tell apart, so every error is answered as the request's.
-        if (job->status == SPEECH_ERROR) {
+        if (job->status < 0) {
             send_error(res, {400, job->error, "", ""});
             return;
         }
         if (job->status != SPEECH_OK) return;
-        if (job->request.format == "text") res.set_content(job->text, "text/plain; charset=utf-8");
+        if (job->asked.format == "text") res.set_content(job->text, "text/plain; charset=utf-8");
         else res.set_content(transcription_json(job->text), "application/json");
     }
 
@@ -366,7 +376,7 @@ private:
         if (sse) {
             const std::string out = status == SPEECH_OK
                 ? sse_done(samples)
-                : sse_error({500, status == SPEECH_ERROR ? error : "The synthesis was cancelled.", "", ""});
+                : sse_error({500, status < 0 ? error : "The synthesis was cancelled.", "", ""});
             if (!sink.write(out.data(), out.size())) return false;
         }
         sink.done();
@@ -378,31 +388,31 @@ private:
 
 int main(int argc, char ** argv) {
     Options options;
-    speech_model * model = nullptr;
+    Model model(nullptr, speech_model_free);
     try {
         options = parse_options(utf8_args(argc, argv));
-        model = load(options);
+        model = load_model(options.model, options.device, options.voices);
+        check_steps(model.get(), model_info(model.get()).get(), options.steps);
     } catch (const std::exception & e) {
         std::fprintf(stderr, "speech-server: %s\n", e.what());
         return 1;
     }
-    std::fprintf(stderr, "speech-server: %s (%s) on %s, %d Hz, speech.cpp %s\n", speech_model_name(model),
-                 speech_model_architecture(model), speech_model_backend(model), speech_model_sample_rate(model), speech_version());
+    const ModelInfo info = model_info(model.get());
+    std::fprintf(stderr, "speech-server: %s (%s) on %s, %d Hz, speech.cpp %s\n", speech_model_info_name(info.get()),
+                 speech_model_info_architecture(info.get()), speech_model_info_device(info.get()), speech_model_info_sample_rate(info.get()),
+                 speech_version());
 
     httplib::Server http;
     // Nagle's algorithm would hold a small chunk of a stream until the client acknowledges the previous one.
     http.set_tcp_nodelay(true);
     // A text to speak fits in 1 MB; a file to recognize may take OpenAI's limit for an upload, 25 MB.
-    http.set_payload_max_length(speech_model_task(model) == SPEECH_TASK_SYNTHESIS ? 1 << 20 : 25 << 20);
-    Server server(model, options.cors_origins);
+    http.set_payload_max_length(speech_model_info_task(info.get()) == SPEECH_TASK_SYNTHESIS ? 1 << 20 : 25 << 20);
+    Server server(model.get(), options.steps, options.cors_origins);
     server.route(http);
     if (!http.bind_to_port(options.host, options.port)) {
         std::fprintf(stderr, "speech-server: cannot listen on %s:%d; choose another --port or --host\n", options.host.c_str(), options.port);
-        speech_model_free(model);
         return 1;
     }
     std::fprintf(stderr, "speech-server: listening on http://%s:%d\n", options.host.c_str(), options.port);
-    const bool ok = http.listen_after_bind();
-    speech_model_free(model);
-    return ok ? 0 : 1;
+    return http.listen_after_bind() ? 0 : 1;
 }

@@ -1,5 +1,7 @@
 # Metal runs without the tensor API
 
+Superseded in part by docs/adr/0014: the library sets `GGML_METAL_TENSOR_DISABLE` only while its ggml lists its devices, and restores it.
+
 Decided 2026-10-01.
 
 ## Context

@@ -18,11 +18,12 @@ jobs:
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_METAL_EMBED_LIBRARY=ON -DGGML_NATIVE=OFF
           cmake --build build --config Release -j 4
-      # The checks are built to keep them compiling, and released in no archive.
+      # The checks are built to keep them compiling, and released in no archive. The shared library goes in under the
+      # name its install name gives, libspeech.<major>.dylib; the release adds the link libspeech.dylib to it.
       - name: Stage
         run: |
           mkdir package
-          cp build/speech-worker build/speech-server build/speech-tts build/speech-asr build/libspeech.dylib include/speech.h package/
+          cp build/speech-worker build/speech-server build/speech-tts build/speech-asr build/libspeech.*.dylib include/speech.h package/
       - uses: actions/upload-artifact@v4
         with:
           name: speech-cpp-macos-arm64-metal
@@ -173,7 +174,8 @@ jobs:
         run: |
           mkdir package
           for tool in $TOOLS; do cp "build/$tool" package/; done
-          cp build/libspeech.so include/speech.h package/
+          # The shared library under its SONAME, libspeech.so.<major>; the release adds the link libspeech.so to it.
+          cp build/libspeech.so.* include/speech.h package/
       - uses: actions/upload-artifact@v4
         with:
           name: speech-cpp-linux-x64-${{ matrix.backend }}
@@ -204,10 +206,15 @@ jobs:
           cd dist
           # Artifacts lose the executable bit; the Mac and Linux binaries need it back. ASIST bundles the worker
           # alone, so the worker goes into one archive, and the other tools with libspeech and speech.h into another.
+          # Artifacts also lose links, so the unversioned name a program links against is linked to the versioned
+          # library again, and zip -y keeps the link.
           for platform in macos-arm64-metal windows-x64-vulkan linux-x64-vulkan linux-x64-cpu; do
             (cd "speech-cpp-$platform" && chmod +x * && \
+              for lib in $(ls | grep -E '^libspeech\.([0-9]+\.dylib|so\.[0-9]+)$'); do \
+                ln -s "$lib" "$(echo "$lib" | sed -E 's/\.[0-9]+\.dylib$/.dylib/; s/\.so\.[0-9]+$/.so/')"; \
+              done && \
               zip -q "../speech-worker-${GITHUB_REF_NAME}-$platform.zip" speech-worker* && \
-              zip -q "../speech-cpp-tools-${GITHUB_REF_NAME}-$platform.zip" $(ls | grep -v '^speech-worker'))
+              zip -qy "../speech-cpp-tools-${GITHUB_REF_NAME}-$platform.zip" $(ls | grep -v '^speech-worker'))
           done
           sha256sum *.zip > SHA256SUMS
       - name: Release

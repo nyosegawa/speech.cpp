@@ -28,7 +28,10 @@ struct PromptIds {
 
     explicit PromptIds(const ModelFile & m);
 
-    /** The index of a voice, its name compared without case as the official code compares it; an unknown name throws. */
+    /**
+     * The index of a voice, its name compared with case: the official code lowers the name it is given, and the C API
+     * takes the names as speech.voices writes them. An unknown name throws.
+     */
     size_t voice(const std::string & name) const;
     /**
      * The codec id of the language that a prompt for voice `voice` names when a request asks for the BCP 47 tag `tag`
