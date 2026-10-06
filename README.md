@@ -259,7 +259,9 @@ before it starts a worker:
   `reference/qwen3-asr/`, whose texts it compares byte for byte.
 - `reference/<model>/` pins the official implementation in a uv environment and the checkpoints by revision,
   converts the weights to one GGUF file per model (GGUF files, below) and dumps the tensors the checks compare with;
-  `reference/resample/` dumps torchaudio's resampling, which `resample-check` compares the library's with.
+  `reference/resample/` dumps torchaudio's resampling, which `resample-check` compares the library's with, and
+  `reference/unicode/` writes the Unicode tables of `src/common/` and the normalizations of Python 3.10 and of the
+  tokenizers library, which `unicode-check` compares the library's with (Unicode normalization, below).
 
 ## Audio at another rate
 
@@ -286,6 +288,24 @@ build/resample-check reference/resample/out
 The official implementations resample each in their own way, NeMo's `transcribe()` with librosa's soxr and the
 Irodori-TTS runtime with torchaudio's defaults, so audio at another rate gives a text or a voice slightly different
 from theirs.
+
+## Unicode normalization
+
+The library normalizes text as each model's reference does, with the tables of the version of Unicode the reference
+has: Irodori-TTS takes NFKC with those of Unicode 13.0, as its runtime's Python 3.10 does. The tables hold Unicode 9.0
+as well, the version of the unicode-normalization-alignments crate that the tokenizers library normalizes with; the
+two differ only on characters assigned after 9.0. `unicode-check` compares the library's NFC and NFKC in both versions
+with the tokenizers library's and Python 3.10's on 3626 texts, which hold every code point that a normalization
+changes or orders, every mark beside one of each combining class, every pair of a canonical decomposition with and
+without a mark between them, every Hangul syllable and jamo, and random sequences of them; all are equal.
+
+```sh
+cd reference/unicode
+uv run python gen_unicode.py ../../src/common/unicode-data.inc
+uv run python normalization_cases.py out
+cd ../..
+build/unicode-check reference/unicode/out/normalization-cases.tsv
+```
 
 ## The C API
 

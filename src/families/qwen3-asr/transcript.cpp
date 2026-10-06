@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "unicode.h"
 #include "utf8.h"
 
 namespace qwen3_asr {
@@ -20,12 +21,6 @@ Text code_points(const std::string & s) {
     std::optional<Text> text = decode_utf8(s);
     if (!text) throw std::logic_error("the decoded text is not UTF-8");
     return std::move(*text);
-}
-
-/** What Python's str.isspace() takes for whitespace, which str.strip() removes (Unicode 15.0, Python 3.12). */
-bool python_space(uint32_t cp) {
-    return (cp >= 0x09 && cp <= 0x0D) || (cp >= 0x1C && cp <= 0x20) || cp == 0x85 || cp == 0xA0 || cp == 0x1680 ||
-           (cp >= 0x2000 && cp <= 0x200A) || cp == 0x2028 || cp == 0x2029 || cp == 0x202F || cp == 0x205F || cp == 0x3000;
 }
 
 Text stripped(const Text & text, size_t from = 0) {

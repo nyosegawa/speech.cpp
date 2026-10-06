@@ -48,6 +48,7 @@ add_library(speechcommon STATIC
     src/common/qwen3-decoder.cpp
     src/common/qwen2-tokenizer.cpp
     src/common/utf8.cpp
+    src/common/unicode.cpp
 )
 target_include_directories(speechcommon PUBLIC src/common)
 target_link_libraries(speechcommon PUBLIC ggml::ggml)
@@ -178,6 +179,9 @@ endif()
 # The checks compare each stage with the reference dumps; they are built but not released.
 add_executable(resample-check checks/resample-check.cpp)
 target_link_libraries(resample-check PRIVATE speechcommon)
+
+add_executable(unicode-check checks/unicode-check.cpp)
+target_link_libraries(unicode-check PRIVATE speechcommon)
 
 add_executable(codec-check checks/codec-check.cpp)
 target_link_libraries(codec-check PRIVATE qwen3tts)
