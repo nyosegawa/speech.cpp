@@ -13,13 +13,19 @@ and its check before changing behavior.
 ## Architecture
 
 - `include/speech.h` is the C API and the way into the library for every program and binding: plain C,
-  opaque handles, UTF-8 strings, errors as return codes with the message from `speech_last_error()`, and no
-  C++ exception or type crossing it. A change a caller notices raises `SPEECH_API_VERSION`.
-- `src/speech.cpp` implements the C API over `src/engine.h`, the interface of one family behind it, with one
-  engine per family (`src/<family>-engine.cpp`) that turns the API's options and requests into the family's.
-  One table in `src/speech.cpp` lists the families: the `general.architecture` of their GGUF files, their task
-  (synthesis or recognition), the fields of `speech_model_params` they take and their engine.
-  `speech_model_load()` chooses the family from the table, and adding a family is adding its line.
+  opaque handles, UTF-8 strings, errors as statuses whose category says what failed, with the message from
+  `speech_last_error()` and the input at fault from `speech_last_error_option()`, and no C++ exception or type
+  crossing it. The API has two versions: a change an existing caller notices raises `SPEECH_API_VERSION_MAJOR`,
+  which is the shared library's SOVERSION, and an added function, option or enum value raises
+  `SPEECH_API_VERSION_MINOR`.
+- `src/speech.cpp`, `src/info.cpp` and `src/request.cpp` implement the C API over `src/engine.h`, the interface of
+  one family behind it, with one engine per family (`src/<family>-engine.cpp`). An engine declares in one table the
+  request options its family takes, with their defaults and ranges read from the model file, and turns a request
+  checked against that table into the family's; the setters, the model information and its JSON read the table and
+  nothing else. One table in `src/speech.cpp` lists the families: their task (synthesis or recognition), the layout
+  their reader takes, which names the `general.architecture` of their files, their engine and, for a family that
+  takes voice files, how it makes one. `speech_model_load()` and `speech_model_info_open()` choose the family from
+  the table, and adding a family is adding its line.
 - `src/families/<family>/` holds the code of one architecture, whichever weights it is given: `qwen3-tts/`
   runs Qwen3-TTS 0.6B and 1.7B. A family reads its model's one GGUF file, its codec included, and turns text into
   audio or audio into text; it knows nothing of the C API, the worker protocol or the command line. Its
@@ -36,7 +42,8 @@ and its check before changing behavior.
   task, and the requests it takes follow from the task.
 - `checks/` holds one check per ported stage (`*-check.cpp`) that compares the stage with the reference
   dumps, and `speech-api-check`, which runs the C API through the shared library with a synthesis model and,
-  with `transcribe`, with a recognition model (`speech-api-recognition.c`). Checks reach into
+  with `transcribe`, with a recognition model (`speech-api-recognition.c`), what the two share in
+  `speech-api-common.c`. Checks reach into
   `src/` for the stage they check; they are built but not released.
 - `tools/server/` holds `speech-server`, which serves one model over HTTP with OpenAI's audio API
   (`POST /v1/audio/speech` for a synthesis model, `POST /v1/audio/transcriptions` for a recognition model,
@@ -71,9 +78,10 @@ another one.
 - Do not add fallback behavior; fail loudly rather than degrade silently. A GGUF without a key or tensor, a key
   of another type, a tensor the keys do not call for, a layout the reader does not know,
   a text longer than the model takes, a WAVE format that is not understood and a device that does not
-  start all throw with a message; the C API returns them as `SPEECH_ERROR` and the worker reports them as
-  `error` or `fatal`. Nothing is truncated or
-  moved to another device behind the caller's back.
+  start all throw an `Error` of their kind with a message (`src/common/error.h`), naming the input at fault where
+  there is one; the C API returns each with its category, and the worker reports them as `error` or `fatal`. Nothing
+  is truncated or moved to another device behind the caller's back, and the library checks what it is given before
+  ggml sees it, so that no input makes ggml abort the process.
 - Fix a defect where its cause is, in a form in which it cannot happen, rather than with a guard for the
   one case that showed it; the code after the fix reads better than before. When a fix is much larger
   than the defect, or needs a choice only the user can make, stop and ask instead of patching.
