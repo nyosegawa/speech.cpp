@@ -1,6 +1,6 @@
 # Every program speaks through one C API
 
-Superseded in part by docs/adr/0014: requests are objects that each model checks as their options are set, cancellation is per request, and the API's version has two numbers.
+Superseded in part by docs/adr/0014 and docs/adr/0017: requests are objects that each model checks as their options are set, cancellation is per request, and the API's version has two numbers (0014); the tools are one `speech` executable (0017).
 
 Decided 2026-10-05.
 

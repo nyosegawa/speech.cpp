@@ -1,6 +1,6 @@
 # Irodori-TTS runs both v4.1-Small-MF and v4.1-Small
 
-Superseded in part by docs/adr/0014: the sampler's steps are an option of each request, which the worker's `--steps` sets.
+Superseded in part by docs/adr/0014 and docs/adr/0017: the sampler's steps are an option of each request (0014), which a worker's request sets as its member `steps` and `speech tts` as `--steps` (0017).
 
 Decided 2026-10-01.
 

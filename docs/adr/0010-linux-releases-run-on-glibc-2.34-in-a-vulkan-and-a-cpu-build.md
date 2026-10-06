@@ -1,5 +1,7 @@
 # Linux releases run on glibc 2.34, in a Vulkan and a CPU build
 
+Superseded in part by docs/adr/0017: a release has one archive per platform, `speech-<version>-<platform>.zip`.
+
 Decided 2026-10-05.
 
 ## Context

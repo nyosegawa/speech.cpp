@@ -11,11 +11,13 @@
 #include <optional>
 #include <string>
 
-#include "openai-api.h"
-#include "speech.h"
+#include "library.h"
 
-// How the server runs requests on its one model: in the order they arrive, each on a thread of its own that hands
-// what it makes to the HTTP handler, and stopped when its client goes away.
+// How the server runs requests on its one model: each set up by its HTTP handler as it arrives, so that the library
+// refuses a value at once, then run in the order the requests arrived, each on a thread of its own that hands what it
+// makes to the handler, and stopped when its client goes away.
+
+namespace server {
 
 using Clock = std::chrono::steady_clock;
 
@@ -55,19 +57,17 @@ private:
     uint64_t next_ = 0, serving_ = 0;
 };
 
-/** What every request's run shares: its state, which the HTTP handler waits on, and its client's departure. */
+/** What every request's run shares: the library's request, its state, which the HTTP handler waits on, and its client's departure. */
 struct Job {
-    speech_model * model;
-    /** The steps of every speech request, or 0 for the model's own. */
-    int steps = 0;
+    /** The request as its handler set it up, which the run spends and a client that goes away cancels. */
+    Request request{nullptr, speech_request_free};
     std::mutex mutex;
     std::condition_variable changed;
-    /** The library's request while it runs, which a client that goes away cancels. */
-    speech_request * request = nullptr;
     bool finished = false;
     bool abandoned = false;
     speech_status status = SPEECH_OK;
-    std::string error;
+    /** The library's failure of a run that failed. */
+    std::optional<Failure> failure;
     Clock::time_point arrived = Clock::now(), gone;
 
     /** Stops the request for a client that went away, whether it waits or runs. */
@@ -75,33 +75,34 @@ struct Job {
         std::lock_guard<std::mutex> lock(mutex);
         if (!abandoned) gone = Clock::now();
         abandoned = true;
-        if (request) speech_request_cancel(request);
+        speech_request_cancel(request.get());
     }
 };
 
 /** One request's synthesis, which hands its audio to the HTTP handler as it is made. */
 struct SpeechJob : Job {
-    SpeechRequest asked;
     /** The model's sample rate, which the log gives the length in. */
     int sample_rate = 0;
     /** The PCM made and not yet sent. */
     std::string pending;
-    /** The callback has been called, so the library has accepted the request. */
+    /** A callback has been called, so the library has accepted the request and its work has begun. */
     bool accepted = false;
-    size_t samples = 0;
+    uint64_t samples = 0;
+    int64_t seed = -1;
+    speech_stop stop = SPEECH_STOP_COMPLETE;
     Clock::time_point first_audio;
 };
 
-/** One request's recognition, whose text the HTTP handler sends once it is done. */
+/** One request's recognition, whose result the HTTP handler reads from the request once it is done. */
 struct TranscriptionJob : Job {
-    TranscriptionRequest asked;
-    std::string text;
+    /** The length of the audio in seconds and its rate, for the log and verbose_json. */
+    double duration = 0;
+    int sample_rate = 0;
 };
 
 inline int on_audio(const float * s, size_t n, void * user_data) {
     SpeechJob & job = *static_cast<SpeechJob *>(user_data);
     std::lock_guard<std::mutex> lock(job.mutex);
-    if (job.abandoned) return 1;
     job.accepted = true;
     if (job.samples == 0) job.first_audio = Clock::now();
     append_pcm(job.pending, s, n);
@@ -114,59 +115,54 @@ inline int on_audio(const float * s, size_t n, void * user_data) {
 inline int on_progress(double, void * user_data) {
     SpeechJob & job = *static_cast<SpeechJob *>(user_data);
     std::lock_guard<std::mutex> lock(job.mutex);
-    if (job.abandoned) return 1;
     job.accepted = true;
     job.changed.notify_all();
     return 0;
 }
 
-inline double seconds_since(Clock::time_point t0, Clock::time_point t1) {
+inline double seconds_between(Clock::time_point t0, Clock::time_point t1) {
     return std::chrono::duration<double>(t1 - t0).count();
 }
 
 /**
  * Runs a request on the model in its turn, on a thread of its own, unless its client went away while it waited, and
- * logs how it went: `name` begins the line, `prepare` sets the library's request up and `run` runs it, and `outcome`,
- * called with the job locked, says what the run made.
+ * logs how it went: `name` begins the line, `run` runs the request, and `outcome`, called with the job locked, says
+ * what the run made.
  */
-template <typename Prepare, typename Run, typename Outcome>
-inline void run_in_turn(Job & job, Turns & turns, uint64_t ticket, const std::string & name, Prepare prepare, Run run, Outcome outcome) {
+template <typename Run, typename Outcome>
+void run_in_turn(Job & job, Turns & turns, uint64_t ticket, const std::string & name, Run run, Outcome outcome) {
     turns.wait(ticket);
     const Clock::time_point started = Clock::now();
-    speech_request * request = nullptr;
-    speech_status status = speech_request_new(job.model, &request);
-    const std::unique_ptr<speech_request, decltype(&speech_request_free)> owned(request, speech_request_free);
-    if (status == SPEECH_OK) status = prepare(request);
     bool ran = false;
     {
         std::lock_guard<std::mutex> lock(job.mutex);
         ran = !job.abandoned;
-        if (ran && status == SPEECH_OK) job.request = request;
     }
-    std::string error;
-    if (ran && status == SPEECH_OK) status = run(request);
-    if (status < 0) error = speech_last_error();
-    if (!ran) status = SPEECH_CANCELLED;
+    speech_status status = SPEECH_CANCELLED;
+    std::optional<Failure> failure;
+    if (ran) {
+        status = run(job.request.get());
+        if (status < 0) failure = library_failure(status);
+    }
     {
         std::lock_guard<std::mutex> lock(job.mutex);
-        job.request = nullptr;
         job.finished = true;
         job.status = status;
-        job.error = error;
+        job.failure = failure;
         job.changed.notify_all();
         const Clock::time_point now = Clock::now();
         char line[256];
-        std::snprintf(line, sizeof line, ": waited %.3f s", seconds_since(job.arrived, started));
+        std::snprintf(line, sizeof line, ": waited %.3f s", seconds_between(job.arrived, started));
         std::string log = name + line;
         if (!ran) {
             log += ", not started: the client went away while it waited";
         } else {
-            log += outcome(started, request);
-            std::snprintf(line, sizeof line, " in %.3f s", seconds_since(started, now));
+            log += outcome(started);
+            std::snprintf(line, sizeof line, " in %.3f s", seconds_between(started, now));
             log += line;
-            if (status < 0) log += ", failed: " + error;
+            if (failure) log += ", failed: " + failure->code() + ": " + failure->what();
             if (job.abandoned) {
-                std::snprintf(line, sizeof line, ", stopped %.3f s after the client went away", seconds_since(job.gone, now));
+                std::snprintf(line, sizeof line, ", stopped %.3f s after the client went away", seconds_between(job.gone, now));
                 log += line;
             }
         }
@@ -175,32 +171,20 @@ inline void run_in_turn(Job & job, Turns & turns, uint64_t ticket, const std::st
     turns.pass();
 }
 
-/** Sets one option, returning the library's status. */
-inline speech_status set_float_if(speech_request * r, speech_option option, const std::optional<double> & v) {
-    return v ? speech_request_set_float(r, option, *v) : SPEECH_OK;
-}
-
-inline void synthesize(const std::shared_ptr<SpeechJob> & job, Turns & turns, uint64_t ticket) {
-    char name[256];
-    std::snprintf(name, sizeof name, "speech: voice %s, seed %llu", job->asked.voice.c_str(), (unsigned long long) job->asked.seed);
-    const SpeechRequest & a = job->asked;
+inline void synthesize(const std::shared_ptr<SpeechJob> & job, Turns & turns, uint64_t ticket, const std::string & name) {
     run_in_turn(*job, turns, ticket, name, [&](speech_request * r) {
-        speech_status s = speech_request_set_text(r, a.input.c_str());
-        if (s == SPEECH_OK) s = speech_request_set_string(r, SPEECH_OPT_VOICE, a.voice.c_str());
-        if (s == SPEECH_OK && !a.language.empty()) s = speech_request_set_string(r, SPEECH_OPT_LANGUAGE, a.language.c_str());
-        if (s == SPEECH_OK) s = speech_request_set_int(r, SPEECH_OPT_SEED, (int64_t) a.seed);
-        if (s == SPEECH_OK && job->steps > 0) s = speech_request_set_int(r, SPEECH_OPT_STEPS, job->steps);
-        if (s == SPEECH_OK) s = set_float_if(r, SPEECH_OPT_SPEED, a.speed);
-        // A length of 0 leaves it to the model.
-        if (s == SPEECH_OK && a.seconds.value_or(0) != 0) s = set_float_if(r, SPEECH_OPT_SECONDS, a.seconds);
-        if (s == SPEECH_OK) s = set_float_if(r, SPEECH_OPT_DURATION_SCALE, a.duration_scale);
-        if (s == SPEECH_OK) s = speech_request_set_progress(r, on_progress, job.get());
+        const speech_status s = speech_synthesize(r, on_audio, job.get());
+        if (s >= 0) {
+            const speech_result * result = speech_request_result(r);
+            std::lock_guard<std::mutex> lock(job->mutex);
+            job->seed = speech_result_seed(result);
+            job->stop = speech_result_stop(result);
+        }
         return s;
-    }, [&](speech_request * r) { return speech_synthesize(r, on_audio, job.get()); },
-    [&](Clock::time_point started, speech_request *) {
+    }, [&](Clock::time_point started) {
         if (!job->samples) return std::string();
         char line[256];
-        std::snprintf(line, sizeof line, ", first audio after %.3f s, %.2f s of audio", seconds_since(started, job->first_audio),
+        std::snprintf(line, sizeof line, ", first audio after %.3f s, %.2f s of audio", seconds_between(started, job->first_audio),
                       (double) job->samples / job->sample_rate);
         return std::string(line);
     });
@@ -208,15 +192,11 @@ inline void synthesize(const std::shared_ptr<SpeechJob> & job, Turns & turns, ui
 
 inline void transcribe(const std::shared_ptr<TranscriptionJob> & job, Turns & turns, uint64_t ticket) {
     char name[256];
-    const TranscriptionRequest & a = job->asked;
-    std::snprintf(name, sizeof name, "transcription: %.2f s of audio at %d Hz", (double) a.samples.size() / a.sample_rate, a.sample_rate);
-    run_in_turn(*job, turns, ticket, name, [&](speech_request * r) {
-        speech_status s = speech_request_set_audio(r, a.samples.data(), a.samples.size(), a.sample_rate);
-        if (s == SPEECH_OK && !a.language.empty()) s = speech_request_set_string(r, SPEECH_OPT_LANGUAGE, a.language.c_str());
-        return s;
-    }, [&](speech_request * r) {
-        const speech_status s = speech_transcribe(r);
-        if (s == SPEECH_OK) job->text = speech_result_text(speech_request_result(r));
-        return s;
-    }, [&](Clock::time_point, speech_request *) { return ", " + std::to_string(job->text.size()) + " bytes of text"; });
+    std::snprintf(name, sizeof name, "transcription: %.2f s of audio at %d Hz", job->duration, job->sample_rate);
+    run_in_turn(*job, turns, ticket, name, [&](speech_request * r) { return speech_transcribe(r); }, [&](Clock::time_point) {
+        const speech_result * result = speech_request_result(job->request.get());
+        return result ? ", " + std::to_string(std::string(speech_result_text(result)).size()) + " bytes of text" : std::string();
+    });
 }
+
+}  // namespace server
