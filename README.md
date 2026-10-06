@@ -13,7 +13,7 @@ checked against the official implementation.
 | nvidia | parakeet-tdt_ctc | 0.6b-ja | `fastconformer` | Japanese speech recognition with its TDT decoder, a recording at a time | [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) |
 | nvidia | parakeet-tdt | 0.6b-v3 | `fastconformer` | speech recognition of 25 European languages, which the model tells apart itself, with its TDT decoder | [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) |
 | reazon-research | reazonspeech-nemo | v2 | `fastconformer` | Japanese speech recognition of recordings of many minutes, with its RNN-T decoder's beam search | [sakasegawa/reazonspeech-nemo-v2-GGUF](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) |
-| Qwen | Qwen3-ASR | 0.6B and 1.7B | `qwen3-asr` | speech recognition of 30 languages, found by the model or forced, with a prompt of context, by an encoder and a Qwen3 decoder | [sakasegawa/Qwen3-ASR-0.6B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF), [sakasegawa/Qwen3-ASR-1.7B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF), not uploaded yet |
+| Qwen | Qwen3-ASR | 0.6B and 1.7B | `qwen3-asr` | speech recognition of 30 languages, found by the model or forced, with a prompt of context, by an encoder and a Qwen3 decoder | [sakasegawa/Qwen3-ASR-0.6B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF), [sakasegawa/Qwen3-ASR-1.7B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF) |
 
 The organization and the model line are the model file's `general.organization` and `general.basename`. The family
 is its `general.architecture`, which the model information calls `architecture`: the code that runs the file, which
@@ -932,8 +932,8 @@ writes the other types as well:
 | [nvidia/parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) | [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | `parakeet-tdt_ctc-0.6B-ja-F16.gguf` | `parakeet-tdt_ctc-0.6B-ja-F32.gguf` |
 | [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) | `parakeet-tdt-0.6B-v3-F16.gguf` | `parakeet-tdt-0.6B-v3-F32.gguf` |
 | [reazon-research/reazonspeech-nemo-v2](https://huggingface.co/reazon-research/reazonspeech-nemo-v2) | [sakasegawa/reazonspeech-nemo-v2-GGUF](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) | `reazonspeech-nemo-619M-v2-F16.gguf` | `reazonspeech-nemo-619M-v2-F32.gguf` |
-| [Qwen/Qwen3-ASR-0.6B](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) | [sakasegawa/Qwen3-ASR-0.6B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF), not uploaded yet | `Qwen3-ASR-0.6B-Q8_0.gguf` | `Qwen3-ASR-0.6B-F16.gguf`, `Qwen3-ASR-0.6B-F32.gguf` |
-| [Qwen/Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) | [sakasegawa/Qwen3-ASR-1.7B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF), not uploaded yet | `Qwen3-ASR-1.7B-Q8_0.gguf` | `Qwen3-ASR-1.7B-F16.gguf`, `Qwen3-ASR-1.7B-F32.gguf` |
+| [Qwen/Qwen3-ASR-0.6B](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) | [sakasegawa/Qwen3-ASR-0.6B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF) | `Qwen3-ASR-0.6B-Q8_0.gguf` | `Qwen3-ASR-0.6B-F16.gguf`, `Qwen3-ASR-0.6B-F32.gguf` |
+| [Qwen/Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) | [sakasegawa/Qwen3-ASR-1.7B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF) | `Qwen3-ASR-1.7B-Q8_0.gguf` | `Qwen3-ASR-1.7B-F16.gguf`, `Qwen3-ASR-1.7B-F32.gguf` |
 
 Irodori-TTS's names give Small, a word, where the convention's size label is a number, so their size label is counted:
 848M for v4.1-Small-MF, whose DiT has MeanFlow's 7.2M parameters more, and 841M for v4.1-Small, each with its codec.
@@ -974,9 +974,9 @@ A synthesis needs one file per model, the codec inside it:
 [sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF)
 holds `Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf` and
 [sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF)
-`Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf`. The repositories get these files with the release of 0.7.0; until then
-they hold the talker and the separate codec of earlier releases, which this one refuses. To convert them yourself
-from the official checkpoints, which `reference/qwen3-tts/pins.py` pins by revision:
+`Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf`. The talker and the separate codec of earlier releases, which this one
+refuses, remain in the repositories' history. To convert them yourself from the official checkpoints, which
+`reference/qwen3-tts/pins.py` pins by revision:
 
 ```sh
 cd reference/qwen3-tts
@@ -1062,10 +1062,9 @@ A synthesis needs one file per model, the codec inside it:
 [sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF)
 holds `Irodori-TTS-848M-MF-v4.1-F16.gguf` and
 [sakasegawa/Irodori-TTS-v4.1-Small-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF)
-`Irodori-TTS-841M-v4.1-F16.gguf`, and their cards list the SHA-256. The repositories get these files with the
-release of 0.7.0; until then they hold the model and the separate codec of earlier releases, which this one refuses.
-To convert them yourself from the official checkpoints and codec, which `reference/irodori-tts/pins.py` pins by
-revision:
+`Irodori-TTS-841M-v4.1-F16.gguf`, and their cards list the SHA-256. The model and the separate codec of earlier
+releases, which this one refuses, remain in the repositories' history. To convert them yourself from the official
+checkpoints and codec, which `reference/irodori-tts/pins.py` pins by revision:
 
 ```sh
 cd reference/irodori-tts
@@ -1212,9 +1211,9 @@ Recognition needs one file per model: `parakeet-tdt_ctc-0.6B-ja-F16.gguf` from
 [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) or
 `reazonspeech-nemo-619M-v2-F16.gguf` from
 [sakasegawa/reazonspeech-nemo-v2-GGUF](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF), whose cards
-list their SHA-256. The repositories get these files in layout 1 with the release of 0.7.0; until then they hold
-the files of earlier releases, which this one refuses. To convert them yourself, `reference/fastconformer/` pins NeMo
-3.0.0 with PyTorch 2.10.0 and each checkpoint by revision, size and SHA-256:
+list their SHA-256. The files of earlier releases, which this one refuses, remain in the repositories' history. To
+convert them yourself, `reference/fastconformer/` pins NeMo 3.0.0 with PyTorch 2.10.0 and each checkpoint by
+revision, size and SHA-256:
 
 ```sh
 cd reference/fastconformer
@@ -1407,8 +1406,8 @@ false); the language the model writes, which the result does not carry; qwen-asr
 
 Recognition needs one file per model: `Qwen3-ASR-0.6B-Q8_0.gguf` from
 [sakasegawa/Qwen3-ASR-0.6B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF) or `Qwen3-ASR-1.7B-Q8_0.gguf`
-from [sakasegawa/Qwen3-ASR-1.7B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF), which are not uploaded
-yet. `reference/qwen3-asr/` pins transformers 5.18.0, qwen-asr 0.0.6 and PyTorch 2.10.0, and each checkpoint by
+from [sakasegawa/Qwen3-ASR-1.7B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF).
+`reference/qwen3-asr/` pins transformers 5.18.0, qwen-asr 0.0.6 and PyTorch 2.10.0, and each checkpoint by
 revision, size and SHA-256, and converts it:
 
 ```sh
