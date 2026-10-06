@@ -956,7 +956,7 @@ of every stage; the check tools compare against them.
 | Codec decoder, one frame at a time against whole, CPU | 133 dB SNR |
 | Codec decoder on Metal | error at -63 dB of the voice |
 | Talker and code predictor, F32, teacher forcing (`talker-check`) | argmax matches on every frame; greedy decode gives the same 54 frames |
-| Tokenizer (`tokenizer-check`) | matches the model's `tokenizer.json` on 19 texts |
+| Tokenizer (`tokenizer-check`) | encodes 19 texts and decodes 1033 sequences of ids as the model's `tokenizer.json` does |
 
 The tokenizer follows the pre-tokenizer of the `tokenizer.json` that ships with the model. The official
 package loads it through transformers 4.57.3 with `fix_mistral_regex=True`, which swaps in Mistral's

@@ -44,6 +44,7 @@ add_library(speechcommon STATIC
     src/common/graph.cpp
     src/common/resample.cpp
     src/common/log.cpp
+    src/common/qwen2-tokenizer.cpp
 )
 target_include_directories(speechcommon PUBLIC src/common)
 target_link_libraries(speechcommon PUBLIC ggml::ggml)
@@ -59,7 +60,6 @@ add_library(qwen3tts STATIC
     src/families/qwen3-tts/talker.cpp
     src/families/qwen3-tts/prompt.cpp
     src/families/qwen3-tts/sampler.cpp
-    src/families/qwen3-tts/tokenizer.cpp
     src/families/qwen3-tts/synthesizer.cpp
 )
 # Code names the family in its includes ("qwen3-tts/codec.h"), since both families have a codec.h.
