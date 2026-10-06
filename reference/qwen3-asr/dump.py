@@ -54,7 +54,6 @@ auto/part<i>/, each part's prompt_ids, ids, raw.txt and text.txt, with the joine
 import argparse
 import copy
 import importlib.metadata
-import importlib.util
 import json
 import os
 import time
@@ -68,6 +67,7 @@ from transformers import (AutoTokenizer, GenerationConfig, Qwen3ASRConfig, Qwen3
 from transformers.models.qwen3_asr.modeling_qwen3_asr import _get_feat_extract_output_lengths
 
 from inputs import INPUTS, SAMPLE_RATE, read
+from official_utils import qwen_asr_utils
 from pins import FLEURS, MODELS, snapshot
 
 MAX_NEW_TOKENS = 4096
@@ -75,16 +75,6 @@ VARIANTS = {"auto": (False, False), "forced": (True, False), "auto-prompt": (Fal
 TOP = 8
 PREFILL_LOGIT_ROWS = 4
 VERSIONS = {name: importlib.metadata.version(name) for name in ("transformers", "qwen-asr", "torch")}
-
-
-def qwen_asr_utils():
-    """qwen-asr's inference/utils.py. It is loaded from its file because importing the package runs its __init__,
-    which imports qwen-asr's own copy of the model, written for transformers 4.57.6 and failing on 5.18."""
-    package = importlib.util.find_spec("qwen_asr").submodule_search_locations[0]
-    spec = importlib.util.spec_from_file_location("qwen_asr_inference_utils", os.path.join(package, "inference", "utils.py"))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 utils = qwen_asr_utils()

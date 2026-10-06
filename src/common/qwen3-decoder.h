@@ -27,9 +27,17 @@ struct Qwen3Shape {
 /**
  * The shape that the keys `<prefix>.hidden_size`, `.intermediate_size`, `.num_hidden_layers`, `.num_attention_heads`,
  * `.num_key_value_heads`, `.head_dim`, `.rms_norm_eps` and `.rope_theta` of `m` give, named as Qwen3's configuration
- * names them.
+ * names them. A size of 0, heads that are no multiple of the key/value heads and an odd head width, which RoPE cannot
+ * turn in pairs, throw.
  */
 Qwen3Shape read_qwen3_shape(const ModelFile & m, const std::string & prefix);
+
+/**
+ * Appends to `t` the tensors of the stack `tensors` of shape `s` that Qwen3Decoder reads, its matrices in one of
+ * `matrix_types` and its norms in F32.
+ */
+void add_qwen3_tensors(std::vector<TensorSpec> & t, const std::string & tensors, const Qwen3Shape & s,
+                       const std::vector<ggml_type> & matrix_types);
 
 /** Builds rows [from, from + rows) of a run's input, [hidden, rows], in the graph `g` of the block that holds them. */
 using Qwen3Rows = std::function<ggml_tensor *(Graph & g, int64_t from, int64_t rows)>;

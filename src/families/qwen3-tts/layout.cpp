@@ -9,6 +9,7 @@
 #include "codec.h"
 #include "error.h"
 #include "prompt.h"
+#include "qwen3-decoder.h"
 
 namespace {
 
@@ -32,31 +33,6 @@ constexpr int64_t kConvNextWidening = 4;
 
 void require(bool condition, const ModelFile & m, const std::string & what) {
     if (!condition) throw Error(Fault::File, m.path() + ": " + what + "; " + m.remedy());
-}
-
-/** The talker's or the code predictor's decoder stack. */
-struct Stack {
-    int hidden, ffn, layers, heads, kv_heads, head_dim, vocab;
-};
-
-Stack read_stack(const ModelFile & m, const std::string & prefix) {
-    const Stack s = {m.size(prefix + "hidden_size"),         m.size(prefix + "intermediate_size"), m.count(prefix + "num_hidden_layers"),
-                     m.size(prefix + "num_attention_heads"), m.size(prefix + "num_key_value_heads"), m.size(prefix + "head_dim"),
-                     m.size(prefix + "vocab_size")};
-    m.f32(prefix + "rms_norm_eps");
-    m.f32(prefix + "rope_theta");
-    require(s.heads % s.kv_heads == 0, m, prefix + "num_attention_heads is not a multiple of " + prefix + "num_key_value_heads");
-    require(s.head_dim % 2 == 0, m, prefix + "head_dim is odd, where RoPE turns pairs of channels");
-    return s;
-}
-
-void add_stack(std::vector<TensorSpec> & t, const std::string & prefix, const Stack & s) {
-    const int64_t h = s.hidden, q = (int64_t) s.heads * s.head_dim, kv = (int64_t) s.kv_heads * s.head_dim;
-    add_numbered(t, prefix, s.layers,
-                 {{"attn_norm", {h}, kF32},         {"ffn_norm", {h}, kF32},           {"attn_q", {h, q}, kMatrix},
-                  {"attn_k", {h, kv}, kMatrix},     {"attn_v", {h, kv}, kMatrix},      {"attn_o", {q, h}, kMatrix},
-                  {"attn_q_norm", {s.head_dim}, kF32}, {"attn_k_norm", {s.head_dim}, kF32}, {"ffn_gate", {h, s.ffn}, kMatrix},
-                  {"ffn_up", {h, s.ffn}, kMatrix},  {"ffn_down", {s.ffn, h}, kMatrix}});
 }
 
 void read_sampling(const ModelFile & m, const std::string & prefix) {
@@ -94,8 +70,8 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
     }
 
     const std::string p = "qwen3-tts.";
-    const Stack talker = read_stack(m, p + "talker."), cp = read_stack(m, p + "code_predictor.");
-    const int vocab = talker.vocab;
+    const Qwen3Shape talker = read_qwen3_shape(m, p + "talker"), cp = read_qwen3_shape(m, p + "code_predictor");
+    const int vocab = m.size(p + "talker.vocab_size"), cp_vocab = m.size(p + "code_predictor.vocab_size");
     const int groups = m.count(p + "talker.num_code_groups");
     require(groups >= 2, m, "qwen3-tts.talker.num_code_groups is 1, where the code predictor predicts the codes after a frame's first");
     for (const char * key : {"codec_bos_id", "codec_eos_token_id", "codec_pad_id", "codec_think_id", "codec_nothink_id", "codec_think_bos_id",
@@ -153,7 +129,7 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
     const int64_t text_width = m.width("talker.text_embd", 0), text_rows = m.width("talker.text_embd", 1);
     require(text_rows >= (int64_t) tokens, m, "talker.text_embd has fewer rows than qwen3-tts.tokenizer.tokens has tokens");
     const int64_t codebook_size = m.width("codec.vq.first.codebook.0", 1);
-    require(codebook_size >= vocab - (int64_t) suppressed && codebook_size >= cp.vocab, m,
+    require(codebook_size >= vocab - (int64_t) suppressed && codebook_size >= cp_vocab, m,
             "the codec's codebooks have fewer entries than the talker or the code predictor has codes");
     const int64_t decoder = m.width("codec.dec.in_conv.weight", 1), codec_ffn = m.width("codec.tf.blk.0.ffn_gate", 1);
     std::vector<int64_t> channels = {decoder};
@@ -170,14 +146,12 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
                                  {"talker.text_proj.fc2.weight", {text_width, h}, kMatrix},
                                  {"talker.text_proj.fc2.bias", {h}, kF32},
                                  {"talker.codec_embd", {h, vocab}, kMatrix},
-                                 {"talker.codec_head", {h, vocab}, kMatrix},
-                                 {"talker.norm", {h}, kF32},
-                                 {"cp.norm", {cp.hidden}, kF32}};
-    add_stack(t, "talker.blk.", talker);
-    add_stack(t, "cp.blk.", cp);
+                                 {"talker.codec_head", {h, vocab}, kMatrix}};
+    add_qwen3_tensors(t, "talker", talker, kMatrix);
+    add_qwen3_tensors(t, "cp", cp, kMatrix);
     // The code predictor embeds the codes after a frame's first in the talker's width, since the talker reads them too.
-    add_numbered(t, "cp.codec_embd.", groups - 1, {{"", {h, cp.vocab}, kMatrix}});
-    add_numbered(t, "cp.head.", groups - 1, {{"", {cp.hidden, cp.vocab}, kMatrix}});
+    add_numbered(t, "cp.codec_embd.", groups - 1, {{"", {h, cp_vocab}, kMatrix}});
+    add_numbered(t, "cp.head.", groups - 1, {{"", {cp.hidden, cp_vocab}, kMatrix}});
     // The official model makes small_to_mtp_projection a Linear exactly when the two widths differ (the 1.7B model).
     if (cp.hidden != talker.hidden) add_block(t, "cp.in_proj.", {{"weight", {h, cp.hidden}, kMatrix}, {"bias", {cp.hidden}, kF32}});
 

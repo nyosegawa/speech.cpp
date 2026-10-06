@@ -18,7 +18,7 @@
 
 #include "args.h"
 #include "backend.h"
-#include "fastconformer-dumps.h"
+#include "reference-dumps.h"
 #include "fastconformer/recognizer.h"
 #include "fastconformer/times.h"
 #include "npy.h"
@@ -109,7 +109,7 @@ int main(int argc, char ** argv) {
             const std::vector<std::string> separators = recognizer.model().str_array("fastconformer.segment.separators");
             const std::vector<std::string> breaks = recognizer.model().str_array("fastconformer.segment.breaks");
             ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
-            for (const auto & d : fastconformer_dumps(args[2], recognizer.model())) {
+            for (const auto & d : reference_dumps(args[2], recognizer.model())) {
                 const Npy encoded = read_npy((d / "encoded.npy").u8string());
                 const Npy audio = read_npy((d / "audio.npy").u8string());
                 const Npy want_ids = read_npy((d / "ids.npy").u8string());
@@ -121,7 +121,7 @@ int main(int argc, char ** argv) {
                 const std::vector<std::string> want_segments = read_lines(d / "segments.txt");
                 Npy duration;
                 if (tdt) duration = read_npy((d / "token_duration.npy").u8string());
-                const std::string want_text = fastconformer_text(d);
+                const std::string want_text = dump_text(d / "text.txt");
                 std::printf("%s (%.2f s, %zu tokens, %zu segments)\n", d.filename().u8string().c_str(),
                             (double) audio.f32.size() / recognizer.sample_rate(), want_ids.i32.size(), want_segments.size());
 

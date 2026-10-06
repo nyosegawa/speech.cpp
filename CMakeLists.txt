@@ -43,6 +43,7 @@ add_library(speechcommon STATIC
     src/common/language.cpp
     src/common/graph.cpp
     src/common/resample.cpp
+    src/common/fft.cpp
     src/common/log.cpp
     src/common/qwen3-decoder.cpp
     src/common/qwen2-tokenizer.cpp
@@ -100,6 +101,15 @@ add_library(fastconformer STATIC
 )
 target_include_directories(fastconformer PUBLIC src/families)
 target_link_libraries(fastconformer PUBLIC speechcommon)
+
+# Qwen3-ASR speech recognition (Qwen): the family.
+add_library(qwen3asr STATIC
+    src/families/qwen3-asr/layout.cpp
+    src/families/qwen3-asr/frontend.cpp
+    src/families/qwen3-asr/encoder.cpp
+)
+target_include_directories(qwen3asr PUBLIC src/families)
+target_link_libraries(qwen3asr PUBLIC speechcommon)
 
 # The C API, include/speech.h, twice: static for the executables, so that each stays one file, and shared as
 # libspeech for bindings and other programs. On Windows the two would both write speech.lib, the static one as
@@ -207,4 +217,10 @@ endif()
 foreach(stage frontend encoder transducer times)
     add_executable(fastconformer-${stage}-check checks/fastconformer-${stage}-check.cpp)
     target_link_libraries(fastconformer-${stage}-check PRIVATE fastconformer)
+endforeach()
+
+# The checks of Qwen3-ASR's stages.
+foreach(stage frontend encoder)
+    add_executable(qwen3-asr-${stage}-check checks/qwen3-asr-${stage}-check.cpp)
+    target_link_libraries(qwen3-asr-${stage}-check PRIVATE qwen3asr)
 endforeach()

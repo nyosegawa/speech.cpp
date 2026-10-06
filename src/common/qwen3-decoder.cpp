@@ -40,15 +40,39 @@ int64_t round_up(int64_t n, int64_t step) {
 
 Qwen3Shape read_qwen3_shape(const ModelFile & m, const std::string & prefix) {
     Qwen3Shape s;
-    s.hidden = (int) m.u32(prefix + ".hidden_size");
-    s.ffn = (int) m.u32(prefix + ".intermediate_size");
-    s.n_layer = (int) m.u32(prefix + ".num_hidden_layers");
-    s.n_head = (int) m.u32(prefix + ".num_attention_heads");
-    s.n_kv_head = (int) m.u32(prefix + ".num_key_value_heads");
-    s.head_dim = (int) m.u32(prefix + ".head_dim");
+    s.hidden = m.size(prefix + ".hidden_size");
+    s.ffn = m.size(prefix + ".intermediate_size");
+    s.n_layer = m.count(prefix + ".num_hidden_layers");
+    s.n_head = m.size(prefix + ".num_attention_heads");
+    s.n_kv_head = m.size(prefix + ".num_key_value_heads");
+    s.head_dim = m.size(prefix + ".head_dim");
     s.rms_eps = m.f32(prefix + ".rms_norm_eps");
     s.rope_theta = m.f32(prefix + ".rope_theta");
+    const auto require = [&](bool condition, const std::string & what) {
+        if (!condition) throw Error(Fault::File, m.path() + ": " + prefix + what + "; " + m.remedy());
+    };
+    require(s.n_head % s.n_kv_head == 0, ".num_attention_heads is not a multiple of " + prefix + ".num_key_value_heads");
+    require(s.head_dim % 2 == 0, ".head_dim is odd, where RoPE turns pairs of channels");
     return s;
+}
+
+void add_qwen3_tensors(std::vector<TensorSpec> & t, const std::string & tensors, const Qwen3Shape & s,
+                       const std::vector<ggml_type> & matrix_types) {
+    const std::vector<ggml_type> f32 = {GGML_TYPE_F32};
+    const int64_t h = s.hidden, q = (int64_t) s.n_head * s.head_dim, kv = (int64_t) s.n_kv_head * s.head_dim;
+    add_numbered(t, tensors + ".blk.", s.n_layer,
+                 {{"attn_norm", {h}, f32},
+                  {"ffn_norm", {h}, f32},
+                  {"attn_q", {h, q}, matrix_types},
+                  {"attn_k", {h, kv}, matrix_types},
+                  {"attn_v", {h, kv}, matrix_types},
+                  {"attn_o", {q, h}, matrix_types},
+                  {"attn_q_norm", {s.head_dim}, f32},
+                  {"attn_k_norm", {s.head_dim}, f32},
+                  {"ffn_gate", {h, s.ffn}, matrix_types},
+                  {"ffn_up", {h, s.ffn}, matrix_types},
+                  {"ffn_down", {s.ffn, h}, matrix_types}});
+    t.push_back({tensors + ".norm", {h}, f32});
 }
 
 /**
