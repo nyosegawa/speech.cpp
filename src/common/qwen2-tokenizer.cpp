@@ -1,4 +1,4 @@
-#include "tokenizer.h"
+#include "qwen2-tokenizer.h"
 
 #include <algorithm>
 #include <climits>
@@ -33,19 +33,57 @@ bool is_crlf(uint32_t cp) { return cp == '\r' || cp == '\n'; }
 /** Neither whitespace, a letter nor a number: [^\s\p{L}\p{N}]. */
 bool is_other(uint32_t cp) { return !is_space(cp) && !is_letter(cp) && !is_number(cp); }
 
+/**
+ * The length of the UTF-8 sequence at `s[i]`, by the well-formed sequences of the Unicode Standard's table 3-7: a whole
+ * character's when `whole` comes back true, and otherwise that of the longest start of one, at least one byte, which
+ * the replacement of maximal subparts that Rust and Python follow turns into one U+FFFD.
+ */
+size_t utf8_sequence(const std::string & s, size_t i, bool & whole) {
+    const unsigned char c = (unsigned char) s[i];
+    whole = false;
+    if (c < 0x80) {
+        whole = true;
+        return 1;
+    }
+    size_t len = 0;
+    unsigned char lo = 0x80, hi = 0xBF;
+    if (c >= 0xC2 && c <= 0xDF) {
+        len = 2;
+    } else if (c >= 0xE0 && c <= 0xEF) {
+        len = 3;
+        if (c == 0xE0) lo = 0xA0;
+        if (c == 0xED) hi = 0x9F;
+    } else if (c >= 0xF0 && c <= 0xF4) {
+        len = 4;
+        if (c == 0xF0) lo = 0x90;
+        if (c == 0xF4) hi = 0x8F;
+    } else {
+        return 1;
+    }
+    for (size_t k = 1; k < len; k++) {
+        if (i + k >= s.size()) return k;
+        const unsigned char cc = (unsigned char) s[i + k];
+        if (cc < (k == 1 ? lo : 0x80) || cc > (k == 1 ? hi : 0xBF)) return k;
+    }
+    whole = true;
+    return len;
+}
+
+/** The code point of the whole UTF-8 sequence of `len` bytes at `s[i]`. */
+uint32_t code_point(const std::string & s, size_t i, size_t len) {
+    const unsigned char c = (unsigned char) s[i];
+    uint32_t cp = len == 1 ? c : len == 2 ? (c & 0x1F) : len == 3 ? (c & 0x0F) : (c & 0x07);
+    for (size_t k = 1; k < len; k++) cp = (cp << 6) | ((unsigned char) s[i + k] & 0x3F);
+    return cp;
+}
+
 std::vector<uint32_t> decode_utf8(const std::string & s) {
     std::vector<uint32_t> out;
     for (size_t i = 0; i < s.size();) {
-        const unsigned char c = (unsigned char) s[i];
-        int len = c < 0x80 ? 1 : (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3 : (c >> 3) == 30 ? 4 : 0;
-        if (len == 0 || i + len > s.size()) throw Error(Fault::InvalidArgument, "the text is not valid UTF-8", "text");
-        uint32_t cp = len == 1 ? c : len == 2 ? (c & 0x1F) : len == 3 ? (c & 0x0F) : (c & 0x07);
-        for (int k = 1; k < len; k++) {
-            const unsigned char cc = (unsigned char) s[i + k];
-            if ((cc >> 6) != 2) throw Error(Fault::InvalidArgument, "the text is not valid UTF-8", "text");
-            cp = (cp << 6) | (cc & 0x3F);
-        }
-        out.push_back(cp);
+        bool whole;
+        const size_t len = utf8_sequence(s, i, whole);
+        if (!whole) throw Error(Fault::InvalidArgument, "the text is not valid UTF-8", "text");
+        out.push_back(code_point(s, i, len));
         i += len;
     }
     return out;
@@ -108,12 +146,11 @@ size_t match_at(const std::vector<uint32_t> & cps, size_t i) {
 
 }  // namespace
 
-Tokenizer::Tokenizer(const ModelFile & m) {
-    const std::vector<std::string> tokens = m.str_array("qwen3-tts.tokenizer.tokens");
-    for (size_t i = 0; i < tokens.size(); i++) {
-        if (!tokens[i].empty()) vocab_[tokens[i]] = (int32_t) i;
+Qwen2Tokenizer::Qwen2Tokenizer(const ModelFile & m, const std::string & prefix) : tokens_(m.str_array(prefix + ".tokens")) {
+    for (size_t i = 0; i < tokens_.size(); i++) {
+        if (!tokens_[i].empty()) vocab_[tokens_[i]] = (int32_t) i;
     }
-    const std::vector<std::string> merges = m.str_array("qwen3-tts.tokenizer.merges");
+    const std::vector<std::string> merges = m.str_array(prefix + ".merges");
     for (size_t r = 0; r < merges.size(); r++) {
         const size_t sp = merges[r].find(' ');
         ranks_[{merges[r].substr(0, sp), merges[r].substr(sp + 1)}] = (int) r;
@@ -122,11 +159,13 @@ Tokenizer::Tokenizer(const ModelFile & m) {
     int extra = 0;
     for (int b = 0; b < 256; b++) {
         const bool printable = (b >= '!' && b <= '~') || (b >= 0xA1 && b <= 0xAC) || (b >= 0xAE && b <= 0xFF);
-        byte_to_unicode_[b] = encode_utf8(printable ? (uint32_t) b : (uint32_t) (256 + extra++));
+        const uint32_t cp = printable ? (uint32_t) b : (uint32_t) (256 + extra++);
+        byte_to_unicode_[b] = encode_utf8(cp);
+        unicode_to_byte_[cp] = (unsigned char) b;
     }
 }
 
-std::vector<std::string> Tokenizer::pre_tokenize(const std::string & text) const {
+std::vector<std::string> Qwen2Tokenizer::pre_tokenize(const std::string & text) const {
     const std::vector<uint32_t> cps = decode_utf8(text);
     std::vector<std::string> pieces;
     for (size_t i = 0; i < cps.size();) {
@@ -139,7 +178,7 @@ std::vector<std::string> Tokenizer::pre_tokenize(const std::string & text) const
     return pieces;
 }
 
-std::vector<int32_t> Tokenizer::bpe(const std::string & piece) const {
+std::vector<int32_t> Qwen2Tokenizer::bpe(const std::string & piece) const {
     std::vector<std::string> symbols;
     for (unsigned char c : piece) symbols.push_back(byte_to_unicode_[c]);
     while (symbols.size() > 1) {
@@ -165,11 +204,39 @@ std::vector<int32_t> Tokenizer::bpe(const std::string & piece) const {
     return ids;
 }
 
-std::vector<int32_t> Tokenizer::encode(const std::string & text) const {
+std::vector<int32_t> Qwen2Tokenizer::encode(const std::string & text) const {
     std::vector<int32_t> ids;
     for (const std::string & piece : pre_tokenize(text)) {
         const std::vector<int32_t> p = bpe(piece);
         ids.insert(ids.end(), p.begin(), p.end());
     }
     return ids;
+}
+
+std::string Qwen2Tokenizer::decode(const std::vector<int32_t> & ids) const {
+    std::string bytes;
+    for (int32_t id : ids) {
+        if (id < 0 || (size_t) id >= tokens_.size()) continue;
+        const std::string & token = tokens_[id];
+        std::string mapped;
+        bool byte_level = true;
+        for (size_t i = 0; i < token.size() && byte_level;) {
+            bool whole;
+            const size_t len = utf8_sequence(token, i, whole);
+            const auto it = whole ? unicode_to_byte_.find(code_point(token, i, len)) : unicode_to_byte_.end();
+            if (it == unicode_to_byte_.end()) byte_level = false;
+            else mapped += (char) it->second;
+            i += len;
+        }
+        bytes += byte_level ? mapped : token;
+    }
+    std::string text;
+    for (size_t i = 0; i < bytes.size();) {
+        bool whole;
+        const size_t len = utf8_sequence(bytes, i, whole);
+        if (whole) text.append(bytes, i, len);
+        else text += "\xEF\xBF\xBD";
+        i += len;
+    }
+    return text;
 }
