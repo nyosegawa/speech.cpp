@@ -113,7 +113,7 @@ std::vector<int32_t> follow(Decoder & decoder, const Npy & ids, const Npy & top_
         if (same && i < (size_t) ids.shape[0]) same = steps.add(i, decoder.logits(), top_ids, top_logits, ids.i32[i]);
     };
     // The decoding calls back after each token but the last, before it feeds the token; the logits of the last stay.
-    const Generation g = decoder.generate([&](size_t n) {
+    const Generation g = *decoder.generate([&](size_t n) {
         compare_step(n - 1);
         return true;
     });

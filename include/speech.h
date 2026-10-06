@@ -681,8 +681,10 @@ SPEECH_API speech_status speech_synthesize(speech_request * request, speech_audi
 
 /**
  * Recognizes the speech in a request's audio. It returns SPEECH_OK once the result holds the text, SPEECH_CANCELLED
- * once it was cancelled, or an error. The whole audio is recognized at once, and how its time and memory grow with
- * its length depends on the model. A synthesis model is SPEECH_ERROR_UNSUPPORTED.
+ * once it was cancelled, or an error. The whole audio is recognized at once, or a model that takes a limited length
+ * at once cuts it into parts it recognizes one after another and joins their texts, as Qwen3-ASR does past 1200 s;
+ * how its time and memory grow with its length depends on the model. A synthesis model is
+ * SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_transcribe(speech_request * request);
 

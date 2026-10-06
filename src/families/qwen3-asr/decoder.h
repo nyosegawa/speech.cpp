@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include "ggml-alloc.h"
@@ -53,10 +54,10 @@ public:
     const std::vector<float> & logits() const { return stack_.logits(); }
 
     /**
-     * Decodes greedily from the prefill's logits. `keep_going` hears the number of tokens written after each, and false
-     * stops the decoding there.
+     * Decodes greedily from the prefill's logits. `keep_going` hears the number of tokens written after each but the
+     * last, and false stops the decoding there, which then returns none.
      */
-    Generation generate(const std::function<bool(size_t tokens)> & keep_going);
+    std::optional<Generation> generate(const std::function<bool(size_t tokens)> & keep_going);
 
     /** The positions a sequence with a prompt of `n` rows takes: the prompt and the most tokens the model writes. */
     int64_t positions(int64_t n) const { return n + max_new_tokens_; }

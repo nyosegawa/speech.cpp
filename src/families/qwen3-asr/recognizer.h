@@ -11,6 +11,7 @@
 #include "frontend.h"
 #include "model-file.h"
 #include "prompt.h"
+#include "split.h"
 #include "tokenizer.h"
 #include "transcript.h"
 
@@ -50,20 +51,21 @@ constexpr ggml_type kCacheType = GGML_TYPE_F16;
 
 /**
  * Qwen3-ASR as qwen-asr's transcribe() runs it with the windowed encoder of transformers 5.18 (docs/adr/0018): the
- * audio normalized, its features, the encoder and the projector, the prompt with the request's context and forced
- * language, the decoder's prefill and greedy decoding, and the text parsed from what it wrote. It reads one GGUF file
- * and computes on one backend.
+ * audio normalized and, when it is too long for the model, split into parts; for each part its features, the encoder
+ * and the projector, the prompt with the request's context and forced language, the decoder's prefill and greedy
+ * decoding, and the text parsed from what it wrote; and the parts' texts joined. It reads one GGUF file and computes
+ * on one backend, holding one part at a time.
  */
 class Recognizer {
 public:
     Recognizer(const std::string & path, ggml_backend_t backend);
 
     /**
-     * Recognizes mono samples at sample_rate(). `progress` hears how far the work has come, from 0 to 1: the encoder's
-     * windows, the prefill's blocks and the tokens written, a third each; false stops the work, and what it returns is
-     * then not a recognition. A request whose prompt and the most tokens the model writes do not fit the decoder's
-     * positions is refused before any work, out of range naming the option prompt, and audio longer than
-     * qwen3-asr.audio.max_samples out of range naming the audio. `parts`, when given, gets the report of each part.
+     * Recognizes mono samples at sample_rate(). `progress` hears how far the work has come, from 0 to 1: of each part
+     * an equal share, of which the encoder's windows, the prefill's blocks and the tokens written take a third each;
+     * false stops the work, and what it returns is then not a recognition. A request whose prompt, beside a part's
+     * audio and the most tokens the model writes, does not fit the decoder's positions is refused before any work, out
+     * of range naming the option prompt. `parts`, when given, gets the report of each part.
      */
     Recognition recognize(const std::vector<float> & samples, const RecognitionRequest & request, const std::function<bool(double)> & progress,
                           std::vector<PartReport> * parts = nullptr);
@@ -79,7 +81,16 @@ public:
     const Prompt & prompt() const { return prompt_; }
     const Transcript & transcript() const { return transcript_; }
 
+    const Splitter & splitter() const { return splitter_; }
+
 private:
+    /**
+     * Recognizes one part of normalized audio with its prompt, `progress` hearing the part's share from 0 to 1, and
+     * returns its text, or none when `progress` stopped it.
+     */
+    std::optional<std::string> recognize_part(const std::vector<float> & part, const PromptIds & prompt, bool forced,
+                                              const std::function<bool(double)> & progress, PartReport & report);
+
     ModelFile model_;
     Frontend frontend_;
     Encoder encoder_;
@@ -87,7 +98,7 @@ private:
     Tokenizer tokenizer_;
     Prompt prompt_;
     Transcript transcript_;
-    int64_t max_samples_;
+    Splitter splitter_;
 };
 
 }  // namespace qwen3_asr

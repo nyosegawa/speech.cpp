@@ -111,6 +111,7 @@ add_library(qwen3asr STATIC
     src/families/qwen3-asr/prompt.cpp
     src/families/qwen3-asr/decoder.cpp
     src/families/qwen3-asr/transcript.cpp
+    src/families/qwen3-asr/split.cpp
     src/families/qwen3-asr/recognizer.cpp
 )
 target_include_directories(qwen3asr PUBLIC src/families)
@@ -225,7 +226,7 @@ foreach(stage frontend encoder transducer times)
 endforeach()
 
 # The checks of Qwen3-ASR's stages.
-foreach(stage frontend encoder)
+foreach(stage frontend encoder split)
     add_executable(qwen3-asr-${stage}-check checks/qwen3-asr-${stage}-check.cpp)
     target_link_libraries(qwen3-asr-${stage}-check PRIVATE qwen3asr)
 endforeach()

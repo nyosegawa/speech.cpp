@@ -70,7 +70,7 @@ void Decoder::step(int32_t id) {
         m_.tensor("dec.token_embd"));
 }
 
-Generation Decoder::generate(const std::function<bool(size_t tokens)> & keep_going) {
+std::optional<Generation> Decoder::generate(const std::function<bool(size_t tokens)> & keep_going) {
     Generation out;
     for (;;) {
         const std::vector<float> & l = logits();
@@ -81,7 +81,7 @@ Generation Decoder::generate(const std::function<bool(size_t tokens)> & keep_goi
             out.limited = true;
             return out;
         }
-        if (!keep_going(out.ids.size())) return out;
+        if (!keep_going(out.ids.size())) return std::nullopt;
         step(id);
     }
 }
