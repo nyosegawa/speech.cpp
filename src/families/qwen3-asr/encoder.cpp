@@ -19,13 +19,15 @@ namespace {
 constexpr int kGraphSize = 8192;
 
 /**
- * The windows one graph encodes at most. A window of 104 tokens leaves a GPU's matrix products few rows: on an Apple
- * M5 in Q8_0 on Metal, the four windows of the 25.50 s utterance took the 0.6B encoder 0.126 s a window at a time and
- * 0.114 s in one graph, and the 1.7B 0.177 and 0.157 s; on its CPU the 0.6B took 0.90 s either way (2026-10-07).
- * Attention reads a score for every pair of a graph's tokens, those of pairs in different windows masked, so that a
- * graph's scores grow with the square of its windows.
+ * The windows one graph encodes at most on a GPU. A window of 104 tokens leaves a GPU's matrix products few rows: on an
+ * Apple M5 in Q8_0 on Metal, the four windows of the 25.50 s utterance took the 0.6B encoder 0.126 s a window at a time
+ * and 0.114 s in one graph, and the 1.7B 0.177 and 0.157 s. Attention reads a score for every pair of a graph's tokens,
+ * those of pairs in different windows masked, so that a graph's scores grow with the square of its windows. On the
+ * CPU a graph holds one window: the 0.6B took 0.90 s either way there, and four windows a graph changed 3 of the 40
+ * texts of qwen3-asr-decoder-check with the 0.6B model in Q8_0, each by a choice within the error of that type
+ * (2026-10-07).
  */
-constexpr size_t kWindowsPerGraph = 4;
+constexpr size_t kWindowsPerGpuGraph = 4;
 
 }  // namespace
 
@@ -42,6 +44,7 @@ Encoder::Encoder(const ModelFile & m, ggml_backend_t backend)
       channels_(m.tensor("enc.conv.1.weight")->ne[3]),
       chunk_tokens_(after_convolutions(chunk_frames_)),
       eps_(m.f32("qwen3-asr.encoder.norm_eps")),
+      windows_per_graph_(ggml_backend_dev_type(ggml_backend_get_device(backend)) == GGML_BACKEND_DEVICE_TYPE_CPU ? 1 : kWindowsPerGpuGraph),
       allocr_(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))) {
     // SinusoidsPositionEmbedding computes the table in float32 from the increment of the log timescales, which numpy
     // computes in float64, so the angles round as they do here.
@@ -182,8 +185,8 @@ ggml_tensor * Encoder::build(Graph & g, const std::vector<float> & features, con
 std::optional<std::vector<float>> Encoder::encode(const std::vector<float> & features, const std::function<bool(size_t windows)> & keep_going) {
     std::vector<float> out;
     const std::vector<EncoderWindow> all = windows((int64_t) features.size() / mels_);
-    for (size_t i = 0; i < all.size(); i += kWindowsPerGraph) {
-        const size_t done = std::min(all.size(), i + kWindowsPerGraph);
+    for (size_t i = 0; i < all.size(); i += windows_per_graph_) {
+        const size_t done = std::min(all.size(), i + windows_per_graph_);
         Graph g(kGraphSize);
         ggml_tensor * embeds = build(g, features, std::vector<EncoderWindow>(all.begin() + (std::ptrdiff_t) i, all.begin() + (std::ptrdiff_t) done));
         g.output(embeds);

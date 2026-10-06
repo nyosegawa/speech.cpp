@@ -43,9 +43,9 @@ struct EncoderStages {
  * tokens) from the first token, the last window holding the rest. LayerNorm (ln_post) and the projector, a linear
  * layer, GELU and a linear layer to the decoder's width, follow.
  *
- * Every chunk and every window is computed on its own, so a graph of a few consecutive windows, each attending within
- * itself, gives what the official computes over the whole utterance, and the memory of a graph does not grow with the
- * utterance.
+ * Every chunk and every window is computed on its own, so a graph of a few consecutive windows on a GPU, or of one on
+ * the CPU, each attending within itself, gives what the official computes over the whole utterance, and the memory of
+ * a graph does not grow with the utterance.
  */
 class Encoder {
 public:
@@ -94,6 +94,8 @@ private:
     float eps_;
     /** The sinusoids of a chunk's positions, [d_model, chunk tokens]: sines in the first half of the channels, cosines in the second. */
     std::vector<float> positions_;
+    /** The windows encode() puts in one graph at most. */
+    size_t windows_per_graph_;
     ggml_gallocr_t allocr_ = nullptr;
 };
 
