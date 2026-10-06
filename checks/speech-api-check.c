@@ -10,7 +10,7 @@
  * longest text, Irodori-TTS's lengths, steps and progress), cancels a request from another thread and one before it
  * runs, and runs requests from two threads at once.
  *
- * With a recognition model (transcribe), speech-api-recognition.c.
+ * With a recognition model (transcribe), speech-api-recognition.c, which takes F32 or F16 weights only.
  *
  * usage: speech-api-check <model.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]...
  *                         [--make-voice <reference.wav> <voice.gguf>]

@@ -166,9 +166,9 @@ struct ModelIdentity {
 ModelIdentity read_identity(const ModelFile & file);
 
 /**
- * Reads and checks the keys every model file has: its identity (read_identity()), general.languages, ISO 639
- * two-letter codes sorted without repeats, speech.sample_rate, and speech.task and speech.language_use, which must be
- * the family's `task` and `language_use`.
+ * Reads and checks the keys every model file has: its identity (read_identity()), general.languages, ISO 639 codes of
+ * two or three lowercase letters sorted without repeats, speech.sample_rate, and speech.task and speech.language_use,
+ * which must be the family's `task` and `language_use`.
  */
 void check_model_keys(const ModelFile & file, const char * task, const char * language_use);
 

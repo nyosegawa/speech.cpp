@@ -76,8 +76,6 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
     const int positions = m.size(p + "decoder.max_position_embeddings");
 
     for (const char * key : {"before_context", "before_audio", "after_audio", "language_prefix"}) m.str(p + "prompt." + key);
-    const std::string asr_text = m.str(p + "prompt.asr_text");
-    m.str(p + "output.no_speech_language");
     m.size(p + "output.repetition_threshold");
     m.size(p + "output.repetition_max_period");
 
@@ -88,8 +86,11 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
     const std::vector<int32_t> special = token_ids(m, p + "tokenizer.special_ids", tokens.size(), true);
     require(std::includes(added.begin(), added.end(), special.begin(), special.end()), m,
             "qwen3-asr.tokenizer.special_ids holds an id that is not one of qwen3-asr.tokenizer.added_ids");
-    require(std::any_of(added.begin(), added.end(), [&](int32_t id) { return tokens[(size_t) id] == asr_text; }), m,
-            "qwen3-asr.prompt.asr_text is not one of the tokenizer's added tokens");
+    for (const char * key : {"asr_text", "audio_token"}) {
+        const std::string token = m.str(p + "prompt." + key);
+        require(std::any_of(added.begin(), added.end(), [&](int32_t id) { return tokens[(size_t) id] == token; }), m,
+                p + "prompt." + key + " is not one of the tokenizer's added tokens");
+    }
     require(!token_ids(m, p + "generation.eos_ids", tokens.size(), false).empty(), m, "qwen3-asr.generation.eos_ids is empty");
     require(m.size(p + "generation.max_new_tokens") < positions, m,
             "qwen3-asr.generation.max_new_tokens leaves the decoder no position for the prompt");

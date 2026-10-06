@@ -58,7 +58,8 @@ extern "C" {
 /**
  * The minor version of this API. It rises when a function, an option or an enum value is added, and returns to 0
  * when the major version rises. A program built against minor version m runs against a library of the same major
- * version and a minor version of m or more.
+ * version and a minor version of m or more. Version 3.0 is first released with speech.cpp 0.7.0, and all that this
+ * header declares, the option prompt included, belongs to it.
  */
 #define SPEECH_API_VERSION_MINOR 0
 
@@ -184,8 +185,8 @@ SPEECH_API speech_status speech_device_memory(size_t index, uint64_t * total, ui
 /*
  * Options: the vocabulary of what a request may ask, the same for every family. A value is never reused, and a later
  * minor version only appends. Each option has one type. Some have a neutral value that every model accepts, whether
- * or not it takes the option: speed 1, duration_scale 1, language "auto" and timestamps false. The others have none,
- * and a model that does not take one refuses any value of it.
+ * or not it takes the option: speed 1, duration_scale 1, language "auto", timestamps false and prompt "". The others
+ * have none, and a model that does not take one refuses any value of it.
  */
 typedef enum speech_option {
     /**
@@ -194,10 +195,10 @@ typedef enum speech_option {
      */
     SPEECH_OPT_VOICE = 0,
     /**
-     * "language", a string: "auto" (the neutral value), or a BCP 47 tag that names one of the model's languages or a
-     * region or script of one ("ja", "ja-JP", "zh-Hant"), compared without case. The model's declaration says
-     * whether the language steers the model or is only checked against its languages
-     * (speech_model_info_option_steers()).
+     * "language", a string: "auto" (the neutral value), or a BCP 47 tag that names one of the model's languages, by
+     * its code of two letters or, for a language that has none, of three, alone or with a region or script ("ja",
+     * "ja-JP", "zh-Hant", "yue", "fil-PH"), compared without case. The model's declaration says whether the language
+     * steers the model or is only checked against its languages (speech_model_info_option_steers()).
      */
     SPEECH_OPT_LANGUAGE = 1,
     /**
@@ -223,7 +224,13 @@ typedef enum speech_option {
      * "timestamps", a boolean: whether a recognition's result carries its segments and its tokens with their times,
      * false being neutral.
      */
-    SPEECH_OPT_TIMESTAMPS = 8
+    SPEECH_OPT_TIMESTAMPS = 8,
+    /**
+     * "prompt", a string: what a recognition is told of the audio before it hears it, such as the names and terms it may
+     * hold, which the model takes as context rather than as instructions; "" (the neutral value) tells it nothing. A
+     * prompt too long for the model beside the audio is refused when the request runs, naming the option.
+     */
+    SPEECH_OPT_PROMPT = 9
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */
@@ -399,8 +406,8 @@ SPEECH_API int speech_model_info_incremental(const speech_model_info * info);
 SPEECH_API size_t speech_model_info_language_count(const speech_model_info * info);
 
 /**
- * The language at `index` as a BCP 47 tag, such as "ja": the file's general.languages, whose ISO 639 two-letter codes
- * are BCP 47 tags.
+ * The language at `index` as a BCP 47 tag, such as "ja" or "yue": the file's general.languages, the shortest ISO 639
+ * code of each language, two letters where ISO 639-1 has one and three where it has none, which are BCP 47 tags.
  */
 SPEECH_API const char * speech_model_info_language(const speech_model_info * info, size_t index);
 
@@ -674,8 +681,10 @@ SPEECH_API speech_status speech_synthesize(speech_request * request, speech_audi
 
 /**
  * Recognizes the speech in a request's audio. It returns SPEECH_OK once the result holds the text, SPEECH_CANCELLED
- * once it was cancelled, or an error. The whole audio is recognized at once, and how its time and memory grow with
- * its length depends on the model. A synthesis model is SPEECH_ERROR_UNSUPPORTED.
+ * once it was cancelled, or an error. The whole audio is recognized at once, or a model that takes a limited length
+ * at once cuts it into parts it recognizes one after another and joins their texts, as Qwen3-ASR does past 1200 s;
+ * how its time and memory grow with its length depends on the model. A synthesis model is
+ * SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_transcribe(speech_request * request);
 
@@ -685,7 +694,10 @@ typedef enum speech_stop {
     SPEECH_STOP_COMPLETE = 0,
     /** The speech reached the request's max_seconds and was stopped there. */
     SPEECH_STOP_MAX_SECONDS = 1,
-    /** The speech reached the longest that the model makes, which its file gives, and was stopped there. */
+    /**
+     * The request reached the most that the model makes, which its file gives, and was stopped there: the longest speech
+     * of a synthesis, or the most tokens a recognition writes, whose text then holds what was written up to it.
+     */
     SPEECH_STOP_MODEL_LIMIT = 2,
     /** speech_request_cancel() or a callback stopped it. */
     SPEECH_STOP_CANCELLED = 3

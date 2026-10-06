@@ -5,8 +5,9 @@
 // usage: speech <subcommand> [options]     speech <subcommand> --help     speech --version
 //
 // It exits with 0 when done, 1 on a failure, which it reports as "speech: <code> (<option>): <message>" with the
-// library's category, 2 on a command line it cannot run, and 3 when `speech tts` stopped a request at the longest
-// speech the model makes. Its stdout carries its output alone: whatever ggml or a driver prints there goes to stderr.
+// library's category, 2 on a command line it cannot run, and 3 when `speech tts` or `speech asr` stopped a request at
+// the most the model makes: the longest speech, or the most tokens of a text. Its stdout carries its output alone:
+// whatever ggml or a driver prints there goes to stderr.
 
 #include <cstdio>
 #include <exception>

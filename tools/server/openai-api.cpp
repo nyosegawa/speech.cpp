@@ -1,6 +1,7 @@
 #include "openai-api.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <iterator>
 #include <stdexcept>
 
@@ -108,13 +109,14 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
         throw ApiError{400, "The body is not multipart/form-data. Send the audio as the form's \"file\", as OpenAI's create transcription takes it.",
                        "", ""};
     }
-    static const char * known[] = {"file", "model", "language", "response_format", "timestamp_granularities[]"};
-    const FormPart * given[4] = {};
+    static const char * known[] = {"file", "model", "language", "prompt", "response_format", "timestamp_granularities[]"};
+    constexpr std::ptrdiff_t kGranularities = 5;
+    const FormPart * given[kGranularities] = {};
     std::vector<std::string> granularities;
     for (const FormPart & part : parts) {
         const auto k = std::find_if(std::begin(known), std::end(known), [&](const char * name) { return part.name == name; });
-        if (k == std::end(known)) throw unknown_member(part.name, "file, model, language, response_format and timestamp_granularities[]");
-        if (k - std::begin(known) == 4) {
+        if (k == std::end(known)) throw unknown_member(part.name, "file, model, language, prompt, response_format and timestamp_granularities[]");
+        if (k - std::begin(known) == kGranularities) {
             granularities.push_back(part.content);
             continue;
         }
@@ -122,7 +124,7 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
         if (slot) throw ApiError{400, "\"" + part.name + "\" is given twice; give it once.", part.name, "invalid_value"};
         slot = &part;
     }
-    const FormPart * file = given[0], * model = given[1], * language = given[2], * format = given[3];
+    const FormPart * file = given[0], * model = given[1], * language = given[2], * prompt = given[3], * format = given[4];
     if (model && model->content != model_name) throw not_served(model->content, model_name);
     if (!file) throw ApiError{400, "The request has no \"file\"; it is required.", "file", "missing_required_parameter"};
     if (!file->file) throw ApiError{400, "\"file\" is a field; send it as a file, with a filename.", "file", "invalid_type"};
@@ -144,6 +146,7 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
         }
     }
     if (language) r.options.push_back({SPEECH_OPT_LANGUAGE, language->content});
+    if (prompt) r.options.push_back({SPEECH_OPT_PROMPT, prompt->content});
     if (r.format == "verbose_json") r.options.push_back({SPEECH_OPT_TIMESTAMPS, true});
     const std::string & bytes = file->content;
     if (bytes.size() < 12 || bytes.compare(0, 4, "RIFF") != 0 || bytes.compare(8, 4, "WAVE") != 0) {

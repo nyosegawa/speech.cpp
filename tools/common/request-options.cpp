@@ -165,7 +165,7 @@ bool timestamps_in_effect(const speech_model_info * info, const std::vector<Requ
 }
 
 std::string recognition_members(const speech_result * result, bool timestamps) {
-    std::string out = ",\"text\":" + json_string(speech_result_text(result));
+    std::string out = ",\"text\":" + json_string(speech_result_text(result)) + ",\"stop\":\"" + speech_stop_name(speech_result_stop(result)) + "\"";
     if (timestamps) out += ",\"segments\":" + timed_texts(result, true) + ",\"tokens\":" + timed_texts(result, false);
     return out;
 }

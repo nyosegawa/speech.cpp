@@ -13,6 +13,7 @@ checked against the official implementation.
 | nvidia | parakeet-tdt_ctc | 0.6b-ja | `fastconformer` | Japanese speech recognition with its TDT decoder, a recording at a time | [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) |
 | nvidia | parakeet-tdt | 0.6b-v3 | `fastconformer` | speech recognition of 25 European languages, which the model tells apart itself, with its TDT decoder | [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) |
 | reazon-research | reazonspeech-nemo | v2 | `fastconformer` | Japanese speech recognition of recordings of many minutes, with its RNN-T decoder's beam search | [sakasegawa/reazonspeech-nemo-v2-GGUF](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) |
+| Qwen | Qwen3-ASR | 0.6B and 1.7B | `qwen3-asr` | speech recognition of 30 languages, found by the model or forced, with a prompt of context, by an encoder and a Qwen3 decoder | [sakasegawa/Qwen3-ASR-0.6B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF), [sakasegawa/Qwen3-ASR-1.7B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF), not uploaded yet |
 
 The organization and the model line are the model file's `general.organization` and `general.basename`. The family
 is its `general.architecture`, which the model information calls `architecture`: the code that runs the file, which
@@ -125,6 +126,9 @@ speech voice Irodori-TTS-848M-MF-v4.1-F16.gguf bright-young-woman-10s.wav bright
 speech asr parakeet-tdt_ctc-0.6B-ja-F16.gguf meeting.wav
 speech asr parakeet-tdt_ctc-0.6B-ja-F16.gguf --timestamps --format json one.wav two.wav > texts.jsonl
 
+# The text of a recording in Japanese, told the names it holds
+speech asr Qwen3-ASR-1.7B-Q8_0.gguf --language ja --prompt "Claude Code、渋谷" meeting.wav
+
 # What a model file holds, without loading it
 speech info Irodori-TTS-848M-MF-v4.1-F16.gguf
 ```
@@ -132,12 +136,12 @@ speech info Irodori-TTS-848M-MF-v4.1-F16.gguf
 A model is one GGUF file, its codec included (GGUF files, below).
 
 One parser reads every command line. Every subcommand that loads a model takes `--device NAME` (`auto`, the default,
-for the first GPU or the CPU on a machine without one; `gpu`; `cpu`; or a name `speech devices` lists) and
-`--threads N`, the C API's load parameters. `speech tts` and `speech asr` take every request option of the C API's
-vocabulary (Options, below) as a flag of its name in kebab-case, read by the option's type: `--voice`, `--language`,
-`--seed`, `--speed`, `--seconds`, `--duration-scale`, `--steps`, `--max-seconds` and `--timestamps`, which, a boolean,
-is a flag without a value. A flag's value follows it or an `=` (`--seed 7`, `--seed=7`), and a number is read whole:
-`--steps 4x` is a usage error. The model refuses an option it does not take, as in the C API: Qwen3-TTS answers
+for the first GPU or the CPU on a machine without one; `gpu`; `cpu`; or a name `speech devices` lists) and `--threads
+N`, the C API's load parameters. `speech tts` and `speech asr` take every request option of the C API's vocabulary
+(Options, below) as a flag of its name in kebab-case, read by the option's type: `--voice`, `--language`, `--seed`,
+`--speed`, `--seconds`, `--duration-scale`, `--steps`, `--max-seconds`, `--timestamps`, which, a boolean, is a flag
+without a value, and `--prompt`. A flag's value follows it or an `=` (`--seed 7`, `--seed=7`), and a number is read
+whole: `--steps 4x` is a usage error. The model refuses an option it does not take, as in the C API: Qwen3-TTS answers
 `--speed 1.5` with `speech: unsupported (speed): ...`. An argument that begins with `-`, such as a text, follows `--`.
 `speech <subcommand> --help` lists a subcommand's flags, and `speech --version` prints the release and the C API's
 version (`speech.cpp 0.7.0, C API 3.0`).
@@ -147,7 +151,7 @@ version (`speech.cpp 0.7.0, C API 3.0`).
 | 0 | done |
 | 1 | a failure, printed on stderr as `speech: <code> (<option>): <message>`: the code is the library's category (`speech_status_name()`, Errors below), the option the input at fault, left out with its parentheses when there is none |
 | 2 | a command line that cannot be run, printed with a pointer to `speech <subcommand> --help` |
-| 3 | `speech tts` alone: a request stopped at the longest speech the model makes (`model_limit`); the WAVE file is complete |
+| 3 | a request stopped at the most the model makes (`model_limit`): for `speech tts` the longest speech, and the WAVE file is complete; for `speech asr` the most tokens of a text, and every file's text is written |
 
 A subcommand's stdout carries its output alone: whatever ggml, a system library or the GPU driver prints to stdout goes
 to stderr. On Windows the command line is read as UTF-8, and stdin and stdout are binary.
@@ -185,19 +189,20 @@ gave several lines.
 
 ```
 speech asr MODEL [options] AUDIO.wav...
-  --language TAG --timestamps
+  --language TAG --timestamps --prompt TEXT
   --format text|json          text (the default) or one JSON object per file and line
   --device NAME --threads N -v
 ```
 
 Recognizes each WAVE file in the order given: 16-, 24- or 32-bit PCM or 32-bit float at any rate, its channels
-averaged, which the library resamples to the model's rate (16 kHz for FastConformer; Audio at another rate, below).
-Audio in another format is converted first (`ffmpeg -i in.mp3 out.wav`). `text` writes one line per file; with
-`--timestamps` it writes one line per segment instead, `FILE<TAB>START<TAB>END<TAB>TEXT`, the times in seconds with
-three decimals. `json` writes `{"file":…,"text":…}` for each file, with `"segments"` and `"tokens"` when
-`--timestamps` is given, in the form of the worker's `end`. It reports on stderr the load and, for each file, its
-seconds of audio, the time to its text and the real-time factor. A failure names the file, and the lines of the files
-before it are already on stdout.
+averaged, which the library resamples to the model's rate (16 kHz for FastConformer and Qwen3-ASR; Audio at another
+rate, below). Audio in another format is converted first (`ffmpeg -i in.mp3 out.wav`). `text` writes one line per
+file; with `--timestamps` it writes one line per segment instead, `FILE<TAB>START<TAB>END<TAB>TEXT`, the times in
+seconds with three decimals. `json` writes `{"file":…,"text":…,"stop":…}` for each file, with `"segments"` and
+`"tokens"` when `--timestamps` is given, in the form of the worker's `end`. It reports on stderr the load and, for each
+file, its seconds of audio, the time to its text and the real-time factor, and a recognition that stopped at the most
+tokens the model writes (Qwen3-ASR's 4096), after which it exits with 3 once every file's text is written. A failure
+names the file, and the lines of the files before it are already on stdout.
 
 ### `speech voice`
 
@@ -250,7 +255,8 @@ before it starts a worker:
 - `vendor/cpp-httplib/` holds cpp-httplib's header and license, which `speech serve` uses.
 - `checks/` holds a check per ported stage that compares it with the official implementation, and
   `speech-api-check`, which runs the C API through the shared library with a synthesis model and, with
-  `transcribe`, with a recognition model and the dumps of `reference/fastconformer/`.
+  `transcribe`, with a recognition model in F32 or F16 and the dumps of `reference/fastconformer/` or
+  `reference/qwen3-asr/`, whose texts it compares byte for byte.
 - `reference/<model>/` pins the official implementation in a uv environment and the checkpoints by revision,
   converts the weights to one GGUF file per model (GGUF files, below) and dumps the tensors the checks compare with;
   `reference/resample/` dumps torchaudio's resampling, which `resample-check` compares the library's with.
@@ -375,10 +381,11 @@ speech_model_free(model);
   recognition's stages and decoding. `speech_request_cancel()` stops one request, from any thread, at the next audio,
   step or stage, and a request cancelled before it runs returns at once; either returns `SPEECH_CANCELLED`.
 - **Results.** `speech_request_result()` gives what a request that returned `SPEECH_OK` or `SPEECH_CANCELLED` did:
-  why it stopped (`complete`, `max_seconds`, `model_limit` or `cancelled`), the seed of a synthesis (the request's,
-  or one the library drew from 0 to 2^53 - 1, with which the same request repeats its audio on the same device), the
-  samples it passed, and the text of a recognition with, when the request set `timestamps`, its segments and tokens
-  with their times in seconds (FastConformer, below).
+  why it stopped (`complete`, `max_seconds`, `model_limit` or `cancelled`; a recognition stops at `model_limit` when it
+  reaches the most tokens the model writes, Qwen3-ASR's 4096, with the text written up to it), the seed of a synthesis
+  (the request's, or one the library drew from 0 to 2^53 - 1, with which the same request repeats its audio on the same
+  device), the samples it passed, and the text of a recognition with, when the request set `timestamps`, its segments
+  and tokens with their times in seconds (FastConformer, below).
 - **Errors.** A function that can fail returns a `speech_status`, a negative one for an error, whose category says
   what kind of failure it is; `speech_status_name()` gives its name, `speech_last_error()` the message and
   `speech_last_error_option()` the input it concerns (an option's name, `text`, `audio`, `device`, `threads`, `name`,
@@ -433,24 +440,27 @@ takes in one table in its engine (`src/<family>-engine.cpp`); ranges and default
 GGUF file (the keys are named in parentheses). The setters, the model information and its JSON read that table and
 nothing else.
 
-| Option | Type | Neutral | Qwen3-TTS | Irodori-TTS | FastConformer |
-|---|---|---|---|---|---|
-| `voice` | string | none | required; one of the speakers (`speech.voices`); steers | required; one of the voices added since loading; steers | not taken |
-| `language` | string | `auto` | default `auto`; one of `general.languages`; steers | default `auto`; one of `general.languages` (`ja`); checked | default `auto`; one of `general.languages`; checked |
-| `seed` | int | none | 0 to 2^53 - 1; drawn when not set | 0 to 2^53 - 1; drawn when not set | not taken |
-| `speed` | float | 1 | not taken | 0.25 to 4 (`irodori-tts.length.min_speed`, `max_speed`), default 1 | not taken |
-| `seconds` | float | none | not taken | 0.5 to 30 (`irodori-tts.length.min_seconds`, `max_seconds`), no default | not taken |
-| `duration_scale` | float | 1 | not taken | above 0, default 1 | not taken |
-| `steps` | int | none | not taken | 1 to 2147483647, default `irodori-tts.sampler.default_steps` (4 for MeanFlow, 40 for RF) | not taken |
-| `max_seconds` | float | none | above 0 to the model's limit, `qwen3-tts.generation.max_frames` frames (8192 × 0.08 s = 655.36 s); no default | not taken | not taken |
-| `timestamps` | bool | false | not taken | not taken | default false |
+| Option | Type | Neutral | Qwen3-TTS | Irodori-TTS | FastConformer | Qwen3-ASR |
+|---|---|---|---|---|---|---|
+| `voice` | string | none | required; one of the speakers (`speech.voices`); steers | required; one of the voices added since loading; steers | not taken | not taken |
+| `language` | string | `auto` | default `auto`; one of `general.languages`; steers | default `auto`; one of `general.languages` (`ja`); checked | default `auto`; one of `general.languages`; checked | default `auto`; one of `general.languages`; steers |
+| `seed` | int | none | 0 to 2^53 - 1; drawn when not set | 0 to 2^53 - 1; drawn when not set | not taken | not taken |
+| `speed` | float | 1 | not taken | 0.25 to 4 (`irodori-tts.length.min_speed`, `max_speed`), default 1 | not taken | not taken |
+| `seconds` | float | none | not taken | 0.5 to 30 (`irodori-tts.length.min_seconds`, `max_seconds`), no default | not taken | not taken |
+| `duration_scale` | float | 1 | not taken | above 0, default 1 | not taken | not taken |
+| `steps` | int | none | not taken | 1 to 2147483647, default `irodori-tts.sampler.default_steps` (4 for MeanFlow, 40 for RF) | not taken | not taken |
+| `max_seconds` | float | none | above 0 to the model's limit, `qwen3-tts.generation.max_frames` frames (8192 × 0.08 s = 655.36 s); no default | not taken | not taken | not taken |
+| `timestamps` | bool | false | not taken | not taken | default false | not taken |
+| `prompt` | string | `""` | not taken | not taken | not taken | default `""`, any text; steers |
 
 A value at an option's neutral value is accepted by every model; any other value of an option a model does not take
 is `unsupported`, and an option marked "none" has no neutral value. A string option's value must be one of its
 choices (`voice` compared with case; `language` also takes `auto` and a region or script of a choice, compared
 without case); a number outside the range is `out_of_range`. "Checked" means the language is compared with the
 model's languages and then not used: Irodori-TTS and the Japanese recognizers have one language, and
-parakeet-tdt-0.6b-v3 finds the language of the audio itself.
+parakeet-tdt-0.6b-v3 finds the language of the audio itself. Qwen3-ASR is told a language that steers it, or finds it
+itself with `auto`. `prompt` is what a recognition is told of the audio before it hears it, the names and terms it may
+hold (Qwen3-ASR, below).
 
 What only the whole request shows is refused when the request runs, before any work, naming the option:
 
@@ -465,7 +475,9 @@ What only the whole request shows is refused when the request runs, before any w
   talker room for the longest speech: `qwen3-tts.talker.max_position_embeddings` - `qwen3-tts.generation.max_frames` -
   11, the rows its prompt adds to the text (32768 - 8192 - 11 = 24565 for both sizes).
 - Audio too short for the model to recognize, two of its mel frames (20 ms for FastConformer): `out_of_range`, option
-  `audio`.
+  `audio`. Qwen3-ASR pads audio under 0.5 s with zeros and takes any.
+- Qwen3-ASR, a `prompt` whose tokens, with those of the longest part of the audio (1200 s at most, 13 tokens a second)
+  and the 4096 the model may write, are more than its decoder's 65536 positions: `out_of_range`, option `prompt`.
 
 ### Model information as JSON
 
@@ -620,10 +632,10 @@ message added, an option added to the vocabulary, or a member added to the model
 ```
 out {"type":"chunk","id":"a","seq":0,"pcm":"..."}
 out {"type":"progress","id":"r","done":0.42}
-out {"type":"partial","id":"r","text":"...","segments":[...],"tokens":[...]}
+out {"type":"partial","id":"r","text":"...","stop":"complete","segments":[...],"tokens":[...]}
 out {"type":"partial","id":"x","error":{"code":"invalid_argument","option":"id","message":"..."}}
 out {"type":"end","id":"a","seed":1234,"samples":96000,"stop":"complete"}
-out {"type":"end","id":"r","text":"...","segments":[{"start":0.0,"end":2.48,"text":"..."}],"tokens":[{"start":0.0,"end":0.16,"text":"..."}]}
+out {"type":"end","id":"r","text":"...","stop":"complete","segments":[{"start":0.0,"end":2.48,"text":"..."}],"tokens":[{"start":0.0,"end":0.16,"text":"..."}]}
 out {"type":"end","id":"v"}
 out {"type":"end","id":"i","model":{...model information...}}
 out {"type":"end","id":"c","tokens":14}
@@ -632,14 +644,15 @@ out {"type":"cancelled","id":"a"}
 ```
 
 - Every request gets exactly one terminal message, `end`, `error` or `cancelled`, and nothing for its id after it.
-  `partial` is never terminal: it has `text`, with `segments` and `tokens` when the peek set `timestamps`, or an
-  `error`, which ends the peek and not its request.
+  `partial` is never terminal: it has `text` and `stop`, with `segments` and `tokens` when the peek set `timestamps`,
+  or an `error`, which ends the peek and not its request.
 - `end` of a synthesis has `seed` (the request's or the one the library drew), `samples` (the number sent in its
-  chunks) and `stop` (`complete`, `max_seconds` or `model_limit`). `end` of a recognition has `text`, and `segments`
-  and `tokens` when the request set `timestamps`, in the form the C API gives them (FastConformer, below). `end` of
-  `info` has `model`; `end` of `add_voice` has nothing more. `end` of `count_tokens` has `tokens`, the number of the
-  model's tokens the text takes as a synthesis counts it against `max_text_tokens` (`speech_model_info_text_tokens()`),
-  so that a caller can split a long text before it sends it.
+  chunks) and `stop` (`complete`, `max_seconds` or `model_limit`). `end` of a recognition has `text` and `stop`
+  (`complete`, or `model_limit` when it reached the most tokens the model writes, its text written up to there), and
+  `segments` and `tokens` when the request set `timestamps`, in the form the C API gives them (FastConformer, below).
+  `end` of `info` has `model`; `end` of `add_voice` has nothing more. `end` of `count_tokens` has `tokens`, the number
+  of the model's tokens the text takes as a synthesis counts it against `max_text_tokens`
+  (`speech_model_info_text_tokens()`), so that a caller can split a long text before it sends it.
 - `error` has `code` (a `speech_status_name()`), `option` (the input it concerns: an option's name, `text`, `audio`,
   `id`, `type`, `seq`, `pcm`, `name`, `path`, `sample_rate` or another member's name, or null) and `message`.
 - `progress` comes for a running request that is passing no chunks, when the library reports progress and at least
@@ -673,6 +686,11 @@ language is `out_of_range`.
   its memory grows with the square of the length. reazonspeech-nemo-v2 attends locally and takes a recording of
   minutes in one request. A cancel takes effect before the encoder starts, once it has run, or between two steps of
   the decoding.
+- **Qwen3-ASR** recognizes a request's audio at once, up to 1200 s, and longer audio in parts of up to 1200 s, each
+  alone (Qwen3-ASR, below). Its encoder attends within windows of 8 s, so its time grows with the length of the audio
+  and with the text it writes. A forced `language` steers it, and a `prompt` tells it the names and terms the audio may
+  hold. A cancel takes effect between two of the encoder's windows, two blocks of 512 rows of the decoder's prefill
+  or two tokens.
 
 A session with Irodori-TTS and one with a recognizer, the second peeking at its request while it collects chunks:
 
@@ -684,10 +702,10 @@ out {"type":"end","id":"1","seed":42,"samples":134400,"stop":"complete"}
 
 in  {"type":"chunk","id":"r","seq":0,"pcm":"..."}
 in  {"type":"peek","id":"r","sample_rate":16000}
-out {"type":"partial","id":"r","text":"群島や湖では"}
+out {"type":"partial","id":"r","text":"群島や湖では","stop":"complete"}
 in  {"type":"chunk","id":"r","seq":1,"pcm":"..."}
 in  {"type":"transcribe","id":"r","sample_rate":16000}
-out {"type":"end","id":"r","text":"群島や湖では必ずしもヨットは必要ありません。"}
+out {"type":"end","id":"r","text":"群島や湖では必ずしもヨットは必要ありません。","stop":"complete"}
 ```
 
 ### Irodori-TTS voices
@@ -760,7 +778,7 @@ A speech request is a JSON object:
 | `model` | the loaded model's `id` from `/v1/models`, or left out. Any other model is a 404 (`model_not_found`) |
 | `response_format` | `wav` (the default) or `pcm`. OpenAI's default is `mp3`, which speech.cpp does not encode; `mp3`, `opus`, `aac` and `flac` are refused |
 | `stream_format` | `audio` (the default) or `sse`, which needs `pcm` |
-| `voice`, `language`, `seed`, `speed`, `seconds`, `duration_scale`, `steps`, `max_seconds`, `timestamps` | every option of the vocabulary by its name (Options, above), of the option's type, which the model checks: `voice` is one of the model's voices, a Qwen3-TTS speaker or a voice of `--add-voice`, and required; `speed` and `voice` are OpenAI's, the others speech.cpp's own. A request without `seed` gets one drawn from 0 to 2^53 - 1 |
+| `voice`, `language`, `seed`, `speed`, `seconds`, `duration_scale`, `steps`, `max_seconds`, `timestamps`, `prompt` | every option of the vocabulary by its name (Options, above), of the option's type, which the model checks: `voice` is one of the model's voices, a Qwen3-TTS speaker or a voice of `--add-voice`, and required; `speed` and `voice` are OpenAI's, the others speech.cpp's own. A request without `seed` gets one drawn from 0 to 2^53 - 1 |
 
 A member speech.cpp does not take, OpenAI's `instructions` among them, is refused rather than ignored; a member set to
 `null` counts as left out.
@@ -848,24 +866,29 @@ A transcription request is a `multipart/form-data` form, as OpenAI's API referen
 
 | Member | Meaning |
 |---|---|
-| `file` | the audio, required: a WAV file, 16-, 24- or 32-bit PCM or 32-bit float at any rate, its channels averaged and resampled by the library to the model's `sample_rate` (16000 for FastConformer). Any other file is refused with a 400 (`param` `file`) rather than guessed at; convert it first (`ffmpeg -i in.mp3 out.wav`) |
+| `file` | the audio, required: a WAV file, 16-, 24- or 32-bit PCM or 32-bit float at any rate, its channels averaged and resampled by the library to the model's `sample_rate` (16000 for FastConformer and Qwen3-ASR). Any other file is refused with a 400 (`param` `file`) rather than guessed at; convert it first (`ffmpeg -i in.mp3 out.wav`) |
 | `model` | the loaded model's `id`, or left out; any other model is a 404 (`model_not_found`) |
 | `language` | the option `language`: a BCP 47 tag of one of the model's languages, or `auto` (the default) |
-| `response_format` | `json` (the default), which answers `{"text":"..."}`; `text`, which answers the text alone as `text/plain`; or `verbose_json`, which sets the option `timestamps` and answers `{"task":"transcribe","duration":…,"text":…,"segments":[{"id":0,"start":…,"end":…,"text":…}]}`, the duration being the file's in seconds. `srt`, `vtt` and `diarized_json` are refused: speech.cpp gives neither subtitles nor speakers |
+| `prompt` | the option `prompt`: what the model is told of the audio before it hears it, for a model that takes it (Qwen3-ASR); OpenAI's own member, which it describes as text to guide the model's style or continue a previous segment |
+| `response_format` | `json` (the default), which answers `{"text":"..."}`; `text`, which answers the text alone as `text/plain`; or `verbose_json`, which sets the option `timestamps`, refused by a model that gives no times (Qwen3-ASR), and answers `{"task":"transcribe","duration":…,"text":…,"segments":[{"id":0,"start":…,"end":…,"text":…}]}`, the duration being the file's in seconds. `srt`, `vtt` and `diarized_json` are refused: speech.cpp gives neither subtitles nor speakers |
 | `timestamp_granularities[]` | `segment`, with `verbose_json`; `word` is refused |
 
-The members of OpenAI's segment that the recognizers have no value for (`seek`, `tokens`, `temperature`,
-`avg_logprob`, `compression_ratio`, `no_speech_prob`) are left out rather than made up, and so is the usage in tokens
-or seconds that OpenAI's answers carry. OpenAI's other members (`prompt`, `temperature`, `stream`, `include[]` and the
-rest) are refused with a 400 rather than ignored, and so is a member given twice. Audio the library cannot take is a
-400 by its category with `param` `file`: no samples or fewer than the model needs, or a rate it cannot resample from;
-a language the model does not recognize is a 400 `unsupported_value` with `param` `language`. The upload may be up to
-25 MB, OpenAI's limit; the model recognizes the whole file at once, so a file should be one utterance (FastConformer,
-below). The request waits its turn like a speech request, and a client that goes away cancels it.
+Every answer carries `X-Speech-Stop`, why the recognition ended: `complete`, or `model_limit` when it reached the most
+tokens the model writes, with the text written up to there. The members of OpenAI's segment that the recognizers have
+no value for (`seek`, `tokens`, `temperature`, `avg_logprob`, `compression_ratio`, `no_speech_prob`) are left out
+rather than made up, and so is the usage in tokens or seconds that OpenAI's answers carry. OpenAI's other members
+(`temperature`, `stream`, `include[]` and the rest) are refused with a 400 rather than ignored, and so is a member given
+twice. Audio the library cannot take is a 400 by its category with `param` `file`: no samples or fewer than the model
+needs, or a rate it cannot resample from; a language the model does not recognize is a 400 `unsupported_value` with
+`param` `language`, and a `prompt` to a model that takes none a 400 `unsupported_parameter`. The upload may be up to
+25 MB, OpenAI's limit; the model recognizes the whole file at once, so a file should be one utterance for
+FastConformer's parakeet models, where Qwen3-ASR takes up to 1200 s at once (below). The request waits its turn like a
+speech request, and a client that goes away cancels it.
 
 ```sh
 curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@utterance.wav -F response_format=text
 curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav -F response_format=verbose_json
+curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav -F language=ja -F prompt="Claude Code、渋谷"
 ```
 
 ## Files on Hugging Face
@@ -886,6 +909,8 @@ writes the other types as well:
 | [nvidia/parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) | [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | `parakeet-tdt_ctc-0.6B-ja-F16.gguf` | `parakeet-tdt_ctc-0.6B-ja-F32.gguf` |
 | [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) | `parakeet-tdt-0.6B-v3-F16.gguf` | `parakeet-tdt-0.6B-v3-F32.gguf` |
 | [reazon-research/reazonspeech-nemo-v2](https://huggingface.co/reazon-research/reazonspeech-nemo-v2) | [sakasegawa/reazonspeech-nemo-v2-GGUF](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) | `reazonspeech-nemo-619M-v2-F16.gguf` | `reazonspeech-nemo-619M-v2-F32.gguf` |
+| [Qwen/Qwen3-ASR-0.6B](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) | [sakasegawa/Qwen3-ASR-0.6B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF), not uploaded yet | `Qwen3-ASR-0.6B-Q8_0.gguf` | `Qwen3-ASR-0.6B-F16.gguf`, `Qwen3-ASR-0.6B-F32.gguf` |
+| [Qwen/Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) | [sakasegawa/Qwen3-ASR-1.7B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF), not uploaded yet | `Qwen3-ASR-1.7B-Q8_0.gguf` | `Qwen3-ASR-1.7B-F16.gguf`, `Qwen3-ASR-1.7B-F32.gguf` |
 
 Irodori-TTS's names give Small, a word, where the convention's size label is a number, so their size label is counted:
 848M for v4.1-Small-MF, whose DiT has MeanFlow's 7.2M parameters more, and 841M for v4.1-Small, each with its codec.
@@ -1317,6 +1342,163 @@ holds every buffer, is 1.35 GB for 6.36 s, 1.55 GB for 64.80 s and 2.35 GB for 3
 parakeet-tdt_ctc-0.6b-ja's is 1.30, 1.49 and 4.14 GB, growing with its square, and the 311 s input takes it 62 s on
 the CPU where ReazonSpeech takes 26 s.
 
+## Qwen3-ASR
+
+Speech recognition with Qwen's [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-1.7B), 0.6B and 1.7B, in 30
+languages: a Whisper-style log-mel frontend, an encoder that attends within windows of 8 s, a projector, and a Qwen3
+decoder that writes the language it hears and then the text. The reference is transformers 5.18's own implementation
+with its windowed encoder, and qwen-asr 0.0.6's code for what transformers leaves out (docs/adr/0018). Implemented:
+
+- the frontend: qwen-asr's normalization of the audio (a peak above 1 brought to 1), an utterance under 0.5 s padded
+  with zeros to it, and Whisper's log-mel as transformers' feature extractor computes it, 128 bins of a centred STFT of
+  400 points, on the host in double precision,
+- the encoder, on ggml: three 3 × 3 convolutions of stride 2 over each chunk of 1 s, the last padded with zeros to a
+  whole chunk, a sinusoid of each token's position within its chunk, 18 (0.6B) or 24 (1.7B) layers that attend within
+  windows of 104 tokens (8 s), one graph per window, and the projector to the decoder's width,
+- the prompt as qwen-asr writes it: the checkpoint's chat template with a system turn that holds the request's
+  `prompt`, empty without one, the audio's tokens in the user turn, and for a forced `language` the prefill
+  `language <Name><asr_text>`, which steers the model; the text on either side of the audio is tokenized with the
+  pre-tokenizer of the checkpoint's tokenizer, split first at its added tokens,
+- the decoder: the Qwen3 stack it shares with Qwen3-TTS's talker, its output tied to the token embeddings, a
+  key/value cache in F16 that grows with the request, and the prompt read 512 rows at a time,
+- greedy decoding until an end token or 4096 new tokens, the limit of the model's `generate()`, at which the result
+  says `model_limit`,
+- the output decoded without its special tokens and parsed as qwen-asr's `parse_asr_output()` parses it: the text
+  after `<asr_text>`, "" for the `language None` of audio without speech, and its repetition fix,
+- audio over 1200 s cut as qwen-asr cuts it (Long audio, below).
+
+Not implemented: timestamps, which need Qwen3-ForcedAligner-0.6B, a second model (a request takes `timestamps` only as
+false); the language the model writes, which the result does not carry; qwen-asr's streaming. The official tokenizer
+brings the prompt to NFC first, and speech.cpp tokenizes it as given, so a prompt not in NFC gets other tokens.
+
+### Models
+
+Recognition needs one file per model: `Qwen3-ASR-0.6B-Q8_0.gguf` from
+[sakasegawa/Qwen3-ASR-0.6B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF) or `Qwen3-ASR-1.7B-Q8_0.gguf`
+from [sakasegawa/Qwen3-ASR-1.7B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF), which are not uploaded
+yet. `reference/qwen3-asr/` pins transformers 5.18.0, qwen-asr 0.0.6 and PyTorch 2.10.0, and each checkpoint by
+revision, size and SHA-256, and converts it:
+
+```sh
+cd reference/qwen3-asr
+uv run python convert.py Qwen3-ASR-0.6B ../../models --type q8_0   # Qwen3-ASR-0.6B-Q8_0.gguf, 0.84 GB
+uv run python convert.py Qwen3-ASR-1.7B ../../models --type q8_0   # Qwen3-ASR-1.7B-Q8_0.gguf, 2.18 GB
+```
+
+`--type f16` writes 1.57 and 4.08 GB, and `--type f32` 3.14 and 8.16 GB. The token embeddings, which are also the
+output matrix, are stored once, where the checkpoint holds them twice. The weights are the Qwen team's, under the
+Apache License 2.0.
+
+### Use
+
+```sh
+speech asr Qwen3-ASR-1.7B-Q8_0.gguf utterance.wav                       # the language left to the model
+speech asr Qwen3-ASR-1.7B-Q8_0.gguf --language ja utterance.wav         # Japanese, forced
+speech asr Qwen3-ASR-1.7B-Q8_0.gguf --prompt "Claude Code、CI、渋谷" meeting.wav
+speech worker Qwen3-ASR-1.7B-Q8_0.gguf
+speech serve Qwen3-ASR-0.6B-Q8_0.gguf                                    # POST /v1/audio/transcriptions, with "prompt"
+```
+
+The models recognize 16 kHz mono audio, to which the library resamples audio at another rate, in `ar`, `cs`, `da`,
+`de`, `el`, `en`, `es`, `fa`, `fi`, `fil`, `fr`, `hi`, `hu`, `id`, `it`, `ja`, `ko`, `mk`, `ms`, `nl`, `pl`, `pt`,
+`ro`, `ru`, `sv`, `th`, `tr`, `vi`, `yue` and `zh`, and 22 Chinese dialects under `zh` or `auto`. Cantonese and
+Filipino have no two-letter code, and take the three letters of ISO 639 (`yue`, `fil`). A forced language steers the
+model, which then writes the text alone; `auto` lets it write the language it hears first. The `prompt` is what the
+model is told of the audio before it hears it, the names and terms it may hold, which it was trained to use as
+background and not to follow as instructions.
+
+### Long audio
+
+The model takes at most 1200 s at once. Longer audio is cut as qwen-asr's `transcribe()` cuts it: at 1200 s from the
+last cut, moved to the quietest 0.1 s within 5 s on either side and to its quietest sample, a part shorter than 0.5 s
+padded with zeros, each part recognized alone, and the texts joined without a separator. The memory is that of the
+longest part (Speed, below). A part that reaches the 4096 tokens stops there, and the request says `model_limit` with
+the text of every part. A recording of over a few minutes may well reach them: on the first 1203 s of 1338 s of FLEURS
+ja_jp joined, the 0.6B model repeats three sentences from the first minute on until it reaches 4096 tokens, as the
+official implementation does. A caller that wants the whole text of a long recording cuts it at its pauses into
+pieces of a few minutes.
+
+### Accuracy
+
+`reference/qwen3-asr/dump.py` runs transformers 5.18's Qwen3-ASR on the CPU in float32 with qwen-asr's prompt and
+parse, and saves every stage; the checks compare each stage, given the dump's own inputs, with it:
+
+```sh
+cd reference/qwen3-asr
+uv run python dump.py Qwen3-ASR-0.6B out
+uv run python dump.py Qwen3-ASR-1.7B out
+uv run python parse_cases.py out    # outputs with qwen-asr's parse of each, for qwen3-asr-decoder-check
+uv run python split_cases.py out    # synthetic audio with qwen-asr's split of each, for qwen3-asr-split-check
+cd ../..
+build/qwen3-asr-frontend-check <model.gguf> reference/qwen3-asr/out
+build/qwen3-asr-encoder-check <model.gguf> reference/qwen3-asr/out [gpu|cpu|device name]
+build/qwen3-asr-decoder-check <model.gguf> reference/qwen3-asr/out [gpu|cpu|device name]
+build/qwen3-asr-split-check <model.gguf> reference/qwen3-asr/out [gpu|cpu|device name]
+```
+
+The inputs are utterances of FLEURS' test split: ja_jp 12677001980660723842 (6.36 s), 13903496305700695803
+(10.50 s) and 2630315561484880103 (25.50 s), en_us 10197164397713068203 (5.76 s) and 2880067776280655708 (23.64 s),
+cmn_hans_cn 12933878060487367144 (6.66 s) and 14716260585206763911 (8.64 s), de_de 10009182821551087671 (11.16 s),
+and two cuts of the first, 0.9 s from 0.6 s on and its first 0.6 s, near silence; each with four requests: the
+language left to the model, forced, and both with a prompt that names the utterance's terms. A 1338.42 s input, the
+first 100 utterances of ja_jp joined, is dumped to qwen-asr's split and each part's ids and text with the 0.6B model.
+On an Apple M5, for the 0.6B and the 1.7B model:
+
+| Check | CPU, F32 | Metal, F32 or F16 | CPU, Q8_0 | Metal, Q8_0 |
+|---|---|---|---|---|
+| Features (`qwen3-asr-frontend-check`) | 123.5 to 143.6 dB SNR | the same (on the host) | the same | the same |
+| Projector output from the dump's features (`qwen3-asr-encoder-check`) | 85.6 to 111.0 dB, 94.4 to 112.5 dB | 44.4 to 70.6 dB, 50.2 to 68.6 dB with F32; 49.8 to 66.7 dB, 50.7 to 64.8 dB with F16 | 20.2 to 33.2 dB, 24.3 to 33.0 dB | 20.4 to 38.2 dB, 17.1 to 38.3 dB |
+| Prompt ids (`qwen3-asr-decoder-check`) | the dump's, all 80 | the same | the same | the same |
+| Logits of the prompt's last four rows from the dump's input | 97.4 to 115.1 dB, 96.1 to 114.8 dB | 43.3 to 70.3 dB, 46.6 to 67.1 dB | 19.3 to 33.9 dB, 18.2 to 32.4 dB | 23.3 to 39.5 dB, 21.7 to 37.0 dB |
+| Argmax teacher-forced on the dump's ids (1176 and 1184 steps) | every step | every step | all but 8 and 1 | all but 5 and 1 |
+| Greedy ids from the dump's projector output, every later stage ours | the dump's on all 80 requests | the same | the dump's on 37 and 38 of 40 | on 37 and 39 of 40 |
+| Text from the audio, every stage ours | the dump's on all 80 | the same | on 37 and 35 of 40 | on 37 and 40 of 40 |
+| Decoding of the dump's ids, parse of its raw text, 180 cases of the parse | equal | equal | equal | equal |
+
+The prompt's logits come from an F32 cache, which leaves the arithmetic of the weights alone; the recognizer's own
+F16 cache puts them 42 to 56 dB from transformers' on the CPU in F32, where every text is the dump's as well. With F16
+weights on the CPU, whose dot product sums in half precision, the 0.6B model's logits are 37.3 to 53.4 dB and every
+text is the dump's. Where a greedy choice differs from the dump's, the check takes it for the arithmetic's only when
+the dump's margin between the two tokens is within our error on their two logits, and so it was each time, at margins
+of 0.03 to 1.39: the near-silent input with its language forced, where the model writes another filler; the 25.50 s
+input, in a name's middle dot (グレン・クッシング for グレンクッシング), a comma, 熱気道 for 熱挙動 and 安定 for 判定; and
+the spaces around a Latin name in the 8.64 s one.
+
+The split is qwen-asr's on five synthetic inputs of 1200 to 3700 s (`split_cases.py`: noise with quiet stretches,
+speech-like bursts, silence, a last part of 0.2 s that is padded, and audio of exactly 1200 s, which is not split)
+and on the 1338.42 s input, cut at 1202.97 s. There, with the 0.6B model in Q8_0 on Metal, the first part's prompt
+and its 4096 ids are the dump's, the model repeating three sentences until the limit, and the second part's prompt is
+the dump's and its first 137 ids of 376. With the 0.6B model in F32 on the CPU, every id of both parts, 4096 and 376,
+is the dump's, and so is the joined text.
+
+### Speed
+
+On an Apple M5 with Q8_0 weights on Metal, after loading, the median of three runs of `speech asr`, the language left
+to the model and, in parentheses, forced; against llama.cpp b11246's `llama-server` (the release ASIST bundles) with
+ggml-org's Qwen3-ASR GGUF files in Q8_0, sent the same audio as 16-bit WAV as ASIST sends it, with its prompt cache off:
+
+| Audio | 0.6B, speech.cpp | 0.6B, llama.cpp | 1.7B, speech.cpp | 1.7B, llama.cpp |
+|---|---|---|---|---|
+| ja_jp, 6.36 s | 0.23 s (0.18 s) | 0.17 s (0.16 s) | 0.45 s (0.41 s) | 0.44 s (0.44 s) |
+| ja_jp, 10.50 s | 0.33 s (0.28 s) | 0.24 s (0.23 s) | 0.66 s (0.60 s) | 0.57 s (0.58 s) |
+| de_de, 11.16 s | 0.36 s (0.34 s) | 0.30 s (0.29 s) | 0.81 s (0.78 s) | 0.69 s (0.67 s) |
+| en_us, 23.64 s | 0.65 s (0.66 s) | 0.53 s (0.50 s) | 1.48 s (1.41 s) | 1.17 s (1.14 s) |
+| ja_jp, 25.50 s | 0.95 s (0.91 s) | 0.73 s (0.74 s) | 2.01 s (1.95 s) | 1.85 s (1.73 s) |
+
+Decoding takes most of the time. Of the 25.50 s input, the 0.6B model's frontend takes 18 ms, the encoder 0.13 s, the
+prefill of its 347 rows 0.12 s and the 87 tokens 0.63 s, 139 a second, where llama.cpp takes 0.16 s for its encoder and
+prompt and 0.55 s for the same tokens, 158 a second; the 1.7B model's encoder takes 0.18 s, the prefill 0.34 s and its
+88 tokens 1.83 s, 48 a second, where llama.cpp takes 0.30 s and 1.50 s, 59 a second. speech.cpp builds a graph for
+every token, where llama.cpp reuses its graphs. llama.cpp's prompt has no system turn, its log-mel one frame more and its last chunk the tokens of
+its padding, so its prompt differs from the official one, and it writes another text than the official on 6 of the
+20 requests with the 0.6B model and 4 with the 1.7B: with the 1.7B model 軍港や湖ではカマザタ寿司もヨット for the
+official 群島や湖では必ずしもヨット on the 6.36 s utterance, and with the 0.6B model 光も for 日陰も on the 10.50 s one.
+
+The 1338.42 s input takes 153 s with the 0.6B model, nearly all of it its first part: an encoder of 5.8 s, a prefill
+of 15,654 rows in 19 s, and 4096 tokens in 126 s, 32 a second, as each reads a cache of up to 19,750 positions. The
+process's peak memory footprint is 2.40 GB, against 2.33 GB for the first part alone and 1.17 GB for the 25.50 s
+input: the memory is that of the longest part.
+
 ## GGUF files
 
 Every model is one GGUF file, its codec included, which `reference/<model>/convert.py` writes from the checkpoint
@@ -1330,8 +1512,8 @@ listed. The tensors are exactly the ones the keys call for, each of the shape th
 converter writes: a tensor missing, one not called for, and one of another shape or type are refused, naming the
 tensor and the shape or type expected and found, before any weight is loaded. The types are the ones each
 converter's `--type` gives, as its docstring says: the matrices it applies to in Q8_0, F16 or F32 (F16 or F32 for
-FastConformer), Qwen3-TTS's codec's large weights in F16 or F32, and the norms, biases, codebooks and the rest in
-F32. A width that no key gives, listed with each family's tensors, is taken from one tensor, and every other tensor
+FastConformer), Qwen3-TTS's codec's large weights and Qwen3-ASR's convolutions in F16 or F32, and the norms, biases,
+codebooks and the rest in F32. A width that no key gives, listed with each family's tensors, is taken from one tensor, and every other tensor
 of that width is checked against it. A key that sizes the model is refused when it is 0, and so is a value the model
 cannot run with: heads that do not divide their width or are of an odd width, which RoPE cannot turn in pairs, an id
 outside the vocabulary or table it indexes, or a stride the codec does not take. A key whose meaning the tables
@@ -1346,10 +1528,10 @@ family's architecture; only speech.cpp runs these files.
 
 | Key | Type | Meaning | Source |
 |---|---|---|---|
-| `general.architecture` | string | the family, the code that runs the file: `qwen3-tts`, `irodori-tts` or `fastconformer` | the converter |
-| `general.name` | string | the model's name | the pinned repository's name (`Qwen3-TTS-12Hz-0.6B-CustomVoice`, `Irodori-TTS-v4.1-Small-MF`, `parakeet-tdt-0.6b-v3`) |
+| `general.architecture` | string | the family, the code that runs the file: `qwen3-tts`, `irodori-tts`, `fastconformer` or `qwen3-asr` | the converter |
+| `general.name` | string | the model's name | the pinned repository's name (`Qwen3-TTS-12Hz-0.6B-CustomVoice`, `Irodori-TTS-v4.1-Small-MF`, `parakeet-tdt-0.6b-v3`, `Qwen3-ASR-1.7B`) |
 | `general.organization` | string | the organization that publishes the model | the pinned repository's namespace (`Qwen`, `Aratako`, `nvidia`, `reazon-research`) |
-| `general.basename` | string | the model line, which the file's name begins with | the repository's name through the converter's table of names (`Qwen3-TTS-12Hz`, `Irodori-TTS`, `parakeet-tdt_ctc`, `parakeet-tdt`, `reazonspeech-nemo`) |
+| `general.basename` | string | the model line, which the file's name begins with | the repository's name through the converter's table of names (`Qwen3-TTS-12Hz`, `Irodori-TTS`, `parakeet-tdt_ctc`, `parakeet-tdt`, `reazonspeech-nemo`, `Qwen3-ASR`) |
 | `general.size_label` | string | the number of parameters with its scale, B or M | the repository's name (`0.6B`, `1.7B`), or, where it gives none, the parameters of the file's tensors as gguf-py's `size_label()` rounds them (`848M`, `841M`, `619M`) |
 | `general.finetune` | string | what the model was trained toward beyond its line; present where its name gives it | the repository's name (`CustomVoice`, `MF`, `ja`) |
 | `general.version` | string | present where the model's name gives one | the repository's name (`v4.1`, `v3`, `v2`) |
@@ -1358,12 +1540,12 @@ family's architecture; only speech.cpp runs these files.
 | `general.source.url` | string | the revision converted: `<general.source.repo_url>/tree/<revision>`, since the specification has no key of its own for a revision | the pin |
 | `general.file_type` | u32 | the type that holds most of the tensors' bytes, as gguf-py's `LlamaFileType` numbers it: 0 (F32), 1 (F16) or 7 (Q8_0); a file whose tensors say otherwise is refused | the converter's `--type` |
 | `general.quantization_version` | u32 | the version of ggml's quantized blocks (2); present when the file holds a quantized tensor | gguf-py's `GGML_QUANT_VERSION` |
-| `general.languages` | [string] | ISO 639 two-letter codes, sorted, which requests and the model information give as BCP 47 tags | Qwen3-TTS: the names of `codec_language_id` through the converter's table of codes, dialects left out; the others: the model card |
+| `general.languages` | [string] | each language's shortest ISO 639 code, sorted, which requests and the model information give as BCP 47 tags: two letters, or three for a language that has no two-letter code (`yue`, `fil`), where the GGUF specification asks for two letters | Qwen3-TTS: the names of `codec_language_id` through the converter's table of codes, dialects left out; Qwen3-ASR: the tags of transformers' `LANGUAGE_CODE_TO_NAME`; the others: the model card |
 | `speech.layout` | u32 | 1, the version of the family's layout | the converter |
 | `speech.requires` | string | `0.7.0`, the first release whose reader takes this layout | the converter's table of layouts |
 | `speech.task` | string | `synthesis` or `recognition`; must be the family's | the converter |
-| `speech.sample_rate` | u32 | the rate of the audio made or recognized | Qwen3-TTS: `speech_tokenizer/config.json` `output_sample_rate`; Irodori-TTS: the DACVAE's `sample_rate`; FastConformer: the featurizer's `sample_rate` |
-| `speech.language_use` | string | `steers` or `checked`; must be what the family does | `steers` for qwen3-tts, `checked` for the others |
+| `speech.sample_rate` | u32 | the rate of the audio made or recognized | Qwen3-TTS: `speech_tokenizer/config.json` `output_sample_rate`; Irodori-TTS: the DACVAE's `sample_rate`; FastConformer: the featurizer's `sample_rate`; Qwen3-ASR: qwen-asr's `SAMPLE_RATE`, the feature extractor's rate |
+| `speech.language_use` | string | `steers` or `checked`; must be what the family does | `steers` for qwen3-tts and qwen3-asr, `checked` for the others |
 | `speech.voices` | [string] | the built-in voices' names; present for qwen3-tts alone | `talker_config.spk_id`'s names, sorted |
 | `speech.voice_languages` | [string] | each voice's language, aligned with `speech.voices` | the model card's "Native Language" column through the table of codes (Dylan's and Eric's dialects are `zh`) |
 | `speech.voice_genders` | [string] | `female` or `male`, aligned | the model card's "Voice Description" column |
@@ -1591,6 +1773,52 @@ prediction network (`pred.embed.weight`) and the joint (`joint.enc.weight`). The
 NeMo's default, which the C++ pads by 1 on either side; `encoder.d_model` is even, and `decoder.tdt.durations` is
 not empty.
 
+### qwen3-asr
+
+From the checkpoint's `config.json` (`thinker_config`, its `audio_config` and `text_config`), `preprocessor_config.json`,
+`generation_config.json`, `chat_template.json`, `vocab.json`, `merges.txt` and `tokenizer_config.json`, transformers
+5.18's Qwen3-ASR (the feature extractor, the encoder and its language tags) and qwen-asr 0.0.6's `inference/utils.py`
+(the limits of the audio, the forced language and the parse of the output), both pinned by the converter's `uv.lock`
+(docs/adr/0018).
+
+| Key | Type | Meaning | Source |
+|---|---|---|---|
+| `qwen3-asr.language_names` | [string] | the name the forced language's prefill writes for each language of `general.languages`, aligned with it (`Cantonese` for `yue`) | transformers' `LANGUAGE_CODE_TO_NAME`, the names of qwen-asr's `SUPPORTED_LANGUAGES` |
+| `qwen3-asr.frontend.n_fft`, `hop_length`, `n_mels` | u32 | | `preprocessor_config.json` `n_fft`, `hop_length`, `feature_size` |
+| `qwen3-asr.frontend.log_floor`, `dynamic_range`, `log_offset`, `log_divisor` | f32 | the log10's guard, the range kept below the utterance's maximum, and the shift and scale after it (1e-10, 8, 4, 4) | the feature extractor's code |
+| `qwen3-asr.audio.min_samples` | u32 | an utterance shorter is padded with zeros to it (8000, 0.5 s) | qwen-asr's `MIN_ASR_INPUT_SECONDS`, the extractor's `min_length` |
+| `qwen3-asr.audio.max_samples` | u32 | longer audio is split (19,200,000, 1200 s) | qwen-asr's `MAX_ASR_INPUT_SECONDS` |
+| `qwen3-asr.audio.split_search_samples`, `split_window_samples` | u32 | how far on either side of a cut the split looks for the quietest window, and the window (80,000 and 1,600: 5 s and 0.1 s) | `split_audio_into_chunks()`'s `search_expand_sec` and `min_window_ms` |
+| `qwen3-asr.encoder.d_model`, `num_layers`, `num_heads`, `ffn_dim` | u32 | | `audio_config` `d_model`, `encoder_layers`, `encoder_attention_heads`, `encoder_ffn_dim` |
+| `qwen3-asr.encoder.chunk_frames` | u32 | the frames of a chunk the convolutions take at once (100) | 2 × `n_window` |
+| `qwen3-asr.encoder.window_frames` | u32 | the frames of a window the layers attend within (800) | `n_window_infer` |
+| `qwen3-asr.encoder.norm_eps` | f32 | the LayerNorms' epsilon (1e-5) | the encoder's LayerNorms |
+| `qwen3-asr.encoder.max_timescale` | f32 | the positions' sinusoids (10000) | `SinusoidsPositionEmbedding` |
+| `qwen3-asr.decoder.hidden_size`, `intermediate_size`, `num_hidden_layers`, `num_attention_heads`, `num_key_value_heads`, `head_dim`, `vocab_size`, `max_position_embeddings` | u32 | | `text_config` |
+| `qwen3-asr.decoder.rms_norm_eps`, `rope_theta` | f32 | | `text_config` |
+| `qwen3-asr.prompt.before_context`, `before_audio`, `after_audio` | string | the chat template's text before the context, between it and the audio's tokens, and after them | `chat_template.json` filled as qwen-asr fills it, split at the context and the audio token |
+| `qwen3-asr.prompt.audio_token` | string | the added token whose rows the projector's output replaces (`<\|audio_pad\|>`) | the processor's `audio_token` |
+| `qwen3-asr.prompt.language_prefix`, `asr_text` | string | the forced language's prefill around the name (`language `, `<asr_text>`), and where the text begins in the output | qwen-asr's `_LANG_PREFIX` and `_ASR_TEXT_TAG` |
+| `qwen3-asr.output.repetition_threshold`, `repetition_max_period` | u32 | the repetition fix of the parse: runs and patterns repeated past the threshold kept once (20, 20) | `detect_and_fix_repetitions()` |
+| `qwen3-asr.generation.eos_ids` | [i32] | the tokens that end the decoding | `generation_config.json` `eos_token_id` |
+| `qwen3-asr.generation.max_new_tokens` | u32 | the most tokens a recognition writes (4096) | the model's `generate()` and qwen-asr's vLLM backend (docs/adr/0018) |
+| `qwen3-asr.tokenizer.tokens`, `merges` | [string] | the BPE tokens in id order, the added ones included, and the merges | `vocab.json`, `tokenizer_config.json`'s `added_tokens_decoder`, `merges.txt` |
+| `qwen3-asr.tokenizer.added_ids`, `special_ids` | [i32] | the added tokens, at which a text is split before the BPE, and the special ones among them, which decoding drops | `added_tokens_decoder` |
+
+Tensors, with E = `encoder.num_layers` and D = `decoder.num_hidden_layers`:
+
+- `frontend.window`, `frontend.filterbank`;
+- `enc.conv.{1,2,3}.{weight,bias}`, `enc.conv_out.weight`;
+- `enc.blk.{0..E-1}.` with `attn_norm`, `attn_q`, `attn_k`, `attn_v`, `attn_out`, `ffn_norm`, `ffn_up` and `ffn_down`, each a
+  `.weight` and a `.bias`; `enc.norm.{weight,bias}`;
+- `proj.{1,2}.{weight,bias}`, the projector;
+- `dec.token_embd`, which is also the output matrix, the checkpoint's being tied to it;
+- `dec.blk.{0..D-1}.` with `attn_norm`, `ffn_norm`, `attn_q`, `attn_k`, `attn_v`, `attn_o`, `attn_q_norm`, `attn_k_norm`,
+  `ffn_gate`, `ffn_up` and `ffn_down`; `dec.norm`.
+
+The width no key gives is the convolutions' channels, from `enc.conv.1.weight` (480). The convolutions are 3 × 3 with
+a stride of 2 and a padding of 1, which the official module fixes in its code and the converter checks.
+
 ### Voice files
 
 A voice file of Irodori-TTS is a GGUF file of its own, layout 1:
@@ -1611,8 +1839,8 @@ codec is refused as the caller's mistake before its latent is checked. Voice fil
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The model weights are their authors': Qwen3-TTS is the Qwen team's, under the
-Apache License 2.0. Irodori-TTS v4.1-Small and v4.1-Small-MF are Aratako's, under the MIT License with the
+MIT, see [LICENSE](LICENSE). The model weights are their authors': Qwen3-TTS and Qwen3-ASR are the Qwen team's,
+under the Apache License 2.0. Irodori-TTS v4.1-Small and v4.1-Small-MF are Aratako's, under the MIT License with the
 ethical restrictions of their model cards (no voice cloning without consent, no deepfakes or
 misinformation). Semantic-DACVAE-Japanese-32dim is Aratako's and MIT on its card; it derives from Meta's
 facebook/dacvae-watermarked, which is under the Apache License 2.0. That card's text also names the SAM

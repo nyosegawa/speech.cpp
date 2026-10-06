@@ -3,8 +3,29 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 
 #include "error.h"
+
+void compute_graph(ggml_backend_t backend, ggml_cgraph * gf) {
+    const std::string device = ggml_backend_name(backend);
+    ggml_status status = GGML_STATUS_FAILED;
+    try {
+        status = ggml_backend_graph_compute(backend, gf);
+    } catch (const std::system_error & e) {
+        // ggml's Vulkan backend allocates buffers of its own while it computes and throws vulkan-hpp's exceptions out of
+        // ggml_backend_graph_compute() when one does not fit: vk::OutOfDeviceMemoryError and vk::OutOfHostMemoryError,
+        // whose codes are VK_ERROR_OUT_OF_DEVICE_MEMORY (-2) and VK_ERROR_OUT_OF_HOST_MEMORY (-1) in the category
+        // "vk::Result". Caught as any exception, they read as a defect of the library.
+        const bool vulkan = std::string(e.code().category().name()) == "vk::Result";
+        if (vulkan && (e.code().value() == -1 || e.code().value() == -2)) {
+            throw Error(Fault::OutOfMemory, "the memory of " + device + " ran out while it computed a graph: " + e.what());
+        }
+        throw Error(Fault::Device, "the device " + device + " failed to compute a graph: " + e.what());
+    }
+    if (status == GGML_STATUS_ALLOC_FAILED) throw Error(Fault::OutOfMemory, "the memory of " + device + " ran out while it computed a graph");
+    if (status != GGML_STATUS_SUCCESS) throw Error(Fault::Device, "the device " + device + " failed to compute a graph");
+}
 
 Graph::Graph(int max_nodes) {
     ggml_init_params params = {ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false),
@@ -54,9 +75,7 @@ void Graph::copy(ggml_tensor * src, ggml_tensor * dst) {
 void Graph::compute(ggml_backend_t backend, ggml_gallocr_t allocr) {
     if (!ggml_gallocr_alloc_graph(allocr, gf_)) throw Error(Fault::OutOfMemory, "cannot allocate the memory of a graph on the device");
     for (const Upload & u : uploads_) ggml_backend_tensor_set(u.tensor, u.bytes.data(), 0, u.bytes.size());
-    if (ggml_backend_graph_compute(backend, gf_) != GGML_STATUS_SUCCESS) {
-        throw Error(Fault::Device, std::string("the device ") + ggml_backend_name(backend) + " failed to compute a graph");
-    }
+    compute_graph(backend, gf_);
 }
 
 std::vector<float> Graph::read(const ggml_tensor * t) {

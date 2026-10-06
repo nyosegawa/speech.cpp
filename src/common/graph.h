@@ -19,6 +19,12 @@ inline ggml_tensor * mul_mat(ggml_context * ctx, ggml_tensor * a, ggml_tensor * 
 }
 
 /**
+ * Computes `gf`, whose tensors have their memory, on `backend`. A backend that runs out of memory while it computes
+ * throws an Error of Fault::OutOfMemory, and one that fails otherwise an Error of Fault::Device.
+ */
+void compute_graph(ggml_backend_t backend, ggml_cgraph * gf);
+
+/**
  * One computation: a ggml context and graph whose inputs carry their data from the moment they are made,
  * so that the code that builds a stage also says what goes into it. The data is uploaded when the graph
  * is computed, after its tensors have been allocated.

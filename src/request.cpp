@@ -1,5 +1,4 @@
 #include <atomic>
-#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <map>
@@ -65,18 +64,14 @@ const char * type_name(speech_type type) {
     return "";
 }
 
-bool is_auto(const std::string & s) {
-    return s.size() == 4 && std::tolower((unsigned char) s[0]) == 'a' && std::tolower((unsigned char) s[1]) == 'u' &&
-           std::tolower((unsigned char) s[2]) == 't' && std::tolower((unsigned char) s[3]) == 'o';
-}
-
 /** Whether `value` is the neutral value of `option`, which every model accepts whether or not it takes the option. */
 bool neutral(speech_option option, const OptionValue & value) {
     switch (option) {
         case SPEECH_OPT_SPEED:
         case SPEECH_OPT_DURATION_SCALE: return std::get<double>(value) == 1;
-        case SPEECH_OPT_LANGUAGE: return is_auto(std::get<std::string>(value));
+        case SPEECH_OPT_LANGUAGE: return language_is_auto(std::get<std::string>(value));
         case SPEECH_OPT_TIMESTAMPS: return !std::get<bool>(value);
+        case SPEECH_OPT_PROMPT: return std::get<std::string>(value).empty();
         default: return false;
     }
 }
@@ -136,7 +131,7 @@ void check(const speech_request & request, speech_option option, speech_type typ
     }
     if (option == SPEECH_OPT_LANGUAGE) {
         const std::string & tag = std::get<std::string>(value);
-        if (is_auto(tag)) return;
+        if (language_is_auto(tag)) return;
         for (const std::string & language : file.languages) {
             if (bcp47_matches(tag, language)) return;
         }
@@ -396,9 +391,10 @@ speech_status speech_transcribe(speech_request * request) {
                 result->text = std::move(found.text);
                 result->segments = std::move(found.segments);
                 result->tokens = std::move(found.tokens);
+                result->stop = found.stop;
             }
         });
-        result->stop = run.stopped() ? SPEECH_STOP_CANCELLED : SPEECH_STOP_COMPLETE;
+        if (run.stopped()) result->stop = SPEECH_STOP_CANCELLED;
         const speech_status status = run.stopped() ? SPEECH_CANCELLED : SPEECH_OK;
         request->result = std::move(result);
         return status;

@@ -1,10 +1,12 @@
 """A client of the worker protocol 2 for the smoke scripts. It starts `speech worker`, and on every line it reads it
 checks that the line is one JSON object with a string "type", that a chunk, progress, partial text or terminal message
 belongs to a request in flight, and that a request gets exactly one terminal message (end, error or cancelled) and
-nothing for its id after it. It also compares the model information of ready with `speech info --json`.
+nothing for its id after it. It also compares the model information of ready with `speech info --json`, and reads the
+requests a recognition model's reference dumped.
 """
 
 import json
+import os
 import subprocess
 import time
 
@@ -160,6 +162,35 @@ def check_model_information(speech, model, loaded, added_voices=()):
         raise SystemExit(f"the loaded model's information lacks the device or the threads: {loaded}")
     if json.dumps(got) != json.dumps(want):
         raise SystemExit(f"the loaded model's information differs from speech info --json:\n  {json.dumps(got)[:600]}\n  {json.dumps(want)[:600]}")
+
+
+def dump_requests(speech, model, dump):
+    """The requests of a dump of a recognition model's reference, each as (name, members, text): for one of
+    reference/fastconformer/dump.py, the request without options and the dump's text; for one of
+    reference/qwen3-asr/dump.py, which keeps each request in a folder of its own, auto, forced, auto-prompt and
+    forced-prompt, the forced language given by the tag of general.languages whose name qwen3-asr.language_names gives
+    (read with speech info --json --meta), and the prompt by its text."""
+    def text(folder):
+        with open(os.path.join(folder, "text.txt"), encoding="utf-8") as f:
+            return f.read()
+
+    if not os.path.isfile(os.path.join(dump, "auto", "meta.json")):
+        return [("auto", {}, text(dump))]
+    r = subprocess.run([speech, "info", model, "--json", "--meta"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    meta = json.loads(r.stdout)["meta"]
+    tags = dict(zip(meta["qwen3-asr.language_names"], meta["general.languages"]))
+    requests = []
+    for name in ("auto", "forced", "auto-prompt", "forced-prompt"):
+        folder = os.path.join(dump, name)
+        with open(os.path.join(folder, "meta.json"), encoding="utf-8") as f:
+            asked = json.load(f)
+        members = {}
+        if asked["language"]:
+            members["language"] = tags[asked["language"]]
+        if asked["prompt"]:
+            members["prompt"] = asked["prompt"]
+        requests.append((name, members, text(folder)))
+    return requests
 
 
 def short(m):

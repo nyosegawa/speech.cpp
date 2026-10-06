@@ -46,7 +46,9 @@ Where the texts differ, the windowed one is as close to FLEURS' transcription or
   side, each part recognized alone and the texts joined without a separator. Where the split falls depends on the
   audio alone, so the dumps check it on the 0.6B model only; the 1.7B model in float32 needs about 17 GB and over an
   hour for 1338 s on an Apple M5.
-- **A `prompt` option** carries qwen-asr's context into the system turn, from the family's first layout on.
+- **A `prompt` option** carries qwen-asr's context into the system turn, from the family's first layout on. It joins
+  the C API's vocabulary as `SPEECH_OPT_PROMPT` within version 3.0, which no release had shipped, with "" as the
+  neutral value every model accepts.
 - **No timestamps for now.** They need Qwen3-ForcedAligner-0.6B, a second model, and for Japanese a port of nagisa's
   word segmenter.
 

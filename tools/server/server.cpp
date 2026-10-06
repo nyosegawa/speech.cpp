@@ -229,7 +229,10 @@ private:
             });
     }
 
-    /** Recognizes the form's WAV file and answers with its text once it is done, as json, text or verbose_json. */
+    /**
+     * Recognizes the form's WAV file and answers with its text once it is done, as json, text or verbose_json, and with
+     * why the recognition ended in X-Speech-Stop.
+     */
     void transcription(const httplib::Request & req, httplib::Response & res) {
         openai::TranscriptionRequest asked;
         try {
@@ -262,6 +265,7 @@ private:
         }
         if (job->status != SPEECH_OK) return;
         const speech_result * result = speech_request_result(job->request.get());
+        res.set_header("X-Speech-Stop", speech_stop_name(speech_result_stop(result)));
         if (asked.format == "text") {
             res.set_content(speech_result_text(result), "text/plain; charset=utf-8");
         } else if (asked.format == "verbose_json") {

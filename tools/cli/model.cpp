@@ -49,7 +49,8 @@ std::string option_line(const speech_model_info * m, speech_option o) {
         if (type == SPEECH_TYPE_STRING) {
             const char * v = nullptr;
             check(speech_model_info_option_default_string(m, o, &v));
-            value = v;
+            // An empty default, the prompt's, reads as nothing after "default" unless it is quoted.
+            value = *v ? v : "\"\"";
         } else if (type == SPEECH_TYPE_INT) {
             int64_t v = 0;
             check(speech_model_info_option_default_int(m, o, &v));

@@ -119,10 +119,14 @@ struct TimedText {
     std::string text;
 };
 
-/** What a recognition found: the text, and its segments and tokens when the request set timestamps. */
+/**
+ * What a recognition found: the text, its segments and tokens when the request set timestamps, and why it ended:
+ * complete, or at the model's limit of what it writes, with the text written up to it.
+ */
 struct Recognized {
     std::string text;
     std::vector<TimedText> segments, tokens;
+    speech_stop stop = SPEECH_STOP_COMPLETE;
 };
 
 /**
@@ -140,7 +144,10 @@ public:
      */
     virtual speech_stop speak(const std::string & text, const RequestValues & values, Run & run);
 
-    /** Recognizes mono samples at the model's sample rate, telling `run` how far it has come. */
+    /**
+     * Recognizes mono samples at the model's sample rate, telling `run` how far it has come, after checking what the
+     * family's rules ask of the request as a whole.
+     */
     virtual Recognized transcribe(const std::vector<float> & samples, const RequestValues & values, Run & run);
 
     /** Adds a voice from a voice file or a WAVE file under a name the C API has checked is new. */
@@ -158,3 +165,6 @@ std::unique_ptr<Engine> load_irodori_tts(const std::string & path, ggml_backend_
 
 FamilyInfo describe_fastconformer(const std::shared_ptr<const ModelFile> & file);
 std::unique_ptr<Engine> load_fastconformer(const std::string & path, ggml_backend_t backend);
+
+FamilyInfo describe_qwen3_asr(const std::shared_ptr<const ModelFile> & file);
+std::unique_ptr<Engine> load_qwen3_asr(const std::string & path, ggml_backend_t backend);

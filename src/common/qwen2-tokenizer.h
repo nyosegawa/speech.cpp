@@ -23,7 +23,10 @@ public:
     /** The tokenizer of the keys `<prefix>.tokens`, every token in the order of its id, and `<prefix>.merges`. */
     Qwen2Tokenizer(const ModelFile & m, const std::string & prefix);
 
-    /** The ids of `text`, with special tokens written in the text taken literally. */
+    /**
+     * The ids of `text`, with special tokens written in the text taken literally. A text that is not UTF-8 throws an
+     * Error that names no input, which the caller names.
+     */
     std::vector<int32_t> encode(const std::string & text) const;
 
     /**

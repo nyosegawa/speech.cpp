@@ -1,17 +1,22 @@
 """Drives `speech worker` with a recognition model through protocol 2 the way a caller does, with every line checked by
 worker_client.py: one JSON object per line, and one terminal message per request and nothing after it.
 
-It sends the audio of each dump of reference/fastconformer/dump.py as 16-bit chunks of one second and checks that the
-text is the dump's, and with timestamps that the segments and tokens join into it in time order; peeks at a request
-while it collects chunks, with and without timestamps, and checks that the request then gets its one end; checks that
-a peek of a request cancelled before the peek's turn is dropped, and that a peek of an id that is not collecting is a
-partial with an error; that the chunks of two requests may interleave and the requests are answered in the order of
-their transcribes; cancels while a request collects chunks (whose later lines are dropped and whose id a chunk 0 starts
+It sends the audio of each dump of reference/fastconformer/dump.py or reference/qwen3-asr/dump.py as 16-bit chunks of
+one second and checks that the text is the dump's and the stop complete, for each request a Qwen3-ASR dump holds with
+its forced language and its prompt, that a language the model only checks changes nothing, and with timestamps, where
+the model takes them, that the segments and tokens join into the text in time order; peeks at a request while it
+collects chunks, with and without timestamps, and checks that the request then gets its one end; checks that a peek of
+a request cancelled before the peek's turn is dropped, and that a peek of an id that is not collecting is a partial with
+an error; that the chunks of two requests may interleave and the requests are answered in the order of their
+transcribes; cancels while a request collects chunks (whose later lines are dropped and whose id a chunk 0 starts
 again), while it waits and while it runs; that audio at three times the model's rate is recognized; each error with its
 code and option (a chunk out of order, not base64 or of odd bytes, a sample rate missing or 0, an unknown language or
-member, audio missing, the other task's messages); info, also answered while a recognition runs, and the model
-information of ready; progress for a recording
-longer than a minute; and the error of a request still collecting chunks when stdin closes.
+member, a prompt the model does not take or too long, audio missing, the other task's messages); info, also answered
+while a recognition runs, and the model information of ready; progress for a recording longer than a minute; and the
+error of a request still collecting chunks when stdin closes.
+
+The audio goes as 16-bit samples, which move the near-silent input of reference/qwen3-asr/dump.py far enough to change
+the text a forced language makes of it; leave that dump out.
 
 usage: python3 tools/worker_recognition_smoke.py <speech> <model.gguf> <dump folder>... [-- worker options...]
 """
@@ -24,7 +29,7 @@ import struct
 import sys
 import time
 
-from worker_client import Worker, short
+from worker_client import Worker, dump_requests, short
 
 args = sys.argv[1:]
 options = args[args.index("--") + 1:] if "--" in args else []
@@ -37,6 +42,8 @@ info = w.ready["model"]
 assert w.ready["protocol"] == 2 and info["task"] == "recognition" and "voices" not in info, short(w.ready)
 w.check_model_information()
 rate = info["sample_rate"]
+options = {o["name"]: o for o in info["options"]}
+timed = {"timestamps": True} if "timestamps" in options else {}
 print(f"ready in {time.perf_counter() - w.started:.2f} s: {info['name']} on {info['device']}, rate {rate}, languages {info['languages']}, "
       f"model information equal to speech info --json")
 
@@ -72,8 +79,8 @@ def read_npy(path):
 
 
 def check_times(m):
-    """The segments and tokens of a message join into its text and run forward in time."""
-    for key in ("segments", "tokens"):
+    """The segments and tokens of a message join into its text and run forward in time, where the model gives times."""
+    for key in ("segments", "tokens") if timed else ():
         items = m[key]
         assert "".join(s["text"] for s in items) == m["text"], (key, short(m))
         assert all(0 <= s["start"] <= s["end"] for s in items), (key, short(m))
@@ -88,27 +95,34 @@ def expect_error(id, code, option, what):
 audio, want_text = {}, {}
 for d in dumps:
     name = os.path.basename(os.path.normpath(d))
-    with open(os.path.join(d, "text.txt"), encoding="utf-8") as f:
-        want_text[name] = f.read()
     audio[name] = pcm16(read_npy(os.path.join(d, "audio.npy")))
-    t1 = time.perf_counter()
-    send_audio(name, audio[name], language=info["languages"][0], timestamps=True)
-    messages = w.until(name)
-    m = messages[-1]
-    assert m["type"] == "end", short(m)
-    if m["text"] != want_text[name]:
-        raise SystemExit(f"{name}: the text differs from the dump's text\n  got  {m['text']}\n  want {want_text[name]}")
-    check_times(m)
-    seconds = len(audio[name]) / 2 / rate
-    progress = [p for p in messages if p["type"] == "progress"]
-    gaps = [b["_at"] - a["_at"] for a, b in zip(progress, progress[1:])]
-    assert all(g > 0.9 for g in gaps) and all(0 <= p["done"] <= 1 for p in progress), [short(p) for p in progress]
-    if seconds > 60:
-        assert progress, f"{name}: {seconds:.0f} s of audio sent no progress"
-    print(f"{name}: {seconds:.2f} s, the dump's text in {time.perf_counter() - t1:.3f} s, {len(m['segments'])} segments and "
-          f"{len(m['tokens'])} tokens joining into it, {len(progress)} progress messages")
+    for request, members, want in dump_requests(speech, model, d):
+        # A language the model only checks is sent too, which must change nothing.
+        if request == "auto":
+            want_text[name] = want
+            if not options["language"]["steers"]:
+                members = {"language": info["languages"][0]}
+        id = f"{name}/{request}"
+        t1 = time.perf_counter()
+        send_audio(id, audio[name], **members, **timed)
+        messages = w.until(id)
+        m = messages[-1]
+        assert m["type"] == "end" and m["stop"] == "complete", short(m)
+        if m["text"] != want:
+            raise SystemExit(f"{id}: the text differs from the dump's text\n  got  {m['text']}\n  want {want}")
+        check_times(m)
+        seconds = len(audio[name]) / 2 / rate
+        progress = [p for p in messages if p["type"] == "progress"]
+        gaps = [b["_at"] - a["_at"] for a, b in zip(progress, progress[1:])]
+        assert all(g > 0.9 for g in gaps) and all(0 <= p["done"] <= 1 for p in progress), [short(p) for p in progress]
+        if seconds > 60:
+            assert progress, f"{name}: {seconds:.0f} s of audio sent no progress"
+        print(f"{id} {members}: {seconds:.2f} s, the dump's text in {time.perf_counter() - t1:.3f} s"
+              + (f", {len(m['segments'])} segments and {len(m['tokens'])} tokens joining into it" if timed else "")
+              + f", {len(progress)} progress messages")
 
-by_length = sorted(audio, key=lambda n: len(audio[n]))
+# The shortest audio the dump has a text of.
+by_length = sorted((n for n in audio if want_text[n]), key=lambda n: len(audio[n]))
 first, last = by_length[0], by_length[-1]
 short_pcm, short_text = audio[first], want_text[first]
 
@@ -123,7 +137,7 @@ first_partial = w.next_for("p")
 assert first_partial["type"] == "partial" and isinstance(first_partial["text"], str) and "segments" not in first_partial, short(first_partial)
 for x in c[half:]:
     w.send(x)
-w.send({"type": "peek", "id": "p", "sample_rate": rate, "timestamps": True})
+w.send({"type": "peek", "id": "p", "sample_rate": rate, **timed})
 m2 = w.next_for("p")
 assert m2["type"] == "partial" and m2["text"] == short_text, short(m2)
 check_times(m2)
@@ -135,8 +149,8 @@ assert w.terminal("p", "end")["text"] == short_text
 w.send({"type": "peek", "id": "p", "sample_rate": rate})
 m = w.next_for("p")
 assert m["type"] == "partial" and m["error"]["option"] == "id", short(m)
-print(f"peek: half the audio gave {first_partial['text'][:20]!r}...; the whole gave the dump's text with times; a peek's error left the request "
-      f"open; the request ended once; a peek after it is a partial with an error")
+print(f"peek: half the audio gave {first_partial['text'][:20]!r}...; the whole gave the dump's text{' with times' if timed else ''}; a peek's "
+      f"error left the request open; the request ended once; a peek after it is a partial with an error")
 
 # A peek of a request cancelled before the peek's turn is dropped without an answer.
 send_audio("long", audio[last])
@@ -221,6 +235,12 @@ send_audio("j", short_pcm, language="zz")
 expect_error("j", "out_of_range", "language", "a language the model does not recognize")
 send_audio("j2", short_pcm, bogus=1)
 expect_error("j2", "invalid_argument", "bogus", "a member transcribe does not have")
+if "prompt" in options:
+    send_audio("j3", short_pcm, prompt=" word" * 70000)
+    expect_error("j3", "out_of_range", "prompt", "a prompt longer than the model takes beside the audio")
+else:
+    send_audio("j3", short_pcm, prompt="x")
+    expect_error("j3", "unsupported", "prompt", "a prompt to a model that takes none")
 w.request({"type": "transcribe", "id": "k", "sample_rate": rate})
 expect_error("k", "invalid_argument", "audio", "a transcribe without chunks")
 w.request({"type": "synthesize", "id": "l", "text": "明日の東京は晴れです。", "voice": "x"})
@@ -233,7 +253,8 @@ w.request({"type": "info", "id": "l4"})
 assert w.terminal("l4", "end")["model"] == info
 
 # A refused chunk is its request's one answer: its later chunks and its transcribe are dropped.
-m_chunks = chunks("m", short_pcm)
+# Chunks of a quarter of the audio, so that there is a chunk 1 to send first however short the audio.
+m_chunks = chunks("m", short_pcm, size=max(2, len(short_pcm) // 8 * 2))
 w.expect("m")
 w.send(m_chunks[1])
 for x in m_chunks[2:]:

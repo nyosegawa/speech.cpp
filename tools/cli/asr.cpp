@@ -50,6 +50,7 @@ int run_asr(const CommandLine & line, FILE * out) {
     const bool timestamps = timestamps_in_effect(m, line.options);
 
     double audio_total = 0, busy = 0;
+    bool model_limit = false;
     for (size_t i = 1; i < line.args.size(); i++) {
         const std::string & path = line.args[i];
         const speech_result * result = nullptr;
@@ -82,13 +83,18 @@ int run_asr(const CommandLine & line, FILE * out) {
         }
         std::fflush(out);
         std::fprintf(stderr, "%s: %.2f s of audio in %.3f s, RTF %.3f\n", path.c_str(), audio, took, took / audio);
+        if (speech_result_stop(result) == SPEECH_STOP_MODEL_LIMIT) {
+            std::fprintf(stderr, "%s: the recognition reached the most the model writes and was stopped there; its text is what was written\n",
+                         path.c_str());
+            model_limit = true;
+        }
         audio_total += audio;
         busy += took;
     }
     if (line.args.size() > 2) {
         std::fprintf(stderr, "%zu files, %.2f s of audio in %.3f s, RTF %.3f\n", line.args.size() - 1, audio_total, busy, busy / audio_total);
     }
-    return 0;
+    return model_limit ? 3 : 0;
 }
 
 }  // namespace
@@ -102,7 +108,8 @@ Command asr_command() {
         "Recognizes each WAVE file (16-, 24- or 32-bit PCM or 32-bit float, any rate, channels averaged) and writes\n"
         "its text to stdout in the order given: with --format text one line per file, or with --timestamps one line\n"
         "per segment, FILE<TAB>START<TAB>END<TAB>TEXT, times in seconds; with --format json one object per file,\n"
-        "{\"file\", \"text\"}, with \"segments\" and \"tokens\" when --timestamps is given.";
+        "{\"file\", \"text\", \"stop\"}, with \"segments\" and \"tokens\" when --timestamps is given. It exits with 3 when a\n"
+        "recognition stopped at the most the model writes, after writing every file's text.";
     c.flags = {
         {"--format", "text|json", false, "text (the default) or one JSON object per file and line"},
         device_flag("auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists"),

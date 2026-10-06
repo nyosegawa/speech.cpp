@@ -460,11 +460,17 @@ void check_model_keys(const ModelFile & file, const char * task, const char * la
     }
     file.size("speech.sample_rate");
     const std::vector<std::string> languages = file.str_array("general.languages");
-    const auto code = [](const std::string & l) { return l.size() == 2 && l[0] >= 'a' && l[0] <= 'z' && l[1] >= 'a' && l[1] <= 'z'; };
+    // BCP 47 names a language by its shortest ISO 639 code: two letters where ISO 639-1 has one, and three, from ISO 639-2
+    // or 639-3, for a language it has none for, such as Cantonese (yue) and Filipino (fil). The GGUF specification asks
+    // for two-letter codes, which those languages lack.
+    const auto code = [](const std::string & l) {
+        return (l.size() == 2 || l.size() == 3) && std::all_of(l.begin(), l.end(), [](char c) { return c >= 'a' && c <= 'z'; });
+    };
     if (languages.empty() || !std::all_of(languages.begin(), languages.end(), code) ||
         std::adjacent_find(languages.begin(), languages.end(), std::greater_equal<std::string>()) != languages.end()) {
         throw file_error("general.languages of " + file.path() +
-                         " is empty, holds what is not an ISO 639 two-letter code in lowercase, or is not sorted without repeats; " + file.remedy());
+                         " is empty, holds what is not an ISO 639 code of two or three lowercase letters, or is not sorted without repeats; " +
+                         file.remedy());
     }
 }
 
