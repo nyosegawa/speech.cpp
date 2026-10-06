@@ -73,7 +73,7 @@ int main(int argc, char ** argv) {
                 for (size_t i = 0; i < ours.size(); i++) {
                     Graph g;
                     EncoderStages stages;
-                    ggml_tensor * out = encoder.build(g, features.f32, ours[i], &stages);
+                    ggml_tensor * out = encoder.build(g, features.f32, {ours[i]}, &stages);
                     g.output(out);
                     g.output(stages.input);
                     g.output(stages.output);

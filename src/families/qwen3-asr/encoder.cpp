@@ -18,6 +18,15 @@ namespace {
 
 constexpr int kGraphSize = 8192;
 
+/**
+ * The windows one graph encodes at most. A window of 104 tokens leaves a GPU's matrix products few rows: on an Apple
+ * M5 in Q8_0 on Metal, the four windows of the 25.50 s utterance took the 0.6B encoder 0.126 s a window at a time and
+ * 0.114 s in one graph, and the 1.7B 0.177 and 0.157 s; on its CPU the 0.6B took 0.90 s either way (2026-10-07).
+ * Attention reads a score for every pair of a graph's tokens, those of pairs in different windows masked, so that a
+ * graph's scores grow with the square of its windows.
+ */
+constexpr size_t kWindowsPerGraph = 4;
+
 }  // namespace
 
 Encoder::Encoder(const ModelFile & m, ggml_backend_t backend)
@@ -97,10 +106,10 @@ ggml_tensor * Encoder::convolution(ggml_context * ctx, ggml_tensor * x, const st
 }
 
 /**
- * Qwen3ASRAudioEncoderLayer: multi-head attention over the window's tokens, without a mask, after a LayerNorm, and a
- * GELU feed-forward after another, each added to its input.
+ * Qwen3ASRAudioEncoderLayer: multi-head attention over the tokens, which `mask` keeps within their windows, after a
+ * LayerNorm, and a GELU feed-forward after another, each added to its input.
  */
-ggml_tensor * Encoder::layer(ggml_context * ctx, ggml_tensor * x, const std::string & name) const {
+ggml_tensor * Encoder::layer(ggml_context * ctx, ggml_tensor * x, ggml_tensor * mask, const std::string & name) const {
     const int64_t n = x->ne[1], dk = d_model_ / heads_;
     ggml_tensor * h = layer_norm(ctx, x, name + "attn_norm");
     // [d_k, heads, tokens] to [d_k, tokens, heads].
@@ -109,7 +118,7 @@ ggml_tensor * Encoder::layer(ggml_context * ctx, ggml_tensor * x, const std::str
     ggml_tensor * k = heads(linear(ctx, h, name + "attn_k"));
     // [d_k, heads, tokens] to [tokens, d_k, heads], so that the product with the weights contracts over the keys.
     ggml_tensor * vt = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_3d(ctx, linear(ctx, h, name + "attn_v"), dk, heads_, n), 1, 2, 0, 3));
-    ggml_tensor * weights = ggml_soft_max_ext(ctx, mul_mat(ctx, k, q), nullptr, 1.0f / std::sqrt((float) dk), 0.0f);
+    ggml_tensor * weights = ggml_soft_max_ext(ctx, mul_mat(ctx, k, q), mask, 1.0f / std::sqrt((float) dk), 0.0f);
     ggml_tensor * out = mul_mat(ctx, vt, weights);
     out = ggml_reshape_2d(ctx, ggml_cont(ctx, ggml_permute(ctx, out, 0, 2, 1, 3)), d_model_, n);
     x = ggml_add(ctx, x, linear(ctx, out, name + "attn_out"));
@@ -118,14 +127,18 @@ ggml_tensor * Encoder::layer(ggml_context * ctx, ggml_tensor * x, const std::str
     return ggml_add(ctx, x, linear(ctx, h, name + "ffn_down"));
 }
 
-ggml_tensor * Encoder::build(Graph & g, const std::vector<float> & features, const EncoderWindow & w, EncoderStages * stages) const {
+ggml_tensor * Encoder::build(Graph & g, const std::vector<float> & features, const std::vector<EncoderWindow> & windows,
+                             EncoderStages * stages) const {
     ggml_context * ctx = g.ctx();
-    const int64_t total = (int64_t) features.size() / mels_, chunks = (w.frames + chunk_frames_ - 1) / chunk_frames_;
-    // The window's chunks as [time, mels, 1, chunks], the frames past the utterance zero.
+    const EncoderWindow & first = windows.front(), & last = windows.back();
+    const int64_t total = (int64_t) features.size() / mels_;
+    const int64_t chunks = (last.first_frame + last.frames - first.first_frame + chunk_frames_ - 1) / chunk_frames_;
+    const int64_t tokens = last.first_token + last.tokens - first.first_token;
+    // The windows' chunks as [time, mels, 1, chunks], the frames past the utterance zero.
     std::vector<float> input((size_t) (chunk_frames_ * mels_ * chunks), 0.0f);
     for (int64_t c = 0; c < chunks; c++) {
         for (int64_t t = 0; t < chunk_frames_; t++) {
-            const int64_t frame = w.first_frame + c * chunk_frames_ + t;
+            const int64_t frame = first.first_frame + c * chunk_frames_ + t;
             if (frame >= total) break;
             for (int m = 0; m < mels_; m++) input[(size_t) (((c * mels_) + m) * chunk_frames_ + t)] = features[(size_t) (frame * mels_ + m)];
         }
@@ -141,14 +154,24 @@ ggml_tensor * Encoder::build(Graph & g, const std::vector<float> & features, con
     x = ggml_reshape_2d(ctx, ggml_cont(ctx, ggml_permute(ctx, x, 2, 0, 1, 3)), mels * channels_, chunk_tokens_ * chunks);
     x = mul_mat(ctx, m_.tensor("enc.conv_out.weight"), x);
     x = ggml_add(ctx, ggml_reshape_3d(ctx, x, d_model_, chunk_tokens_, chunks), g.input(positions_, d_model_, chunk_tokens_));
-    // The tokens of the padding of the utterance's last chunk end the window, and are dropped.
-    x = ggml_view_2d(ctx, x, d_model_, w.tokens, x->nb[1], 0);
+    // The tokens of the padding of the utterance's last chunk end the last window, and are dropped.
+    x = ggml_view_2d(ctx, x, d_model_, tokens, x->nb[1], 0);
     // A copy: ggml's allocator frees the tensor a view reads once the view's last reader has run, even when the view
     // is a graph's output.
     if (stages) stages->input = ggml_cont(ctx, x);
 
+    // A token sees the tokens of its window.
+    ggml_tensor * mask = nullptr;
+    if (windows.size() > 1) {
+        std::vector<float> within((size_t) (tokens * tokens), -INFINITY);
+        for (const EncoderWindow & w : windows) {
+            const int64_t from = w.first_token - first.first_token;
+            for (int64_t i = from; i < from + w.tokens; i++) std::fill_n(within.begin() + (std::ptrdiff_t) (i * tokens + from), w.tokens, 0.0f);
+        }
+        mask = g.input(within, tokens, tokens);
+    }
     for (int l = 0; l < layers_; l++) {
-        x = layer(ctx, x, "enc.blk." + std::to_string(l) + ".");
+        x = layer(ctx, x, mask, "enc.blk." + std::to_string(l) + ".");
         if (stages) stages->layers.push_back(x);
     }
     x = layer_norm(ctx, x, "enc.norm");
@@ -159,14 +182,15 @@ ggml_tensor * Encoder::build(Graph & g, const std::vector<float> & features, con
 std::optional<std::vector<float>> Encoder::encode(const std::vector<float> & features, const std::function<bool(size_t windows)> & keep_going) {
     std::vector<float> out;
     const std::vector<EncoderWindow> all = windows((int64_t) features.size() / mels_);
-    for (size_t i = 0; i < all.size(); i++) {
+    for (size_t i = 0; i < all.size(); i += kWindowsPerGraph) {
+        const size_t done = std::min(all.size(), i + kWindowsPerGraph);
         Graph g(kGraphSize);
-        ggml_tensor * embeds = build(g, features, all[i], nullptr);
+        ggml_tensor * embeds = build(g, features, std::vector<EncoderWindow>(all.begin() + (std::ptrdiff_t) i, all.begin() + (std::ptrdiff_t) done));
         g.output(embeds);
         g.compute(backend_, allocr_);
-        const std::vector<float> window = Graph::read(embeds);
-        out.insert(out.end(), window.begin(), window.end());
-        if (keep_going && !keep_going(i + 1)) return std::nullopt;
+        const std::vector<float> part = Graph::read(embeds);
+        out.insert(out.end(), part.begin(), part.end());
+        if (keep_going && !keep_going(done)) return std::nullopt;
     }
     return out;
 }
