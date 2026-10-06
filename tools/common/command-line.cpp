@@ -1,0 +1,183 @@
+#include "command-line.h"
+
+#include <algorithm>
+#include <cerrno>
+#include <climits>
+#include <cstdlib>
+#include <stdexcept>
+
+namespace {
+
+const Flag * find_flag(const Command & command, const std::string & name) {
+    for (const Flag & f : command.flags) {
+        if (f.name == name) return &f;
+    }
+    return nullptr;
+}
+
+/** The request option whose flag is `name`, or false. */
+bool option_of_flag(const std::string & name, speech_option & option) {
+    for (speech_option o : vocabulary()) {
+        if (option_flag(o) == name) {
+            option = o;
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string padded(const std::string & s, size_t width) {
+    return s.size() >= width ? s + "  " : s + std::string(width - s.size(), ' ');
+}
+
+}  // namespace
+
+bool CommandLine::has(const std::string & flag) const {
+    return std::any_of(given_.begin(), given_.end(), [&](const Given & g) { return g.flag == flag; });
+}
+
+std::optional<std::string> CommandLine::value(const std::string & flag) const {
+    for (const Given & g : given_) {
+        if (g.flag == flag) return g.value;
+    }
+    return std::nullopt;
+}
+
+std::vector<std::string> CommandLine::values(const std::string & flag) const {
+    std::vector<std::string> out;
+    for (const Given & g : given_) {
+        if (g.flag == flag) out.push_back(g.value);
+    }
+    return out;
+}
+
+std::optional<int> CommandLine::integer(const std::string & flag) const {
+    const std::optional<std::string> text = value(flag);
+    if (!text) return std::nullopt;
+    const size_t first = !text->empty() && (*text)[0] == '-' ? 1 : 0;
+    const bool digits = text->size() > first && text->find_first_not_of("0123456789", first) == std::string::npos;
+    errno = 0;
+    const long long v = digits ? std::strtoll(text->c_str(), nullptr, 10) : 0;
+    if (!digits || errno == ERANGE || v < INT_MIN || v > INT_MAX) {
+        throw UsageError(flag + " takes a whole number, not \"" + *text + "\"");
+    }
+    return (int) v;
+}
+
+Loading CommandLine::loading(bool warmup, const std::optional<std::string> & device) const {
+    Loading out;
+    out.device = value("--device");
+    if (!out.device) out.device = device;
+    out.threads = integer("--threads");
+    out.warmup = warmup && !has("--no-warmup");
+    for (const std::string & v : values("--add-voice")) {
+        const size_t eq = v.find('=');
+        if (eq == std::string::npos || eq == 0 || eq + 1 == v.size()) {
+            throw UsageError("--add-voice takes NAME=FILE, a voice's name and its voice file or WAVE file, not \"" + v + "\"");
+        }
+        out.voices.push_back({v.substr(0, eq), v.substr(eq + 1)});
+    }
+    return out;
+}
+
+CommandLine parse_command_line(const Command & command, const std::vector<std::string> & args) {
+    CommandLine line(command);
+    bool flags_end = false;
+    for (size_t i = 0; i < args.size(); i++) {
+        const std::string & arg = args[i];
+        if (flags_end || arg.size() < 2 || arg[0] != '-') {
+            line.args.push_back(arg);
+            continue;
+        }
+        if (arg == "--") {
+            flags_end = true;
+            continue;
+        }
+        const size_t eq = arg.compare(0, 2, "--") == 0 ? arg.find('=') : std::string::npos;
+        const std::string name = arg.substr(0, eq);
+        const std::optional<std::string> attached = eq == std::string::npos ? std::nullopt : std::optional<std::string>(arg.substr(eq + 1));
+        speech_option option;
+        const Flag * flag = find_flag(command, name);
+        const bool request_option = !flag && command.request_options && option_of_flag(name, option);
+        if (!flag && !request_option) {
+            throw UsageError("speech " + command.name + " has no flag " + name);
+        }
+        const bool takes_value = flag ? !flag->value.empty() : speech_option_type(option) != SPEECH_TYPE_BOOL;
+        std::string value;
+        if (takes_value) {
+            if (attached) {
+                value = *attached;
+            } else if (i + 1 < args.size()) {
+                value = args[++i];
+            } else {
+                throw UsageError(name + " needs a value");
+            }
+        } else if (attached) {
+            throw UsageError(name + " takes no value; give it alone");
+        }
+        if (request_option) {
+            for (const RequestOption & o : line.options) {
+                if (o.option == option) throw UsageError(name + " is given twice; give it once");
+            }
+            try {
+                line.options.push_back({option, takes_value ? option_from_text(option, value) : OptionValue(true)});
+            } catch (const std::invalid_argument & e) {
+                throw UsageError(e.what());
+            }
+            continue;
+        }
+        if (!flag->repeatable && line.has(name)) throw UsageError(name + " is given twice; give it once");
+        line.given_.push_back({name, value});
+    }
+    if (line.args.size() < command.min_args) throw UsageError("an argument is missing: speech " + command.usage);
+    if (line.args.size() > command.max_args) {
+        throw UsageError("there are more arguments than speech " + command.usage + " takes; quote an argument that holds spaces");
+    }
+    return line;
+}
+
+bool asks_for_help(const std::vector<std::string> & args) {
+    for (const std::string & a : args) {
+        if (a == "--") return false;
+        if (a == "--help" || a == "-h") return true;
+    }
+    return false;
+}
+
+std::string command_help(const Command & command) {
+    std::string out = "usage: speech " + command.usage + "\n\n" + command.description + "\n";
+    constexpr size_t kWidth = 28;
+    if (!command.flags.empty()) out += "\n";
+    for (const Flag & f : command.flags) {
+        out += "  " + padded(f.name + (f.value.empty() ? "" : " " + f.value), kWidth) + f.help + (f.repeatable ? "; repeatable" : "") + "\n";
+    }
+    if (command.request_options) {
+        out += "\nRequest options, each the C API's option of the same name; the model refuses one it does not take,\n"
+               "and `speech info MODEL` lists those it takes with their defaults and ranges:\n";
+        for (speech_option o : vocabulary()) {
+            const std::string metavar = option_metavar(o);
+            out += "  " + option_flag(o) + (metavar.empty() ? "" : " " + metavar) + "\n";
+        }
+    }
+    return out;
+}
+
+Flag device_flag(const std::string & help) {
+    return {"--device", "NAME", false, help};
+}
+
+Flag threads_flag() {
+    return {"--threads", "N", false, "the CPU's threads, 1 or more; the machine's performance cores unless given"};
+}
+
+Flag add_voice_flag() {
+    return {"--add-voice", "NAME=FILE", true, "add a voice from a voice file or a WAVE file before the first request"};
+}
+
+Flag no_warmup_flag() {
+    return {"--no-warmup", "", false, "skip the short request that compiles a GPU's kernels before the first one"};
+}
+
+Flag verbose_flag(const std::string & help) {
+    return {"-v", "", false, help};
+}

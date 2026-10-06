@@ -1,6 +1,6 @@
 # The HTTP server speaks OpenAI's speech API on cpp-httplib
 
-Superseded in part by docs/adr/0015: the server takes one model file, its codec included.
+Superseded in part by docs/adr/0015 and docs/adr/0017: the server takes one model file, derives its statuses from the library's categories, and is `speech serve`, which links cpp-httplib into the one executable.
 
 Decided 2026-10-05.
 

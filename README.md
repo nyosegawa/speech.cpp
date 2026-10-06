@@ -1,10 +1,10 @@
 # speech.cpp
 
 Speech synthesis and speech recognition in C++ on [ggml](https://github.com/ggml-org/ggml), as a library with a C
-API (`include/speech.h`) and the programs built on it, among them the worker process that
-[ASIST](https://github.com/nyosegawa/asist) starts. It targets Metal, Vulkan and CUDA; it is checked on
-Metal, on Vulkan (NVIDIA) and on the CPU. Every stage of a port is checked against the official
-implementation.
+API (`include/speech.h`) and one executable on it, `speech`, whose subcommands speak text, recognize speech, serve
+OpenAI's audio API over HTTP and run the worker process that [ASIST](https://github.com/nyosegawa/asist) starts. It
+targets Metal, Vulkan and CUDA; it is checked on Metal, on Vulkan (NVIDIA) and on the CPU. Every stage of a port is
+checked against the official implementation.
 
 | Family | Model | Task | Converted weights |
 |---|---|---|---|
@@ -14,18 +14,26 @@ implementation.
 
 ## Binaries
 
-[Releases](https://github.com/nyosegawa/speech.cpp/releases) carry, for macOS arm64 (Metal), Windows x64
-(Vulkan) and Linux x64 (Vulkan, and the CPU alone), `speech-worker-<version>-<platform>.zip` with the worker
-alone, which is what ASIST bundles, and `speech-cpp-tools-<version>-<platform>.zip` with the command-line
-tools `speech-tts` and `speech-asr`, the HTTP server `speech-server` and the shared library with its header
-(`libspeech.3.dylib` with the link `libspeech.dylib`, `libspeech.so.3` with the link `libspeech.so`, or `speech.dll`
-with its import library `speech.lib`, and `speech.h`; 3 is the C API's major version), with their SHA-256 sums. A release is the tag `v<version>` of the number in the file `VERSION`, which CI checks before it
-publishes; the library reports the same number through `speech_version()`, and the worker in its `ready`
-message. Versions follow [Semantic Versioning](https://semver.org): while they are 0.x, a release whose
-change a caller must adapt to (the worker protocol, the C API, the GGUF layout, a voice file's form, a tool's
-arguments) raises the minor version, and any other release the patch. The Vulkan build needs no particular driver version; on the first run the GPU driver compiles its
-shaders, which takes seconds and is cached by the driver until it is updated. The Metal build compiles its
-kernels on its first run as well (16 s for an Irodori-TTS worker on an Apple M5, 1.5 s on the runs after).
+[Releases](https://github.com/nyosegawa/speech.cpp/releases) carry one archive per platform,
+`speech-<version>-<platform>.zip`, for macOS arm64 with Metal (`macos-arm64-metal`), Windows x64 with Vulkan
+(`windows-x64-vulkan`) and Linux x64 with Vulkan and with the CPU alone (`linux-x64-vulkan`, `linux-x64-cpu`), and
+their SHA-256 sums in `SHA256SUMS`. An archive holds:
+
+| File | What it is |
+|---|---|
+| `speech`, or `speech.exe` | the one executable, with the library and ggml linked in (The `speech` command line, below) |
+| `libspeech.3.dylib` with the link `libspeech.dylib`, `libspeech.so.3` with the link `libspeech.so`, or `speech.dll` with its import library `speech.lib` | the shared library, which exports the C API and nothing else; 3 is the C API's major version |
+| `speech.h` | the C API |
+
+CI builds and checks the same archive on every pull request and keeps it as the run's artifact. A release is the tag
+`v<version>` of the number in the file `VERSION`, which CI checks before it publishes; the library reports the same
+number through `speech_version()`, `speech --version` prints it, and the worker's `ready` message carries it. Versions
+follow [Semantic Versioning](https://semver.org): while they are 0.x, a release whose
+change a caller must adapt to (the worker protocol, the C API, the GGUF layout, a voice file's form, the command
+line's arguments) raises the minor version, and any other release the patch. The Vulkan build needs no particular
+driver version; on the first run the GPU driver compiles its shaders, which takes seconds and is cached by the driver
+until it is updated. The Metal build compiles its kernels on its first run as well (16 s for an Irodori-TTS worker on
+an Apple M5, 1.5 s on the runs after).
 
 The Linux binaries (`linux-x64-vulkan` and `linux-x64-cpu`) run on glibc 2.34 or later: Ubuntu 22.04, Debian
 12, Fedora 35, RHEL 9 and the releases after them (docs/adr/0010). They need an x86-64 CPU with AVX2, FMA and
@@ -63,10 +71,10 @@ cmake --build build -j
 A build from source is tuned to the CPU it is built on and uses OpenMP, so it needs `libgomp.so.1`; the
 releases are built for any CPU with AVX2 (`-DGGML_NATIVE=OFF`) and with ggml's own threads
 (`-DGGML_OPENMP=OFF`), as `.github/workflows/build.yml` shows. On a machine without a GPU, the CPU build
-(`cmake -B build`) runs the tools on the CPU without `--device`.
+(`cmake -B build`) runs `speech` on the CPU without `--device`.
 
-The build makes the library twice from the same sources: statically into every executable, so that each
-tool is one file with ggml inside, and as the shared library `libspeech` (`libspeech.3.dylib`, `libspeech.so.3`,
+The build makes the library twice from the same sources: statically into `build/speech`, so that the executable is
+one file with ggml inside, and as the shared library `libspeech` (`libspeech.3.dylib`, `libspeech.so.3`,
 `speech.dll`), which exports the functions of `speech.h` and nothing else. It also builds the checks, which
 need the weights and the reference dumps to run.
 
@@ -76,85 +84,149 @@ and its matrix kernel in ggml v0.25.3 writes past its output when the output has
 turned a codec window of 64 frames into noise ([#13](https://github.com/nyosegawa/speech.cpp/issues/13)). Without it Metal comes closer to the CPU, and on
 the M5 Irodori-TTS takes a fifth to a third longer to its first audio while Qwen3-TTS keeps its speed.
 
-## Command line
+## The `speech` command line
 
-`speech-tts` speaks text with any model speech.cpp runs, through the C API, into a WAVE file (16-bit mono PCM
-at the model's rate) or to stdout. It loads the model once and speaks the text given, or, without one, every
-line of stdin as a request of its own, blank lines skipped, all into the one WAVE in the order of the lines.
-The first line takes the seed and each later line the next one, as the worker's requests do, so a line gives
-the same audio as the same request to the worker.
+`speech` is one executable with a subcommand for each program on the library, each of which reaches the models through
+the C API alone (docs/adr/0017):
+
+| Subcommand | What it does |
+|---|---|
+| `speech tts` | speaks text into a WAVE file or to stdout |
+| `speech asr` | writes the text of WAVE files |
+| `speech voice` | makes an Irodori-TTS voice file from a reference recording |
+| `speech info` | prints what a model file says of its model, without loading it |
+| `speech devices` | lists the devices a model can run on |
+| `speech serve` | serves a model over HTTP with OpenAI's audio API (The HTTP server, below) |
+| `speech worker` | serves a model over JSON Lines on stdin and stdout (The worker protocol 2, below) |
 
 ```sh
 # One sentence to a file, with a Qwen3-TTS speaker
-speech-tts qwen3-tts-0.6b-customvoice-q8_0.gguf --voice-name ono_anna --seed 42 -o out.wav "明日の東京は晴れです。"
+speech tts qwen3-tts-0.6b-customvoice-q8_0.gguf --voice ono_anna --seed 42 -o out.wav "明日の東京は晴れです。"
 
 # A text file, one sentence per line, into one WAVE file, in the voice of a reference recording
-speech-tts irodori-tts-v4.1-small-mf-f16.gguf --voice bright=bright-young-woman-10s.voice.gguf -o story.wav < story.txt
+speech tts irodori-tts-v4.1-small-mf-f16.gguf --add-voice bright=bright-young-woman-10s.voice.gguf --voice bright \
+    -o story.wav < story.txt
 
 # Straight into a player, which starts as the first audio arrives
-echo "こんにちは。" | speech-tts irodori-tts-v4.1-small-mf-f16.gguf \
-    --voice bright=bright-young-woman-10s.voice.gguf -o - | ffplay -nodisp -autoexit -
+echo "こんにちは。" | speech tts irodori-tts-v4.1-small-mf-f16.gguf \
+    --add-voice bright=bright-young-woman-10s.voice.gguf --voice bright -o - | ffplay -nodisp -autoexit -
 
-# An Irodori-TTS voice file from a reference recording (see Irodori-TTS voices below)
-speech-tts make-voice irodori-tts-v4.1-small-mf-f16.gguf bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf \
-    --device cpu
+# An Irodori-TTS voice file from a reference recording (Irodori-TTS voices, below)
+speech voice irodori-tts-v4.1-small-mf-f16.gguf bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf
+
+# The text of recordings, and their segments with their times as JSON Lines
+speech asr parakeet-tdt_ctc-0.6b-ja-f16.gguf meeting.wav
+speech asr parakeet-tdt_ctc-0.6b-ja-f16.gguf --timestamps --format json one.wav two.wav > texts.jsonl
+
+# What a model file holds, without loading it
+speech info irodori-tts-v4.1-small-mf-f16.gguf
 ```
 
-A model is one GGUF file, its codec included (see GGUF files below).
+A model is one GGUF file, its codec included (GGUF files, below).
 
-The options set the C API's load parameters and request options of the same meaning (Options, below):
+One parser reads every command line. Every subcommand that loads a model takes `--device NAME` (`auto`, the default,
+for the first GPU or the CPU on a machine without one; `gpu`; `cpu`; or a name `speech devices` lists) and
+`--threads N`, the C API's load parameters. `speech tts` and `speech asr` take every request option of the C API's
+vocabulary (Options, below) as a flag of its name in kebab-case, read by the option's type: `--voice`, `--language`,
+`--seed`, `--speed`, `--seconds`, `--duration-scale`, `--steps`, `--max-seconds` and `--timestamps`, which, a boolean,
+is a flag without a value. A flag's value follows it or an `=` (`--seed 7`, `--seed=7`), and a number is read whole:
+`--steps 4x` is a usage error. The model refuses an option it does not take, as in the C API: Qwen3-TTS answers
+`--speed 1.5` with `speech: unsupported (speed): ...`. An argument that begins with `-`, such as a text, follows `--`.
+`speech <subcommand> --help` lists a subcommand's flags, and `speech --version` prints the release and the C API's
+version (`speech.cpp 0.7.0, C API 3.0`).
 
-| Option | For | Meaning |
-|---|---|---|
-| `-o FILE` | both | the WAVE file to write, or `-` for stdout. Needed |
-| `--device NAME`, `gpu`, `cpu` | both | the device as `speech-tts --devices` lists it, the first GPU or the CPU; the first GPU, or the CPU on a machine without one, unless given |
-| `--seed n` | both | the seed of the first text; each later line takes the next one. Without it the seed is random |
-| `--voice-name NAME` | both | the voice to speak with: a Qwen3-TTS speaker or the name of a `--voice`. Needed unless the model has a single voice; an error lists the model's voices |
-| `--language TAG` | both | a BCP 47 tag of one of the model's languages, or `auto` (the default) |
-| `--voice NAME=FILE` | Irodori-TTS | a voice added to the model, repeated for more: a reference WAVE file or a voice file. At least one is needed |
-| `--steps n` | Irodori-TTS | the sampler's steps of every text: 4 for v4.1-Small-MF and 40 for v4.1-Small unless given |
-| `--speed x` | Irodori-TTS | the speaking rate, 0.25 to 4 (1) |
-| `--seconds s` | Irodori-TTS | the length of each text's speech, 0.5 to 30 s after `--speed`, instead of the predicted one |
-| `--duration-scale x` | Irodori-TTS | the factor of the predicted length (1); not together with `--seconds` |
-| `-v` | both | also report the release, the model's voices, languages and steps, and each text's seed |
-
-A text that begins with `-` follows `--`. A model refuses what it cannot do, as in the C API: Qwen3-TTS
-answers `--seconds` and any `--speed` or `--duration-scale` but 1 with an error. A text whose speech reaches the
-longest the model makes, which Qwen3-TTS's file gives (655 s), is stopped there and reported on stderr.
-
-`speech-tts` reports on stderr where the time went, which makes it a tool for measuring as well: the load
-(which includes a warm-up that compiles the GPU's kernels), and for each text its seconds of audio, the time to its first
-audio and to its end, and the real-time factor, with the sums when stdin gave several lines. Nothing else is
-written unless `-v` asks for it. With `-o -`, stdout carries the WAVE and nothing else, as the worker's
-stdout carries its protocol alone. The audio is written as it is made, so a player reading the pipe starts
-before the rest is made. Into a regular file, `> out.wav` included, the RIFF and data sizes are set once the
-audio is complete. Anywhere else, a pipe or a file appended to with `>>`, the header cannot be written again
-in place, so the sizes stay `0xFFFFFFFF`, as ffmpeg writes them to a pipe, and players and ffmpeg read to the
-end of the stream.
-
-A run that fails exits with 1 (2 for a command line it cannot run) and a message that names what failed,
-and removes the WAVE file it was writing, so a file it leaves is always complete. Text on stdin is UTF-8;
-a byte order mark and CRLF line endings are accepted.
-
-`speech-asr` recognizes the speech in WAVE files with a recognition model, through the C API, and writes the text of
-each file to stdout as one line, in the order the files are given. A file is 16-, 24- or 32-bit PCM or 32-bit float
-at any rate, its channels averaged, and the library resamples it to the model's rate (16 kHz for FastConformer; see
-Audio at another rate below); audio in another format is converted first (`ffmpeg -i in.mp3 out.wav`).
-
-```sh
-speech-asr parakeet-tdt_ctc-0.6b-ja-f16.gguf meeting.wav
-speech-asr parakeet-tdt_ctc-0.6b-ja-f16.gguf --device cpu one.wav two.wav > texts.txt
-```
-
-| Option | Meaning |
+| Exit | Meaning |
 |---|---|
-| `--device NAME`, `gpu`, `cpu` | as for `speech-tts` |
-| `--language TAG` | a BCP 47 tag of one of the model's languages, or `auto` (the default); another language is an error |
-| `-v` | also report the release, the sample rate and the model's languages |
+| 0 | done |
+| 1 | a failure, printed on stderr as `speech: <code> (<option>): <message>`: the code is the library's category (`speech_status_name()`, Errors below), the option the input at fault, left out with its parentheses when there is none |
+| 2 | a command line that cannot be run, printed with a pointer to `speech <subcommand> --help` |
+| 3 | `speech tts` alone: a request stopped at the longest speech the model makes (`model_limit`); the WAVE file is complete |
 
-It reports on stderr the load and, for each file, its seconds of audio, the time to its text and the real-time
-factor. A run that fails exits with 1 (2 for a command line it cannot run) and a message that names the file and
-what failed; the lines of the files before it are already on stdout.
+A subcommand's stdout carries its output alone: whatever ggml, a system library or the GPU driver prints to stdout goes
+to stderr. On Windows the command line is read as UTF-8, and stdin and stdout are binary.
+
+### `speech tts`
+
+```
+speech tts MODEL -o FILE|- [options] [TEXT]
+  --voice NAME --language TAG --seed N --speed X --seconds S --duration-scale X --steps N --max-seconds S
+  --add-voice NAME=FILE       add a voice from a voice file or a WAVE file before speaking; repeatable
+  --device NAME --threads N
+  -v                          report the model, and each request's seed and stop reason
+```
+
+Speaks TEXT, or without it each non-empty line of stdin as one request, into one 16-bit mono WAVE at the model's rate;
+`-o -` writes it to stdout. `--seed` applies to every request, so a line gives the audio of a worker's request with the
+same seed; without it each request draws its own, which `-v` reports. `--add-voice` adds a voice to a model that takes
+voice files (Irodori-TTS, which has none of its own), and `--voice` chooses the voice to speak with, which a synthesis
+model requires. A request that stops at `--max-seconds`, or at the longest the model makes, which Qwen3-TTS's file
+gives (655 s), is reported on stderr whatever `-v` says. The model loads without a warm-up, so a GPU compiles its
+kernels during the first request.
+
+The WAVE is written as the audio is made, so a player reading stdout starts before the rest is made. Into a regular
+file, `> out.wav` included, the RIFF and data sizes are set once the audio is complete. Anywhere else, a pipe or a file
+appended to with `>>`, the header cannot be written again in place, so the sizes stay `0xFFFFFFFF`, as ffmpeg writes
+them to a pipe, and players and ffmpeg read to the end of the stream. A run that fails removes the WAVE file it was
+writing, so a file it leaves is always complete. Text on stdin is UTF-8; a byte order mark and CRLF line endings are
+accepted.
+
+It reports on stderr where the time went, which makes it a tool for measuring as well: the load, and for each request
+its seconds of audio, the time to its first audio and to its end, and the real-time factor, with the sums when stdin
+gave several lines.
+
+### `speech asr`
+
+```
+speech asr MODEL [options] AUDIO.wav...
+  --language TAG --timestamps
+  --format text|json          text (the default) or one JSON object per file and line
+  --device NAME --threads N -v
+```
+
+Recognizes each WAVE file in the order given: 16-, 24- or 32-bit PCM or 32-bit float at any rate, its channels
+averaged, which the library resamples to the model's rate (16 kHz for FastConformer; Audio at another rate, below).
+Audio in another format is converted first (`ffmpeg -i in.mp3 out.wav`). `text` writes one line per file; with
+`--timestamps` it writes one line per segment instead, `FILE<TAB>START<TAB>END<TAB>TEXT`, the times in seconds with
+three decimals. `json` writes `{"file":…,"text":…}` for each file, with `"segments"` and `"tokens"` when
+`--timestamps` is given, in the form of the worker's `end`. It reports on stderr the load and, for each file, its
+seconds of audio, the time to its text and the real-time factor. A failure names the file, and the lines of the files
+before it are already on stdout.
+
+### `speech voice`
+
+```
+speech voice MODEL REFERENCE.wav VOICE.gguf [--device NAME] [--threads N] [-v]
+```
+
+Makes a voice file from a reference recording at any rate, reading only the codec's encoder from MODEL (Irodori-TTS
+voices, below). `--device` defaults to `cpu` here, the one device whose latent is the official encoder's to 99 dB
+(docs/adr/0002).
+
+### `speech info`
+
+```
+speech info MODEL [--json] [--meta]
+```
+
+Prints the model's information without loading it: its name, architecture and layout, task and rate, languages,
+voices, each option with its type, default, range or choices and whether it steers, the longest text and the sizes.
+`--json` prints the model information as JSON instead (Model information as JSON, below), the object that the worker's
+`ready` and the server's `/v1/models` carry. `--meta` adds every metadata entry of the GGUF file: as `key = value` in
+text, an array of more than eight items shortened with its length given, and whole as a `meta` object in JSON.
+
+### `speech devices`
+
+```
+speech devices [--json]
+```
+
+Lists the devices a model can run on, the CPU and the GPUs without the accelerators ggml runs beside the CPU, with their
+kind (`cpu`, `gpu` or `igpu`), description and memory. `--json` prints one object, for a program that chooses a device
+before it starts a worker:
+
+```json
+{"devices":[{"name":"Vulkan0","description":"NVIDIA GeForce RTX 2080","kind":"gpu","memory_total":8589934592,"memory_free":7516192768}]}
+```
 
 ## Layout
 
@@ -162,10 +234,11 @@ what failed; the lines of the files before it are already on stdout.
 - `src/` is the library: `speech.cpp`, `info.cpp` and `request.cpp` implement the C API over one engine per family
   (`src/<family>-engine.cpp`, which declares the options the family takes), `src/families/<family>/` runs one
   architecture of model, whichever weights it is given, and `src/common/` holds what the families share.
-- `tools/` holds the programs built on the library: the worker (`tools/worker/`), the command-line tools
-  `speech-tts` and `speech-asr` (`tools/cli/`) and the HTTP server `speech-server` (`tools/server/`), which
-  serves a model over HTTP with OpenAI's audio API.
-- `vendor/cpp-httplib/` holds cpp-httplib's header and license, which the server alone uses.
+- `tools/` holds `speech`, the one executable on the library: its subcommands for the command line (`tools/cli/`), the
+  worker (`tools/worker/`) and the HTTP server (`tools/server/`), and what they share (`tools/common/`): the parser of
+  the command line, the JSON reader and the request options. Beside them, `worker_smoke.py`,
+  `worker_recognition_smoke.py`, `server_smoke.py` and `speech_cli_smoke.py` drive each entry point as a caller does.
+- `vendor/cpp-httplib/` holds cpp-httplib's header and license, which `speech serve` uses.
 - `checks/` holds a check per ported stage that compares it with the official implementation, and
   `speech-api-check`, which runs the C API through the shared library with a synthesis model and, with
   `transcribe`, with a recognition model and the dumps of `reference/fastconformer/`.
@@ -265,8 +338,7 @@ speech_model_free(model);
   CPU when there is none; `gpu`; `cpu`; or a device's name, compared without case), the CPU's threads (a preference
   that applies to whatever runs on the CPU; by default the machine's performance cores, or its physical cores where the
   system does not tell them apart), and a warm-up that runs a short request while the model loads so that a GPU
-  compiles its kernels before the first request (off by default; the worker, the server and the command-line tools
-  turn it on). A device asked for by `gpu` or by name that is not there or does not start is an error, and no other
+  compiles its kernels before the first request (off by default; `speech worker` and `speech serve` turn it on). A device asked for by `gpu` or by name that is not there or does not start is an error, and no other
   device takes its place.
 - **Model information.** `speech_model_info_open()` reads what a model file says of its model from its metadata,
   without its weights and without a device: its name, architecture and layout, task and sample rate, languages,
@@ -342,7 +414,9 @@ the target `speech` (shared) or `speech-static`.
 ### Options
 
 What a request may ask of a model is one vocabulary of options (`speech_option`), each with a fixed name in
-snake_case (`speech_option_name()`, `speech_option_from_name()`) and one type. Each family declares the options it
+snake_case (`speech_option_name()`, `speech_option_from_name()`) and one type. Every entry point uses the same name: a
+member of the worker's messages and of the server's speech request, and a flag in kebab-case on the command line
+(`--duration-scale`). Each family declares the options it
 takes in one table in its engine (`src/<family>-engine.cpp`); ranges and defaults that the model defines come from its
 GGUF file (the keys are named in parentheses). The setters, the model information and its JSON read that table and
 nothing else.
@@ -384,7 +458,8 @@ What only the whole request shows is refused when the request runs, before any w
 ### Model information as JSON
 
 `speech_model_info_json()` writes one object, its members in this order; a member that does not apply is left out
-rather than null:
+rather than null. `speech info --json` prints it, the worker's `ready` and `info` carry it as `model`, and the HTTP
+server's model object as `speech`, so every program that shows a model shows the same:
 
 ```json
 {
@@ -429,202 +504,284 @@ rather than null:
   Setting threads is never an error, since with the device `auto` a caller cannot know where the model will run.
 - The example is `qwen3-tts-0.6b-customvoice-q8_0.gguf` loaded on Metal, with two of its nine voices shown.
 
-## The worker
+## The worker protocol 2
 
-`speech-worker` is a process that another program starts to speak texts or to recognize speech, as ASIST does, and
-a program on the C API like any other. It speaks [JSON Lines](https://jsonlines.org): it reads one JSON message
-per line on stdin and answers with one JSON object per line on stdout, and runs the family that
-`general.architecture` of the model GGUF names. Its `ready` message says the model's task, `"synthesis"` or
-`"recognition"`, and the messages it takes follow from the task (below). Nothing else is written to stdout: every log goes to stderr, and so does anything
-ggml, a system library or the GPU driver prints to stdout. A caller treats a line on stdout that is not a JSON
-object as a defect of the worker and fails, rather than skipping it.
+`speech worker` is a process that another program starts to speak texts or to recognize speech, as ASIST does, and a
+program on the C API like any other. It speaks [JSON Lines](https://jsonlines.org): one JSON object per line on stdin
+and on stdout, UTF-8, and nothing else on stdout. Every log goes to stderr, and so does anything ggml, a system library
+or the GPU driver prints to stdout; a caller treats a line on stdout that is not a JSON object as a defect of the worker
+and fails, rather than skipping it. The worker serves one model, one request or peek at a time, in the order they
+become complete; `info` and `count_tokens`, which only read the model's information, are answered as they arrive,
+also while a request runs.
 
-```sh
-speech-worker qwen3-tts-0.6b-customvoice-q8_0.gguf
-speech-worker irodori-tts-v4.1-small-mf-f16.gguf \
-    --voice bright=bright-young-woman-10s.voice.gguf --voice calm=calm-reference.wav
-speech-worker parakeet-tdt_ctc-0.6b-ja-f16.gguf
+```
+speech worker MODEL [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup]
 ```
 
-| Option | For | Meaning |
-|---|---|---|
-| `--device NAME`, `gpu`, `cpu` | all | the device as `--devices` names it (`MTL0`, `Vulkan1`), the first GPU or the CPU; the first GPU, or the CPU on a machine without one, unless given |
-| `--seed n` | synthesis | the seed of the first request, 0 to 2^53 - 1; each later request takes the next one. Without it the seed is random |
-| `--voice NAME=FILE` | Irodori-TTS | a voice added to the model, repeated for more: a reference WAVE file or a voice file (below). At least one is needed |
-| `--steps n` | Irodori-TTS | the sampler's steps of every request: 4 for v4.1-Small-MF and 40 for v4.1-Small unless given |
+```sh
+speech worker qwen3-tts-0.6b-customvoice-q8_0.gguf
+speech worker irodori-tts-v4.1-small-mf-f16.gguf \
+    --add-voice bright=bright-young-woman-10s.voice.gguf --add-voice calm=calm-reference.wav
+speech worker parakeet-tdt_ctc-0.6b-ja-f16.gguf
+```
 
-The worker loads the model with a warm-up, so that a GPU has compiled its kernels before the first request, and
-adds the voices before it is ready. `speech-worker --devices` prints the devices it can run on, the CPU and the GPUs
-without the accelerators ggml runs beside the CPU, with their memory, and exits.
+### Lines
 
-The messages of a synthesis worker, one JSON object per line:
+Every line in either direction is one JSON object with a string member `type`. JSON is read whole: nested objects,
+arrays, booleans and numbers. A member set to `null` counts as left out. A member that the message's type does not
+have is refused, a name that is not an option included.
 
-| Direction | Message |
-|---|---|
-| out | `{"type":"ready","task":"synthesis","model":"Irodori-TTS-v4.1-Small-MF","architecture":"irodori-tts","sampleRate":48000,"streaming":"sentence","voices":["bright","calm"],"languages":["ja"],"languageSelectable":false,"steps":4,"backend":"MTL0","version":"0.4.0"}`, `version` being the release of speech.cpp |
-| in | `{"id":"1","text":"明日の東京は晴れです。","voice":"bright"}`, with `"language"`, `"speed"`, `"seconds"` and `"durationScale"` optional |
-| out | `{"type":"chunk","id":"1","seq":0,"pcm":"<base64 of 16-bit little-endian mono PCM at sampleRate>"}`, one or more |
-| out | `{"type":"end","id":"1","samples":278400}` |
-| out | `{"type":"error","id":"1","error":"..."}` when a request cannot be spoken or a line cannot be read; without `"id"` when the line has none the worker could read |
-| out | `{"type":"fatal","error":"..."}` when the worker cannot start |
-| in | `{"type":"cancel","id":"1"}`: the request stops between two chunks (Irodori-TTS also between two of its sampler's steps, before the first chunk) and sends no `end`; a request cancelled before it starts is dropped |
+The values of option members follow the option's type (Options, above): a JSON string; an integer written without a
+fraction or an exponent; any JSON number; `true` or `false`.
 
-Requests are served one at a time in arrival order.
+### Start
 
-Every line on stdin gets an answer, a recognition request's chunks through the answer to their request. A line
-the worker cannot read as a message of its task (not one JSON object, a member that is not a string or a number
-such as `null` or a nested object, no `id`, or a `type` the task does not take: other than `cancel` for
-synthesis) is answered at once with an `error` that names the problem. It carries the
-line's `id` when one could be read, and has no `id` otherwise. Such an error is a defect of the caller, which
-should fail rather than wait for an answer to the line it meant to send.
+```
+out {"type":"ready","protocol":2,"version":"0.7.0","model":{...model information...}}
+out {"type":"fatal","error":{"code":"model_file","option":null,"message":"..."}}
+```
 
-`speed`, `seconds` and `durationScale` are JSON numbers, the C API's request options `speed`, `seconds` and
-`duration_scale` (Options, above). `speed` is the speaking rate against the model's own (1); `seconds` fixes the
-length of the speech, and 0 or no `seconds` leaves it to the model; `durationScale` scales the length the model
-predicts (1). A model that cannot follow one of them answers the request with an `error` instead of ignoring it, and
-so does a value that is not a number or lies out of its range. Irodori-TTS takes all three (see Length and speed
-below). Qwen3-TTS refuses any `speed` or `durationScale` but 1 and any `seconds`: its official implementation has no
-control of either (docs/adr/0007). A Qwen3-TTS request whose speech reaches the longest the model makes, 655 s, is
-stopped there and ends as one that came to its end does.
+`ready` comes once the model is loaded, warmed up unless `--no-warmup` so that a GPU has compiled its kernels before
+the first request, and has the voices of `--add-voice`; its `model` is the model information as JSON (above), the
+object `speech info --json` prints, with the device, the threads and the voices added. `fatal` comes instead when the
+worker cannot start, and the worker exits with 1, or with 2 for a command line it cannot run. `protocol` is raised when
+a caller must change to keep working: a message or member removed, renamed or given another meaning. A member or
+message added, an option added to the vocabulary, or a member added to the model information does not raise it.
 
-`languages` lists the languages as BCP 47 tags. A request's `language`, when given, must be one of them or
-a region or script of one (`ja`, `ja-JP`, `zh-Hant`), or `auto`; `auto` or no `language` leaves the choice
-to the model. Any other language is an error.
+### Requests
 
-- **Qwen3-TTS** streams frame by frame (`"streaming":"frame"`, 24 kHz). Its voices are the model's speakers,
-  and it speaks `de`, `en`, `es`, `fr`, `it`, `ja`, `ko`, `pt`, `ru` and `zh` (`"languageSelectable":true`):
-  the language goes into its prompt. Two speakers speak a Chinese dialect, `dylan` (Beijing) and `eric`
-  (Sichuan), when the language is `zh` or left to the model, as in the official implementation.
-- **Irodori-TTS** makes a sentence at once and streams it as the codec decodes it (`"streaming":"sentence"`,
-  48 kHz), so a request should be one sentence; a text longer than the model's 256 tokens is refused. Its
-  voices are those given with `--voice`. It speaks `ja` and is not told a language
-  (`"languageSelectable":false`).
+| `type` | Members | Task | Answer |
+|---|---|---|---|
+| `synthesize` | `id`, `text`, option members | synthesis | `progress` and `chunk`s, then one terminal message |
+| `chunk` | `id`, `seq`, `pcm` | recognition | none of its own; it adds audio to request `id` |
+| `transcribe` | `id`, `sample_rate`, option members | recognition | `progress`, then one terminal message |
+| `peek` | `id`, `sample_rate`, option members | recognition | one `partial`; the request stays open |
+| `add_voice` | `id`, `name`, `path` | synthesis models that take voice files | one terminal message |
+| `info` | `id` | any | one terminal message, at once |
+| `count_tokens` | `id`, `text` | synthesis | one terminal message, at once |
+| `cancel` | `id` | any | none of its own |
 
-A recognition worker takes the audio of a request in the chunks a synthesis worker sends, and the request itself
-in the request's `end`:
+- `id` is a non-empty string, unique among the requests that have not had their terminal message.
+- A recognition request is its `chunk` lines, `seq` 0, 1, 2 … in order, then its `transcribe` line, which makes it
+  complete; the chunks of several requests may interleave. `sample_rate` is the rate of the chunks' audio, any rate;
+  the library resamples it.
+- `pcm`, in both directions, is base64 of 16-bit little-endian mono samples. Audio from the worker is at the model's
+  `sample_rate`, each sample `round(clamp(x, −1, 1) × 32767)`; audio to the worker is read as `x / 32768`.
+- `path` of `add_voice` is a voice file or a WAVE file (Irodori-TTS voices, below).
+- `info` and `count_tokens` are answered as they arrive rather than in turn, so a caller can count the tokens of the
+  next text while a synthesis runs. `info` gives the voices added so far: one sent before an `add_voice` has had its
+  `end` may not list that voice yet.
+- `peek`, for live captions, asks for the text of a recognition request that is still collecting chunks. It takes the
+  members `transcribe` takes, and they apply to that peek alone: it recognizes the chunks that came before it as a
+  `transcribe` with those members would, answers one `partial`, and leaves the request collecting, so that more chunks
+  may follow and its `transcribe` still gets the request's one terminal message. A peek waits its turn as a request
+  does, sends no `progress`, and is dropped without an answer when its request ends before its turn. A peek of an id
+  that is not collecting chunks (unknown, already answered, or after its `transcribe`) is answered with a `partial`
+  that carries an `error` and leaves that request as it was.
+- A peek recognizes the whole audio received so far, so its cost grows with the audio: parakeet-tdt_ctc-0.6b-ja in F16
+  on Metal took 0.07 s for 6.4 s of audio and 0.11 s for 10.5 s. The parakeet models' memory also grows with the
+  square of the audio's length (docs/adr/0013).
+- `cancel` of a request that is collecting chunks or waiting ends it with `cancelled` at once. One that is running
+  stops at the next point where its work can stop, between two chunks, two of Irodori-TTS's sampler steps or two
+  stages of a recognition, and ends with `cancelled`; `add_voice` cannot be stopped once it runs and ends with its
+  answer. A cancel of an id that no request in flight has, because its request was answered or never sent, is ignored
+  and changes nothing later.
+- Once a recognition request has had its `error` or its `cancelled` while it collected chunks, its later `chunk` lines
+  are dropped up to and including its `transcribe` line, which frees its id, or until a chunk 0 under its id starts a
+  new request; a caller that cancels need not send the `transcribe`.
 
-| Direction | Message |
-|---|---|
-| out | `{"type":"ready","task":"recognition","model":"parakeet-tdt_ctc-0.6b-ja","architecture":"fastconformer","sampleRate":16000,"languages":["ja"],"languageSelectable":false,"backend":"MTL0","version":"0.5.0"}`, without `streaming`, `voices` or `steps` |
-| in | `{"type":"chunk","id":"1","seq":0,"pcm":"<base64 of 16-bit little-endian mono PCM>"}`, zero or more, `seq` counting from 0; the chunks of several requests may interleave |
-| in | `{"type":"end","id":"1","sampleRate":16000}`, with `"language"` optional: the request, recognized once it is its turn |
-| out | `{"type":"text","id":"1","text":"群島や湖では必ずしもヨットは必要ありません。"}` |
-| out | `{"type":"error","id":"1","error":"..."}` when the request cannot be recognized or one of its lines is refused |
-| in | `{"type":"cancel","id":"1"}`: the request sends no `text`, whether it is still taking chunks, waits or is being recognized |
+### Answers
 
-A request is answered once, by its `text` or by one `error`. `sampleRate` is the rate of the request's audio, any
-rate; the library resamples it to the model's `sampleRate`, 16000 for FastConformer. A chunk whose `seq` is not the
-next one, whose `pcm` is not base64 or holds an odd number of bytes, and an `end` without a whole-number `sampleRate`
-are answered at once with an `error`, and the request's other lines are then dropped. Requests are recognized one at a
-time in the order of their ends. A request to speak sent to a recognition worker is an error, and so is a chunk or an
-end sent to a synthesis worker. FastConformer recognizes a request's audio at once. The parakeet models' encoders
-attend over the whole of it, so a request to them should be one utterance: on an Apple M5, the 25.5 s FLEURS utterance
-takes 0.22 s on Metal and its memory grows with the square of the length. reazonspeech-nemo-v2 attends locally and
-takes a recording of minutes in one request. A cancel takes effect before the encoder starts, once it has run, or
-between two steps of the decoding.
+```
+out {"type":"chunk","id":"a","seq":0,"pcm":"..."}
+out {"type":"progress","id":"r","done":0.42}
+out {"type":"partial","id":"r","text":"...","segments":[...],"tokens":[...]}
+out {"type":"partial","id":"x","error":{"code":"invalid_argument","option":"id","message":"..."}}
+out {"type":"end","id":"a","seed":1234,"samples":96000,"stop":"complete"}
+out {"type":"end","id":"r","text":"...","segments":[{"start":0.0,"end":2.48,"text":"..."}],"tokens":[{"start":0.0,"end":0.16,"text":"..."}]}
+out {"type":"end","id":"v"}
+out {"type":"end","id":"i","model":{...model information...}}
+out {"type":"end","id":"c","tokens":14}
+out {"type":"error","id":"a","error":{"code":"out_of_range","option":"speed","message":"..."}}
+out {"type":"cancelled","id":"a"}
+```
+
+- Every request gets exactly one terminal message, `end`, `error` or `cancelled`, and nothing for its id after it.
+  `partial` is never terminal: it has `text`, with `segments` and `tokens` when the peek set `timestamps`, or an
+  `error`, which ends the peek and not its request.
+- `end` of a synthesis has `seed` (the request's or the one the library drew), `samples` (the number sent in its
+  chunks) and `stop` (`complete`, `max_seconds` or `model_limit`). `end` of a recognition has `text`, and `segments`
+  and `tokens` when the request set `timestamps`, in the form the C API gives them (FastConformer, below). `end` of
+  `info` has `model`; `end` of `add_voice` has nothing more. `end` of `count_tokens` has `tokens`, the number of the
+  model's tokens the text takes as a synthesis counts it against `max_text_tokens` (`speech_model_info_text_tokens()`),
+  so that a caller can split a long text before it sends it.
+- `error` has `code` (a `speech_status_name()`), `option` (the input it concerns: an option's name, `text`, `audio`,
+  `id`, `type`, `seq`, `pcm`, `name`, `path`, `sample_rate` or another member's name, or null) and `message`.
+- `progress` comes for a running request that is passing no chunks, when the library reports progress and at least
+  1 s has passed since the request's last message; `done` is the library's fraction, 0 to 1. Irodori-TTS reports its
+  sampler's steps, and a recognition its stages and its decoding. A caller that takes a silent worker for a hung one
+  allows for the longest single step: the encoder of a long recording runs as one (3.7 s for 311 s of audio with
+  reazonspeech-nemo-v2 in F16 on an Apple M5).
+- A line that names no request it could belong to (not a JSON object, no string `id`, a `cancel` with a member it does
+  not have, or a line that starts a request under an `id` already in flight) is answered with an `error` without `id`.
+- A request of the other task is `unsupported` with the option `type`: a `synthesize` to a recognition model, and a
+  `chunk` or `transcribe` to a synthesis model, whose request this error answers and whose later lines are dropped. A
+  member the type does not have is `invalid_argument` with that member as `option`. The values of option members are
+  checked by the library's setters when the request runs, so their errors are the C API's.
+
+When stdin closes, the worker answers the requests it has, answers each request still collecting chunks with an
+`error`, since no `transcribe` can follow, and exits with 0.
+
+`languages` in the model information lists the languages as BCP 47 tags. A request's `language` must be one of them or
+a region or script of one (`ja`, `ja-JP`, `zh-Hant`), or `auto`, which leaves the choice to the model; any other
+language is `out_of_range`.
+
+- **Qwen3-TTS** passes audio frame by frame (`incremental` true, 24 kHz). Its voices are the model's speakers, and it
+  speaks `de`, `en`, `es`, `fr`, `it`, `ja`, `ko`, `pt`, `ru` and `zh`; the language steers it, going into its prompt.
+  Two speakers speak a Chinese dialect, `dylan` (Beijing) and `eric` (Sichuan), when the language is `zh` or left to
+  the model, as in the official implementation.
+- **Irodori-TTS** makes a sentence at once and passes it as the codec decodes it (`incremental` false, 48 kHz), so a
+  request should be one sentence; a text longer than the model's 256 tokens is refused. Its voices are those of
+  `--add-voice` and `add_voice`. It speaks `ja`, and the language is only checked.
+- **FastConformer** recognizes a request's audio at once. The parakeet models' encoders attend over the whole of it, so
+  a request to them should be one utterance: on an Apple M5, the 25.5 s FLEURS utterance takes 0.22 s on Metal, and
+  its memory grows with the square of the length. reazonspeech-nemo-v2 attends locally and takes a recording of
+  minutes in one request. A cancel takes effect before the encoder starts, once it has run, or between two steps of
+  the decoding.
+
+A session with Irodori-TTS and one with a recognizer, the second peeking at its request while it collects chunks:
+
+```
+in  {"type":"synthesize","id":"1","text":"明日の東京は晴れです。","voice":"bright","seed":42}
+out {"type":"chunk","id":"1","seq":0,"pcm":"..."}
+out {"type":"chunk","id":"1","seq":1,"pcm":"..."}
+out {"type":"end","id":"1","seed":42,"samples":134400,"stop":"complete"}
+
+in  {"type":"chunk","id":"r","seq":0,"pcm":"..."}
+in  {"type":"peek","id":"r","sample_rate":16000}
+out {"type":"partial","id":"r","text":"群島や湖では"}
+in  {"type":"chunk","id":"r","seq":1,"pcm":"..."}
+in  {"type":"transcribe","id":"r","sample_rate":16000}
+out {"type":"end","id":"r","text":"群島や湖では必ずしもヨットは必要ありません。"}
+```
 
 ### Irodori-TTS voices
 
 Irodori-TTS has no voices of its own; it speaks in the voice of a reference. A voice is either:
 
 - a reference WAVE file: at most 120 s, 16-, 24- or 32-bit PCM or 32-bit float at any rate, the channels
-  averaged and resampled to 48 kHz. `speech_voice_add()`, and so the worker when it starts, normalizes its loudness
-  and encodes it with the codec, as the official runtime does for every request.
-- a voice file, which `speech-tts make-voice` or `speech_voice_make()` writes from a reference WAVE file, reading
-  only the codec's encoder from the model file: the reference's codec latent in a GGUF file of its own (Voice files,
-  below) that carries the hash of the codec's tensors. It works with every model file of the same codec, v4.1-Small-MF and v4.1-Small in any type, and a model
-  of another codec refuses it. Voice files made before 0.7.0 have no layout and are refused; make them again from
-  their WAVE files.
+  averaged and resampled to 48 kHz. `speech_voice_add()`, and so `--add-voice` and the worker's `add_voice`,
+  normalizes its loudness and encodes it with the codec, as the official runtime does for every request.
+- a voice file, which `speech voice` or `speech_voice_make()` writes from a reference WAVE file, reading only the
+  codec's encoder from the model file: the reference's codec latent in a GGUF file of its own (Voice files, below) that
+  carries the hash of the codec's tensors. It works with every model file of the same codec, v4.1-Small-MF and
+  v4.1-Small in any type, and a model of another codec refuses it. Voice files made before 0.7.0 have no layout and are
+  refused; make them again from their WAVE files.
 
 ```sh
-speech-tts make-voice irodori-tts-v4.1-small-mf-f16.gguf bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf \
-    --device cpu
+speech voice irodori-tts-v4.1-small-mf-f16.gguf bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf
 ```
 
 For the 10.7 s reference bright-young-woman-10s.wav, the voice file is 35 KB against the WAVE file's 1 MB,
 and loads in 0.016 s on an Apple M5 (Metal) and 0.025 s on an RTX 2080 (Vulkan), against 0.72 s and 0.43 s
-to encode the WAVE file (5.05 s on the M5's CPU). Made on the CPU (`--device cpu`), its latent is the
+to encode the WAVE file (5.05 s on the M5's CPU). Made on the CPU, `speech voice`'s default device, its latent is the
 official encoder's to 99 dB SNR; on Metal it is 40 dB and on Vulkan 33 dB (see Accuracy below). ASIST
 carries voice files (docs/adr/0002).
 
-## The server
+## The HTTP server
 
-`speech-server` serves one model over HTTP with OpenAI's audio API, so that a web app, a Python script or curl
-can speak a text or recognize speech without starting the worker. It loads the model as the worker does, listens
-once the model is ready, and logs to stderr.
+`speech serve` serves one model over HTTP with OpenAI's audio API, so that a web app, a Python script or curl can
+speak a text or recognize speech without starting the worker. It loads the model as the worker does, listens once the
+model is ready, and logs to stderr.
+
+```
+speech serve MODEL [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]... [--add-voice NAME=FILE]...
+                   [--device NAME] [--threads N] [--no-warmup]
+```
 
 ```sh
-speech-server qwen3-tts-0.6b-customvoice-q8_0.gguf
-speech-server irodori-tts-v4.1-small-mf-f16.gguf \
-    --voice bright=bright-young-woman-10s.voice.gguf --port 8080 --cors-origin http://localhost:5173
-speech-server parakeet-tdt_ctc-0.6b-ja-f16.gguf
+speech serve qwen3-tts-0.6b-customvoice-q8_0.gguf
+speech serve irodori-tts-v4.1-small-mf-f16.gguf \
+    --add-voice bright=bright-young-woman-10s.voice.gguf --port 8080 --cors-origin http://localhost:5173
+speech serve parakeet-tdt_ctc-0.6b-ja-f16.gguf
 ```
 
 | Option | Meaning |
 |---|---|
 | `--host ADDRESS` | the address to listen on, 127.0.0.1 unless given; the server has no authentication and no TLS, so a server reachable from other machines belongs behind a proxy that adds them |
-| `--port n` | the port, 8080 unless given |
-| `--cors-origin ORIGIN` | an origin a web page may call the server from, such as `http://localhost:5173`, repeated for more, or `*` for any. Without it the server sends no CORS headers. Preflight requests are answered |
-| `--device`, `--voice NAME=FILE`, `--steps` | as for the worker (above) |
+| `--port N` | the port, 8080 unless given |
+| `--cors-origin ORIGIN` | an origin a web page may call the server from, such as `http://localhost:5173`, repeated for more, or `*` for any. Without it the server sends no CORS headers. Preflight requests are answered, and `X-Sample-Rate`, `X-Speech-Seed` and `X-Speech-Stop` are exposed |
+| `--add-voice NAME=FILE`, `--device`, `--threads`, `--no-warmup` | as for the worker (above) |
 
 The endpoints:
 
-- `POST /v1/audio/speech` speaks a text with a synthesis model, as [OpenAI's create speech](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create) does.
+- `GET /health` answers `{"status":"ok"}`.
+- `GET /v1/models` lists the loaded model as OpenAI's model object (`id` the model's name, `object`, `created`,
+  `owned_by` `"speech.cpp"`) with `version`, the release, and `speech`, the model information (Model information as
+  JSON, above). `GET /v1/models/{id}` gives it alone, and another id is a 404 (`model_not_found`).
+- `POST /v1/audio/speech` speaks a text with a synthesis model, as
+  [OpenAI's create speech](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create) does.
 - `POST /v1/audio/transcriptions` recognizes the speech in a WAV file with a recognition model, as
   [OpenAI's create transcription](https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create)
   does (below).
-- `GET /v1/models` lists the loaded model as OpenAI's model object, with speech.cpp's members added: `task`
-  (`synthesis` or `recognition`), `architecture`, `sample_rate`, `streaming` (`frame` or `sentence`) and `voices`
-  (synthesis), `languages`, `language_selectable`, `steps` (Irodori-TTS), `backend` and `version`.
-  `GET /v1/models/<id>` gives it alone.
 
-The endpoint of the other task answers a 404 whose message names the right one. The speech request is described
-first; the transcription request follows it.
-- `GET /health` answers `{"status":"ok"}`.
+The endpoint of the other task answers a 404 whose message names the right one.
 
-The request is a JSON object:
+A speech request is a JSON object:
 
 | Member | Meaning |
 |---|---|
 | `input` | the text, required |
-| `voice` | one of the model's voices, required: a Qwen3-TTS speaker or a voice given with `--voice` |
 | `model` | the loaded model's `id` from `/v1/models`, or left out. Any other model is a 404 (`model_not_found`) |
 | `response_format` | `wav` (the default) or `pcm`. OpenAI's default is `mp3`, which speech.cpp does not encode; `mp3`, `opus`, `aac` and `flac` are refused |
 | `stream_format` | `audio` (the default) or `sse`, which needs `pcm` |
-| `speed` | the speaking rate, as in the worker: Irodori-TTS takes 0.25 to 4, Qwen3-TTS only 1 |
-| `language` | speech.cpp's own: a BCP 47 tag of one of the model's languages, or `auto` (the default) |
-| `seed` | speech.cpp's own: the seed, an integer from 0 to 2^53 - 1. Without it the seed is random |
-| `seconds`, `duration_scale` | speech.cpp's own: Irodori-TTS's length (see Length and speed below) |
+| `voice`, `language`, `seed`, `speed`, `seconds`, `duration_scale`, `steps`, `max_seconds`, `timestamps` | every option of the vocabulary by its name (Options, above), of the option's type, which the model checks: `voice` is one of the model's voices, a Qwen3-TTS speaker or a voice of `--add-voice`, and required; `speed` and `voice` are OpenAI's, the others speech.cpp's own. A request without `seed` gets one drawn from 0 to 2^53 - 1 |
 
-A member speech.cpp does not take, OpenAI's `instructions` among them, is refused rather than ignored; a
-member set to `null` counts as left out.
+A member speech.cpp does not take, OpenAI's `instructions` among them, is refused rather than ignored; a member set to
+`null` counts as left out.
 
 The response:
 
-- `wav` is the whole file, 16-bit mono at the model's rate, sent once the sentence is made.
+- `wav` is the whole file, 16-bit mono at the model's rate, sent once the speech is made, with `X-Sample-Rate`,
+  `X-Speech-Seed`, the seed it was made with, and `X-Speech-Stop`, why it stopped (`complete`, `max_seconds` or
+  `model_limit`).
 - `pcm` is raw 16-bit little-endian mono at the model's rate, `Content-Type: audio/pcm`, streamed with chunked
-  transfer as the model makes it: the first bytes leave with the worker's first chunk. On an Apple M5 under
-  heavy load from other work, the same requests alternated between the server and the worker gave a median
-  first byte of 0.106 s against the worker's 0.102 s for Qwen3-TTS 0.6B Q8_0, and 0.64 s against 0.60 s for
-  Irodori-TTS v4.1-Small-MF F16, and the same audio, byte for byte, for the same seed.
+  transfer as the model makes it, with `X-Sample-Rate` and `X-Speech-Seed`; its headers leave before the speech ends,
+  so it cannot carry the stop reason. The first bytes leave with the worker's first chunk: on an Apple M5 under heavy
+  load from other work, the same requests alternated between the server and the worker gave a median first byte of
+  0.106 s against the worker's 0.102 s for Qwen3-TTS 0.6B Q8_0, and 0.64 s against 0.60 s for Irodori-TTS
+  v4.1-Small-MF F16, and the same audio, byte for byte, for the same seed.
 - `stream_format: "sse"` sends the same PCM as server-sent events, each a `data:` line:
   `{"type":"speech.audio.delta","audio":"<base64 PCM>"}` for each chunk, then
-  `{"type":"speech.audio.done","samples":134400}`. OpenAI's done event carries the usage in tokens, which
-  speech.cpp does not count, so it gives the number of samples instead.
-- Every audio response carries `X-Sample-Rate` and `X-Speech-Seed`, the seed it was made with: the same
-  request with that seed gives the same audio on the same device.
+  `{"type":"speech.audio.done","seed":42,"samples":134400,"stop":"complete"}`. OpenAI's done event carries the usage in
+  tokens, which speech.cpp does not count, so it gives the seed, the samples and the stop reason instead.
 
-Errors have OpenAI's shape, `{"error":{"message":...,"type":...,"param":...,"code":...}}`. A request the server
-cannot read (malformed JSON, a missing or unknown member, an unsupported format) is a 400 that names the
-member in `param`; a request the model cannot follow (an unknown voice, a speed on Qwen3-TTS, a length out of
-range) is a 400 with the library's message; another model is a 404, and a failure during the synthesis a
-500. Once a stream has begun, a failure ends a `pcm` stream without its last chunk, which the client reads as
-a broken transfer, and an SSE stream with `{"type":"error","error":{...}}`.
+The same request with the seed of `X-Speech-Seed` gives the same audio on the same device.
 
-The model speaks one request at a time, in the order they arrive; the others wait. A client that disconnects
-while it waits is dropped, and one that disconnects while its audio streams stops its synthesis at the next
-chunk (Qwen3-TTS) or codec window (Irodori-TTS), as a cancel of the worker does, so the next request starts
-then.
+Errors have OpenAI's shape, `{"error":{"message":...,"type":...,"param":...,"code":...}}`. A failure of the library
+becomes an error by its category alone (Errors, above), the same for the same mistake whenever it happens; `param` is
+the input at fault, with `text` written as `input` and `audio` as `file`:
+
+| Category | HTTP | `type` | `code` |
+|---|---|---|---|
+| `invalid_argument` | 400 | `invalid_request_error` | `invalid_value` |
+| `unsupported` | 400 | `invalid_request_error` | `unsupported_parameter` |
+| `out_of_range` | 400 | `invalid_request_error` | `unsupported_value` |
+| `model_file`, `device`, `out_of_memory`, `io`, `internal` | 500 | `server_error` | the category's name |
+
+So an unknown voice is a 400 `unsupported_value` with `param` `voice`, a `speed` on Qwen3-TTS a 400
+`unsupported_parameter`, and a text longer than the model takes a 400 `unsupported_value` with `param` `input`. The
+server's own refusals keep their codes: `unknown_parameter` for a member it does not have, `invalid_type` for a value of
+another type, `missing_required_parameter`, `unsupported_value` for a format it does not give, and 404
+`model_not_found`; a body that is not JSON is a 400 without a code. A `pcm` or SSE stream begins once the library has
+begun the request's work, so a request it refuses gets its error status; an error after that ends a `pcm` stream
+without its last chunk, which the client reads as a broken transfer, and an SSE stream with
+`{"type":"error","error":{...}}`.
+
+The model serves one request at a time, in the order they arrive; the others wait. A client that disconnects
+while it waits is dropped, and one that disconnects while its request runs stops it at the next chunk (Qwen3-TTS),
+sampler step or codec window (Irodori-TTS) or stage (a recognition), as a cancel of the worker does, so the next
+request starts then.
 
 ```sh
 # A WAV file.
@@ -666,21 +823,33 @@ A transcription request is a `multipart/form-data` form, as OpenAI's API referen
 
 | Member | Meaning |
 |---|---|
-| `file` | the audio, required: a WAV file, 16-, 24- or 32-bit PCM or 32-bit float at any rate, its channels averaged and resampled to the model's `sample_rate` (16000 for FastConformer). Any other file is refused with a 400 (`param` `file`) rather than guessed at; convert it first (`ffmpeg -i in.mp3 out.wav`) |
+| `file` | the audio, required: a WAV file, 16-, 24- or 32-bit PCM or 32-bit float at any rate, its channels averaged and resampled by the library to the model's `sample_rate` (16000 for FastConformer). Any other file is refused with a 400 (`param` `file`) rather than guessed at; convert it first (`ffmpeg -i in.mp3 out.wav`) |
 | `model` | the loaded model's `id`, or left out; any other model is a 404 (`model_not_found`) |
-| `language` | a BCP 47 tag of one of the model's languages, or `auto` (the default) |
-| `response_format` | `json` (the default), which answers `{"text":"..."}`, or `text`, which answers the text alone as `text/plain`. `srt`, `vtt`, `verbose_json` and `diarized_json` are refused: speech.cpp gives neither timestamps nor speakers |
+| `language` | the option `language`: a BCP 47 tag of one of the model's languages, or `auto` (the default) |
+| `response_format` | `json` (the default), which answers `{"text":"..."}`; `text`, which answers the text alone as `text/plain`; or `verbose_json`, which sets the option `timestamps` and answers `{"task":"transcribe","duration":…,"text":…,"segments":[{"id":0,"start":…,"end":…,"text":…}]}`, the duration being the file's in seconds. `srt`, `vtt` and `diarized_json` are refused: speech.cpp gives neither subtitles nor speakers |
+| `timestamp_granularities[]` | `segment`, with `verbose_json`; `word` is refused |
 
-OpenAI's other members (`prompt`, `temperature`, `timestamp_granularities[]`, `stream`, `include[]` and the rest)
-are refused with a 400 rather than ignored, and so is a member given twice. OpenAI's json answer also carries the
-usage in tokens or seconds, which speech.cpp does not count. Audio the model cannot take (no samples, a rate the
-library cannot resample from, a language it does not recognize) is a 400 with the library's message. The upload may
-be up to 25 MB, OpenAI's limit; the model recognizes the whole file at once, so a file should be one utterance (see
-the worker above). The request waits its turn like a speech request, and a client that goes away cancels it.
+The members of OpenAI's segment that the recognizers have no value for (`seek`, `tokens`, `temperature`,
+`avg_logprob`, `compression_ratio`, `no_speech_prob`) are left out rather than made up, and so is the usage in tokens
+or seconds that OpenAI's answers carry. OpenAI's other members (`prompt`, `temperature`, `stream`, `include[]` and the
+rest) are refused with a 400 rather than ignored, and so is a member given twice. Audio the library cannot take is a
+400 by its category with `param` `file`: no samples or fewer than the model needs, or a rate it cannot resample from;
+a language the model does not recognize is a 400 `unsupported_value` with `param` `language`. The upload may be up to
+25 MB, OpenAI's limit; the model recognizes the whole file at once, so a file should be one utterance (FastConformer,
+below). The request waits its turn like a speech request, and a client that goes away cancels it.
 
 ```sh
 curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@utterance.wav -F response_format=text
+curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav -F response_format=verbose_json
 ```
+
+## Files on Hugging Face
+
+Each Hugging Face repository of converted weights (one per upstream model, named after it with `-GGUF`) holds, beside
+each GGUF file, a file of the same name with `.json` added: the output of `speech info --json` for it, made at release.
+A program can show a model's voices, languages, options and sizes, and choose which file to download, without
+downloading the model file; once it loads the model, the worker's `ready` carries the same object with the device, the
+threads and the voices added, and a program that pinned the JSON compares the two.
 
 ## Qwen3-TTS
 
@@ -724,10 +893,11 @@ are float16 in a Q8_0 or F16 file, as the released files have them, and float32 
 ### Use
 
 ```sh
-build/speech-tts <model.gguf> --voice-name ono_anna --language ja -o out.wav "明日の東京は晴れです。"
+build/speech tts <model.gguf> --voice ono_anna --language ja -o out.wav "明日の東京は晴れです。"
 ```
 
-`speech-worker <model.gguf>` runs it behind the worker protocol (above).
+`speech worker <model.gguf>` runs it behind the worker protocol (above), and `speech serve <model.gguf>` behind
+OpenAI's speech API.
 
 ### Accuracy
 
@@ -803,19 +973,19 @@ F16, and 3.81% in Q8_0, which garbled one phrase.
 ### Use
 
 ```sh
-build/speech-tts irodori-tts-v4.1-small-mf-f16.gguf --voice bright=bright-young-woman-10s.voice.gguf \
-    -o out.wav "明日の東京は晴れです。" [--device NAME] [--seed n] [--steps n] [--seconds s | --duration-scale x] [--speed x]
+build/speech tts irodori-tts-v4.1-small-mf-f16.gguf --add-voice bright=bright-young-woman-10s.voice.gguf --voice bright \
+    -o out.wav "明日の東京は晴れです。" [--device NAME] [--seed N] [--steps N] [--seconds S | --duration-scale X] [--speed X]
 ```
 
 ### Length and speed
 
 The duration predictor sets the length of a sentence before the DiT makes it. A request may change it as the
-official runtime's request does, and the C API, the worker and `speech-tts` take the same three options:
+official runtime's request does, and the C API, the worker, the server and `speech tts` take the same three options:
 
 - `seconds` fixes the length: the latent has the frames that hold `int(seconds / speed × 48000)` samples, and the
   audio is cut there. The duration predictor does not run. Both `seconds` and `seconds / speed` must lie within 0.5
   to 30 s; the runtime clamps a length outside them with a warning, speech.cpp refuses it.
-- `duration_scale` (`durationScale` in the worker) multiplies the predicted frames before they are rounded. It must
+- `duration_scale` multiplies the predicted frames before they are rounded. It must
   be above 0, and it cannot be given with `seconds`, which the runtime would let override it without a word.
 - `speed`, from 0.25 to 4, divides both: the length is `seconds / speed`, or the prediction scaled by
   `duration_scale / speed`. This is what [Irodori-TTS-Server](https://github.com/Aratako/Irodori-TTS-Server)
@@ -864,7 +1034,7 @@ That latent lies 30.6 dB from the 48 kHz reference's at 44.1 kHz and 10.7 dB at 
 
 ### Speed
 
-The 20 sentences of speech-bench's prompts/speak-ja-JP.json through `speech-worker` in the voice file above,
+The 20 sentences of speech-bench's prompts/speak-ja-JP.json through the worker in the voice file above,
 one request at a time, after the worker is ready:
 
 | Model | Device | Median first audio | p90 first audio | Real-time factor | Memory |
@@ -925,7 +1095,7 @@ For the same reason ReazonSpeech decodes with its beam search alone, not with th
 on it: of the eight FLEURS utterances and the 65 s input of the checks below, NeMo's greedy decoding writes another
 text for four: each lacks some of the commas and full stops the beam search writes, and one also has another word. Why recognition goes through this port is in
 [ADR 0009](docs/adr/0009-speech-recognition-runs-through-a-fastconformer-port.md), and how it reaches the C API, the
-worker, the server and `speech-asr` in [ADR 0011](docs/adr/0011-speech-recognition-is-a-task-of-every-entry-point.md).
+worker, the server and the command line in [ADR 0011](docs/adr/0011-speech-recognition-is-a-task-of-every-entry-point.md).
 
 ### Models
 
@@ -955,22 +1125,22 @@ are reazon-research's, under the Apache License 2.0.
 ### Use
 
 ```sh
-speech-asr parakeet-tdt_ctc-0.6b-ja-f16.gguf utterance.wav     # the text on stdout
-speech-asr parakeet-tdt-0.6b-v3-f16.gguf utterance.wav
-speech-asr reazonspeech-nemo-v2-f16.gguf meeting.wav            # a recording of minutes, whole
-speech-worker parakeet-tdt_ctc-0.6b-ja-f16.gguf                 # a recognition worker (The worker, above)
-speech-server parakeet-tdt-0.6b-v3-f16.gguf                     # POST /v1/audio/transcriptions
+speech asr parakeet-tdt_ctc-0.6b-ja-f16.gguf utterance.wav     # the text on stdout
+speech asr parakeet-tdt-0.6b-v3-f16.gguf --timestamps utterance.wav
+speech asr reazonspeech-nemo-v2-f16.gguf meeting.wav            # a recording of minutes, whole
+speech worker parakeet-tdt_ctc-0.6b-ja-f16.gguf                 # a recognition worker (The worker protocol 2, above)
+speech serve parakeet-tdt-0.6b-v3-f16.gguf                      # POST /v1/audio/transcriptions
 ```
 
 The models recognize 16 kHz mono audio, to which the library resamples audio at another rate. parakeet-tdt_ctc-0.6b-ja
 and reazonspeech-nemo-v2 recognize `ja`, and parakeet-tdt-0.6b-v3 `bg`, `cs`, `da`, `de`, `el`, `en`, `es`, `et`,
 `fi`, `fr`, `hr`, `hu`, `it`, `lt`, `lv`, `mt`, `nl`, `pl`, `pt`, `ro`, `ru`, `sk`, `sl`, `sv` and `uk`, the languages
 of its model card. None has an input for a language: parakeet-v3 finds the language of the audio itself, as NeMo's
-`transcribe()` runs it, without a prompt. A request's language is therefore only checked against the model's
-(`languageSelectable` false) and changes nothing in the text. For a long recording, prefer reazonspeech-nemo-v2: the
-parakeet models' memory grows with the square of the length. A request of the C API that sets `timestamps` also gets
-the text's tokens and segments with their times in seconds, from the frames the decoding emitted them on, and the
-segments end where the model's file says a sentence ends (Accuracy, below).
+`transcribe()` runs it, without a prompt. A request's language is therefore only checked against the model's (the
+option does not steer) and changes nothing in the text. For a long recording, prefer reazonspeech-nemo-v2: the
+parakeet models' memory grows with the square of the length. A request that sets `timestamps` also gets the text's
+tokens and segments with their times in seconds, from the frames the decoding emitted them on, and the segments end
+where the model's file says a sentence ends (Accuracy, below).
 
 ### Accuracy
 
@@ -1076,7 +1246,7 @@ by default, and the vocabularies of the Japanese models hold `。` and the ASCII
 
 ### Speed
 
-`speech-asr` on an Apple M5 with F16 weights on Metal, after loading: 0.07 s for the 6.36 s utterance, 0.11 s for
+`speech asr` on an Apple M5 with F16 weights on Metal, after loading: 0.07 s for the 6.36 s utterance, 0.11 s for
 the 10.50 s one and 0.28 s for the 25.50 s one. Of the last, the encoder takes 0.20 to 0.26 s, the TDT decoding
 0.07 to 0.08 s (107 steps of the prediction network, about 0.6 ms each on the GPU) and the frontend 13 to 15 ms. On
 the CPU with F32 weights and ggml's default four threads it takes 6.3 s, 0.2 to 0.3 s of it the decoding.

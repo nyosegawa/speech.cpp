@@ -1,0 +1,282 @@
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <filesystem>
+#include <iostream>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <system_error>
+#include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <io.h>
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
+#include "commands.h"
+#include "ggml.h"
+
+// speech tts: speaks the text, or each non-empty line of stdin as a request of its own, into one 16-bit mono WAVE at
+// the model's rate, written as the audio is made so that a player reading stdout starts before the rest is made. In a
+// regular file that the WAVE starts at the beginning of, its RIFF and data sizes are set once the audio is complete;
+// anywhere else (a pipe, a console, a file appended to) they stay 0xFFFFFFFF, as ffmpeg writes them to a pipe. It
+// reports on stderr where the time went: the load, and for each request the first audio, the whole and the real-time
+// factor.
+
+namespace {
+
+using Clock = std::chrono::steady_clock;
+
+double seconds_since(Clock::time_point t0) {
+    return std::chrono::duration<double>(Clock::now() - t0).count();
+}
+
+Failure io_failure(const std::string & message) {
+    return Failure(speech_status_name(SPEECH_ERROR_IO), "", message);
+}
+
+/**
+ * Whether a write at the stream's offset 0 lands at the start of what it holds: a regular file not opened for
+ * appending. Whether fseek() succeeds cannot tell: on a pipe on Windows, MSVC's fseek() returns 0 with an undefined
+ * result, and a header written after it lands at the end of the stream.
+ */
+bool rewritable(FILE * file) {
+#ifdef _WIN32
+    const HANDLE handle = (HANDLE) _get_osfhandle(_fileno(file));
+    return handle != INVALID_HANDLE_VALUE && GetFileType(handle) == FILE_TYPE_DISK;
+#else
+    struct stat st;
+    const int fd = fileno(file);
+    const int flags = fcntl(fd, F_GETFL);
+    return fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && flags >= 0 && !(flags & O_APPEND);
+#endif
+}
+
+/** Writes 16-bit mono PCM as a WAVE stream, converting the samples as the worker does. */
+class WavWriter {
+public:
+    WavWriter(FILE * file, int sample_rate) : file_(file), sample_rate_(sample_rate) {
+        // A WAVE that starts past the file's beginning, after `>>` onto a file with content, has its header
+        // elsewhere than offset 0.
+        rewritable_ = rewritable(file_) && std::ftell(file_) == 0;
+        header(UINT32_MAX, UINT32_MAX);
+    }
+
+    void write(const float * s, size_t n) {
+        pcm_.resize(n);
+        for (size_t i = 0; i < n; i++) pcm_[i] = (int16_t) std::lround(std::max(-1.0f, std::min(1.0f, s[i])) * 32767.0f);
+        put(pcm_.data(), n * sizeof(int16_t));
+        std::fflush(file_);
+        bytes_ += n * sizeof(int16_t);
+    }
+
+    /** Sets the sizes where the header can be written again in place, and flushes. */
+    void finish() {
+        if (bytes_ > UINT32_MAX - 36) throw io_failure("the audio is longer than a WAVE file can hold; speak less text at a time");
+        if (rewritable_) {
+            if (std::fseek(file_, 0, SEEK_SET) != 0 || std::ftell(file_) != 0) throw io_failure("cannot seek back to the WAVE header to set its sizes");
+            header((uint32_t) bytes_ + 36, (uint32_t) bytes_);
+        }
+        if (std::fflush(file_) != 0) throw io_failure("cannot write the WAVE file; check the space left on its disk");
+    }
+
+private:
+    void put(const void * data, size_t n) {
+        if (std::fwrite(data, 1, n, file_) != n) throw io_failure("cannot write the WAVE file; check the space left on its disk");
+    }
+    void put32(uint32_t v) {
+        const uint8_t b[4] = {(uint8_t) v, (uint8_t) (v >> 8), (uint8_t) (v >> 16), (uint8_t) (v >> 24)};
+        put(b, 4);
+    }
+    void put16(uint16_t v) {
+        const uint8_t b[2] = {(uint8_t) v, (uint8_t) (v >> 8)};
+        put(b, 2);
+    }
+    void header(uint32_t riff_size, uint32_t data_size) {
+        put("RIFF", 4);
+        put32(riff_size);
+        put("WAVEfmt ", 8);
+        put32(16);
+        put16(1);
+        put16(1);
+        put32((uint32_t) sample_rate_);
+        put32((uint32_t) sample_rate_ * 2);
+        put16(2);
+        put16(16);
+        put("data", 4);
+        put32(data_size);
+    }
+
+    FILE * file_;
+    int sample_rate_;
+    bool rewritable_ = false;
+    uint64_t bytes_ = 0;
+    std::vector<int16_t> pcm_;
+};
+
+/** The WAVE file named by -o, removed again unless keep() is called, so that a failed run leaves none behind. */
+class Output {
+public:
+    Output(const std::string & path, FILE * out) : path_(path) {
+        if (path == "-") {
+            file_ = out;
+            return;
+        }
+        file_ = ggml_fopen(path.c_str(), "wb");
+        if (!file_) throw io_failure("cannot write " + path + "; check that its folder exists and is writable");
+    }
+    ~Output() {
+        if (path_ == "-") return;
+        std::fclose(file_);
+        if (!kept_) {
+            std::error_code ignored;
+            std::filesystem::remove(std::filesystem::u8path(path_), ignored);
+        }
+    }
+    FILE * file() const { return file_; }
+    void keep() { kept_ = true; }
+
+private:
+    std::string path_;
+    FILE * file_ = nullptr;
+    bool kept_ = false;
+};
+
+/** What the audio callback needs of one request, and the failure to write that stopped it. */
+struct Speaking {
+    WavWriter & wav;
+    Clock::time_point start;
+    double first_audio = -1;
+    std::optional<Failure> failed;
+};
+
+/** Writes the audio; a failure to write stops the request, since no exception may cross the C API. */
+int on_audio(const float * s, size_t n, void * user_data) {
+    Speaking & r = *static_cast<Speaking *>(user_data);
+    if (r.first_audio < 0) r.first_audio = seconds_since(r.start);
+    try {
+        r.wav.write(s, n);
+    } catch (const Failure & e) {
+        r.failed = e;
+        return 1;
+    }
+    return 0;
+}
+
+/** The next line of stdin with text on it, without its line ending or a UTF-8 byte order mark, or false at the end. */
+bool next_line(std::string & line, bool & first) {
+    while (std::getline(std::cin, line)) {
+        if (first && line.compare(0, 3, "\xEF\xBB\xBF") == 0) line.erase(0, 3);
+        first = false;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.find_first_not_of(" \t") != std::string::npos) return true;
+    }
+    return false;
+}
+
+std::string joined(size_t count, const char * (*get)(const speech_model_info *, size_t), const speech_model_info * m) {
+    std::string out;
+    for (size_t i = 0; i < count; i++) out += (i ? ", " : "") + std::string(get(m, i));
+    return out;
+}
+
+int run_tts(const CommandLine & line, FILE * out) {
+    const std::optional<std::string> output = line.value("-o");
+    if (!output) throw UsageError("name the WAVE file to write with -o, or give -o - for stdout");
+    const bool verbose = line.has("-v");
+    const bool from_stdin = line.args.size() == 1;
+
+    const auto t0 = Clock::now();
+    const Model model = load_model(line.args[0], line.loading(false));
+    const ModelInfo info = model_info(model.get());
+    const speech_model_info * m = info.get();
+    std::fprintf(stderr, "load %.2f s: %s on %s\n", seconds_since(t0), speech_model_info_name(m), speech_model_info_device(m));
+    if (verbose) {
+        std::fprintf(stderr, "speech.cpp %s, %d Hz, voices: %s; languages: %s\n", speech_version(), speech_model_info_sample_rate(m),
+                     joined(speech_model_info_voice_count(m), speech_model_info_voice_name, m).c_str(),
+                     joined(speech_model_info_language_count(m), speech_model_info_language, m).c_str());
+    }
+
+    Output file(*output, out);
+    WavWriter wav(file.file(), speech_model_info_sample_rate(m));
+    const double rate = speech_model_info_sample_rate(m);
+    std::string text = from_stdin ? "" : line.args[1];
+    bool first_line = true, model_limit = false;
+    int count = 0;
+    uint64_t samples = 0;
+    double busy = 0;
+    while (from_stdin ? next_line(text, first_line) : count == 0) {
+        count++;
+        const std::string where = from_stdin ? "line " + std::to_string(count) + ": " : std::string();
+        Speaking speaking{wav, Clock::now()};
+        const Request request = new_request(model.get());
+        speech_request * r = request.get();
+        try {
+            check(speech_request_set_text(r, text.c_str()));
+            apply_options(r, line.options);
+            check(speech_synthesize(r, on_audio, &speaking));
+            if (speaking.failed) throw *speaking.failed;
+        } catch (const Failure & e) {
+            throw Failure(e.code(), e.option(), where + e.what());
+        }
+        const speech_result * result = speech_request_result(r);
+        const uint64_t made = speech_result_samples(result);
+        const double total = seconds_since(speaking.start), audio = (double) made / rate;
+        const speech_stop stop = speech_result_stop(result);
+        std::fprintf(stderr, "%s%.2f s of audio: first audio %.3f s, total %.3f s, RTF %.3f", where.c_str(), audio, speaking.first_audio, total,
+                     total / audio);
+        if (verbose) std::fprintf(stderr, ", seed %lld, %s", (long long) speech_result_seed(result), speech_stop_name(stop));
+        std::fprintf(stderr, "\n");
+        if (stop == SPEECH_STOP_MAX_SECONDS) {
+            std::fprintf(stderr, "%sthe speech reached --max-seconds and was stopped there\n", where.c_str());
+        } else if (stop == SPEECH_STOP_MODEL_LIMIT) {
+            std::fprintf(stderr, "%sthe speech reached the longest the model makes and was stopped there\n", where.c_str());
+            model_limit = true;
+        }
+        samples += made;
+        busy += total;
+    }
+    if (count == 0) throw UsageError("stdin held no text; give the text as an argument or pipe lines of text in");
+    wav.finish();
+    file.keep();
+    if (from_stdin) {
+        std::fprintf(stderr, "%d lines, %.2f s of audio in %.3f s, RTF %.3f\n", count, samples / rate, busy, busy / (samples / rate));
+    }
+    return model_limit ? 3 : 0;
+}
+
+}  // namespace
+
+Command tts_command() {
+    Command c;
+    c.name = "tts";
+    c.usage = "tts MODEL -o FILE|- [options] [TEXT]";
+    c.summary = "speak text into a WAVE file";
+    c.description =
+        "Speaks TEXT, or without it each non-empty line of stdin as one request, into one 16-bit mono WAVE at the\n"
+        "model's rate, written as the audio comes; -o - writes it to stdout. A seed applies to every request, and\n"
+        "without one each request draws its own. A text that begins with - follows --. Exits with 3 when a request\n"
+        "stopped at the longest speech the model makes.";
+    c.flags = {
+        {"-o", "FILE", false, "the WAVE file to write, or - for stdout"},
+        add_voice_flag(),
+        device_flag("auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists"),
+        threads_flag(),
+        verbose_flag("also report the model, and each request's seed and stop reason"),
+    };
+    c.request_options = true;
+    c.min_args = 1;
+    c.max_args = 2;
+    c.run = run_tts;
+    return c;
+}

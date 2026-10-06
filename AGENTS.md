@@ -33,23 +33,30 @@ and its check before changing behavior.
   tensors the keys call for.
 - `src/common/` holds what two families use in the same role. Code moves there when a second family needs
   it, not before, and never as a framework for families that do not exist yet.
-- `tools/` holds the programs for users: the worker in `tools/worker/` and the command-line tools in
-  `tools/cli/`, `speech-tts`, which speaks text into a WAVE file or to stdout, and `speech-asr`, which writes the
-  text of WAVE files to stdout, with what they share in `tools/common/`.
-  Every tool reaches the models only through the C API. The worker's protocol is JSON Lines, one JSON object
-  per line on stdin and stdout, and is the contract of every program that starts it, ASIST among them:
-  stdout carries the protocol and nothing else, and every log goes to stderr. Its `ready` message names the model's
-  task, and the requests it takes follow from the task.
+- `tools/` holds `speech`, the one executable for users (docs/adr/0017), with a subcommand per program: `tts`,
+  `asr`, `voice`, `info` and `devices` in `tools/cli/` (with `main.cpp`, which dispatches them), `worker` in
+  `tools/worker/` and `serve` in `tools/server/`, and what they share in `tools/common/`: the one parser of every
+  command line, which makes a flag of each option of the C API's vocabulary, the JSON reader, and the request options
+  read from text or JSON and set through the library's setters. Every subcommand reaches the models only through the
+  C API. The worker's protocol 2 is JSON Lines, one JSON object per line on stdin and stdout, and is the contract of
+  every program that starts it, ASIST among them: stdout carries the protocol and nothing else, every log goes to
+  stderr, and every request gets exactly one terminal message. Its `ready` message carries the protocol's version, the
+  release and the model's information.
 - `checks/` holds one check per ported stage (`*-check.cpp`) that compares the stage with the reference
   dumps, and `speech-api-check`, which runs the C API through the shared library with a synthesis model and,
   with `transcribe`, with a recognition model (`speech-api-recognition.c`), what the two share in
   `speech-api-common.c`. Checks reach into
   `src/` for the stage they check; they are built but not released.
-- `tools/server/` holds `speech-server`, which serves one model over HTTP with OpenAI's audio API
+- `tools/server/` holds `speech serve`, which serves one model over HTTP with OpenAI's audio API
   (`POST /v1/audio/speech` for a synthesis model, `POST /v1/audio/transcriptions` for a recognition model,
   `GET /v1/models`, `GET /health`) for programs that speak HTTP. Like the worker it reaches the model only
-  through the C API; `openai-api.h` reads OpenAI's requests and writes its errors and stream events, and
-  `jobs.h` runs one request at a time in arrival order and cancels the request of a client that goes away.
+  through the C API; `openai-api.cpp` reads OpenAI's requests and writes its errors, mapped from the library's
+  categories alone, and its stream events, and `jobs.h` runs one request at a time in arrival order and cancels the
+  request of a client that goes away.
+- The smoke scripts in `tools/` drive each entry point as its caller does and fail on a defect:
+  `worker_smoke.py` and `worker_recognition_smoke.py` the worker protocol 2 through `worker_client.py`, which checks
+  every line and one terminal message per request, `server_smoke.py` every endpoint and the mapping of errors, and
+  `speech_cli_smoke.py` the command line against the worker.
 - `reference/<model>/` holds, per model, a uv environment that pins the official code, PyTorch and the rest,
   `pins.py`, which pins the checkpoints by revision, the conversion of the official weights to one GGUF file per
   model, and the scripts that run the official implementation to dump reference tensors. Dumps go to
@@ -62,10 +69,10 @@ another one.
 ## Code
 
 - C++17 with ggml as a git submodule and no other dependency, except cpp-httplib's single header, vendored in
-  `vendor/cpp-httplib/` by commit for `speech-server` alone; the library, `libspeech` and the worker never
-  include it (docs/adr/0008). Each tool is one executable with the library and ggml linked in statically, so
-  that a release is one file per tool; the shared library `libspeech` exports the C API and nothing else, for
-  bindings and other programs.
+  `vendor/cpp-httplib/` by commit for `speech serve` and compiled into `speech` with it; the library and `libspeech`
+  never include it (docs/adr/0008, 0017). `speech` has the library and ggml linked in statically, so that a release is
+  one executable beside the shared library `libspeech`, which exports the C API and nothing else, for bindings and
+  other programs.
 - Anything the C API returns is owned by the library, and the header says for how long. A model serves one
   request at a time, and the header says which functions any thread may call.
 - The GGUF layout is this repository's own (docs/adr/0015): one file per model, its codec included, written by
@@ -79,7 +86,8 @@ another one.
   of another type, a tensor the keys do not call for, a layout the reader does not know,
   a text longer than the model takes, a WAVE format that is not understood and a device that does not
   start all throw an `Error` of their kind with a message (`src/common/error.h`), naming the input at fault where
-  there is one; the C API returns each with its category, and the worker reports them as `error` or `fatal`. Nothing
+  there is one; the C API returns each with its category, which every subcommand passes on: the worker as `error` or
+  `fatal`, the server as OpenAI's error by the category alone, and the command line as `speech: <code> (<option>)`. Nothing
   is truncated or moved to another device behind the caller's back, and the library checks what it is given before
   ggml sees it, so that no input makes ggml abort the process.
 - Fix a defect where its cause is, in a form in which it cannot happen, rather than with a guard for the
@@ -93,7 +101,7 @@ another one.
   responsibility with meaningful variation.
 - A file approaching 500 lines calls for a review of its responsibilities; split it when a coherent one
   can be extracted, not to meet a line count.
-- On Windows, a tool reads its command line as UTF-8, sets stdin and stdout to binary, and defines
+- On Windows, `speech` reads its command line as UTF-8, sets stdin and stdout to binary, and defines
   `NOMINMAX` before `windows.h`.
 - A path is a UTF-8 string from the command line to the file. A C stream opens it with `ggml_fopen()` and a
   C++ stream through `std::filesystem::u8path()`: `fopen()` and a stream opened on a `std::string` read the
@@ -148,8 +156,8 @@ settled a choice or turned an approach down for good; if so, the record goes int
 - Build with `cmake -B build && cmake --build build -j`, and run the checks the change touches before
   committing code. A change to the C API or the worker also runs `speech-api-check` and
   `tools/worker_smoke.py` for both synthesis families, and `speech-api-check transcribe` and
-  `tools/worker_recognition_smoke.py` for FastConformer; a change to `speech-tts` runs
-  `tools/speech_tts_smoke.py` for both synthesis families.
+  `tools/worker_recognition_smoke.py` for FastConformer; a change to the server runs `tools/server_smoke.py`, and one
+  to the command line or the parser `tools/speech_cli_smoke.py`, with a model of each family.
 - Never commit on main. Every change reaches main through a pull request, one coherent unit each: a
   model's stage, a fix, a refactor or a documentation change.
 - Commit messages and pull request titles are one English sentence in the imperative, without a prefix
@@ -157,8 +165,9 @@ settled a choice or turned an approach down for good; if so, the record goes int
 - The user merges pull requests, with a squash, once CI passes. An agent merges only when told to.
 - The release's number is written in `VERSION` and nowhere else; CMake reads it, and `speech_version()` and
   the worker's `ready` report it. Versions follow Semantic Versioning: while they are 0.x, a change a caller
-  notices and must adapt to (the worker protocol, the C API, the GGUF layout, a voice file's form, a tool's
-  arguments) raises the minor version, and anything else that is released raises the patch.
+  notices and must adapt to (the worker protocol, the C API, the GGUF layout, a voice file's form, the command
+  line's arguments) raises the minor version, and anything else that is released raises the patch. The worker's
+  protocol has a version of its own, in `ready`, raised when a caller must change to keep working.
 - `VERSION` is raised by a pull request of its own just before a release ("Raise the version to 0.5.0"), to
   the number the changes since the last tag call for; a change does not raise it by itself.
 - The tag `v<VERSION>` builds the release in CI, which refuses a tag that differs from `VERSION`. Releases and
@@ -166,7 +175,10 @@ settled a choice or turned an approach down for good; if so, the record goes int
 - Converted GGUF files go to Hugging Face only with the user's approval, one repository for each upstream
   repository, named after it with `-GGUF` (sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF for
   Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice). A repository holds one file per model and type, the codec inside it, and
-  the licenses of what it holds; its card says that only speech.cpp reads it. A changed file goes up under the
-  same name, and its card's SHA-256 changes with it.
-- When a change alters what a user does or sees (the C API, a tool's arguments, the worker protocol, the
-  GGUF layout), update README.md in the same change.
+  the licenses of what it holds; its card says that only speech.cpp reads it. Beside each GGUF file goes the output
+  of `speech info --json` for it, under the file's name with `.json` added. A changed file goes up under the same
+  name, with its JSON made again, and its card's SHA-256 changes with it.
+- The tag's archives, `speech-<VERSION>-<platform>.zip`, are the ones CI builds and checks on every run; a change to
+  what they hold changes the packaging steps of `.github/workflows/build.yml` and README.md's Binaries together.
+- When a change alters what a user does or sees (the C API, the command line's arguments, the worker protocol, the
+  HTTP server, the GGUF layout), update README.md in the same change.

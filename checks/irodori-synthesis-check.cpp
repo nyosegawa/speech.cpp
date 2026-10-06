@@ -14,30 +14,33 @@
 #include "args.h"
 #include "backend.h"
 #include "compare.h"
-#include "flat-json.h"
 #include "irodori-tts/synthesizer.h"
+#include "json-reader.h"
 #include "npy.h"
 
 using namespace irodori;
 
 namespace {
 
-/** A string member of the dump's meta.json, and the object member `outer` before it when given. */
-std::string meta_string(const std::filesystem::path & dir, const std::string & key, const std::string & outer = "") {
+JsonValue read_meta(const std::filesystem::path & dir) {
     std::ifstream f(dir / "meta.json");
-    const std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    size_t at = json.find("\"" + key + "\"", outer.empty() ? 0 : json.find("\"" + outer + "\""));
-    if (at == std::string::npos) throw std::runtime_error(key + " is missing from " + (dir / "meta.json").u8string());
-    at = json.find('"', json.find(':', at) + 1);
-    return flat_json::parse_string(json, at);
+    return parse_json(std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()));
+}
+
+/** A string member of the dump's meta.json, or of its object member `outer` when given. */
+std::string meta_string(const std::filesystem::path & dir, const std::string & key, const std::string & outer = "") {
+    const JsonValue meta = read_meta(dir);
+    const JsonValue * object = outer.empty() ? &meta : meta.member(outer);
+    const JsonValue * value = object ? object->member(key) : nullptr;
+    if (!value || value->kind != JsonValue::Kind::String) throw std::runtime_error(key + " is missing from " + (dir / "meta.json").u8string());
+    return value->text;
 }
 
 /** A number member of the dump's meta.json, or `absent` when it has none. */
 double meta_number(const std::filesystem::path & dir, const std::string & key, double absent) {
-    std::ifstream f(dir / "meta.json");
-    const std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    const size_t at = json.find("\"" + key + "\"");
-    return at == std::string::npos ? absent : std::stod(json.substr(json.find(':', at) + 1));
+    const JsonValue meta = read_meta(dir);
+    const JsonValue * value = meta.member(key);
+    return value && value->kind == JsonValue::Kind::Number ? std::stod(value->text) : absent;
 }
 
 }  // namespace
