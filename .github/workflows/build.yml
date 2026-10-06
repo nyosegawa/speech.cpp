@@ -7,6 +7,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Each platform's job builds speech, the one executable, and libspeech, and packs them with speech.h into the archive
+# a release publishes, speech-<VERSION>-<platform>.zip, on every run: a pull request shows the archive a tag would
+# release, and the release job publishes the same files. The checks are built to keep them compiling, and released in
+# no archive.
 jobs:
   macos-metal:
     runs-on: macos-15
@@ -18,16 +22,38 @@ jobs:
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_METAL_EMBED_LIBRARY=ON -DGGML_NATIVE=OFF
           cmake --build build --config Release -j 4
-      # The checks are built to keep them compiling, and released in no archive. The shared library goes in under the
-      # name its install name gives, libspeech.<major>.dylib; the release adds the link libspeech.dylib to it.
-      - name: Stage
+      # The shared library goes in under the name its install name gives, libspeech.<major>.dylib, with the link
+      # libspeech.dylib that a program links against; zip -y keeps the link.
+      - name: Package
         run: |
+          archive="speech-$(cat VERSION)-macos-arm64-metal.zip"
           mkdir package
-          cp build/speech-worker build/speech-server build/speech-tts build/speech-asr build/libspeech.*.dylib include/speech.h package/
+          cp build/speech build/libspeech.*.dylib include/speech.h package/
+          (cd package && ln -s libspeech.*.dylib libspeech.dylib && zip -qy "../$archive" *)
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+      # The archive as a user unpacks it: speech runs with the library linked in, the link names the versioned
+      # library, and libspeech exports the C API alone.
+      - name: Check the archive
+        run: |
+          mkdir unpacked
+          cd unpacked
+          unzip -q "../$ARCHIVE"
+          ls -l
+          ./speech --version
+          test "$(readlink libspeech.dylib)" = "$(ls libspeech.*.dylib)"
+          if otool -L speech | grep -q libspeech; then
+            echo "::error::speech needs libspeech; it links the library statically."
+            exit 1
+          fi
+          exported=$(nm -gU libspeech.*.dylib | awk '{print $3}' | grep -v '^_speech_' || true)
+          if [ -n "$exported" ]; then
+            echo "::error::libspeech exports symbols outside the C API: $(echo $exported)."
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
-          name: speech-cpp-macos-arm64-metal
-          path: package/
+          name: speech-macos-arm64-metal
+          path: ${{ env.ARCHIVE }}
 
   windows-vulkan:
     runs-on: windows-2025
@@ -74,14 +100,26 @@ jobs:
           cmake -B build @options -DSPEECH_INSTALLED_GGML=ON "-DCMAKE_PREFIX_PATH=$PWD/ggml-install"
           cmake --build build --config Release -j 4
       # speech.lib is the import library a program links to use speech.dll.
-      - name: Stage
+      - name: Package
         run: |
+          $archive = "speech-$((Get-Content VERSION -TotalCount 1).Trim())-windows-x64-vulkan.zip"
           New-Item -ItemType Directory package
-          Copy-Item build/Release/speech-worker.exe, build/Release/speech-server.exe, build/Release/speech-tts.exe, build/Release/speech-asr.exe, build/Release/speech.dll, build/Release/speech.lib, include/speech.h package/
+          Copy-Item build/Release/speech.exe, build/Release/speech.dll, build/Release/speech.lib, include/speech.h package/
+          Compress-Archive -Path package/* -DestinationPath $archive
+          Add-Content $env:GITHUB_ENV "ARCHIVE=$archive"
+      - name: Check the archive
+        run: |
+          Expand-Archive $env:ARCHIVE unpacked
+          $names = (Get-ChildItem unpacked).Name | Sort-Object
+          Get-ChildItem unpacked
+          if (Compare-Object $names @('speech.dll', 'speech.exe', 'speech.h', 'speech.lib')) {
+            Write-Output "::error::The archive holds $names, not speech.exe, speech.dll, speech.lib and speech.h."
+            exit 1
+          }
       - uses: actions/upload-artifact@v4
         with:
-          name: speech-cpp-windows-x64-vulkan
-          path: package/
+          name: speech-windows-x64-vulkan
+          path: ${{ env.ARCHIVE }}
 
   # Linux x64 twice: with Vulkan, for a GPU of any vendor, and for the CPU alone, which needs no Vulkan loader
   # to start. The binaries are built on the oldest Ubuntu GitHub hosts and run on glibc 2.34 or later
@@ -97,8 +135,6 @@ jobs:
       VULKAN_SHA256: 0f09bf6a0625e346bf004be70b92907e934a4c76606b323441b2baf3a5a0e66d
       # The oldest glibc the binaries run on; the check below fails a build that needs a newer one.
       GLIBC_FLOOR: '2.34'
-      # The programs the archives carry besides libspeech.so and speech.h.
-      TOOLS: speech-worker speech-tts speech-asr speech-server
       # As on Windows, ggml is built once, installed with static libraries, and restored from the cache while
       # its commit, the runner's Ubuntu, the Vulkan SDK, GCC and these options stay the same. libspeech.so
       # links ggml's static libraries, so they are position-independent, and OpenMP is off so that nothing
@@ -143,7 +179,7 @@ jobs:
         run: |
           cmake -B build $CMAKE_OPTIONS -DSPEECH_INSTALLED_GGML=ON "-DCMAKE_PREFIX_PATH=$PWD/ggml-install"
           cmake --build build -j "$(nproc)"
-      # libspeech.so exports the C API alone (src/speech.map). Every file needs no glibc newer than the floor and
+      # libspeech.so exports the C API alone (src/speech.map). Both files need no glibc newer than the floor and
       # no shared library but glibc's and, in the Vulkan build, the Vulkan loader.
       - name: Check the exports and the libraries needed
         run: |
@@ -155,7 +191,7 @@ jobs:
           fi
           allowed='libc.so.6 libm.so.6 ld-linux-x86-64.so.2'
           if [ "$BACKEND" = vulkan ]; then allowed="$allowed libvulkan.so.1"; fi
-          for file in $TOOLS libspeech.so; do
+          for file in speech libspeech.so; do
             newest=$(objdump -T "build/$file" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -Vu | tail -1)
             if [ "$(printf '%s\n' "$newest" "$GLIBC_FLOOR" | sort -V | tail -1)" != "$GLIBC_FLOOR" ]; then
               echo "::error::$file needs glibc $newest, newer than the $GLIBC_FLOOR it must run on. Find the call that needs it with objdump -T."
@@ -170,16 +206,32 @@ jobs:
             echo "$file: glibc $newest, $(readelf -d "build/$file" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | tr '\n' ' ')"
           done
           exit $status
-      - name: Stage
+      # The shared library goes in under its SONAME, libspeech.so.<major>, with the link libspeech.so that a program
+      # links against; zip -y keeps the link.
+      - name: Package
         run: |
+          archive="speech-$(cat VERSION)-linux-x64-$BACKEND.zip"
           mkdir package
-          for tool in $TOOLS; do cp "build/$tool" package/; done
-          # The shared library under its SONAME, libspeech.so.<major>; the release adds the link libspeech.so to it.
-          cp build/libspeech.so.* include/speech.h package/
+          cp build/speech build/libspeech.so.* include/speech.h package/
+          (cd package && ln -s libspeech.so.* libspeech.so && zip -qy "../$archive" *)
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+      # The archive as a user unpacks it. The CPU build, which needs no Vulkan loader, also runs speech.
+      - name: Check the archive
+        run: |
+          mkdir unpacked
+          cd unpacked
+          unzip -q "../$ARCHIVE"
+          ls -l
+          test -x speech
+          test "$(readlink libspeech.so)" = "$(ls libspeech.so.*)"
+          if [ "$BACKEND" = cpu ]; then
+            ./speech --version
+            ./speech devices
+          fi
       - uses: actions/upload-artifact@v4
         with:
-          name: speech-cpp-linux-x64-${{ matrix.backend }}
-          path: package/
+          name: speech-linux-x64-${{ matrix.backend }}
+          path: ${{ env.ARCHIVE }}
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -201,26 +253,16 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
-      - name: Package
+          merge-multiple: true
+      - name: Sum the archives
         run: |
           cd dist
-          # Artifacts lose the executable bit; the Mac and Linux binaries need it back. ASIST bundles the worker
-          # alone, so the worker goes into one archive, and the other tools with libspeech and speech.h into another.
-          # Artifacts also lose links, so the unversioned name a program links against is linked to the versioned
-          # library again, and zip -y keeps the link.
-          for platform in macos-arm64-metal windows-x64-vulkan linux-x64-vulkan linux-x64-cpu; do
-            (cd "speech-cpp-$platform" && chmod +x * && \
-              for lib in $(ls | grep -E '^libspeech\.([0-9]+\.dylib|so\.[0-9]+)$'); do \
-                ln -s "$lib" "$(echo "$lib" | sed -E 's/\.[0-9]+\.dylib$/.dylib/; s/\.so\.[0-9]+$/.so/')"; \
-              done && \
-              zip -q "../speech-worker-${GITHUB_REF_NAME}-$platform.zip" speech-worker* && \
-              zip -qy "../speech-cpp-tools-${GITHUB_REF_NAME}-$platform.zip" $(ls | grep -v '^speech-worker'))
-          done
-          sha256sum *.zip > SHA256SUMS
+          ls -l
+          sha256sum speech-*.zip > SHA256SUMS
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/*.zip dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" --generate-notes \
-            --notes "speech-worker, the other tools and the shared library libspeech with its C API, speech.h, for macOS arm64 (Metal), Windows x64 (Vulkan) and Linux x64 (Vulkan, and the CPU alone; glibc 2.34 or later). The README lists the model families the worker runs and where their converted weights are on Hugging Face."
+            --notes "speech, speech.cpp's one executable (tts, asr, voice, info, devices, serve and worker), and the shared library libspeech with its C API, speech.h, in one archive for each of macOS arm64 (Metal), Windows x64 (Vulkan) and Linux x64 (Vulkan, and the CPU alone; glibc 2.34 or later). The README lists the model families and where their converted weights are on Hugging Face."
