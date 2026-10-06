@@ -107,6 +107,11 @@ add_library(qwen3asr STATIC
     src/families/qwen3-asr/layout.cpp
     src/families/qwen3-asr/frontend.cpp
     src/families/qwen3-asr/encoder.cpp
+    src/families/qwen3-asr/tokenizer.cpp
+    src/families/qwen3-asr/prompt.cpp
+    src/families/qwen3-asr/decoder.cpp
+    src/families/qwen3-asr/transcript.cpp
+    src/families/qwen3-asr/recognizer.cpp
 )
 target_include_directories(qwen3asr PUBLIC src/families)
 target_link_libraries(qwen3asr PUBLIC speechcommon)
@@ -115,16 +120,16 @@ target_link_libraries(qwen3asr PUBLIC speechcommon)
 # libspeech for bindings and other programs. On Windows the two would both write speech.lib, the static one as
 # the library and the shared one as its import library, hence speech-static.
 set(SPEECH_SOURCES src/speech.cpp src/info.cpp src/request.cpp src/qwen3-tts-engine.cpp src/irodori-tts-engine.cpp
-    src/fastconformer-engine.cpp)
+    src/fastconformer-engine.cpp src/qwen3-asr-engine.cpp)
 
 add_library(speech-static STATIC ${SPEECH_SOURCES})
 target_include_directories(speech-static PUBLIC include)
-target_link_libraries(speech-static PUBLIC qwen3tts irodoritts fastconformer)
+target_link_libraries(speech-static PUBLIC qwen3tts irodoritts fastconformer qwen3asr)
 target_compile_definitions(speech-static PRIVATE SPEECH_VERSION="${PROJECT_VERSION}")
 
 add_library(speech SHARED ${SPEECH_SOURCES})
 target_include_directories(speech PUBLIC include)
-target_link_libraries(speech PRIVATE qwen3tts irodoritts fastconformer)
+target_link_libraries(speech PRIVATE qwen3tts irodoritts fastconformer qwen3asr)
 target_compile_definitions(speech PRIVATE SPEECH_BUILD_SHARED SPEECH_VERSION="${PROJECT_VERSION}" INTERFACE SPEECH_SHARED)
 set_target_properties(speech PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 # The shared library's SOVERSION is the C API's major version, which speech.h defines and nothing else repeats.
@@ -224,3 +229,7 @@ foreach(stage frontend encoder)
     add_executable(qwen3-asr-${stage}-check checks/qwen3-asr-${stage}-check.cpp)
     target_link_libraries(qwen3-asr-${stage}-check PRIVATE qwen3asr)
 endforeach()
+# It reads each request's meta.json with the JSON reader of `speech`.
+add_executable(qwen3-asr-decoder-check checks/qwen3-asr-decoder-check.cpp tools/common/json-reader.cpp)
+target_include_directories(qwen3-asr-decoder-check PRIVATE tools/common)
+target_link_libraries(qwen3-asr-decoder-check PRIVATE qwen3asr)

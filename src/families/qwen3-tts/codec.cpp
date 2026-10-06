@@ -6,6 +6,7 @@
 
 #include "error.h"
 #include "ggml-alloc.h"
+#include "graph.h"
 
 /*
  * Activations are channel-first ([channels, time], ne0 = channels), so a linear layer is one matrix
@@ -19,7 +20,7 @@ namespace {
 
 constexpr int kGraphSize = 16384;
 
-struct Graph {
+struct CodecGraph {
     ggml_context * ctx;
     ggml_cgraph * gf;
 
@@ -192,7 +193,7 @@ void CodecDecoder::decode(const int32_t * codes, int n_frames, std::vector<float
     ggml_init_params params = {ggml_tensor_overhead() * kGraphSize + ggml_graph_overhead_custom(kGraphSize, false),
                                nullptr, true};
     ggml_context * ctx = ggml_init(params);
-    Graph g{ctx, ggml_new_graph_custom(ctx, kGraphSize, false)};
+    CodecGraph g{ctx, ggml_new_graph_custom(ctx, kGraphSize, false)};
     const int64_t t = n_frames;
 
     // Residual vector quantization: the first codebook and the other fifteen each have their own projection.
@@ -317,9 +318,11 @@ void CodecDecoder::decode(const int32_t * codes, int n_frames, std::vector<float
     }
     ggml_backend_tensor_set(mask, mask_data.data(), 0, mask_data.size() * sizeof(float));
 
-    if (ggml_backend_graph_compute(backend_, g.gf) != GGML_STATUS_SUCCESS) {
+    try {
+        compute_graph(backend_, g.gf);
+    } catch (...) {
         ggml_free(ctx);
-        throw Error(Fault::Device, std::string("the device ") + ggml_backend_name(backend_) + " failed to compute the codec's graph");
+        throw;
     }
     const size_t base = out.size();
     out.resize(base + ggml_nelements(x));

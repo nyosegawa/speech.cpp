@@ -685,7 +685,10 @@ typedef enum speech_stop {
     SPEECH_STOP_COMPLETE = 0,
     /** The speech reached the request's max_seconds and was stopped there. */
     SPEECH_STOP_MAX_SECONDS = 1,
-    /** The speech reached the longest that the model makes, which its file gives, and was stopped there. */
+    /**
+     * The request reached the most that the model makes, which its file gives, and was stopped there: the longest speech
+     * of a synthesis, or the most tokens a recognition writes, whose text then holds what was written up to it.
+     */
     SPEECH_STOP_MODEL_LIMIT = 2,
     /** speech_request_cancel() or a callback stopped it. */
     SPEECH_STOP_CANCELLED = 3

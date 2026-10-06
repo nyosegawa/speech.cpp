@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
+#include <optional>
 #include <vector>
 
 #include "ggml-alloc.h"
@@ -66,9 +68,11 @@ public:
 
     /**
      * The projector's output for every token of the utterance whose features are `features`, [frames, mels]
-     * row-major, computed a window at a time: [tokens, output_dim] row-major.
+     * row-major, computed a window at a time: [tokens, output_dim] row-major. `keep_going`, when given, hears the
+     * windows done after each, and false stops the encoder there, which then returns none.
      */
-    std::vector<float> encode(const std::vector<float> & features);
+    std::optional<std::vector<float>> encode(const std::vector<float> & features,
+                                             const std::function<bool(size_t windows)> & keep_going = nullptr);
 
     int d_model() const { return d_model_; }
     int output_dim() const { return output_dim_; }

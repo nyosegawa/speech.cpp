@@ -156,15 +156,17 @@ ggml_tensor * Encoder::build(Graph & g, const std::vector<float> & features, con
     return linear(ctx, ggml_gelu_erf(ctx, linear(ctx, x, "proj.1")), "proj.2");
 }
 
-std::vector<float> Encoder::encode(const std::vector<float> & features) {
+std::optional<std::vector<float>> Encoder::encode(const std::vector<float> & features, const std::function<bool(size_t windows)> & keep_going) {
     std::vector<float> out;
-    for (const EncoderWindow & w : windows((int64_t) features.size() / mels_)) {
+    const std::vector<EncoderWindow> all = windows((int64_t) features.size() / mels_);
+    for (size_t i = 0; i < all.size(); i++) {
         Graph g(kGraphSize);
-        ggml_tensor * embeds = build(g, features, w, nullptr);
+        ggml_tensor * embeds = build(g, features, all[i], nullptr);
         g.output(embeds);
         g.compute(backend_, allocr_);
         const std::vector<float> window = Graph::read(embeds);
         out.insert(out.end(), window.begin(), window.end());
+        if (keep_going && !keep_going(i + 1)) return std::nullopt;
     }
     return out;
 }

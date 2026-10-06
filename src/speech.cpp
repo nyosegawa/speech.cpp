@@ -16,6 +16,7 @@
 #include "irodori-tts/layout.h"
 #include "irodori-tts/voice-file.h"
 #include "log.h"
+#include "qwen3-asr/layout.h"
 #include "qwen3-tts/layout.h"
 
 // The C API's versions, statuses and errors, log, devices, load parameters, the table of families, and the models
@@ -32,6 +33,7 @@ const Family families[] = {
     {SPEECH_TASK_SYNTHESIS, qwen3_tts_layout, describe_qwen3_tts, load_qwen3_tts, nullptr},
     {SPEECH_TASK_SYNTHESIS, irodori::model_layout, describe_irodori_tts, load_irodori_tts, irodori::make_voice_file},
     {SPEECH_TASK_RECOGNITION, fastconformer::layout, describe_fastconformer, load_fastconformer, nullptr},
+    {SPEECH_TASK_RECOGNITION, qwen3_asr::layout, describe_qwen3_asr, load_qwen3_asr, nullptr},
 };
 
 thread_local std::string last_error;

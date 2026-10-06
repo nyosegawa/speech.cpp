@@ -161,8 +161,11 @@ repetitions = inspect.getsource(utils.detect_and_fix_repetitions)
 repetition_threshold = inspect.signature(utils.detect_and_fix_repetitions).parameters["threshold"].default
 [repetition_max_period] = [int(n) for n in re.findall(r"def fix_pattern_repeats\(s, thresh, max_len=(\d+)\)", repetitions)]
 assert "text = fix_pattern_repeats(text, threshold)" in repetitions
-NO_SPEECH_LANGUAGE = "None"
-assert f'"{utils._LANG_PREFIX.lower()}{NO_SPEECH_LANGUAGE.lower()}" in meta_lower' in inspect.getsource(utils.parse_asr_output)
+# The text of the output is what follows <asr_text>, stripped, whether the model wrote a language or None for audio
+# without speech, and the whole output when the language was forced; the C++ parses it so, and reports no language.
+for raw, forced, parsed in (("language None<asr_text>", None, ""), ("language None<asr_text> x ", None, "x"),
+                            (" language Japanese<asr_text>\u3000x\n", None, "x"), ("x<asr_text>y", "Japanese", "x<asr_text>y")):
+    assert utils.parse_asr_output(raw, user_language=forced)[1] == parsed, raw
 
 # Greedy decoding to MAX_NEW_TOKENS, stopping at any of the generation configuration's end tokens.
 assert not generation["do_sample"] and generation.get("repetition_penalty", 1.0) == 1.0
@@ -210,6 +213,8 @@ audio_token = tokenizer.audio_token
 before_context, rest = filled.split(CONTEXT_MARK)
 before_audio, after_audio = rest.split(audio_token)
 assert before_audio.endswith(tokenizer.audio_bos_token) and after_audio.startswith(tokenizer.audio_eos_token)
+# The audio's tokens are the added token whose rows of the embeddings the projector's output replaces.
+assert tokenizer.audio_token_id == thinker["audio_token_id"] and tokens[thinker["audio_token_id"]] == audio_token
 asr_text = utils._ASR_TEXT_TAG
 assert asr_text in [tokens[i] for i in added_ids]
 
@@ -291,9 +296,9 @@ w.add_float32(p + "decoder.rope_theta", text["rope_theta"])
 w.add_string(p + "prompt.before_context", before_context)
 w.add_string(p + "prompt.before_audio", before_audio)
 w.add_string(p + "prompt.after_audio", after_audio)
+w.add_string(p + "prompt.audio_token", audio_token)
 w.add_string(p + "prompt.language_prefix", utils._LANG_PREFIX)
 w.add_string(p + "prompt.asr_text", asr_text)
-w.add_string(p + "output.no_speech_language", NO_SPEECH_LANGUAGE)
 w.add_uint32(p + "output.repetition_threshold", repetition_threshold)
 w.add_uint32(p + "output.repetition_max_period", repetition_max_period)
 add_array(p + "generation.eos_ids", eos_ids, GGUFValueType.INT32)

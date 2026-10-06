@@ -41,7 +41,7 @@ SynthesisOutcome Synthesizer::synthesize(const SynthesisRequest & r, const Audio
     {
         Timer t{&st.prompt};
         std::vector<int32_t> text_ids = {ids_.im_start, ids_.assistant, ids_.newline};
-        const std::vector<int32_t> body = tokenizer_.encode(r.text);
+        const std::vector<int32_t> body = naming("text", [&] { return tokenizer_.encode(r.text); });
         if (body.empty()) throw Error(Fault::InvalidArgument, "the text is empty; give a text to speak", "text");
         if ((int) body.size() > max_text_tokens()) {
             throw Error(Fault::OutOfRange, "the text is " + std::to_string(body.size()) + " tokens long and Qwen3-TTS takes at most " +

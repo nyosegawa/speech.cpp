@@ -10,12 +10,13 @@
 namespace qwen3_asr {
 
 /**
- * What qwen-asr's normalize_audio_input() and transformers' Qwen3ASRFeatureExtractor do to an utterance at the
- * model's rate (qwen_asr/inference/utils.py and transformers/models/qwen3_asr/feature_extraction_qwen3_asr.py):
- * samples whose peak exceeds 1 divided by it, an utterance shorter than qwen3-asr.audio.min_samples padded with zeros
- * to it, and Whisper's log-mel: a centred STFT with reflected padding and a periodic Hann window, the power of every
- * frame but the last through a Slaney mel filterbank, its log10 floored at log_floor, floored again at the
- * utterance's largest value less dynamic_range, and shifted by log_offset and divided by log_divisor.
+ * What qwen-asr's normalize_audio_input() and transformers' Qwen3ASRFeatureExtractor do to audio at the model's rate
+ * (qwen_asr/inference/utils.py and transformers/models/qwen3_asr/feature_extraction_qwen3_asr.py): the whole audio's
+ * samples divided by their peak when it exceeds 1 (normalize()), before qwen-asr splits audio too long for the model;
+ * then, for each utterance, one shorter than qwen3-asr.audio.min_samples padded with zeros to it, and Whisper's log-mel
+ * (features()): a centred STFT with reflected padding and a periodic Hann window, the power of every frame but the last
+ * through a Slaney mel filterbank, its log10 floored at log_floor, floored again at the utterance's largest value less
+ * dynamic_range, and shifted by log_offset and divided by log_divisor.
  *
  * It runs on the host in double precision rather than in a ggml graph, as FastConformer's frontend does: it costs a
  * few milliseconds a second of audio, and Metal's matrix kernel rounds its inputs to half precision, which the log
@@ -25,7 +26,12 @@ class Frontend {
 public:
     explicit Frontend(const ModelFile & m);
 
-    /** The features of mono samples at sample_rate(), [frames, mels] row-major (ggml [mels, frames]). */
+    /** Mono samples at sample_rate() divided by their peak when it exceeds 1, and clipped to [-1, 1]. */
+    static std::vector<float> normalize(std::vector<float> samples);
+
+    /**
+     * The features of an utterance of samples that normalize() gave, [frames, mels] row-major (ggml [mels, frames]).
+     */
     std::vector<float> features(const std::vector<float> & samples) const;
 
     /** The frames features() gives for that many samples. */

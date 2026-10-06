@@ -7,3 +7,6 @@
  * `zh-Hant` for `zh`), compared without regard to case as BCP 47 asks.
  */
 bool bcp47_matches(const std::string & tag, const std::string & language);
+
+/** Whether `tag` is "auto" in any case, which leaves the language to the model. */
+bool language_is_auto(const std::string & tag);

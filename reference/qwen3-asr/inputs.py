@@ -45,6 +45,11 @@ INPUTS = {
     "ja_jp-12677001980660723842-cut": {
         "config": "ja_jp", "files": ["12677001980660723842.wav"], "start": 0.6, "seconds": 0.9, "language": "Japanese",
         "prompt": "群島、湖、ヨット"},
+    # The 0.6 s before the speech of the first input begins, near silence (an RMS of 1e-4 in 0.1 s windows), in which
+    # the 0.6B model hears no language and writes "language None", and the 1.7B model a Chinese filler.
+    "ja_jp-12677001980660723842-silence": {
+        "config": "ja_jp", "files": ["12677001980660723842.wav"], "start": 0.0, "seconds": 0.6, "language": "Japanese",
+        "prompt": "群島、湖、ヨット"},
     # 1338.42 s, which qwen-asr splits near 1200 s; dumped only to its split and its text. Where the split falls does
     # not depend on the model, and the 1.7B model in float32 takes about 17 GB and over an hour for it on an Apple M5,
     # so only the 0.6B model runs it.

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "engine.h"
+#include "error.h"
 #include "qwen3-tts/codec.h"
 #include "qwen3-tts/synthesizer.h"
 
@@ -53,7 +54,9 @@ private:
 /** The tokens of a text as the synthesis counts them against its limit. */
 struct TokenCounter {
     explicit TokenCounter(const ModelFile & m) : tokenizer(m, kTextTokenizer) {}
-    size_t count(const std::string & text) const { return tokenizer.encode(text).size(); }
+    size_t count(const std::string & text) const {
+        return naming("text", [&] { return tokenizer.encode(text); }).size();
+    }
     Qwen2Tokenizer tokenizer;
 };
 

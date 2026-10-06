@@ -46,12 +46,17 @@ int64_t Frontend::frames(size_t samples) const {
     return (int64_t) std::max(samples, (size_t) min_samples_) / hop_;
 }
 
-std::vector<float> Frontend::features(const std::vector<float> & samples) const {
+std::vector<float> Frontend::normalize(std::vector<float> samples) {
     // float_range_normalize() divides in float32 by a peak above 1, then clips to [-1, 1].
     float peak = 0;
     for (float s : samples) peak = std::max(peak, std::fabs(s));
+    for (float & s : samples) s = std::clamp(peak > 1.0f ? s / peak : s, -1.0f, 1.0f);
+    return samples;
+}
+
+std::vector<float> Frontend::features(const std::vector<float> & samples) const {
     std::vector<float> x(std::max(samples.size(), (size_t) min_samples_), 0.0f);
-    for (size_t i = 0; i < samples.size(); i++) x[i] = std::clamp(peak > 1.0f ? samples[i] / peak : samples[i], -1.0f, 1.0f);
+    std::copy(samples.begin(), samples.end(), x.begin());
 
     const int64_t frames = this->frames(samples.size()), n = (int64_t) x.size();
     const int bins = n_fft_ / 2 + 1;

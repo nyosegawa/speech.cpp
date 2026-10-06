@@ -108,7 +108,7 @@ int main(int argc, char ** argv) {
                 print_diff("  projector output", projector);
 
                 const auto start = std::chrono::steady_clock::now();
-                const std::vector<float> encoded = encoder.encode(features.f32);
+                const std::vector<float> encoded = *encoder.encode(features.f32);
                 const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
                 const Diff whole = compare(encoded, embeds.f32);
                 print_diff("  encode()", whole);

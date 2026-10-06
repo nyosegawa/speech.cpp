@@ -82,7 +82,7 @@ std::vector<uint32_t> decode_utf8(const std::string & s) {
     for (size_t i = 0; i < s.size();) {
         bool whole;
         const size_t len = utf8_sequence(s, i, whole);
-        if (!whole) throw Error(Fault::InvalidArgument, "the text is not valid UTF-8", "text");
+        if (!whole) throw Error(Fault::InvalidArgument, "the text to tokenize is not valid UTF-8; give UTF-8");
         out.push_back(code_point(s, i, len));
         i += len;
     }
