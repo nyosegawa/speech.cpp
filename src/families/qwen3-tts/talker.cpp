@@ -15,34 +15,6 @@ struct GraphCtx {
     ggml_cgraph * gf;
 };
 
-/** The keys and values of every layer of one stack for `capacity` positions, [kv heads * head dim, capacity] each. */
-struct Talker::Cache {
-    ggml_context * ctx = nullptr;
-    ggml_backend_buffer_t buffer = nullptr;
-    std::vector<ggml_tensor *> k, v;
-    int64_t capacity = 0;
-
-    Cache(ggml_backend_t backend, ggml_type type, const DecoderShape & s, int64_t positions) : capacity(positions) {
-        ggml_init_params params = {ggml_tensor_overhead() * (2 * s.n_layer + 1), nullptr, true};
-        ctx = ggml_init(params);
-        for (int l = 0; l < s.n_layer; l++) {
-            k.push_back(ggml_new_tensor_2d(ctx, type, (int64_t) s.n_kv_head * s.head_dim, positions));
-            v.push_back(ggml_new_tensor_2d(ctx, type, (int64_t) s.n_kv_head * s.head_dim, positions));
-        }
-        buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
-        if (!buffer) {
-            ggml_free(ctx);
-            throw std::runtime_error("cannot allocate a key/value cache of " + std::to_string(positions) + " positions");
-        }
-    }
-    ~Cache() {
-        ggml_backend_buffer_free(buffer);
-        ggml_free(ctx);
-    }
-    Cache(const Cache &) = delete;
-    Cache & operator=(const Cache &) = delete;
-};
-
 namespace {
 
 constexpr int kGraphSize = 8192;
@@ -52,6 +24,14 @@ constexpr int kGraphSize = 8192;
  * (20 s of speech), and doubling as the speech grows.
  */
 constexpr int64_t kCacheStep = 256;
+
+/**
+ * A cache holds a multiple of this many positions, so that every row of its transposed values starts on 32 bytes in
+ * half precision, as ggml aligns a tensor. Metal's matrix-vector product reads a row four values at a time whenever
+ * its length is a multiple of four, whatever the stride between rows, and a row that does not start on four bytes
+ * reads the wrong values: a cache of 85 positions puts the talker's logits 42% off on Metal.
+ */
+constexpr int64_t kCacheAlign = 16;
 
 int64_t round_up(int64_t n, int64_t step) {
     return (n + step - 1) / step * step;
@@ -85,6 +65,56 @@ ggml_tensor * input_i32(ggml_context * ctx, int64_t n) {
 
 }  // namespace
 
+/**
+ * The keys and values of every layer of one stack for `capacity` positions: the keys a row per position,
+ * [kv heads * head dim, capacity], and the values transposed, a row per channel, [capacity, kv heads * head dim].
+ * A step's attention reads both through views, the keys as [head dim, positions, kv heads] and the values as
+ * [positions, head dim, kv heads], the operands of its two matrix products, so it reads the cache once and copies
+ * none of it. Values kept a row per position need a copy into that layout at every step, with which a step of the 1.7B
+ * talker 8192 frames into its speech took 205 ms instead of 28 on Metal and 259 instead of 40 on the CPU of an Apple M5
+ * (2026-10-06). ggml_flash_attn_ext reads values a row per position, but it gains at most 3 ms a step there on Metal
+ * and takes two to four times as long as the two products on the CPU, where it also sums the values in half precision.
+ */
+struct Talker::Cache {
+    ggml_context * ctx = nullptr;
+    ggml_backend_buffer_t buffer = nullptr;
+    std::vector<ggml_tensor *> k, v;
+    int64_t capacity = 0;
+
+    /** A cache with room for `positions` positions, room(positions) in all. */
+    Cache(ggml_backend_t backend, ggml_type type, const DecoderShape & s, int64_t positions) : capacity(room(positions)) {
+        ggml_init_params params = {ggml_tensor_overhead() * (2 * s.n_layer + 1), nullptr, true};
+        ctx = ggml_init(params);
+        for (int l = 0; l < s.n_layer; l++) {
+            k.push_back(ggml_new_tensor_2d(ctx, type, (int64_t) s.n_kv_head * s.head_dim, capacity));
+            v.push_back(ggml_new_tensor_2d(ctx, type, capacity, (int64_t) s.n_kv_head * s.head_dim));
+        }
+        buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
+        if (!buffer) {
+            ggml_free(ctx);
+            throw std::runtime_error("cannot allocate a key/value cache of " + std::to_string(capacity) + " positions");
+        }
+    }
+    ~Cache() {
+        ggml_backend_buffer_free(buffer);
+        ggml_free(ctx);
+    }
+    Cache(const Cache &) = delete;
+    Cache & operator=(const Cache &) = delete;
+
+    /** The positions a cache made for `positions` holds: `positions` rounded up to a multiple of kCacheAlign. */
+    static int64_t room(int64_t positions) { return round_up(positions, kCacheAlign); }
+
+    /** The keys of layer `l` at positions [from, from + n), [kv dim, n]. */
+    ggml_tensor * keys(ggml_context * c, int l, int64_t from, int64_t n) const {
+        return ggml_view_2d(c, k[l], k[l]->ne[0], n, k[l]->nb[1], from * k[l]->nb[1]);
+    }
+    /** The values of layer `l` at positions [from, from + n), [n, kv dim]. */
+    ggml_tensor * values(ggml_context * c, int l, int64_t from, int64_t n) const {
+        return ggml_view_2d(c, v[l], n, v[l]->ne[1], v[l]->nb[1], from * v[l]->nb[0]);
+    }
+};
+
 Talker::Talker(const ModelFile & m, ggml_backend_t backend) : backend_(backend), m_(m) {
     talker_ = read_shape(m, "qwen3-tts.talker");
     cp_ = read_shape(m, "qwen3-tts.code_predictor");
@@ -105,16 +135,14 @@ int64_t Talker::cache_capacity() const {
     return cache_ ? cache_->capacity : 0;
 }
 
-void Talker::resize_cache(int64_t capacity) {
-    auto next = std::make_unique<Cache>(backend_, GGML_TYPE_F16, talker_, capacity);
+void Talker::resize_cache(int64_t positions) {
+    auto next = std::make_unique<Cache>(backend_, GGML_TYPE_F16, talker_, positions);
     if (n_past_ > 0) {
         // The positions so far are copied on the device, layer by layer, into the new buffer.
         GraphCtx g = new_graph();
         for (int l = 0; l < talker_.n_layer; l++) {
-            for (auto [from, to] : {std::make_pair(cache_->k[l], next->k[l]), std::make_pair(cache_->v[l], next->v[l])}) {
-                ggml_build_forward_expand(g.gf, ggml_cpy(g.ctx, ggml_view_2d(g.ctx, from, from->ne[0], n_past_, from->nb[1], 0),
-                                                         ggml_view_2d(g.ctx, to, to->ne[0], n_past_, to->nb[1], 0)));
-            }
+            ggml_build_forward_expand(g.gf, ggml_cpy(g.ctx, cache_->keys(g.ctx, l, 0, n_past_), next->keys(g.ctx, l, 0, n_past_)));
+            ggml_build_forward_expand(g.gf, ggml_cpy(g.ctx, cache_->values(g.ctx, l, 0, n_past_), next->values(g.ctx, l, 0, n_past_)));
         }
         const bool computed = ggml_gallocr_alloc_graph(allocr_, g.gf) && ggml_backend_graph_compute(backend_, g.gf) == GGML_STATUS_SUCCESS;
         ggml_free(g.ctx);
@@ -140,17 +168,17 @@ ggml_tensor * Talker::run_stack(GraphCtx & g, const std::string & prefix, const 
         q = ggml_rope_ext(ctx, q, pos, nullptr, s.head_dim, GGML_ROPE_TYPE_NEOX, 0, s.rope_theta, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
         k = ggml_rope_ext(ctx, k, pos, nullptr, s.head_dim, GGML_ROPE_TYPE_NEOX, 0, s.rope_theta, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
 
+        ggml_build_forward_expand(g.gf, ggml_cpy(ctx, ggml_reshape_2d(ctx, k, kv_dim, n_tokens), cache.keys(ctx, l, n_past, n_tokens)));
+        ggml_build_forward_expand(g.gf, ggml_cpy(ctx, ggml_transpose(ctx, v), cache.values(ctx, l, n_past, n_tokens)));
+
         ggml_tensor * kc = cache.k[l];
         ggml_tensor * vc = cache.v[l];
-        ggml_build_forward_expand(g.gf, ggml_cpy(ctx, ggml_reshape_2d(ctx, k, kv_dim, n_tokens),
-                                                 ggml_view_2d(ctx, kc, kv_dim, n_tokens, kc->nb[1], n_past * kc->nb[1])));
-        ggml_build_forward_expand(g.gf, ggml_cpy(ctx, v, ggml_view_2d(ctx, vc, kv_dim, n_tokens, vc->nb[1], n_past * vc->nb[1])));
-
         ggml_tensor * keys = ggml_view_3d(ctx, kc, s.head_dim, s.n_kv_head, n_kv, ggml_row_size(kc->type, s.head_dim), kc->nb[1], 0);
-        ggml_tensor * vals = ggml_view_3d(ctx, vc, s.head_dim, s.n_kv_head, n_kv, ggml_row_size(vc->type, s.head_dim), vc->nb[1], 0);
-        ggml_tensor * kh = ggml_cont(ctx, ggml_permute(ctx, keys, 0, 2, 1, 3));
-        ggml_tensor * vt = ggml_cont(ctx, ggml_permute(ctx, vals, 1, 2, 0, 3));
-        ggml_tensor * qh = ggml_cont(ctx, ggml_permute(ctx, q, 0, 2, 1, 3));
+        ggml_tensor * kh = ggml_permute(ctx, keys, 0, 2, 1, 3);
+        ggml_tensor * vt = ggml_view_3d(ctx, vc, n_kv, s.head_dim, s.n_kv_head, vc->nb[1], s.head_dim * vc->nb[1], 0);
+        // The query is a permuted view like the keys: Vulkan multiplies the keys by a single token in place only when
+        // both are permuted alike, and otherwise copies the keys into a contiguous tensor first.
+        ggml_tensor * qh = ggml_permute(ctx, q, 0, 2, 1, 3);
         ggml_tensor * kq = ggml_mul_mat(ctx, kh, qh);
         kq = ggml_soft_max_ext(ctx, kq, mask, 1.0f / std::sqrt((float) s.head_dim), 0.0f);
         ggml_tensor * kqv = ggml_mul_mat(ctx, vt, kq);
@@ -209,7 +237,7 @@ void Talker::prefill(const std::vector<float> & embeds, int n, int64_t positions
     n_past_ = 0;
     // A cache that a long utterance grew is given back, so that a model holds what its current utterance needs.
     const int64_t start = std::min(positions, round_up(n + kCacheStep, kCacheStep));
-    if (cache_capacity() != start) resize_cache(start);
+    if (cache_capacity() != Cache::room(start)) resize_cache(start);
     run_talker(&embeds, nullptr, nullptr, n);
 }
 
