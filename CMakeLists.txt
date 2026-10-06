@@ -106,6 +106,7 @@ target_link_libraries(fastconformer PUBLIC speechcommon)
 add_library(qwen3asr STATIC
     src/families/qwen3-asr/layout.cpp
     src/families/qwen3-asr/frontend.cpp
+    src/families/qwen3-asr/encoder.cpp
 )
 target_include_directories(qwen3asr PUBLIC src/families)
 target_link_libraries(qwen3asr PUBLIC speechcommon)
@@ -219,7 +220,7 @@ foreach(stage frontend encoder transducer times)
 endforeach()
 
 # The checks of Qwen3-ASR's stages.
-foreach(stage frontend)
+foreach(stage frontend encoder)
     add_executable(qwen3-asr-${stage}-check checks/qwen3-asr-${stage}-check.cpp)
     target_link_libraries(qwen3-asr-${stage}-check PRIVATE qwen3asr)
 endforeach()
