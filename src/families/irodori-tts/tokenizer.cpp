@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <stdexcept>
 
+#include "error.h"
+
 namespace irodori {
 
 namespace {
@@ -30,7 +32,7 @@ Tokenizer::Tokenizer(const ModelFile & m) {
     added_ = m.i32_array("irodori-tts.tokenizer.added_ids");
     bos_ = (int32_t) m.u32("irodori-tts.tokenizer.bos_id");
     unknown_ = (int32_t) m.u32("irodori-tts.tokenizer.unknown_id");
-    if (scores_.size() != tokens_.size()) throw std::runtime_error("the tokenizer has a score for each token");
+    if (scores_.size() != tokens_.size()) throw Error(Fault::File, m.path() + ": the tokenizer does not have a score for each token");
     double lowest = 0;
     for (size_t i = 0; i < tokens_.size(); i++) {
         ids_.emplace(tokens_[i], (int32_t) i);
@@ -42,7 +44,7 @@ Tokenizer::Tokenizer(const ModelFile & m) {
         char name[8];
         std::snprintf(name, sizeof name, "<0x%02X>", b);
         const auto it = ids_.find(name);
-        if (it == ids_.end()) throw std::runtime_error(std::string("the tokenizer has no byte token ") + name);
+        if (it == ids_.end()) throw Error(Fault::File, m.path() + ": the tokenizer has no byte token " + name);
         bytes_[b] = it->second;
     }
 }

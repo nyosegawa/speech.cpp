@@ -2,6 +2,8 @@
 
 #include <stdexcept>
 
+#include "error.h"
+
 #include "layout.h"
 
 namespace fastconformer {
@@ -18,7 +20,7 @@ Recognizer::Recognizer(const std::string & path, ggml_backend_t backend)
       separators_(model_.str_array("fastconformer.segment.separators")),
       breaks_(model_.str_array("fastconformer.segment.breaks")),
       allocr_(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))) {
-    if (!allocr_) throw std::runtime_error("cannot create a graph allocator");
+    if (!allocr_) throw Error(Fault::OutOfMemory, "cannot create a graph allocator");
 }
 
 Recognizer::~Recognizer() {

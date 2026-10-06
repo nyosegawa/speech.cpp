@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include "error.h"
 #include "language.h"
 
 namespace {
@@ -39,8 +40,8 @@ PromptIds::PromptIds(const ModelFile & m) {
 }
 
 size_t PromptIds::voice(const std::string & name) const {
-    const auto it = std::find(voices.begin(), voices.end(), lower(name));
-    if (it == voices.end()) throw std::runtime_error("unknown speaker: " + name);
+    const auto it = std::find(voices.begin(), voices.end(), name);
+    if (it == voices.end()) throw Error(Fault::OutOfRange, "Qwen3-TTS has no voice named \"" + name + "\"", "voice");
     return (size_t) (it - voices.begin());
 }
 
@@ -53,7 +54,7 @@ int32_t PromptIds::language_id(const std::string & tag, size_t voice) const {
         if (language < 0) {
             std::string list;
             for (const std::string & l : languages) list += (list.empty() ? "" : ", ") + l;
-            throw std::runtime_error("Qwen3-TTS speaks " + list + ", not " + tag);
+            throw Error(Fault::OutOfRange, "Qwen3-TTS speaks " + list + ", not " + tag, "language");
         }
     }
     // The official prompt gives a voice with a dialect its dialect when the language is Chinese or auto.
@@ -65,7 +66,7 @@ Prompt build_prompt(Talker & talker, const PromptIds & ids, const std::vector<in
                     const std::string & voice, const std::string & language) {
     const size_t n_text_ids = text_ids.size();
     // The template's 3 leading tokens are the role, and its 5 trailing ones close it and open the answer.
-    if (n_text_ids < 9) throw std::runtime_error("the text is empty");
+    if (n_text_ids < 9) throw Error(Fault::InvalidArgument, "the text is empty; give a text to speak", "text");
     const int h = talker.hidden();
 
     const size_t v = ids.voice(voice);

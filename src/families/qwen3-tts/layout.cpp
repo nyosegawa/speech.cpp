@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "codec.h"
+#include "error.h"
 
 namespace {
 
@@ -14,7 +15,7 @@ const std::initializer_list<const char *> kDecoderLayer = {"attn_norm", "ffn_nor
                                                            "attn_q_norm", "attn_k_norm", "ffn_gate", "ffn_up", "ffn_down"};
 
 void require(bool condition, const ModelFile & m, const std::string & what) {
-    if (!condition) throw std::runtime_error(m.path() + ": " + what + "; " + m.remedy());
+    if (!condition) throw Error(Fault::File, m.path() + ": " + what + "; " + m.remedy());
 }
 
 void read_stack(const ModelFile & m, const std::string & prefix) {

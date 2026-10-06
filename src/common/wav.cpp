@@ -8,6 +8,8 @@
 #include <fstream>
 #include <stdexcept>
 
+#include "error.h"
+
 namespace {
 
 constexpr uint16_t kFormatPcm = 1, kFormatFloat = 3, kFormatExtensible = 0xFFFE;
@@ -30,7 +32,7 @@ std::vector<float> Wav::mono() const {
 
 Wav read_wav(const std::string & path) {
     std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
-    if (!f) throw std::runtime_error("cannot open " + path);
+    if (!f) throw Error(Fault::Io, "cannot open " + path + "; check the path and that the file can be read");
     return parse_wav(std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()), path);
 }
 
@@ -38,7 +40,7 @@ Wav parse_wav(const std::string & file, const std::string & path) {
     const auto * bytes = reinterpret_cast<const uint8_t *>(file.data());
     const size_t size_of_file = file.size();
     if (size_of_file < 12 || std::memcmp(bytes, "RIFF", 4) != 0 || std::memcmp(bytes + 8, "WAVE", 4) != 0) {
-        throw std::runtime_error(path + " is not a WAVE file");
+        throw Error(Fault::File, path + " is not a WAVE file");
     }
     uint16_t format = 0, bits = 0;
     Wav wav;
@@ -47,7 +49,7 @@ Wav parse_wav(const std::string & file, const std::string & path) {
     for (size_t at = 12; at + 8 <= size_of_file;) {
         const uint8_t * chunk = bytes + at;
         const size_t size = u32(chunk + 4);
-        if (at + 8 + size > size_of_file) throw std::runtime_error(path + " ends inside a chunk");
+        if (at + 8 + size > size_of_file) throw Error(Fault::File, path + " ends inside a chunk");
         if (std::memcmp(chunk, "fmt ", 4) == 0 && size >= 16) {
             format = u16(chunk + 8);
             wav.channels = u16(chunk + 10);
@@ -60,11 +62,11 @@ Wav parse_wav(const std::string & file, const std::string & path) {
         }
         at += 8 + size + (size & 1);
     }
-    if (!data || wav.channels == 0) throw std::runtime_error(path + " has no format or no data");
+    if (!data || wav.channels == 0) throw Error(Fault::File, path + " has no format or no data");
     const bool pcm = format == kFormatPcm && (bits == 16 || bits == 24 || bits == 32);
     const bool ieee = format == kFormatFloat && bits == 32;
     if (!pcm && !ieee) {
-        throw std::runtime_error(path + " is neither 16-, 24- or 32-bit PCM nor 32-bit float WAVE (format " +
+        throw Error(Fault::File, path + " is neither 16-, 24- or 32-bit PCM nor 32-bit float WAVE (format " +
                                  std::to_string(format) + ", " + std::to_string(bits) + " bits)");
     }
     const size_t width = bits / 8, n = data_size / width;
@@ -88,7 +90,7 @@ Wav parse_wav(const std::string & file, const std::string & path) {
 
 void write_wav(const std::string & path, const std::vector<float> & pcm, int rate) {
     std::ofstream f(std::filesystem::u8path(path), std::ios::binary);
-    if (!f) throw std::runtime_error("cannot write " + path);
+    if (!f) throw Error(Fault::Io, "cannot write " + path);
     const uint32_t data_size = (uint32_t) pcm.size() * 2;
     auto put32 = [&](uint32_t v) { f.write((const char *) &v, 4); };
     auto put16 = [&](uint16_t v) { f.write((const char *) &v, 2); };

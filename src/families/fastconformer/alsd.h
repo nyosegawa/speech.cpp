@@ -29,7 +29,7 @@ class AlsdDecoder : public Decoder {
 public:
     AlsdDecoder(const ModelFile & m, const PredictionNetwork & prediction, const Joint & joint);
 
-    Decoding decode(const std::vector<float> & projected, ggml_backend_t backend) const override;
+    Decoding decode(const std::vector<float> & projected, ggml_backend_t backend, const DecodingProgress & progress) const override;
 
     int blank() const override { return blank_; }
 

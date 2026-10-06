@@ -4,6 +4,7 @@
 #include <map>
 #include <stdexcept>
 
+#include "error.h"
 #include "ggml-alloc.h"
 
 /*
@@ -83,7 +84,7 @@ struct Graph {
             ggml_build_forward_expand(gf, first);
             keep(ggml_view_2d(ctx, second, out * stride, 1, second->nb[1], (t - 1) * second->nb[1]), state);
         } else if (k_width != stride) {
-            throw std::runtime_error("a transposed convolution of width other than s or 2s is not supported");
+            throw Error(Fault::File, "a transposed convolution of the codec has a width other than its stride or twice it, which this reader does not run");
         }
         return ggml_add(ctx, ggml_reshape_2d(ctx, first, out, stride * t), b);
     }
@@ -102,6 +103,13 @@ struct Graph {
 
 }  // namespace
 
+int codec_samples_per_frame(const ModelFile & m) {
+    int samples = 1;
+    for (int r : m.i32_array("qwen3-tts.codec.upsample_rates")) samples *= r;
+    for (int r : m.i32_array("qwen3-tts.codec.upsampling_ratios")) samples *= r;
+    return samples;
+}
+
 CodecDecoder::CodecDecoder(const ModelFile & m, ggml_backend_t backend) : backend_(backend), m_(m) {
     const std::string p = "qwen3-tts.codec.";
     sample_rate_ = (int) m.u32("speech.sample_rate");
@@ -117,9 +125,7 @@ CodecDecoder::CodecDecoder(const ModelFile & m, ggml_backend_t backend) : backen
     rope_theta_ = m.f32(p + "rope_theta");
     upsample_rates_ = m.i32_array(p + "upsample_rates");
     upsampling_ratios_ = m.i32_array(p + "upsampling_ratios");
-    samples_per_frame_ = 1;
-    for (int r : upsample_rates_) samples_per_frame_ *= r;
-    for (int r : upsampling_ratios_) samples_per_frame_ *= r;
+    samples_per_frame_ = codec_samples_per_frame(m);
 
     const size_t n_states = 1 + 2 * n_layer_ + upsampling_ratios_.size() + 2 + upsample_rates_.size() * (1 + kCodecResidualUnits);
     ggml_init_params params = {ggml_tensor_overhead() * (n_states + 8), nullptr, true};
@@ -153,7 +159,7 @@ CodecDecoder::CodecDecoder(const ModelFile & m, ggml_backend_t backend) : backen
     state_tensor("dec.out", out_conv->ne[0], out_conv->ne[2] - 1);
 
     state_buffer_ = ggml_backend_alloc_ctx_tensors(state_ctx_, backend_);
-    if (!state_buffer_) throw std::runtime_error("cannot allocate the codec state");
+    if (!state_buffer_) throw Error(Fault::OutOfMemory, "cannot allocate the codec's state");
     allocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
     reset();
 }
@@ -289,7 +295,7 @@ void CodecDecoder::decode(const int32_t * codes, int n_frames, std::vector<float
 
     if (!ggml_gallocr_alloc_graph(allocr_, g.gf)) {
         ggml_free(ctx);
-        throw std::runtime_error("cannot allocate the codec graph");
+        throw Error(Fault::OutOfMemory, "cannot allocate the memory of the codec's graph on the device");
     }
 
     std::vector<int32_t> column(t);
@@ -315,7 +321,7 @@ void CodecDecoder::decode(const int32_t * codes, int n_frames, std::vector<float
 
     if (ggml_backend_graph_compute(backend_, g.gf) != GGML_STATUS_SUCCESS) {
         ggml_free(ctx);
-        throw std::runtime_error("the codec graph failed to compute");
+        throw Error(Fault::Device, std::string("the device ") + ggml_backend_name(backend_) + " failed to compute the codec's graph");
     }
     const size_t base = out.size();
     out.resize(base + ggml_nelements(x));

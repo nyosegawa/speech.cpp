@@ -1,6 +1,7 @@
 #include "sampler.h"
 
 #include <cmath>
+#include <cstdint>
 #include <random>
 
 namespace irodori {
@@ -12,10 +13,10 @@ namespace {
  * vectorized path can round the last bit of a few points differently; dit_t in the dumps shows the times
  * the official run used.)
  */
-std::vector<float> linspace(float start, float end, int n) {
-    std::vector<float> out(n);
+std::vector<float> linspace(float start, float end, int64_t n) {
+    std::vector<float> out((size_t) n);
     const float step = (end - start) / (float) (n - 1);
-    for (int i = 0; i < n; i++) out[i] = i < n / 2 ? start + step * (float) i : end - step * (float) (n - i - 1);
+    for (int64_t i = 0; i < n; i++) out[(size_t) i] = i < n / 2 ? start + step * (float) i : end - step * (float) (n - i - 1);
     return out;
 }
 
@@ -37,9 +38,9 @@ Sampler::~Sampler() {
 }
 
 std::vector<float> Sampler::schedule(int steps) const {
-    if (dit_.meanflow()) return linspace(1.0f, 0.0f, steps + 1);
+    if (dit_.meanflow()) return linspace(1.0f, 0.0f, (int64_t) steps + 1);
     // RF starts just short of pure noise.
-    std::vector<float> t = linspace(0.0f, 1.0f, steps + 1);
+    std::vector<float> t = linspace(0.0f, 1.0f, (int64_t) steps + 1);
     for (float & v : t) v = (1.0f - v) * 0.999f;
     return t;
 }
@@ -63,14 +64,15 @@ std::vector<float> Sampler::velocity(const Conditions & c, const std::vector<flo
 }
 
 std::vector<float> Sampler::sample(const Conditions & c, std::vector<float> x, int frames, int steps,
-                                   const std::function<bool()> & cancelled) {
+                                   const std::function<bool(double done)> & progress) {
     const std::vector<float> times = schedule(steps);
     for (int i = 0; i < steps; i++) {
-        if (cancelled && cancelled()) return {};
+        if (progress && !progress((double) i / steps)) return {};
         const std::vector<float> v = velocity(c, x, frames, times[i], times[i + 1]);
         const float dt = times[i + 1] - times[i];
         for (size_t j = 0; j < x.size(); j++) x[j] = x[j] + v[j] * dt;
     }
+    if (progress && !progress(1)) return {};
     return x;
 }
 

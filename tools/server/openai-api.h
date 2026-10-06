@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iterator>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
@@ -41,13 +42,13 @@ inline std::string error_json(const ApiError & e) {
     return "{\"error\":" + error_object(e) + "}";
 }
 
-/** A create speech request as read from its JSON body. */
+/** A create speech request as read from its JSON body; a number left out is one the request does not set. */
 struct SpeechRequest {
     std::string input, voice, language;
     std::string format = "wav";
     bool sse = false;
     uint64_t seed = 0;
-    double speed, seconds, duration_scale;
+    std::optional<double> speed, seconds, duration_scale;
 };
 
 /**
@@ -86,9 +87,9 @@ inline SpeechRequest read_request(const std::string & body, const std::string & 
         }
         return it->second.text;
     };
-    auto number = [&](const char * key, double absent) {
+    auto number = [&](const char * key) -> std::optional<double> {
         const auto it = json.find(key);
-        if (it == json.end()) return absent;
+        if (it == json.end()) return std::nullopt;
         char * end = nullptr;
         const double v = std::strtod(it->second.text.c_str(), &end);
         if (it->second.kind != FlatValue::NUMBER || *end != '\0' || !std::isfinite(v)) {
@@ -122,7 +123,8 @@ inline SpeechRequest read_request(const std::string & body, const std::string & 
     }
     const auto seed = json.find("seed");
     if (seed == json.end()) {
-        r.seed = std::random_device{}() * 0x100000000ull + std::random_device{}();
+        // The library takes a seed from 0 to 2^53 - 1, the integers a JSON reader in JavaScript holds exactly.
+        r.seed = (std::random_device{}() * 0x100000000ull + std::random_device{}()) & ((1ull << 53) - 1);
     } else {
         const std::string & t = seed->second.text;
         const bool digits = seed->second.kind == FlatValue::NUMBER && !t.empty() &&
@@ -130,13 +132,12 @@ inline SpeechRequest read_request(const std::string & body, const std::string & 
         errno = 0;
         r.seed = digits ? std::strtoull(t.c_str(), nullptr, 10) : 0;
         if (!digits || errno == ERANGE) {
-            throw ApiError{400, "\"seed\" is " + json_string(t) + "; give an integer from 0 to 18446744073709551615.", "seed", "invalid_type"};
+            throw ApiError{400, "\"seed\" is " + json_string(t) + "; give an integer from 0 to 9007199254740991.", "seed", "invalid_type"};
         }
     }
-    const speech_request defaults = speech_request_default();
-    r.speed = number("speed", defaults.speed);
-    r.seconds = number("seconds", defaults.seconds);
-    r.duration_scale = number("duration_scale", defaults.duration_scale);
+    r.speed = number("speed");
+    r.seconds = number("seconds");
+    r.duration_scale = number("duration_scale");
     return r;
 }
 

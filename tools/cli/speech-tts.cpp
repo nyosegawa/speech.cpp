@@ -26,6 +26,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -46,6 +47,7 @@
 #include "args.h"
 #include "ggml.h"
 #include "list-devices.h"
+#include "load-model.h"
 #include "speech.h"
 #include "take-stdout.h"
 
@@ -116,7 +118,7 @@ struct Options {
     std::vector<std::pair<std::string, std::string>> voices;
     bool has_seed = false;
     uint64_t seed = 0;
-    speech_request request = speech_request_default();
+    std::optional<double> speed, seconds, duration_scale;
 };
 
 Options parse_options(const std::vector<std::string> & a, size_t first) {
@@ -160,11 +162,11 @@ Options parse_options(const std::vector<std::string> & a, size_t first) {
             if (eq == std::string::npos || eq == 0) throw UsageError("--voice takes NAME=FILE, not \"" + voice + "\"");
             o.voices.push_back({voice.substr(0, eq), voice.substr(eq + 1)});
         } else if (key == "--speed") {
-            o.request.speed = real_number(key, value());
+            o.speed = real_number(key, value());
         } else if (key == "--seconds") {
-            o.request.seconds = real_number(key, value());
+            o.seconds = real_number(key, value());
         } else if (key == "--duration-scale") {
-            o.request.duration_scale = real_number(key, value());
+            o.duration_scale = real_number(key, value());
         } else {
             throw UsageError("unknown option " + key);
         }
@@ -284,40 +286,59 @@ private:
 int make_voice(const std::vector<std::string> & a) {
     const Options o = parse_options(a, 2);
     if (o.positional.size() != 3) throw UsageError("make-voice takes <model.gguf> <reference.wav> <voice.gguf>");
-    if (o.has_output || o.has_seed || !o.voice.empty() || !o.language.empty() || !o.voices.empty() || o.steps || o.request.speed != 1 ||
-        o.request.seconds != 0 || o.request.duration_scale != 1) {
+    if (o.has_output || o.has_seed || !o.voice.empty() || !o.language.empty() || !o.voices.empty() || o.steps || o.speed || o.seconds ||
+        o.duration_scale) {
         throw UsageError("make-voice takes no option but --device and -v");
     }
-    speech_model_params params = speech_model_default_params();
-    params.model_path = o.positional[0].c_str();
-    params.device = o.device.c_str();
+    speech_load_params * raw = nullptr;
+    if (speech_load_params_new(&raw) != SPEECH_OK) throw_last_error();
+    const std::unique_ptr<speech_load_params, decltype(&speech_load_params_free)> params(raw, speech_load_params_free);
+    if (!o.device.empty() && speech_load_params_set_device(params.get(), o.device.c_str()) != SPEECH_OK) throw_last_error();
     const auto t0 = Clock::now();
-    if (speech_make_voice(&params, o.positional[1].c_str(), o.positional[2].c_str()) != SPEECH_OK) {
-        throw std::runtime_error(speech_last_error());
+    if (speech_voice_make(o.positional[0].c_str(), o.positional[1].c_str(), o.positional[2].c_str(), params.get()) != SPEECH_OK) {
+        throw_last_error();
     }
     std::fprintf(stderr, "wrote %s in %.2f s\n", o.positional[2].c_str(), seconds_since(t0));
     return 0;
 }
 
-std::string joined(size_t count, const char * (*get)(const speech_model *, size_t), const speech_model * m) {
+std::string joined(size_t count, const char * (*get)(const speech_model_info *, size_t), const speech_model_info * m) {
     std::string out;
     for (size_t i = 0; i < count; i++) out += (i ? ", " : "") + std::string(get(m, i));
     return out;
 }
 
 /** The voice to speak with: the one named, or the model's only one. */
-std::string choose_voice(const speech_model * m, const std::string & named) {
-    const size_t n = speech_model_voice_count(m);
-    const std::string voices = joined(n, speech_model_voice, m);
+std::string choose_voice(const speech_model_info * m, const std::string & named) {
+    const size_t n = speech_model_info_voice_count(m);
+    const std::string voices = joined(n, speech_model_info_voice_name, m);
     if (named.empty()) {
-        if (n == 1) return speech_model_voice(m, 0);
-        throw UsageError(std::string(speech_model_name(m)) + " has " + std::to_string(n) +
+        if (n == 1) return speech_model_info_voice_name(m, 0);
+        throw UsageError(std::string(speech_model_info_name(m)) + " has " + std::to_string(n) +
                          " voices; choose one with --voice-name: " + voices);
     }
     for (size_t i = 0; i < n; i++) {
-        if (named == speech_model_voice(m, i)) return named;
+        if (named == speech_model_info_voice_name(m, i)) return named;
     }
-    throw UsageError(std::string(speech_model_name(m)) + " has no voice named \"" + named + "\"; its voices are " + voices);
+    throw UsageError(std::string(speech_model_info_name(m)) + " has no voice named \"" + named + "\"; its voices are " + voices);
+}
+
+/** A request of the text and the options of the command line, with its seed; what the model refuses throws. */
+std::unique_ptr<speech_request, decltype(&speech_request_free)> make_request(speech_model * model, const Options & o, const std::string & text,
+                                                                             const std::string & voice, uint64_t seed) {
+    speech_request * raw = nullptr;
+    if (speech_request_new(model, &raw) != SPEECH_OK) throw_last_error();
+    std::unique_ptr<speech_request, decltype(&speech_request_free)> r(raw, speech_request_free);
+    if (speech_request_set_text(raw, text.c_str()) != SPEECH_OK) throw_last_error();
+    if (speech_request_set_string(raw, SPEECH_OPT_VOICE, voice.c_str()) != SPEECH_OK) throw_last_error();
+    if (!o.language.empty() && speech_request_set_string(raw, SPEECH_OPT_LANGUAGE, o.language.c_str()) != SPEECH_OK) throw_last_error();
+    if (speech_request_set_int(raw, SPEECH_OPT_SEED, (int64_t) seed) != SPEECH_OK) throw_last_error();
+    if (o.steps > 0 && speech_request_set_int(raw, SPEECH_OPT_STEPS, o.steps) != SPEECH_OK) throw_last_error();
+    if (o.speed && speech_request_set_float(raw, SPEECH_OPT_SPEED, *o.speed) != SPEECH_OK) throw_last_error();
+    // A length of 0 leaves it to the model.
+    if (o.seconds.value_or(0) != 0 && speech_request_set_float(raw, SPEECH_OPT_SECONDS, *o.seconds) != SPEECH_OK) throw_last_error();
+    if (o.duration_scale && speech_request_set_float(raw, SPEECH_OPT_DURATION_SCALE, *o.duration_scale) != SPEECH_OK) throw_last_error();
+    return r;
 }
 
 /** What the audio callback needs of one text. */
@@ -330,7 +351,6 @@ struct Speaking {
 
 int on_audio(const float * s, size_t n, void * user_data) {
     Speaking & r = *static_cast<Speaking *>(user_data);
-    if (n == 0) return 0;
     if (r.first_audio < 0) r.first_audio = seconds_since(r.start);
     r.wav.write(s, n);
     r.samples += n;
@@ -356,48 +376,46 @@ int speak(const std::vector<std::string> & a, FILE * out) {
     const bool from_stdin = o.positional.size() == 1;
     const uint64_t first_seed = o.has_seed ? o.seed : std::random_device{}();
 
-    std::vector<speech_voice_source> voices;
-    for (const auto & [name, path] : o.voices) voices.push_back({name.c_str(), path.c_str()});
-    speech_model_params params = speech_model_default_params();
-    params.model_path = o.positional[0].c_str();
-    params.device = o.device.c_str();
-    params.voices = voices.data();
-    params.n_voices = voices.size();
-    params.steps = o.steps;
-    speech_model * model = nullptr;
     auto t0 = Clock::now();
-    if (speech_model_load(&params, &model) != SPEECH_OK) throw std::runtime_error(speech_last_error());
-    std::unique_ptr<speech_model, decltype(&speech_model_free)> owned(model, speech_model_free);
-    std::fprintf(stderr, "load %.2f s: %s on %s\n", seconds_since(t0), speech_model_name(model), speech_model_backend(model));
+    const Model model = load_model(o.positional[0], o.device, o.voices);
+    const ModelInfo info = model_info(model.get());
+    const speech_model_info * m = info.get();
+    std::fprintf(stderr, "load %.2f s: %s on %s\n", seconds_since(t0), speech_model_info_name(m), speech_model_info_device(m));
+    if (o.steps > 0 && !speech_model_info_takes(m, SPEECH_OPT_STEPS)) {
+        throw std::runtime_error(std::string(speech_model_info_name(m)) + " has no sampler steps; leave --steps out");
+    }
     if (o.verbose) {
-        std::fprintf(stderr, "speech.cpp %s, %d Hz, voices: %s; languages: %s",
-                     speech_version(), speech_model_sample_rate(model),
-                     joined(speech_model_voice_count(model), speech_model_voice, model).c_str(),
-                     joined(speech_model_language_count(model), speech_model_language, model).c_str());
-        if (speech_model_steps(model) > 0) std::fprintf(stderr, "; %d steps", speech_model_steps(model));
+        std::fprintf(stderr, "speech.cpp %s, %d Hz, voices: %s; languages: %s", speech_version(), speech_model_info_sample_rate(m),
+                     joined(speech_model_info_voice_count(m), speech_model_info_voice_name, m).c_str(),
+                     joined(speech_model_info_language_count(m), speech_model_info_language, m).c_str());
+        const int64_t steps = steps_in_effect(m, o.steps);
+        if (steps > 0) std::fprintf(stderr, "; %lld steps", (long long) steps);
         std::fprintf(stderr, "\n");
     }
-    const std::string voice = choose_voice(model, o.voice);
+    const std::string voice = choose_voice(m, o.voice);
 
     Output output(o.output, out);
-    WavWriter wav(output.file(), speech_model_sample_rate(model));
-    const double rate = speech_model_sample_rate(model);
+    WavWriter wav(output.file(), speech_model_info_sample_rate(m));
+    const double rate = speech_model_info_sample_rate(m);
     std::string text = from_stdin ? "" : o.positional[1];
     bool first_line = true;
     int count = 0;
     size_t samples = 0;
     double busy = 0;
     while (from_stdin ? next_line(text, first_line) : count == 0) {
-        speech_request r = o.request;
-        r.text = text.c_str();
-        r.voice = voice.c_str();
-        r.language = o.language.c_str();
-        r.seed = first_seed + count;
+        const uint64_t seed = first_seed + count;
         count++;
-        if (o.verbose) std::fprintf(stderr, "%d: seed %llu: %s\n", count, (unsigned long long) r.seed, text.c_str());
+        const std::string line = from_stdin ? "line " + std::to_string(count) + ": " : std::string();
+        if (o.verbose) std::fprintf(stderr, "%d: seed %llu: %s\n", count, (unsigned long long) seed, text.c_str());
         Speaking speaking{wav, Clock::now()};
-        if (speech_synthesize(model, &r, on_audio, &speaking) != SPEECH_OK) {
-            throw std::runtime_error((from_stdin ? "line " + std::to_string(count) + ": " : std::string()) + speech_last_error());
+        try {
+            const auto r = make_request(model.get(), o, text, voice, seed);
+            if (speech_synthesize(r.get(), on_audio, &speaking) != SPEECH_OK) throw_last_error();
+            if (speech_result_stop(speech_request_result(r.get())) == SPEECH_STOP_MODEL_LIMIT) {
+                std::fprintf(stderr, "%sthe speech reached the longest the model makes and was stopped there\n", line.c_str());
+            }
+        } catch (const std::exception & e) {
+            throw std::runtime_error(line + e.what());
         }
         const double total = seconds_since(speaking.start), audio = speaking.samples / rate;
         std::fprintf(stderr, "%s%.2f s of audio: first audio %.3f s, total %.3f s, RTF %.3f\n",

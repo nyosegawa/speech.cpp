@@ -5,13 +5,14 @@
 #include <vector>
 
 #include "codec.h"
+#include "error.h"
 
 namespace irodori {
 
 namespace {
 
 void require(bool condition, const ModelFile & m, const std::string & what) {
-    if (!condition) throw std::runtime_error(m.path() + ": " + what + "; " + m.remedy());
+    if (!condition) throw Error(Fault::File, m.path() + ": " + what + "; " + m.remedy());
 }
 
 /** The residual units of a codec block, "<prefix>res.<j>." each. */

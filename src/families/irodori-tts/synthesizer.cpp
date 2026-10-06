@@ -8,7 +8,7 @@
 #include <fstream>
 #include <stdexcept>
 
-#include "gguf.h"
+#include "error.h"
 #include "layout.h"
 #include "text-normalizer.h"
 
@@ -25,20 +25,10 @@ struct Timer {
 
 bool starts_with_riff(const std::string & path) {
     std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
-    if (!f) throw std::runtime_error("cannot open " + path);
+    if (!f) throw Error(Fault::Io, "cannot open " + path + "; check the path and that the file can be read");
     char magic[4] = {};
     f.read(magic, 4);
     return std::memcmp(magic, "RIFF", 4) == 0;
-}
-
-/** The kind of device `backend` runs on, as a voice file names it. */
-std::string device_kind(ggml_backend_t backend) {
-    switch (ggml_backend_dev_type(ggml_backend_get_device(backend))) {
-        case GGML_BACKEND_DEVICE_TYPE_CPU: return "cpu";
-        case GGML_BACKEND_DEVICE_TYPE_GPU: return "gpu";
-        case GGML_BACKEND_DEVICE_TYPE_IGPU: return "igpu";
-        default: throw std::runtime_error(std::string("the device ") + ggml_backend_name(backend) + " is of a kind a voice file cannot name");
-    }
 }
 
 }  // namespace
@@ -99,52 +89,21 @@ Voice Synthesizer::voice_from_latent(std::vector<float> latent) {
 
 Voice Synthesizer::load_voice(const std::string & path) {
     if (starts_with_riff(path)) {
-        EncodedReference reference = encode_reference(codec_, path, reference_);
-        Voice v = voice_from_latent(std::move(reference.latent));
-        v.reference_seconds = reference.seconds;
-        v.reference_sample_rate = reference.sample_rate;
-        v.device_kind = device_kind(backend_);
-        return v;
+        return voice_from_latent(encode_reference(codec_, path, reference_).latent);
     }
     ModelFile file(path, backend_, voice_layout);
     const std::string codec = file.str("irodori-tts-voice.codec_sha256");
     if (codec != codec_.sha256()) {
-        throw std::runtime_error(path + " was made with the codec of SHA-256 " + codec + ", and " + model_->str("general.name") +
-                                 " has the codec " + codec_.sha256() + "; make the voice again from its WAVE file with this model");
+        throw Error(Fault::InvalidArgument, path + " was made with the codec of SHA-256 " + codec + ", and " + model_->str("general.name") +
+                                                " has the codec " + codec_.sha256() + "; make the voice again from its WAVE file with this model");
     }
     ggml_tensor * t = file.tensor("latent");
     if (t->type != GGML_TYPE_F32 || t->ne[0] != codec_.latent_dim() || ggml_n_dims(t) > 2) {
-        throw std::runtime_error(path + " holds no latent of " + std::to_string(codec_.latent_dim()) + " channels in float32; " + file.remedy());
+        throw Error(Fault::File, path + " holds no latent of " + std::to_string(codec_.latent_dim()) + " channels in float32; " + file.remedy());
     }
     std::vector<float> latent(ggml_nelements(t));
     ggml_backend_tensor_get(t, latent.data(), 0, ggml_nbytes(t));
-    Voice v = voice_from_latent(std::move(latent));
-    v.reference_seconds = file.f32("irodori-tts-voice.reference_seconds");
-    v.reference_sample_rate = (int) file.u32("irodori-tts-voice.reference_sample_rate");
-    v.device_kind = file.str("irodori-tts-voice.device_kind");
-    return v;
-}
-
-void Synthesizer::save_voice(const Voice & voice, const std::string & path) const {
-    const size_t bytes = voice.latent.size() * sizeof(float);
-    ggml_init_params params = {ggml_tensor_overhead() + bytes + 64, nullptr, false};
-    ggml_context * ctx = ggml_init(params);
-    ggml_tensor * t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, codec_.latent_dim(), voice.frames);
-    ggml_set_name(t, "latent");
-    std::memcpy(t->data, voice.latent.data(), bytes);
-    gguf_context * g = gguf_init_empty();
-    gguf_set_val_str(g, "general.architecture", voice_layout.architecture);
-    gguf_set_val_u32(g, "speech.layout", voice_layout.version);
-    gguf_set_val_str(g, "speech.requires", kVoiceLayoutRequires);
-    gguf_set_val_str(g, "irodori-tts-voice.codec_sha256", codec_.sha256().c_str());
-    gguf_set_val_f32(g, "irodori-tts-voice.reference_seconds", (float) voice.reference_seconds);
-    gguf_set_val_u32(g, "irodori-tts-voice.reference_sample_rate", (uint32_t) voice.reference_sample_rate);
-    gguf_set_val_str(g, "irodori-tts-voice.device_kind", voice.device_kind.c_str());
-    gguf_add_tensor(g, t);
-    const bool written = gguf_write_to_file(g, path.c_str(), false);
-    gguf_free(g);
-    ggml_free(ctx);
-    if (!written) throw std::runtime_error("cannot write " + path);
+    return voice_from_latent(std::move(latent));
 }
 
 size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const AudioSink & sink, Stats * stats) {
@@ -158,12 +117,13 @@ size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
     {
         Timer t{st.text};
         const std::string text = normalize_text(r.text);
-        if (text.empty()) throw std::runtime_error("the text is empty after normalization");
+        if (text.empty()) throw Error(Fault::InvalidArgument, "the text is empty after normalization; give a text to speak", "text");
         const std::vector<int32_t> ids = tokenizer_.encode(text);
         tokens = (int) ids.size();
         if (tokens > text_.max_tokens()) {
-            throw std::runtime_error("the text is " + std::to_string(tokens) + " tokens long and Irodori-TTS takes at most " +
-                                     std::to_string(text_.max_tokens()) + "; split it into sentences");
+            throw Error(Fault::OutOfRange, "the text is " + std::to_string(tokens) + " tokens long and Irodori-TTS takes at most " +
+                                               std::to_string(text_.max_tokens()) + "; split it into sentences",
+                        "text");
         }
         Graph g;
         ggml_tensor * state = text_.build(g, ids);
@@ -191,7 +151,7 @@ size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
                                      std::to_string(frames));
         }
         x = sampler_.sample(c, r.noise.empty() ? gaussian_noise(r.seed, n) : r.noise, frames, r.steps > 0 ? r.steps : sampler_.default_steps(),
-                            r.cancelled);
+                            r.progress);
     }
     if (x.empty()) return 0;
     const int flat = tail_.flattening_point(x, frames, codec_.latent_dim());

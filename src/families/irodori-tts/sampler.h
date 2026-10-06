@@ -26,11 +26,12 @@ public:
     std::vector<float> schedule(int steps) const;
 
     /**
-     * The latent, row-major [frames, latent_dim], reached from `noise` in `steps` steps, or an empty one once
-     * `cancelled`, asked before each step, answers true.
+     * The latent, row-major [frames, latent_dim], reached from `noise` in `steps` steps. `progress`, when given, is
+     * told the fraction of the steps done before each step and once the last is done, and an empty latent comes back
+     * once it answers false.
      */
     std::vector<float> sample(const Conditions & c, std::vector<float> noise, int frames, int steps,
-                              const std::function<bool()> & cancelled = {});
+                              const std::function<bool(double done)> & progress = {});
 
     /** The velocity of one step; for RF with guidance, `branches` receives each branch's output. */
     std::vector<float> velocity(const Conditions & c, const std::vector<float> & x, int frames, float t, float t_next,

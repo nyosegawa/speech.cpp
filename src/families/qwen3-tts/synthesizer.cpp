@@ -5,7 +5,12 @@
 #include <random>
 #include <stdexcept>
 
+#include "error.h"
 #include "layout.h"
+
+int text_token_limit(const ModelFile & m) {
+    return (int) m.u32("qwen3-tts.talker.max_position_embeddings") - (int) m.u32("qwen3-tts.generation.max_frames") - kPromptRows;
+}
 
 Synthesizer::Synthesizer(const std::string & path, ggml_backend_t backend)
     : model_(path, backend, qwen3_tts_layout),
@@ -28,8 +33,8 @@ struct Timer {
 
 }  // namespace
 
-int Synthesizer::synthesize(const SynthesisRequest & r, const AudioSink & sink, int frames_per_piece,
-                            SynthesisStats * stats) {
+SynthesisOutcome Synthesizer::synthesize(const SynthesisRequest & r, const AudioSink & sink, int frames_per_piece,
+                                         SynthesisStats * stats) {
     SynthesisStats local;
     SynthesisStats & st = stats ? *stats : local;
     Prompt prompt;
@@ -37,10 +42,11 @@ int Synthesizer::synthesize(const SynthesisRequest & r, const AudioSink & sink, 
         Timer t{&st.prompt};
         std::vector<int32_t> text_ids = {ids_.im_start, ids_.assistant, ids_.newline};
         const std::vector<int32_t> body = tokenizer_.encode(r.text);
-        if (body.empty()) throw std::runtime_error("the text is empty");
+        if (body.empty()) throw Error(Fault::InvalidArgument, "the text is empty; give a text to speak", "text");
         if ((int) body.size() > max_text_tokens()) {
-            throw std::runtime_error("the text is " + std::to_string(body.size()) + " tokens long and Qwen3-TTS takes at most " +
-                                     std::to_string(max_text_tokens()) + "; split it into shorter texts");
+            throw Error(Fault::OutOfRange, "the text is " + std::to_string(body.size()) + " tokens long and Qwen3-TTS takes at most " +
+                                               std::to_string(max_text_tokens()) + "; split it into shorter texts",
+                        "text");
         }
         text_ids.insert(text_ids.end(), body.begin(), body.end());
         text_ids.insert(text_ids.end(), {ids_.im_end, ids_.newline, ids_.im_start, ids_.assistant, ids_.newline});
@@ -62,7 +68,7 @@ int Synthesizer::synthesize(const SynthesisRequest & r, const AudioSink & sink, 
     std::vector<int32_t> history, frame(n_groups), pending;
     std::vector<float> audio;
     int frames = 0, pending_frames = 0;
-    bool stopped = false;
+    bool stopped = false, ended = false;
 
     auto flush = [&]() {
         if (pending_frames == 0) return;
@@ -78,7 +84,10 @@ int Synthesizer::synthesize(const SynthesisRequest & r, const AudioSink & sink, 
 
     while (frames < max_frames && !stopped) {
         frame[0] = sample(talker_.logits(), generation_.talker, history, generation_.banned(vocab, ids_.codec_eos, frames), rng);
-        if (frame[0] == ids_.codec_eos) break;
+        if (frame[0] == ids_.codec_eos) {
+            ended = true;
+            break;
+        }
         history.push_back(frame[0]);
         {
             Timer t{&st.code_predictor};
@@ -96,5 +105,5 @@ int Synthesizer::synthesize(const SynthesisRequest & r, const AudioSink & sink, 
         talker_.step(frame.data(), prompt.frame_extra);
     }
     if (!stopped) flush();
-    return frames;
+    return {frames, ended};
 }

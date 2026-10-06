@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <initializer_list>
 #include <memory>
 #include <string>
@@ -32,20 +33,26 @@ struct Layout {
 std::string gguf_architecture(const std::string & path);
 
 /**
- * A GGUF file of a known layout whose tensors live in one backend buffer, and whose metadata stays readable. A key
- * is read by its exact type: one that is missing or of another type throws with a message naming it, where ggml's
- * own getters would abort the process.
+ * A GGUF file of a known layout whose metadata stays readable and whose tensors, all of them or those a reader asks
+ * for, live in one backend buffer. A key is read by its exact type: one that is missing or of another type throws
+ * with a message naming it, where ggml's own getters would abort the process. Every failure throws an Error: Io for
+ * a file that cannot be opened or read, File for one whose content this release cannot use.
  */
 class ModelFile {
 public:
     /**
      * Opens the file, checks its architecture and layout against `layout` and its tensors against the ones its keys
-     * call for, a tensor missing or one not called for included, and only then loads the tensors onto `backend`.
+     * call for, a tensor missing or one not called for included, and only then loads the tensors onto `backend`:
+     * every tensor, or those whose names `keep` accepts.
      */
-    ModelFile(const std::string & path, ggml_backend_t backend, const Layout & layout);
+    ModelFile(const std::string & path, ggml_backend_t backend, const Layout & layout,
+              const std::function<bool(const std::string & name)> & keep = {});
+    /** Opens and checks the file as above and loads no tensor, for a reader of its metadata alone. */
+    ModelFile(const std::string & path, const Layout & layout);
     ModelFile(const ModelFile &) = delete;
     ModelFile & operator=(const ModelFile &) = delete;
 
+    /** A loaded tensor; one the file does not hold or that was not loaded throws. */
     ggml_tensor * tensor(const std::string & name) const;
 
     uint32_t u32(const std::string & key) const;
@@ -61,19 +68,36 @@ public:
     const std::string & path() const { return path_; }
     /** The layout's remedy, for a message about the file that a family's reader throws. */
     const std::string & remedy() const { return remedy_; }
+    uint32_t layout_version() const { return version_; }
+
+    /** The size of the file in bytes. */
+    uint64_t file_bytes() const;
+    /** The bytes of every tensor the file holds, as it stores them. */
+    uint64_t weight_bytes() const;
+    /** The number of metadata entries, the key of the one at `index`, and its value as JSON text. */
+    size_t meta_count() const;
+    std::string meta_key(size_t index) const;
+    std::string meta_json(size_t index) const;
 
 private:
+    /** Opens and checks the file, which both constructors do. */
+    void open(const Layout & layout);
     /** The key's id, once it is known to have `type` and, for an array, `element`. */
     int64_t key_id(const std::string & key, gguf_type type, gguf_type element = GGUF_TYPE_COUNT) const;
     /** "layout 1 of qwen3-tts", or the architecture alone while the layout is not yet read. */
     std::string layout_name() const;
     void check_tensors(const Layout & layout) const;
-    void load(ggml_backend_t backend);
+    void load(ggml_backend_t backend, const std::function<bool(const std::string & name)> & keep);
 
     std::string path_, architecture_, remedy_;
     uint32_t version_ = 0;
     std::unique_ptr<gguf_context, decltype(&gguf_free)> gguf_{nullptr, gguf_free};
+    /** The shapes and types of every tensor of the file, which ggml reads with its metadata. */
     std::unique_ptr<ggml_context, decltype(&ggml_free)> ctx_{nullptr, ggml_free};
+    /** The copies of the tensors a reader keeps, when it keeps only some. */
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> kept_{nullptr, ggml_free};
+    /** The context of the loaded tensors: ctx_, kept_, or none for a reader of the metadata alone. */
+    ggml_context * loaded_ = nullptr;
     std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)> buffer_{nullptr, ggml_backend_buffer_free};
 };
 

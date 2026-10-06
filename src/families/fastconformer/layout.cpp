@@ -4,12 +4,13 @@
 #include <string>
 #include <vector>
 
+#include "error.h"
 namespace fastconformer {
 
 namespace {
 
 void require(bool condition, const ModelFile & m, const std::string & what) {
-    if (!condition) throw std::runtime_error(m.path() + ": " + what + "; " + m.remedy());
+    if (!condition) throw Error(Fault::File, m.path() + ": " + what + "; " + m.remedy());
 }
 
 /** Reads every key of the layout, checks the ones that must agree, and names the tensors they call for. */

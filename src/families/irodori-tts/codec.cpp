@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include "error.h"
+
 namespace irodori {
 
 /*
@@ -128,7 +130,7 @@ std::vector<float> Codec::encode(const std::vector<float> & audio, int window) {
     std::vector<float> padded = audio;
     if (remainder) {
         // torch's reflect padding, which repeats the samples before the last one in reverse.
-        if (hop_ - remainder >= length) throw std::runtime_error("the reference is shorter than one codec frame");
+        if (hop_ - remainder >= length) throw Error(Fault::OutOfRange, "the reference is shorter than one frame of the codec");
         for (int64_t i = 0; i < hop_ - remainder; i++) padded.push_back(audio[length - 2 - i]);
     }
     const int64_t frames = (int64_t) padded.size() / hop_;

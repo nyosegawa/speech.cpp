@@ -1,76 +1,160 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "ggml-backend.h"
+#include "model-file.h"
 #include "speech.h"
 
+/** A value of an option, the alternative of its speech_type: a string, an integer, a number or a boolean. */
+using OptionValue = std::variant<std::string, int64_t, double, bool>;
+
+/** The largest seed, 2^53 - 1: the integers a JSON reader in JavaScript holds exactly. */
+constexpr int64_t kMaxSeed = (int64_t(1) << 53) - 1;
+
 /**
- * What a family reads of speech_model_params, copied out of the caller's memory. src/speech.cpp has already refused
- * what the family does not take, so a family reads only its own fields.
+ * One option a family takes, as its table declares it: whether a request must set it, whether its value steers the
+ * model or is only checked, its default, and the range of a number, its minimum excluded where `minimum_exclusive`
+ * says so. The choices of a string option are the model's voices or languages, which the information holds.
  */
-struct EngineOptions {
-    std::string model;
-    std::vector<std::pair<std::string, std::string>> voices;
-    int steps = 0;
+struct OptionSpec {
+    speech_option option;
+    bool required = false;
+    bool steers = true;
+    std::optional<OptionValue> default_value = std::nullopt;
+    double minimum = -INFINITY, maximum = INFINITY;
+    bool minimum_exclusive = false;
 };
 
-/** What a loaded model tells its callers, fixed from its load to its end. */
-struct EngineInfo {
-    std::string name;
-    int sample_rate = 0;
-    speech_streaming streaming = SPEECH_STREAMING_NONE;
-    std::vector<std::string> voices, languages;
-    bool language_selectable = false;
-    int steps = 0;
-};
-
-/** One request with its strings copied; an empty language leaves the choice to the model. */
-struct EngineRequest {
-    std::string text, voice, language;
-    uint64_t seed = 0;
-    /** As speech_request has them: 1, 0 and 1 leave the rate and the length to the model. */
-    double speed = 1, seconds = 0, duration_scale = 1;
+/** A voice as the model information shows it; what the model file does not say is empty. */
+struct VoiceInfo {
+    std::string name, language, gender, description;
 };
 
 /**
- * Called with each piece of audio as it is made, and with none (null, 0) where the synthesis can stop before it
- * has audio; returning false stops the synthesis without more audio.
+ * What a family says of a model from its file's metadata, besides what every model file says: what the information
+ * shows of it, the table of the options it takes in the order of the vocabulary, and how a synthesis counts a text's
+ * tokens.
  */
-using AudioCallback = std::function<bool(const float * samples, size_t n)>;
-
-/** Whether the request has been cancelled, asked where the recognition can stop. */
-using StopCheck = std::function<bool()>;
+struct FamilyInfo {
+    bool incremental = false;
+    std::vector<VoiceInfo> voices;
+    /** The hash a voice file must carry, for a family that takes voice files. */
+    std::string voice_codec;
+    size_t max_text_tokens = 0;
+    std::vector<OptionSpec> options;
+    /** The tokens of a text as a synthesis counts them against max_text_tokens; empty for a recognition model. */
+    std::function<size_t(const std::string & text)> count_tokens;
+};
 
 /**
- * One family of models behind the C API. A synthesis family overrides speak() and a recognition family
- * transcribe(); src/speech.cpp calls only the one its table names for the family.
+ * An object made from a model file's metadata when it is first asked for, from any thread: a tokenizer, which the
+ * information needs only to count a text's tokens.
+ */
+template <typename T>
+class Lazy {
+public:
+    explicit Lazy(std::shared_ptr<const ModelFile> file) : file_(std::move(file)) {}
+
+    const T & get() const {
+        std::call_once(once_, [&] { value_ = std::make_unique<T>(*file_); });
+        return *value_;
+    }
+
+private:
+    std::shared_ptr<const ModelFile> file_;
+    mutable std::once_flag once_;
+    mutable std::unique_ptr<T> value_;
+};
+
+/**
+ * The options of a request that runs: each one it set, checked against the family's table as it was set, the table's
+ * default of each one it did not set that has one, and the seed the C API drew where the request set none.
+ */
+class RequestValues {
+public:
+    void set(speech_option option, OptionValue value) { values_[option] = std::move(value); }
+    bool has(speech_option option) const { return values_.count(option) > 0; }
+    const std::string & string(speech_option option) const { return std::get<std::string>(at(option)); }
+    int64_t integer(speech_option option) const { return std::get<int64_t>(at(option)); }
+    double number(speech_option option) const { return std::get<double>(at(option)); }
+    bool boolean(speech_option option) const { return std::get<bool>(at(option)); }
+
+private:
+    const OptionValue & at(speech_option option) const {
+        const auto it = values_.find(option);
+        if (it == values_.end()) throw std::logic_error(std::string("a request has no value of ") + speech_option_name(option));
+        return it->second;
+    }
+
+    std::map<speech_option, OptionValue> values_;
+};
+
+/** What a request that runs passes to its caller and asks of it. */
+class Run {
+public:
+    virtual ~Run() = default;
+    /** Passes audio on, at least one sample; false once the request is to stop. */
+    virtual bool audio(const float * samples, size_t n) = 0;
+    /** Says how far work that passes no audio has come, from 0 to 1; false once the request is to stop. */
+    virtual bool progress(double done) = 0;
+    /** Whether the request is to stop. */
+    virtual bool stopped() = 0;
+};
+
+/** A token or a segment of a recognition: its start and end in seconds from the start of the audio, and its text. */
+struct TimedText {
+    double start, end;
+    std::string text;
+};
+
+/** What a recognition found: the text, and its segments and tokens when the request set timestamps. */
+struct Recognized {
+    std::string text;
+    std::vector<TimedText> segments, tokens;
+};
+
+/**
+ * One loaded model of a family behind the C API, which has checked each value of a request against the family's table
+ * and the request as a whole for what the table shows. A synthesis family overrides speak() and a recognition family
+ * transcribe(); a family that takes voice files overrides add_voice().
  */
 class Engine {
 public:
     virtual ~Engine() = default;
 
-    const EngineInfo & info() const { return info_; }
-
-    /** Speaks one request. A request the family cannot take throws. */
-    virtual void speak(const EngineRequest & request, const AudioCallback & on_audio);
-
     /**
-     * The text of mono samples, which src/speech.cpp has resampled to info().sample_rate and whose language it has
-     * checked; nothing when `stopped` said so.
+     * Speaks `text`, passing its audio to `run`, after checking what the family's rules ask of the request as a whole.
+     * Returns why the speech ended, unless `run` stopped it: complete, at max_seconds or at the model's limit.
      */
-    virtual std::optional<std::string> transcribe(const std::vector<float> & samples, const StopCheck & stopped);
+    virtual speech_stop speak(const std::string & text, const RequestValues & values, Run & run);
 
-protected:
-    EngineInfo info_;
+    /** Recognizes mono samples at the model's sample rate, telling `run` how far it has come. */
+    virtual Recognized transcribe(const std::vector<float> & samples, const RequestValues & values, Run & run);
+
+    /** Adds a voice from a voice file or a WAVE file under a name the C API has checked is new. */
+    virtual void add_voice(const std::string & name, const std::string & path);
+
+    /** Runs a short request of the model's task, so that a GPU compiles its kernels before the first request. */
+    virtual void warm_up() = 0;
 };
 
-std::unique_ptr<Engine> make_qwen3_tts(const EngineOptions & options, ggml_backend_t backend);
-std::unique_ptr<Engine> make_irodori_tts(const EngineOptions & options, ggml_backend_t backend);
-std::unique_ptr<Engine> make_fastconformer(const EngineOptions & options, ggml_backend_t backend);
+FamilyInfo describe_qwen3_tts(const std::shared_ptr<const ModelFile> & file);
+std::unique_ptr<Engine> load_qwen3_tts(const std::string & path, ggml_backend_t backend);
+
+FamilyInfo describe_irodori_tts(const std::shared_ptr<const ModelFile> & file);
+std::unique_ptr<Engine> load_irodori_tts(const std::string & path, ggml_backend_t backend);
+
+FamilyInfo describe_fastconformer(const std::shared_ptr<const ModelFile> & file);
+std::unique_ptr<Engine> load_fastconformer(const std::string & path, ggml_backend_t backend);

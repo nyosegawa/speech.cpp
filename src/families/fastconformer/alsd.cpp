@@ -6,6 +6,8 @@
 #include <memory>
 #include <stdexcept>
 
+#include "error.h"
+
 namespace fastconformer {
 
 namespace {
@@ -42,13 +44,13 @@ AlsdDecoder::AlsdDecoder(const ModelFile & m, const PredictionNetwork & predicti
       beam_((int) m.u32("fastconformer.decoder.rnnt.beam_size")),
       score_norm_(m.boolean("fastconformer.decoder.rnnt.score_norm")),
       max_target_ratio_(m.f32("fastconformer.decoder.rnnt.max_target_ratio")) {
-    if (joint_.outputs() != blank_ + 1) throw std::runtime_error("joint.out.weight does not have an output for each token and the blank");
+    if (joint_.outputs() != blank_ + 1) throw Error(Fault::File, "joint.out.weight does not have an output for each token and the blank");
     // BeamRNNTInfer runs greedy_search() instead with a beam of 1.
-    if (beam_ < 2) throw std::runtime_error("fastconformer.decoder.rnnt.beam_size is less than 2");
-    if (!(max_target_ratio_ >= 0)) throw std::runtime_error("fastconformer.decoder.rnnt.max_target_ratio is negative");
+    if (beam_ < 2) throw Error(Fault::File, "fastconformer.decoder.rnnt.beam_size is less than 2");
+    if (!(max_target_ratio_ >= 0)) throw Error(Fault::File, "fastconformer.decoder.rnnt.max_target_ratio is negative");
 }
 
-Decoding AlsdDecoder::decode(const std::vector<float> & projected, ggml_backend_t backend) const {
+Decoding AlsdDecoder::decode(const std::vector<float> & projected, ggml_backend_t backend, const DecodingProgress & progress) const {
     const int hidden = joint_.hidden(), outputs = joint_.outputs(), predicted = prediction_.hidden();
     const int64_t frames = (int64_t) (projected.size() / (size_t) hidden);
     const int beam = std::min(beam_, blank_);
@@ -56,7 +58,7 @@ Decoding AlsdDecoder::decode(const std::vector<float> & projected, ggml_backend_
     const int64_t max_labels = (int64_t) ((double) max_target_ratio_ * (double) frames);
     std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocr(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend)),
                                                                        &ggml_gallocr_free);
-    if (!allocr) throw std::runtime_error("cannot create a graph allocator");
+    if (!allocr) throw Error(Fault::OutOfMemory, "cannot create a graph allocator");
 
     // NeMo caches the prediction of each sequence of labels it has computed. Only the beam's sequences can be asked
     // for again in the next step, so the cache keeps those; one asked for after it was dropped is computed again from
@@ -66,6 +68,8 @@ Decoding AlsdDecoder::decode(const std::vector<float> & projected, ggml_backend_
     Hypotheses beam_hyps{std::make_shared<Hypothesis>(Hypothesis{{blank_}, {}, 0.0, nullptr})}, finished;
     std::vector<double> logp((size_t) outputs);
     std::vector<int> tokens((size_t) blank_);
+    // The frame the search has passed for every hypothesis, which only rises.
+    int64_t passed = 0;
     for (int64_t i = 0; i < frames + max_labels; i++) {
         Hypotheses active;
         std::vector<int64_t> at;
@@ -76,6 +80,8 @@ Decoding AlsdDecoder::decode(const std::vector<float> & projected, ggml_backend_
             at.push_back(t);
         }
         if (active.empty()) break;
+        passed = std::max(passed, *std::min_element(at.begin(), at.end()));
+        if (progress && !progress((double) passed / (double) frames)) break;
         const size_t n = active.size();
 
         // The predictions the cache lacks and the joint of every active hypothesis at its frame, in one graph.

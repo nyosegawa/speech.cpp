@@ -35,8 +35,10 @@ public:
     /** The encoder's output for `features` ([frames, mels] row-major) projected for the joint, [T, hidden] row-major. */
     std::vector<float> encode(const std::vector<float> & features, int64_t frames);
 
-    /** The tokens of encode()'s output with the frames they were emitted on. */
-    Decoding decoding(const std::vector<float> & projected) const { return decoder_->decode(projected, backend_); }
+    /** The tokens of encode()'s output with the frames they were emitted on, telling `progress` how far it has come. */
+    Decoding decoding(const std::vector<float> & projected, const DecodingProgress & progress = {}) const {
+        return decoder_->decode(projected, backend_, progress);
+    }
 
     /** The token ids of encode()'s output. */
     std::vector<int32_t> decode(const std::vector<float> & projected) const { return decoding(projected).ids; }

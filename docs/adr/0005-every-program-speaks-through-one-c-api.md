@@ -1,5 +1,7 @@
 # Every program speaks through one C API
 
+Superseded in part by docs/adr/0014: requests are objects that each model checks as their options are set, cancellation is per request, and the API's version has two numbers.
+
 Decided 2026-10-05.
 
 ## Context

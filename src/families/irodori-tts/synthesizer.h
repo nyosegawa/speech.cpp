@@ -17,19 +17,12 @@
 
 namespace irodori {
 
-/**
- * A voice: the latent of its reference, the speaker condition the model makes of it, and what the reference was and
- * the kind of device that encoded it, which a voice file keeps.
- */
+/** A voice: the latent of its reference and the speaker condition the model makes of it. */
 struct Voice {
     std::vector<float> latent;
     int frames = 0;
     std::vector<float> speaker;
     int speaker_tokens = 0;
-    double reference_seconds = 0;
-    int reference_sample_rate = 0;
-    /** "cpu", "gpu" or "igpu". */
-    std::string device_kind;
 };
 
 struct Request {
@@ -41,10 +34,10 @@ struct Request {
     /** The sampler's starting point, row-major [frames, latent_dim], instead of noise from the seed. */
     std::vector<float> noise;
     /**
-     * Asked before each of the sampler's steps, which pass no audio to the sink and so cannot be stopped by it;
-     * once it answers true, synthesize() returns without audio.
+     * Told the fraction of the sampler's steps done before each step and once the last is done, while no audio
+     * reaches the sink; once it answers false, synthesize() returns without audio.
      */
-    std::function<bool()> cancelled;
+    std::function<bool(double done)> progress;
 };
 
 /** Where the time of one synthesis went, in seconds, and how long the speech is. */
@@ -77,12 +70,13 @@ public:
     Synthesizer(const std::string & model_path, ggml_backend_t backend);
     ~Synthesizer();
 
-    /** A voice from a reference WAVE file or a voice file that save_voice() wrote with this model's codec. */
+    /**
+     * A voice from a reference WAVE file or a voice file of this model's codec (voice-file.h). A voice file of another
+     * codec throws.
+     */
     Voice load_voice(const std::string & path);
     /** A voice from the latent of its reference, row-major [frames, latent_dim]. */
     Voice voice_from_latent(std::vector<float> latent);
-    /** Writes a voice to a voice file that load_voice() reads, bound to this codec by its hash. */
-    void save_voice(const Voice & voice, const std::string & path) const;
 
     /** Speaks `r.text` in `voice`, passing the audio to `sink` window by window. Returns the samples. */
     size_t synthesize(const Request & r, const Voice & voice, const AudioSink & sink, Stats * stats = nullptr);

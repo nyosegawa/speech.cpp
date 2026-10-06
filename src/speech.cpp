@@ -1,227 +1,366 @@
 #include "speech.h"
 
-#include <atomic>
-#include <exception>
+#include <cstring>
+#include <functional>
 #include <memory>
 #include <mutex>
-#include <optional>
+#include <new>
 #include <stdexcept>
 #include <string>
-#include <vector>
+#include <utility>
 
+#include "api.h"
 #include "backend.h"
-#include "engine.h"
-#include "irodori-tts/synthesizer.h"
-#include "language.h"
-#include "model-file.h"
-#include "resample.h"
+#include "error.h"
+#include "fastconformer/layout.h"
+#include "irodori-tts/layout.h"
+#include "irodori-tts/voice-file.h"
+#include "log.h"
+#include "qwen3-tts/layout.h"
+
+// The C API's versions, statuses and errors, log, devices, load parameters, the table of families, and the models
+// with their voices. The model information is in info.cpp and the requests in request.cpp.
 
 namespace {
 
 /**
- * A family of models: the general.architecture its GGUF files carry, what it does, which fields of
- * speech_model_params it takes, and its engine. Adding a family is adding its line to `families`.
+ * The families speech.cpp runs: the task of each, the layout its reader takes, which names its general.architecture,
+ * its table of options with what else its information says, its engine, and how it makes a voice file where it takes
+ * them. Adding a family is adding its line.
  */
-struct Family {
-    const char * architecture;
-    /** The name a message gives it, such as Qwen3-TTS. */
-    const char * name;
-    speech_task task;
-    /** Whether it takes voices and sampler steps; any it does not take is refused. */
-    bool voices, steps;
-    std::unique_ptr<Engine> (*make)(const EngineOptions & options, ggml_backend_t backend);
+const Family families[] = {
+    {SPEECH_TASK_SYNTHESIS, qwen3_tts_layout, describe_qwen3_tts, load_qwen3_tts, nullptr},
+    {SPEECH_TASK_SYNTHESIS, irodori::model_layout, describe_irodori_tts, load_irodori_tts, irodori::make_voice_file},
+    {SPEECH_TASK_RECOGNITION, fastconformer::layout, describe_fastconformer, load_fastconformer, nullptr},
 };
 
-const Family families[] = {
-    {"qwen3-tts", "Qwen3-TTS", SPEECH_TASK_SYNTHESIS, false, false, make_qwen3_tts},
-    {"irodori-tts", "Irodori-TTS", SPEECH_TASK_SYNTHESIS, true, true, make_irodori_tts},
-    {"fastconformer", "FastConformer", SPEECH_TASK_RECOGNITION, false, false, make_fastconformer},
+thread_local std::string last_error;
+thread_local std::string last_input;
+thread_local bool has_input = false;
+
+speech_status status_of(Fault fault) {
+    switch (fault) {
+        case Fault::InvalidArgument: return SPEECH_ERROR_INVALID_ARGUMENT;
+        case Fault::OutOfRange: return SPEECH_ERROR_OUT_OF_RANGE;
+        case Fault::File: return SPEECH_ERROR_MODEL_FILE;
+        case Fault::Device: return SPEECH_ERROR_DEVICE;
+        case Fault::OutOfMemory: return SPEECH_ERROR_OUT_OF_MEMORY;
+        case Fault::Io: return SPEECH_ERROR_IO;
+    }
+    return SPEECH_ERROR_INTERNAL;
+}
+
+struct OptionName {
+    const char * name;
+    speech_type type;
 };
+
+/** The vocabulary of options, by their value. */
+const OptionName vocabulary[] = {
+    {"voice", SPEECH_TYPE_STRING},  {"language", SPEECH_TYPE_STRING},      {"seed", SPEECH_TYPE_INT},
+    {"speed", SPEECH_TYPE_FLOAT},   {"seconds", SPEECH_TYPE_FLOAT},        {"duration_scale", SPEECH_TYPE_FLOAT},
+    {"steps", SPEECH_TYPE_INT},     {"max_seconds", SPEECH_TYPE_FLOAT},    {"timestamps", SPEECH_TYPE_BOOL},
+};
+constexpr size_t kOptions = sizeof vocabulary / sizeof vocabulary[0];
+
+const char * const status_names[] = {"internal", "io", "out_of_memory", "device", "model_file", "out_of_range", "unsupported",
+                                     "invalid_argument", "ok", "cancelled"};
+
+const char * const stop_names[] = {"complete", "max_seconds", "model_limit", "cancelled"};
+
+ggml_backend_dev_t device_at(size_t index) {
+    const auto & list = devices();
+    if (index >= list.size()) {
+        throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT,
+                       "there is no device " + std::to_string(index) + "; speech_device_count() gives " + std::to_string(list.size()));
+    }
+    return list[index];
+}
 
 }  // namespace
 
-std::optional<std::string> Engine::transcribe(const std::vector<float> &, const StopCheck &) {
-    throw std::logic_error("the family's engine does not recognize speech, though the table of families says it does");
-}
+struct speech_load_params {
+    std::string device = "auto";
+    /** 0 for the library's default. */
+    int threads = 0;
+    bool warmup = false;
+};
 
-void Engine::speak(const EngineRequest &, const AudioCallback &) {
+speech_stop Engine::speak(const std::string &, const RequestValues &, Run &) {
     throw std::logic_error("the family's engine does not speak, though the table of families says it does");
 }
 
-struct speech_model {
-    const Family * family = nullptr;
-    ggml_backend_t backend = nullptr;
-    std::unique_ptr<Engine> engine;
-    /** Held for the whole of a request, so that requests on one model run one at a time. */
-    std::mutex speaking;
-    std::atomic<bool> cancelled{false};
+Recognized Engine::transcribe(const std::vector<float> &, const RequestValues &, Run &) {
+    throw std::logic_error("the family's engine does not recognize speech, though the table of families says it does");
+}
 
-    ~speech_model() {
-        engine.reset();
-        if (backend) ggml_backend_free(backend);
-    }
-};
+void Engine::add_voice(const std::string &, const std::string &) {
+    throw std::logic_error("the family's engine takes no voice files, though the table of families says it does");
+}
 
-namespace {
-
-thread_local std::string last_error;
-
-/** Runs `body`, turning what it throws into SPEECH_ERROR and the message speech_last_error() returns. */
-template <typename Body>
-speech_status guarded(Body && body) {
+speech_status record_failure() {
+    speech_status status = SPEECH_ERROR_INTERNAL;
+    std::string message, input;
     try {
-        return body();
+        throw;
+    } catch (const ApiError & e) {
+        status = e.status();
+        message = e.what();
+        input = e.input();
+    } catch (const Error & e) {
+        status = status_of(e.fault());
+        message = e.what();
+        input = e.input();
+    } catch (const std::bad_alloc &) {
+        status = SPEECH_ERROR_OUT_OF_MEMORY;
+        message = "the memory of the host ran out";
+    } catch (const std::invalid_argument & e) {
+        status = SPEECH_ERROR_INVALID_ARGUMENT;
+        message = e.what();
     } catch (const std::exception & e) {
-        last_error = e.what();
+        message = e.what();
     } catch (...) {
-        last_error = "an unknown C++ exception";
+        message = "an unknown C++ exception";
     }
-    return SPEECH_ERROR;
+    last_error = message;
+    last_input = input;
+    has_input = !input.empty();
+    return status;
 }
 
-template <typename Pointer>
-void require(Pointer pointer, const char * what) {
-    if (!pointer) throw std::invalid_argument(std::string(what) + " is NULL");
-}
-
-std::string text_or_empty(const char * s) {
-    return s ? s : "";
-}
-
-EngineOptions engine_options(const speech_model_params & params) {
-    require(params.model_path, "speech_model_params.model_path");
-    if (params.n_voices > 0) require(params.voices, "speech_model_params.voices");
-    EngineOptions o;
-    o.model = params.model_path;
-    o.steps = params.steps;
-    for (size_t i = 0; i < params.n_voices; i++) {
-        require(params.voices[i].name, "a voice's name");
-        require(params.voices[i].path, "a voice's path");
-        o.voices.push_back({params.voices[i].name, params.voices[i].path});
-    }
-    return o;
-}
-
-const char * task_name(speech_task task) {
-    return task == SPEECH_TASK_SYNTHESIS ? "speech synthesis" : "speech recognition";
-}
-
-/** The family of the model's GGUF file; an architecture no family has throws. */
-const Family & family_of(const std::string & model) {
-    const std::string architecture = gguf_architecture(model);
+const Family & family_of(const std::string & path) {
+    const std::string architecture = gguf_architecture(path);
     for (const Family & f : families) {
-        if (architecture == f.architecture) return f;
+        if (architecture == f.layout.architecture) return f;
     }
     std::string known;
-    for (const Family & f : families) known += (known.empty() ? "" : ", ") + std::string(f.architecture);
-    throw std::runtime_error(model + " is a model of " + architecture + ", which speech.cpp does not run; it runs " + known);
+    for (const Family & f : families) known += (known.empty() ? "" : ", ") + std::string(f.layout.architecture);
+    throw Error(Fault::File, path + " is a model of " + architecture + ", which speech.cpp does not run; it runs " + known);
 }
 
-/** Refuses any field the family does not take that is not at its default. */
-void check_inputs(const Family & family, const EngineOptions & o) {
-    const std::string model = o.model + " is a model of " + family.name + " for " + task_name(family.task);
-    if (!family.voices && !o.voices.empty()) {
-        throw std::invalid_argument(model + ", which takes no voices" +
-                                    (family.task == SPEECH_TASK_SYNTHESIS ? " and speaks with its own" : "") +
-                                    "; leave speech_model_params.voices empty");
+const OptionSpec * FileInfo::spec(speech_option option) const {
+    for (const OptionSpec & s : described.options) {
+        if (s.option == option) return &s;
     }
-    if (!family.steps && o.steps != speech_model_default_params().steps) {
-        throw std::invalid_argument(model + ", which has no sampler steps; leave speech_model_params.steps 0");
+    return nullptr;
+}
+
+const char * FileInfo::meta_key(size_t index) const {
+    std::lock_guard<std::mutex> lock(meta_mutex_);
+    if (meta_keys_.empty()) meta_keys_.resize(file->meta_count());
+    if (index >= meta_keys_.size()) return nullptr;
+    if (!meta_keys_[index]) meta_keys_[index] = std::make_unique<std::string>(file->meta_key(index));
+    return meta_keys_[index]->c_str();
+}
+
+const char * FileInfo::meta_value(size_t index) const {
+    std::lock_guard<std::mutex> lock(meta_mutex_);
+    if (meta_values_.empty()) meta_values_.resize(file->meta_count());
+    if (index >= meta_values_.size()) return nullptr;
+    if (!meta_values_[index]) meta_values_[index] = std::make_unique<std::string>(file->meta_json(index));
+    return meta_values_[index]->c_str();
+}
+
+std::shared_ptr<const FileInfo> read_file_info(const std::string & path) {
+    const Family & family = family_of(path);
+    auto info = std::make_shared<FileInfo>();
+    info->family = &family;
+    info->file = std::make_shared<const ModelFile>(path, family.layout);
+    const ModelFile & m = *info->file;
+    info->name = m.str("general.name");
+    info->sample_rate = (int) m.u32("speech.sample_rate");
+    info->languages = m.str_array("speech.languages");
+    info->described = family.describe(info->file);
+    for (size_t i = 1; i < info->described.options.size(); i++) {
+        if (info->described.options[i - 1].option >= info->described.options[i].option) {
+            throw std::logic_error(std::string("the options of ") + family.layout.architecture + " are not in the order of the vocabulary");
+        }
     }
-}
-
-void require_task(const speech_model * model, speech_task task, const char * instead) {
-    if (model->family->task != task) {
-        throw std::invalid_argument(model->engine->info().name + " is a " + task_name(model->family->task) + " model; use " + instead);
+    if (info->described.voice_codec.empty() != !family.make_voice) {
+        throw std::logic_error(std::string("the family ") + family.layout.architecture + " names a voice codec without making voice files, or the reverse");
     }
+    info->file_bytes = m.file_bytes();
+    info->weight_bytes = m.weight_bytes();
+    return info;
 }
 
-/**
- * Refuses a language a model whose language is only checked does not have. A model that is told its language
- * (Qwen3-TTS) checks the language itself.
- */
-void check_language(const speech_model * model, const std::string & tag) {
-    const EngineInfo & info = model->engine->info();
-    if (info.language_selectable || tag.empty() || tag == "auto") return;
-    std::string list;
-    for (const std::string & l : info.languages) {
-        if (bcp47_matches(tag, l)) return;
-        list += (list.empty() ? "" : ", ") + l;
+bool speech_model::has_voice(const std::string & name) const {
+    for (const VoiceInfo & v : file->described.voices) {
+        if (v.name == name) return true;
     }
-    throw std::invalid_argument(info.name + (model->family->task == SPEECH_TASK_SYNTHESIS ? " speaks " : " recognizes ") + list +
-                                ", not " + tag);
+    std::lock_guard<std::mutex> lock(voices_mutex_);
+    for (const VoiceInfo & v : added_) {
+        if (v.name == name) return true;
+    }
+    return false;
 }
-
-/** The backend of `params.device`, freed when it goes out of scope unless released. */
-std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> start_device(const speech_model_params & params) {
-    return {init_backend(text_or_empty(params.device)), ggml_backend_free};
-}
-
-}  // namespace
 
 extern "C" {
 
-int speech_api_version(void) {
-    return SPEECH_API_VERSION;
+int speech_api_version_major(void) {
+    return SPEECH_API_VERSION_MAJOR;
+}
+
+int speech_api_version_minor(void) {
+    return SPEECH_API_VERSION_MINOR;
 }
 
 const char * speech_version(void) {
     return SPEECH_VERSION;
 }
 
+const char * speech_status_name(speech_status status) {
+    const int at = (int) status - SPEECH_ERROR_INTERNAL;
+    return at >= 0 && at < (int) (sizeof status_names / sizeof status_names[0]) ? status_names[at] : nullptr;
+}
+
+const char * speech_stop_name(speech_stop stop) {
+    return (int) stop >= 0 && (int) stop < (int) (sizeof stop_names / sizeof stop_names[0]) ? stop_names[stop] : nullptr;
+}
+
 const char * speech_last_error(void) {
     return last_error.c_str();
 }
 
-size_t speech_device_count(void) {
-    configure_ggml();
-    return ggml_backend_dev_count();
+const char * speech_last_error_option(void) {
+    return has_input ? last_input.c_str() : nullptr;
 }
 
-speech_status speech_device_get(size_t index, speech_device * device) {
+void speech_log_set(speech_log_callback callback, void * user_data) {
+    quietly(0, [&] {
+        if (callback) {
+            set_log_sink([callback, user_data](LogLevel level, const char * text) { callback((speech_log_level) level, text, user_data); });
+        } else {
+            set_log_sink({});
+        }
+        return 0;
+    });
+}
+
+size_t speech_device_count(void) {
+    return quietly<size_t>(0, [] { return devices().size(); });
+}
+
+const char * speech_device_name(size_t index) {
+    return quietly<const char *>(nullptr, [&] { return index < devices().size() ? ggml_backend_dev_name(devices()[index]) : nullptr; });
+}
+
+const char * speech_device_description(size_t index) {
+    return quietly<const char *>(nullptr, [&] { return index < devices().size() ? ggml_backend_dev_description(devices()[index]) : nullptr; });
+}
+
+speech_status speech_device_get_kind(size_t index, speech_device_kind * kind) {
     return guarded([&] {
-        require(device, "device");
-        configure_ggml();
-        if (index >= ggml_backend_dev_count()) {
-            throw std::out_of_range("there is no device " + std::to_string(index) + "; speech_device_count() gives " +
-                                    std::to_string(ggml_backend_dev_count()));
+        require(kind, "kind");
+        switch (ggml_backend_dev_type(device_at(index))) {
+            case GGML_BACKEND_DEVICE_TYPE_CPU: *kind = SPEECH_DEVICE_CPU; break;
+            case GGML_BACKEND_DEVICE_TYPE_GPU: *kind = SPEECH_DEVICE_GPU; break;
+            default: *kind = SPEECH_DEVICE_IGPU; break;
         }
-        ggml_backend_dev_t dev = ggml_backend_dev_get(index);
-        size_t free = 0, total = 0;
-        ggml_backend_dev_memory(dev, &free, &total);
-        device->name = ggml_backend_dev_name(dev);
-        device->description = ggml_backend_dev_description(dev);
-        switch (ggml_backend_dev_type(dev)) {
-            case GGML_BACKEND_DEVICE_TYPE_CPU: device->kind = SPEECH_DEVICE_CPU; break;
-            case GGML_BACKEND_DEVICE_TYPE_GPU: device->kind = SPEECH_DEVICE_GPU; break;
-            case GGML_BACKEND_DEVICE_TYPE_IGPU: device->kind = SPEECH_DEVICE_IGPU; break;
-            case GGML_BACKEND_DEVICE_TYPE_ACCEL: device->kind = SPEECH_DEVICE_ACCEL; break;
-            default: throw std::runtime_error(std::string("ggml lists the device ") + device->name + " as of a kind speech.cpp does not know");
-        }
-        device->memory_total = total;
-        device->memory_free = free;
         return SPEECH_OK;
     });
 }
 
-speech_model_params speech_model_default_params(void) {
-    speech_model_params p = {};
-    return p;
+speech_status speech_device_memory(size_t index, uint64_t * total, uint64_t * free_bytes) {
+    return guarded([&] {
+        require(total, "total");
+        require(free_bytes, "free_bytes");
+        size_t free = 0, all = 0;
+        ggml_backend_dev_memory(device_at(index), &free, &all);
+        *total = all;
+        *free_bytes = free;
+        return SPEECH_OK;
+    });
 }
 
-speech_status speech_model_load(const speech_model_params * params, speech_model ** model) {
-    if (model) *model = nullptr;
+size_t speech_option_count(void) {
+    return kOptions;
+}
+
+const char * speech_option_name(speech_option option) {
+    return (size_t) option < kOptions ? vocabulary[option].name : nullptr;
+}
+
+speech_status speech_option_from_name(const char * name, speech_option * option) {
+    return guarded([&] {
+        require(name, "name");
+        require(option, "option");
+        std::string names;
+        for (size_t i = 0; i < kOptions; i++) {
+            if (std::strcmp(name, vocabulary[i].name) == 0) {
+                *option = (speech_option) i;
+                return SPEECH_OK;
+            }
+            names += (i ? ", " : "") + std::string(vocabulary[i].name);
+        }
+        throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, std::string("no option is named \"") + name + "\"; the options are " + names);
+    });
+}
+
+speech_type speech_option_type(speech_option option) {
+    return (size_t) option < kOptions ? vocabulary[option].type : (speech_type) -1;
+}
+
+speech_status speech_load_params_new(speech_load_params ** params) {
     return guarded([&] {
         require(params, "params");
+        *params = new speech_load_params();
+        return SPEECH_OK;
+    });
+}
+
+void speech_load_params_free(speech_load_params * params) {
+    delete params;
+}
+
+speech_status speech_load_params_set_device(speech_load_params * params, const char * device) {
+    return guarded([&] {
+        require(params, "params");
+        require(device, "device", "device");
+        if (!*device) {
+            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the device is empty; give \"auto\", \"gpu\", \"cpu\" or a device's name", "device");
+        }
+        params->device = device;
+        return SPEECH_OK;
+    });
+}
+
+speech_status speech_load_params_set_threads(speech_load_params * params, int threads) {
+    return guarded([&] {
+        require(params, "params");
+        if (threads < 1) {
+            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the threads are " + std::to_string(threads) + "; give 1 or more", "threads");
+        }
+        params->threads = threads;
+        return SPEECH_OK;
+    });
+}
+
+speech_status speech_load_params_set_warmup(speech_load_params * params, int warmup) {
+    return guarded([&] {
+        require(params, "params");
+        params->warmup = warmup != 0;
+        return SPEECH_OK;
+    });
+}
+
+speech_status speech_model_load(const char * path, const speech_load_params * params, speech_model ** model) {
+    if (model) *model = nullptr;
+    return guarded([&] {
+        require(path, "path");
         require(model, "model");
-        const EngineOptions options = engine_options(*params);
-        const Family & family = family_of(options.model);
-        check_inputs(family, options);
+        const speech_load_params defaults;
+        const speech_load_params & p = params ? *params : defaults;
         auto m = std::make_unique<speech_model>();
-        m->family = &family;
-        auto backend = start_device(*params);
-        m->engine = family.make(options, backend.get());
-        m->backend = backend.release();
+        m->file = read_file_info(path);
+        ggml_backend_dev_t device = find_device(p.device);
+        const int threads = p.threads > 0 ? p.threads : default_threads();
+        m->backend.reset(start_device(device, threads));
+        m->engine = m->file->family->load(path, m->backend.get());
+        m->device = ggml_backend_dev_name(device);
+        // A model on a GPU runs every graph there and none on the CPU.
+        m->threads = ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_CPU ? threads : 0;
+        if (p.warmup) m->engine->warm_up();
         *model = m.release();
         return SPEECH_OK;
     });
@@ -231,139 +370,57 @@ void speech_model_free(speech_model * model) {
     delete model;
 }
 
-const char * speech_model_name(const speech_model * model) {
-    return model->engine->info().name.c_str();
-}
-
-const char * speech_model_architecture(const speech_model * model) {
-    return model->family->architecture;
-}
-
-speech_task speech_model_task(const speech_model * model) {
-    return model->family->task;
-}
-
-int speech_model_sample_rate(const speech_model * model) {
-    return model->engine->info().sample_rate;
-}
-
-speech_streaming speech_model_streaming(const speech_model * model) {
-    return model->engine->info().streaming;
-}
-
-size_t speech_model_voice_count(const speech_model * model) {
-    return model->engine->info().voices.size();
-}
-
-const char * speech_model_voice(const speech_model * model, size_t index) {
-    const auto & voices = model->engine->info().voices;
-    return index < voices.size() ? voices[index].c_str() : nullptr;
-}
-
-size_t speech_model_language_count(const speech_model * model) {
-    return model->engine->info().languages.size();
-}
-
-const char * speech_model_language(const speech_model * model, size_t index) {
-    const auto & languages = model->engine->info().languages;
-    return index < languages.size() ? languages[index].c_str() : nullptr;
-}
-
-int speech_model_language_selectable(const speech_model * model) {
-    return model->engine->info().language_selectable ? 1 : 0;
-}
-
-int speech_model_steps(const speech_model * model) {
-    return model->engine->info().steps;
-}
-
-const char * speech_model_backend(const speech_model * model) {
-    return ggml_backend_name(model->backend);
-}
-
-speech_request speech_request_default(void) {
-    speech_request r = {};
-    r.speed = 1;
-    r.duration_scale = 1;
-    return r;
-}
-
-speech_status speech_synthesize(speech_model * model, const speech_request * request, speech_audio_callback on_audio,
-                                void * user_data) {
+speech_status speech_model_get_info(const speech_model * model, speech_model_info ** info) {
+    if (info) *info = nullptr;
     return guarded([&] {
         require(model, "model");
-        require(request, "request");
-        require(on_audio, "on_audio");
-        require(request->text, "speech_request.text");
-        require(request->voice, "speech_request.voice");
-        require_task(model, SPEECH_TASK_SYNTHESIS, "speech_transcribe() to recognize speech with it");
-        EngineRequest r;
-        r.text = request->text;
-        r.voice = request->voice;
-        r.language = text_or_empty(request->language);
-        r.seed = request->seed;
-        r.speed = request->speed;
-        r.seconds = request->seconds;
-        r.duration_scale = request->duration_scale;
-        check_language(model, r.language);
-        std::lock_guard<std::mutex> lock(model->speaking);
-        model->cancelled = false;
-        bool stopped = false;
-        model->engine->speak(r, [&](const float * samples, size_t n) {
-            stopped = stopped || model->cancelled || on_audio(samples, n, user_data) != 0;
-            return !stopped;
-        });
-        return stopped ? SPEECH_STOPPED : SPEECH_OK;
-    });
-}
-
-speech_transcription_request speech_transcription_request_default(void) {
-    speech_transcription_request r = {};
-    return r;
-}
-
-speech_status speech_transcribe(speech_model * model, const speech_transcription_request * request, speech_text_callback on_text,
-                                void * user_data) {
-    return guarded([&] {
-        require(model, "model");
-        require(request, "request");
-        require(on_text, "on_text");
-        require_task(model, SPEECH_TASK_RECOGNITION, "speech_synthesize() to speak with it");
-        const EngineInfo & info = model->engine->info();
-        if (request->n_samples == 0) throw std::invalid_argument("the audio has no samples; give at least one");
-        require(request->samples, "speech_transcription_request.samples");
-        const Resampler resample(request->sample_rate, info.sample_rate);
-        check_language(model, text_or_empty(request->language));
-        std::vector<float> samples(request->samples, request->samples + request->n_samples);
-        std::lock_guard<std::mutex> lock(model->speaking);
-        model->cancelled = false;
-        samples = resample(std::move(samples));
-        const std::optional<std::string> text = model->engine->transcribe(samples, [&] { return model->cancelled.load(); });
-        if (!text || model->cancelled) return SPEECH_STOPPED;
-        return on_text(text->c_str(), user_data) != 0 ? SPEECH_STOPPED : SPEECH_OK;
-    });
-}
-
-void speech_cancel(speech_model * model) {
-    model->cancelled = true;
-}
-
-speech_status speech_make_voice(const speech_model_params * params, const char * wave_path, const char * voice_path) {
-    return guarded([&] {
-        require(params, "params");
-        require(wave_path, "wave_path");
-        require(voice_path, "voice_path");
-        const EngineOptions options = engine_options(*params);
-        const Family & family = family_of(options.model);
-        if (family.make != make_irodori_tts) {
-            throw std::runtime_error(options.model + " is a model of " + family.name + "; only Irodori-TTS makes voice files");
-        }
-        check_inputs(family, options);
-        auto backend = start_device(*params);
-        irodori::Synthesizer synth(options.model, backend.get());
-        synth.save_voice(synth.load_voice(wave_path), voice_path);
+        require(info, "info");
+        *info = make_info(model->file, model->added(), model->device, model->threads);
         return SPEECH_OK;
     });
 }
 
+speech_status speech_voice_add(speech_model * model, const char * name, const char * path) {
+    return guarded([&] {
+        require(model, "model");
+        require(name, "name", "name");
+        require(path, "path", "path");
+        const FileInfo & file = *model->file;
+        if (!file.family->make_voice) {
+            throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.name + " takes no voices made from recordings; " +
+                                                         (file.family->task == SPEECH_TASK_SYNTHESIS ? "it speaks with its own voices" : "it recognizes speech"));
+        }
+        if (!*name) throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the voice's name is empty; give the voice a name", "name");
+        std::lock_guard<std::mutex> lock(model->busy);
+        if (model->has_voice(name)) {
+            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, std::string(name) + " is already a voice of " + file.name + "; give the voice another name",
+                           "name");
+        }
+        naming("path", [&] { model->engine->add_voice(name, path); });
+        model->add({name, "", "", ""});
+        return SPEECH_OK;
+    });
 }
+
+speech_status speech_voice_make(const char * model_path, const char * reference_path, const char * voice_path,
+                                const speech_load_params * params) {
+    return guarded([&] {
+        require(model_path, "model_path", "model_path");
+        require(reference_path, "reference_path", "reference_path");
+        require(voice_path, "voice_path", "voice_path");
+        const speech_load_params defaults;
+        const speech_load_params & p = params ? *params : defaults;
+        const Family & family = naming("model_path", [&]() -> const Family & { return family_of(model_path); });
+        if (!family.make_voice) {
+            throw ApiError(SPEECH_ERROR_UNSUPPORTED, std::string(model_path) + " is a model of " + family.layout.architecture +
+                                                         ", which takes no voices made from recordings",
+                           "model_path");
+        }
+        std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> backend(
+            start_device(find_device(p.device), p.threads > 0 ? p.threads : default_threads()), ggml_backend_free);
+        family.make_voice(model_path, reference_path, voice_path, backend.get());
+        return SPEECH_OK;
+    });
+}
+
+}  // extern "C"
