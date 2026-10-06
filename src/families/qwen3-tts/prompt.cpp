@@ -34,7 +34,7 @@ PromptIds::PromptIds(const ModelFile & m) {
     voices = m.str_array("speech.voices");
     speaker_ids = m.i32_array(p + "speaker_ids");
     dialect_ids = m.i32_array(p + "dialect_ids");
-    languages = m.str_array("speech.languages");
+    languages = m.str_array("general.languages");
     language_ids = m.i32_array(p + "language_ids");
     dialect_language = m.str(p + "dialect_language");
 }

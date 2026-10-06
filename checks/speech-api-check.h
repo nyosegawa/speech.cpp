@@ -51,7 +51,8 @@ int check_load_refusals(const char * model_path);
 /**
  * Checks the information of the model file at `path` read without loading against the information of `model`, which
  * was loaded from it and has no voice added: the same JSON object but for the device and the threads, which only the
- * loaded model's has. Returns nonzero on a failure.
+ * loaded model's has. Checks as well that the identity's accessors give the file's general keys. Returns nonzero on a
+ * failure.
  */
 int check_info_matches(const char * path, const speech_model * model);
 

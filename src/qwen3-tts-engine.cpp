@@ -50,6 +50,13 @@ private:
     Synthesizer synth_;
 };
 
+/** The tokens of a text as the synthesis counts them against its limit. */
+struct TokenCounter {
+    explicit TokenCounter(const ModelFile & m) : tokenizer(m, kTextTokenizer) {}
+    size_t count(const std::string & text) const { return tokenizer.encode(text).size(); }
+    Qwen2Tokenizer tokenizer;
+};
+
 }  // namespace
 
 /**
@@ -72,8 +79,8 @@ FamilyInfo describe_qwen3_tts(const std::shared_ptr<const ModelFile> & file) {
         {SPEECH_OPT_SEED, false, true, std::nullopt, 0, (double) kMaxSeed},
         {SPEECH_OPT_MAX_SECONDS, false, true, std::nullopt, 0, longest, true},
     };
-    const auto tokenizer = std::make_shared<Lazy<Tokenizer>>(file);
-    info.count_tokens = [tokenizer](const std::string & text) { return tokenizer->get().encode(text).size(); };
+    const auto counter = std::make_shared<Lazy<TokenCounter>>(file);
+    info.count_tokens = [counter](const std::string & text) { return counter->get().count(text); };
     return info;
 }
 

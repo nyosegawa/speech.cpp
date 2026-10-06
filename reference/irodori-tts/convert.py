@@ -3,10 +3,11 @@ the C++ port reads.
 
 usage: uv run python convert.py <mf|rf> <out dir> [--type f32|f16|q8_0]
 
-Writes irodori-tts-v4.1-small-mf-<type>.gguf or irodori-tts-v4.1-small-<type>.gguf in layout 1: the tokenizer,
-ModernBERT-ja and the projector that make the text condition, the speaker encoder, the duration predictor, the DiT,
-and Semantic-DACVAE-Japanese-32dim, the codec, with every constant the C++ reads and the hash of the codec's
-tensors, which voice files carry.
+Writes Irodori-TTS-848M-MF-v4.1-<F32|F16|Q8_0>.gguf or Irodori-TTS-841M-v4.1-<F32|F16|Q8_0>.gguf, named under GGUF's
+naming convention, in layout 1: the tokenizer, ModernBERT-ja and the projector that make the text condition, the
+speaker encoder, the duration predictor, the DiT, and Semantic-DACVAE-Japanese-32dim, the codec, with every constant
+the C++ reads, the hash of the codec's tensors, which voice files carry, and the model's identity in the GGUF
+specification's general keys.
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [out, in] is stored as is
 (ne = [in, out]). --type applies to the model's matrices whose rows are a multiple of 32; the codec stays float32,
@@ -32,7 +33,8 @@ import numpy as np
 import torch
 import yaml
 from dacvae import DACVAE
-from gguf import GGMLQuantizationType, GGUFValueType, GGUFWriter
+from gguf import (GGML_QUANT_VERSION, GGMLQuantizationType, GGUFValueType, GGUFWriter, LlamaFileType, naming_convention,
+                  size_label)
 from gguf.quants import quantize
 from irodori_tts import inference_runtime
 from irodori_tts.model import precompute_freqs_cis
@@ -47,6 +49,13 @@ RELEASES = {1: "0.7.0"}
 LAYOUT = max(RELEASES)
 # The SPDX identifier of each license a model card names.
 LICENSES = {"mit": "MIT"}
+# The parts of each model's name under GGUF's naming convention (ggml's docs/gguf.md) besides the size. The names' word
+# for the size, Small, gives way to a size label counted from the parameters of the file's tensors, since the
+# convention's size label is a number; MF is v4.1-Small distilled with MeanFlow.
+NAMES = {"mf": {"basename": "Irodori-TTS", "finetune": "MF", "version": "v4.1"},
+         "rf": {"basename": "Irodori-TTS", "finetune": None, "version": "v4.1"}}
+# The type of most of a file's weights by its --type, as general.file_type gives it.
+FILE_TYPES = {"f32": LlamaFileType.ALL_F32, "f16": LlamaFileType.MOSTLY_F16, "q8_0": LlamaFileType.MOSTLY_Q8_0}
 # The bounds of OpenAI's speed, which Irodori-TTS-Server takes and divides the length by
 # (Aratako/Irodori-TTS-Server@61012c760f22f7b4a6c21c5c5f8f9e148120b6f9, src/irodori_openai_tts/app.py).
 MIN_SPEED, MAX_SPEED = 0.25, 4.0
@@ -100,9 +109,7 @@ meanflow = config.get("flow_parameterization", "rf_velocity") == "meanflow"
 assert "num_steps = (4 if is_meanflow else 40) if req.num_steps is None" in inspect.getsource(inference_runtime)
 default_steps = 4 if meanflow else 40
 
-name = pin["repository"].split("/")[1]
-path = os.path.join(args.out_dir, f"{name.lower()}-{args.type}.gguf")
-w = GGUFWriter(path, ARCH)
+w = GGUFWriter(None, ARCH)
 
 
 def add_array(key, values, element):
@@ -110,14 +117,10 @@ def add_array(key, values, element):
     w.add_key_value(key, list(values), GGUFValueType.ARRAY, sub_type=element)
 
 
-w.add_name(name)
-w.add_license(LICENSES[card["license"]])
-w.add_source_url(f"https://huggingface.co/{pin['repository']}/tree/{pin['revision']}")
 w.add_uint32("speech.layout", LAYOUT)
 w.add_string("speech.requires", RELEASES[LAYOUT])
 w.add_string("speech.task", "synthesis")
 w.add_uint32("speech.sample_rate", int(codec.sample_rate))
-add_array("speech.languages", sorted(card["language"]), GGUFValueType.STRING)
 # Irodori-TTS takes no language with a request; a request's language is only checked against the model's.
 w.add_string("speech.language_use", "checked")
 
@@ -385,7 +388,30 @@ watermark = codec.decoder.wm_model.encoder_block.pre
 snake("dec.out_snake", watermark[0])
 conv("dec.conv_out", watermark[1])
 
-w.write_header_to_file()
+# The model's identity and languages in the GGUF specification's general keys, which name the file. They follow the
+# tensors, whose parameters give the size label, and then go first after general.architecture, since GGUFWriter
+# writes the keys in the order they were added.
+parts = NAMES[args.model]
+label = size_label(*w.get_total_parameter_count())
+repository = f"https://huggingface.co/{pin['repository']}"
+w.add_name(pin["repository"].split("/")[1])
+w.add_organization(pin["repository"].split("/")[0])
+w.add_basename(parts["basename"])
+w.add_size_label(label)
+if parts["finetune"]:
+    w.add_finetune(parts["finetune"])
+w.add_version(parts["version"])
+w.add_license(LICENSES[card["license"]])
+w.add_source_url(f"{repository}/tree/{pin['revision']}")
+w.add_source_repo_url(repository)
+w.add_file_type(FILE_TYPES[args.type])
+if args.type == "q8_0":
+    w.add_quantization_version(GGML_QUANT_VERSION)
+w.add_languages(sorted(card["language"]))
+w.kv_data[0] = dict(sorted(w.kv_data[0].items(), key=lambda item: not item[0].startswith("general.")))
+
+path = os.path.join(args.out_dir, naming_convention(None, parts["basename"], parts["finetune"], parts["version"], label, args.type) + ".gguf")
+w.write_header_to_file(path)
 w.write_kv_data_to_file()
 w.write_tensors_to_file()
 w.close()

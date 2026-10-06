@@ -167,9 +167,9 @@ std::shared_ptr<const FileInfo> read_file_info(const std::string & path) {
     info->family = &family;
     info->file = std::make_shared<const ModelFile>(path, family.layout);
     const ModelFile & m = *info->file;
-    info->name = m.str("general.name");
+    info->identity = read_identity(m);
     info->sample_rate = (int) m.u32("speech.sample_rate");
-    info->languages = m.str_array("speech.languages");
+    info->languages = m.str_array("general.languages");
     info->described = family.describe(info->file);
     for (size_t i = 1; i < info->described.options.size(); i++) {
         if (info->described.options[i - 1].option >= info->described.options[i].option) {
@@ -387,13 +387,13 @@ speech_status speech_voice_add(speech_model * model, const char * name, const ch
         require(path, "path", "path");
         const FileInfo & file = *model->file;
         if (!file.family->make_voice) {
-            throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.name + " takes no voices made from recordings; " +
+            throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.identity.name + " takes no voices made from recordings; " +
                                                          (file.family->task == SPEECH_TASK_SYNTHESIS ? "it speaks with its own voices" : "it recognizes speech"));
         }
         if (!*name) throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the voice's name is empty; give the voice a name", "name");
         std::lock_guard<std::mutex> lock(model->busy);
         if (model->has_voice(name)) {
-            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, std::string(name) + " is already a voice of " + file.name + "; give the voice another name",
+            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, std::string(name) + " is already a voice of " + file.identity.name + "; give the voice another name",
                            "name");
         }
         naming("path", [&] { model->engine->add_voice(name, path); });

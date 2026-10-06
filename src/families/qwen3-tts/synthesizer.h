@@ -9,9 +9,9 @@
 #include "codec.h"
 #include "model-file.h"
 #include "prompt.h"
+#include "qwen2-tokenizer.h"
 #include "sampler.h"
 #include "talker.h"
-#include "tokenizer.h"
 
 struct SynthesisRequest {
     std::string text;
@@ -33,6 +33,9 @@ struct SynthesisOutcome {
 struct SynthesisStats {
     double prompt = 0, talker = 0, code_predictor = 0, codec = 0;
 };
+
+/** The prefix of the keys of a model file that hold the text's tokenizer. */
+constexpr const char * kTextTokenizer = "qwen3-tts.tokenizer";
 
 /**
  * The longest text in tokens that a model file speaks: what leaves the talker's positions room for a prompt and the
@@ -69,7 +72,7 @@ private:
     ModelFile model_;
     Talker talker_;
     CodecDecoder codec_;
-    Tokenizer tokenizer_;
+    Qwen2Tokenizer tokenizer_;
     PromptIds ids_;
     Generation generation_;
 };

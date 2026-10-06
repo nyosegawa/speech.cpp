@@ -267,6 +267,57 @@ int check_load_refusals(const char * model_path) {
     return ok ? 0 : 1;
 }
 
+/** The JSON value of the metadata entry `key`, or NULL when the file has none. */
+static const char * meta_value_of(const speech_model_info * info, const char * key) {
+    for (size_t i = 0; i < speech_model_info_meta_count(info); i++) {
+        if (!strcmp(speech_model_info_meta_key(info, i), key)) return speech_model_info_meta_value(info, i);
+    }
+    return NULL;
+}
+
+/**
+ * Whether `value` is the string of the metadata entry `key`, or NULL where the file has no such entry. The values
+ * compared hold no character that JSON escapes.
+ */
+static int is_meta_string(const speech_model_info * info, const char * key, const char * value) {
+    const char * meta = meta_value_of(info, key);
+    char quoted[1024];
+    if (!value || !meta) return !value && !meta;
+    snprintf(quoted, sizeof quoted, "\"%s\"", value);
+    return !strcmp(quoted, meta);
+}
+
+/** The identity's accessors against the general keys they are read from. Returns 1 when each gives its key. */
+static int check_identity(const speech_model_info * info) {
+    const char * repository = NULL, * revision = NULL;
+    int ok = expect(speech_model_info_source(info, NULL, &revision), SPEECH_ERROR_INVALID_ARGUMENT, NULL, "the source without a repository");
+    ok &= expect(speech_model_info_source(info, &repository, &revision), SPEECH_OK, NULL, "the source");
+    if (!ok) return 0;
+    char url[1024];
+    snprintf(url, sizeof url, "%s/tree/%s", repository, revision);
+    static const char * const file_types[][2] = {{"0", "F32"}, {"1", "F16"}, {"7", "Q8_0"}};
+    const char * file_type = meta_value_of(info, "general.file_type"), * weight_type = speech_model_info_weight_type(info);
+    int typed = 0;
+    for (size_t i = 0; i < sizeof file_types / sizeof file_types[0]; i++) {
+        typed |= file_type && !strcmp(file_type, file_types[i][0]) && !strcmp(weight_type, file_types[i][1]);
+    }
+    const char * finetune = speech_model_info_finetune(info), * version = speech_model_info_version(info);
+    ok = is_meta_string(info, "general.name", speech_model_info_name(info)) &&
+         is_meta_string(info, "general.organization", speech_model_info_organization(info)) &&
+         is_meta_string(info, "general.basename", speech_model_info_basename(info)) &&
+         is_meta_string(info, "general.size_label", speech_model_info_size_label(info)) && is_meta_string(info, "general.finetune", finetune) &&
+         is_meta_string(info, "general.version", version) && is_meta_string(info, "general.license", speech_model_info_license(info)) &&
+         is_meta_string(info, "general.source.repo_url", repository) && is_meta_string(info, "general.source.url", url) && typed;
+    if (!ok) {
+        fprintf(stderr, "FAIL: the identity's accessors do not give the general keys of the file\n");
+        return 0;
+    }
+    printf("identity: %s of %s, %s %s%s%s%s%s, %s, %s at %s, %s weights, as the general keys give them\n", speech_model_info_name(info),
+           speech_model_info_organization(info), speech_model_info_basename(info), speech_model_info_size_label(info), finetune ? " " : "",
+           finetune ? finetune : "", version ? " " : "", version ? version : "", speech_model_info_license(info), repository, revision, weight_type);
+    return 1;
+}
+
 int check_info_matches(const char * path, const speech_model * model) {
     speech_model_info * file = NULL, * loaded = NULL;
     const double start = now_seconds();
@@ -284,14 +335,9 @@ int check_info_matches(const char * path, const speech_model * model) {
                  speech_model_info_threads(loaded));
         ok = strcmp(expected, loaded_json) == 0;
     }
-    char architecture[256];
-    snprintf(architecture, sizeof architecture, "\"%s\"", speech_model_info_architecture(file));
-    int found = 0;
-    for (size_t i = 0; i < speech_model_info_meta_count(file); i++) {
-        if (!strcmp(speech_model_info_meta_key(file, i), "general.architecture")) found = !strcmp(speech_model_info_meta_value(file, i), architecture);
-    }
-    if (!found || speech_model_info_meta_key(file, speech_model_info_meta_count(file)) != NULL) {
-        fprintf(stderr, "FAIL: the metadata does not give general.architecture as %s\n", architecture);
+    if (!is_meta_string(file, "general.architecture", speech_model_info_architecture(file)) ||
+        speech_model_info_meta_key(file, speech_model_info_meta_count(file)) != NULL) {
+        fprintf(stderr, "FAIL: the metadata does not give general.architecture as %s\n", speech_model_info_architecture(file));
         ok = 0;
     }
     if (!ok) {
@@ -300,9 +346,10 @@ int check_info_matches(const char * path, const speech_model * model) {
         printf("the loaded model's information is the file's with \"device\":\"%s\" and \"threads\":%d\n", device,
                speech_model_info_threads(loaded));
     }
+    const int identified = check_identity(file);
     speech_model_info_free(file);
     speech_model_info_free(loaded);
-    return ok ? 0 : 1;
+    return ok && identified ? 0 : 1;
 }
 
 /** The neutral value of an option, set through `r`, or SPEECH_OK when the option has none. */

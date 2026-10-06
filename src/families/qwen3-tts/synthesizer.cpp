@@ -16,7 +16,7 @@ Synthesizer::Synthesizer(const std::string & path, ggml_backend_t backend)
     : model_(path, backend, qwen3_tts_layout),
       talker_(model_, backend),
       codec_(model_, backend),
-      tokenizer_(model_),
+      tokenizer_(model_, kTextTokenizer),
       ids_(model_),
       generation_(model_) {}
 

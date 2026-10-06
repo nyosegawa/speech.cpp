@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <set>
 #include <stdexcept>
 
@@ -90,6 +91,15 @@ std::string types_text(const std::vector<ggml_type> & types) {
     for (size_t i = 0; i < types.size(); i++) out += (i == 0 ? "" : i + 1 == types.size() ? " or " : ", ") + tensor_type_text(types[i]);
     return out;
 }
+
+/** A value of general.file_type, as gguf-py's LlamaFileType numbers it, and the type it names. */
+struct FileType {
+    uint32_t value;
+    ggml_type type;
+};
+
+/** The values of general.file_type that speech.cpp's converters write: ALL_F32, MOSTLY_F16 and MOSTLY_Q8_0. */
+constexpr FileType kFileTypes[] = {{0, GGML_TYPE_F32}, {1, GGML_TYPE_F16}, {7, GGML_TYPE_Q8_0}};
 
 /** The bytes of one value of a type that is neither a string nor an array. */
 size_t scalar_size(gguf_type type) {
@@ -246,6 +256,10 @@ ggml_tensor * ModelFile::tensor(const std::string & name) const {
     return t;
 }
 
+bool ModelFile::has(const std::string & key) const {
+    return gguf_find_key(gguf_.get(), key.c_str()) >= 0;
+}
+
 int64_t ModelFile::key_id(const std::string & key, gguf_type type, gguf_type element) const {
     const int64_t id = gguf_find_key(gguf_.get(), key.c_str());
     const std::string layout = layout_name();
@@ -350,6 +364,14 @@ uint64_t ModelFile::weight_bytes() const {
     return bytes;
 }
 
+std::map<ggml_type, uint64_t> ModelFile::type_bytes() const {
+    std::map<ggml_type, uint64_t> bytes;
+    for (int64_t i = 0; i < gguf_get_n_tensors(gguf_.get()); i++) {
+        bytes[gguf_get_tensor_type(gguf_.get(), i)] += gguf_get_tensor_size(gguf_.get(), i);
+    }
+    return bytes;
+}
+
 size_t ModelFile::meta_count() const {
     return (size_t) gguf_get_n_kv(gguf_.get());
 }
@@ -379,10 +401,54 @@ std::string ModelFile::meta_json(size_t index) const {
     return out + "]";
 }
 
-void check_model_keys(const ModelFile & file, const char * task, const char * language_use) {
-    for (const char * key : {"general.name", "general.license", "general.source.url"}) {
-        if (file.str(key).empty()) throw file_error("the key " + std::string(key) + " of " + file.path() + " is empty; " + file.remedy());
+ModelIdentity read_identity(const ModelFile & file) {
+    const auto text = [&](const std::string & key) {
+        std::string value = file.str(key);
+        if (value.empty()) throw file_error("the key " + key + " of " + file.path() + " is empty; " + file.remedy());
+        return value;
+    };
+    const auto text_if_any = [&](const std::string & key) { return file.has(key) ? std::optional<std::string>(text(key)) : std::nullopt; };
+    ModelIdentity id;
+    id.name = text("general.name");
+    id.organization = text("general.organization");
+    id.basename = text("general.basename");
+    id.size_label = text("general.size_label");
+    id.finetune = text_if_any("general.finetune");
+    id.version = text_if_any("general.version");
+    id.license = text("general.license");
+    id.repository = text("general.source.repo_url");
+    const std::string url = text("general.source.url"), tree = id.repository + "/tree/";
+    if (url.compare(0, tree.size(), tree) == 0) id.revision = url.substr(tree.size());
+    if (id.revision.empty() || id.revision.find('/') != std::string::npos) {
+        throw file_error("the key general.source.url of " + file.path() + " is " + url + ", where speech.cpp takes " + tree +
+                         "<revision>, a revision of general.source.repo_url; " + file.remedy());
     }
+
+    const uint32_t value = file.u32("general.file_type");
+    const FileType * named = nullptr;
+    std::string known;
+    for (const FileType & t : kFileTypes) {
+        if (t.value == value) named = &t;
+        known += (known.empty() ? "" : ", ") + std::to_string(t.value) + " (" + tensor_type_text(t.type) + ")";
+    }
+    if (!named) {
+        throw file_error("the key general.file_type of " + file.path() + " is " + std::to_string(value) +
+                         ", which names none of the types speech.cpp's converters write, " + known + "; " + file.remedy());
+    }
+    const std::map<ggml_type, uint64_t> bytes = file.type_bytes();
+    const auto most = std::max_element(bytes.begin(), bytes.end(), [](const auto & a, const auto & b) { return a.second < b.second; });
+    if (most == bytes.end() || most->first != named->type) {
+        throw file_error("the key general.file_type of " + file.path() + " names " + tensor_type_text(named->type) + ", where " +
+                         (most == bytes.end() ? std::string("the file holds no tensor") : "most of its tensors' bytes are " + tensor_type_text(most->first)) +
+                         "; " + file.remedy());
+    }
+    id.weight_type = tensor_type_text(named->type);
+    if (std::any_of(bytes.begin(), bytes.end(), [](const auto & b) { return ggml_is_quantized(b.first); })) file.u32("general.quantization_version");
+    return id;
+}
+
+void check_model_keys(const ModelFile & file, const char * task, const char * language_use) {
+    read_identity(file);
     const std::string file_task = file.one_of("speech.task", {"synthesis", "recognition"});
     if (file_task != task) {
         throw file_error(file.path() + " says its speech.task is " + file_task + ", where its family does " + task + "; " + file.remedy());
@@ -393,9 +459,12 @@ void check_model_keys(const ModelFile & file, const char * task, const char * la
                          file.remedy());
     }
     file.size("speech.sample_rate");
-    const std::vector<std::string> languages = file.str_array("speech.languages");
-    if (languages.empty() || !std::is_sorted(languages.begin(), languages.end())) {
-        throw file_error("speech.languages of " + file.path() + " is empty or not sorted; " + file.remedy());
+    const std::vector<std::string> languages = file.str_array("general.languages");
+    const auto code = [](const std::string & l) { return l.size() == 2 && l[0] >= 'a' && l[0] <= 'z' && l[1] >= 'a' && l[1] <= 'z'; };
+    if (languages.empty() || !std::all_of(languages.begin(), languages.end(), code) ||
+        std::adjacent_find(languages.begin(), languages.end(), std::greater_equal<std::string>()) != languages.end()) {
+        throw file_error("general.languages of " + file.path() +
+                         " is empty, holds what is not an ISO 639 two-letter code in lowercase, or is not sorted without repeats; " + file.remedy());
     }
 }
 

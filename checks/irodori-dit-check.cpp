@@ -46,13 +46,13 @@ int main(int argc, char ** argv) {
         const ModelFile model(args[1], backend, model_layout);
         const Dit dit(model);
         Sampler sampler(dit, model, backend);
-        const std::string source = model.str("general.source.url");
+        const std::string repository = model.str("general.source.repo_url");
         ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
 
         std::vector<std::filesystem::path> dumps;
         for (const auto & e : std::filesystem::directory_iterator(std::filesystem::u8path(args[2]))) {
             if (std::filesystem::exists(e.path() / "dit_velocity.npy") &&
-                source.find("huggingface.co/" + meta_model(e.path()) + "/tree/") != std::string::npos) {
+                repository == "https://huggingface.co/" + meta_model(e.path())) {
                 dumps.push_back(e.path());
             }
         }

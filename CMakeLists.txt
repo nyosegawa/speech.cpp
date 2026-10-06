@@ -44,6 +44,8 @@ add_library(speechcommon STATIC
     src/common/graph.cpp
     src/common/resample.cpp
     src/common/log.cpp
+    src/common/qwen3-decoder.cpp
+    src/common/qwen2-tokenizer.cpp
 )
 target_include_directories(speechcommon PUBLIC src/common)
 target_link_libraries(speechcommon PUBLIC ggml::ggml)
@@ -59,7 +61,6 @@ add_library(qwen3tts STATIC
     src/families/qwen3-tts/talker.cpp
     src/families/qwen3-tts/prompt.cpp
     src/families/qwen3-tts/sampler.cpp
-    src/families/qwen3-tts/tokenizer.cpp
     src/families/qwen3-tts/synthesizer.cpp
 )
 # Code names the family in its includes ("qwen3-tts/codec.h"), since both families have a codec.h.
@@ -169,6 +170,10 @@ target_link_libraries(talker-check PRIVATE qwen3tts)
 
 add_executable(tokenizer-check checks/tokenizer-check.cpp)
 target_link_libraries(tokenizer-check PRIVATE qwen3tts)
+
+# The decoder's runs in blocks, on the talker of a Qwen3-TTS file.
+add_executable(qwen3-decoder-check checks/qwen3-decoder-check.cpp)
+target_link_libraries(qwen3-decoder-check PRIVATE qwen3tts)
 
 add_executable(irodori-text-check checks/irodori-text-check.cpp)
 target_link_libraries(irodori-text-check PRIVATE irodoritts)

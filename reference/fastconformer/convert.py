@@ -2,10 +2,12 @@
 
 usage: uv run python convert.py <model> <out dir> [--type f32|f16]
 
-Writes <model>-<type>.gguf in layout 1: the frontend's window and mel filterbank, the subsampling, the conformer
-layers, the prediction network and the joint, with the SentencePiece pieces the token ids name, the settings of the
-decoding transcribe() runs (greedy TDT's durations and limit, or the beam and length of RNN-T's alignment-length
-synchronous beam search) and every other constant the C++ reads. A hybrid checkpoint's CTC head is left out, since
+Writes parakeet-tdt_ctc-0.6B-ja-<F32|F16>.gguf, parakeet-tdt-0.6B-v3-<F32|F16>.gguf or
+reazonspeech-nemo-619M-v2-<F32|F16>.gguf, named under GGUF's naming convention, in layout 1: the frontend's window and
+mel filterbank, the subsampling, the conformer layers, the prediction network and the joint, with the SentencePiece
+pieces the token ids name, the settings of the decoding transcribe() runs (greedy TDT's durations and limit, or the
+beam and length of RNN-T's alignment-length synchronous beam search), every other constant the C++ reads and the
+model's identity in the GGUF specification's general keys. A hybrid checkpoint's CTC head is left out, since
 NeMo decodes with its transducer.
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [out, in] is stored as is
@@ -20,7 +22,7 @@ import argparse
 import os
 
 import numpy as np
-from gguf import GGUFValueType, GGUFWriter
+from gguf import GGUFValueType, GGUFWriter, LlamaFileType, naming_convention, size_label
 from nemo.collections.asr.models import EncDecHybridRNNTCTCBPEModel, EncDecRNNTBPEModel
 from nemo.collections.asr.parts.preprocessing import features
 from nemo.collections.asr.parts.submodules import multi_head_attention
@@ -33,8 +35,8 @@ ARCH = "fastconformer"
 # last.
 RELEASES = {1: "0.7.0"}
 LAYOUT = max(RELEASES)
-# The BCP 47 tags of the languages each checkpoint transcribes, from its model card. None takes a language:
-# parakeet-tdt-0.6b-v3 finds the language of the audio itself.
+# The ISO 639 two-letter codes of the languages each checkpoint transcribes, from its model card, which requests give as
+# BCP 47 tags. None takes a language: parakeet-tdt-0.6b-v3 finds the language of the audio itself.
 LANGUAGES = {
     "parakeet-tdt_ctc-0.6b-ja": ["ja"],
     "reazonspeech-nemo-v2": ["ja"],
@@ -43,6 +45,16 @@ LANGUAGES = {
 }
 # The SPDX identifier of each checkpoint's license, from its model card.
 LICENSES = {"parakeet-tdt_ctc-0.6b-ja": "CC-BY-4.0", "parakeet-tdt-0.6b-v3": "CC-BY-4.0", "reazonspeech-nemo-v2": "Apache-2.0"}
+# The parts of each model's name under GGUF's naming convention (ggml's docs/gguf.md): its line, its size where the name
+# gives one, what it was trained toward (ja, the language of parakeet-tdt_ctc-0.6b-ja) and its version. Where the name
+# gives no size, the size label is counted from the parameters of the file's tensors.
+NAMES = {
+    "parakeet-tdt_ctc-0.6b-ja": {"basename": "parakeet-tdt_ctc", "size_label": "0.6B", "finetune": "ja", "version": None},
+    "parakeet-tdt-0.6b-v3": {"basename": "parakeet-tdt", "size_label": "0.6B", "finetune": None, "version": "v3"},
+    "reazonspeech-nemo-v2": {"basename": "reazonspeech-nemo", "size_label": None, "finetune": None, "version": "v2"},
+}
+# The type of most of a file's weights by its --type, as general.file_type gives it.
+FILE_TYPES = {"f32": LlamaFileType.ALL_F32, "f16": LlamaFileType.MOSTLY_F16}
 # speech.cpp's addition to NeMo's segments: the marks that end a segment wherever they stand, for a model whose
 # languages are written without spaces. NeMo ends a segment at one of its separators only where a word ends, which
 # text without spaces between its words never reaches.
@@ -123,8 +135,7 @@ assert joint.activation == "relu" and joint.temperature == 1.0
 assert joint.num_extra_outputs == len(durations) == len(decoding.durations or [])
 assert joint.joint_net[-1].out_features == decoding.blank_id + 1 + len(durations)
 
-path = os.path.join(args.out_dir, f"{args.model}-{args.type}.gguf")
-w = Writer(path, ARCH)
+w = Writer(None, ARCH)
 
 
 def add_array(key, values, element):
@@ -132,14 +143,10 @@ def add_array(key, values, element):
     w.add_key_value(key, list(values), GGUFValueType.ARRAY, sub_type=element)
 
 
-w.add_name(args.model)
-w.add_license(LICENSES[args.model])
-w.add_source_url(f"https://huggingface.co/{pin['repository']}/tree/{pin['revision']}")
 w.add_uint32("speech.layout", LAYOUT)
 w.add_string("speech.requires", RELEASES[LAYOUT])
 w.add_string("speech.task", "recognition")
 w.add_uint32("speech.sample_rate", int(featurizer.sample_rate))
-add_array("speech.languages", sorted(LANGUAGES[args.model]), GGUFValueType.STRING)
 w.add_string("speech.language_use", "checked")
 
 # The frontend: FilterbankFeatures' parameters, and the normalization guard, CONSTANT in features.py.
@@ -300,7 +307,29 @@ for x in ("enc", "pred"):
 add("joint.out.weight", sd["joint.joint_net.2.weight"], True)
 add("joint.out.bias", sd["joint.joint_net.2.bias"])
 
-w.write_header_to_file()
+# The model's identity and languages in the GGUF specification's general keys, which name the file. They follow the
+# tensors, whose parameters give a size label the name does not, and then go first after general.architecture, since
+# GGUFWriter writes the keys in the order they were added.
+parts = NAMES[args.model]
+label = parts["size_label"] or size_label(*w.get_total_parameter_count())
+repository = f"https://huggingface.co/{pin['repository']}"
+w.add_name(pin["repository"].split("/")[1])
+w.add_organization(pin["repository"].split("/")[0])
+w.add_basename(parts["basename"])
+w.add_size_label(label)
+if parts["finetune"]:
+    w.add_finetune(parts["finetune"])
+if parts["version"]:
+    w.add_version(parts["version"])
+w.add_license(LICENSES[args.model])
+w.add_source_url(f"{repository}/tree/{pin['revision']}")
+w.add_source_repo_url(repository)
+w.add_file_type(FILE_TYPES[args.type])
+w.add_languages(sorted(LANGUAGES[args.model]))
+w.kv_data[0] = dict(sorted(w.kv_data[0].items(), key=lambda item: not item[0].startswith("general.")))
+
+path = os.path.join(args.out_dir, naming_convention(None, parts["basename"], parts["finetune"], parts["version"], label, args.type) + ".gguf")
+w.write_header_to_file(path)
 w.write_kv_data_to_file()
 w.write_tensors_to_file()
 w.close()
