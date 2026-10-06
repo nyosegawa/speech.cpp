@@ -47,6 +47,10 @@ void Graph::output(ggml_tensor * t) {
     ggml_build_forward_expand(gf_, t);
 }
 
+void Graph::copy(ggml_tensor * src, ggml_tensor * dst) {
+    ggml_build_forward_expand(gf_, ggml_cpy(ctx_, src, dst));
+}
+
 void Graph::compute(ggml_backend_t backend, ggml_gallocr_t allocr) {
     if (!ggml_gallocr_alloc_graph(allocr, gf_)) throw Error(Fault::OutOfMemory, "cannot allocate the memory of a graph on the device");
     for (const Upload & u : uploads_) ggml_backend_tensor_set(u.tensor, u.bytes.data(), 0, u.bytes.size());

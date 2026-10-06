@@ -40,6 +40,12 @@ public:
     /** Marks `t` as a result to read back after compute(). */
     void output(ggml_tensor * t);
 
+    /**
+     * Writes `src` into `dst`, a tensor that outlives the graph, at this point of the graph: a node added afterwards
+     * that reads `dst` through a view of it sees what was written.
+     */
+    void copy(ggml_tensor * src, ggml_tensor * dst);
+
     /** Allocates the graph with `allocr`, uploads the inputs and computes it on `backend`. */
     void compute(ggml_backend_t backend, ggml_gallocr_t allocr);
 
