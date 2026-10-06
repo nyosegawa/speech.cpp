@@ -1,5 +1,7 @@
 # The worker speaks plain JSON Lines, and VERSION names the release
 
+Superseded in part by docs/adr/0017: the worker's protocol has a version of its own.
+
 Decided 2026-10-05.
 
 ## Context

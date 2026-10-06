@@ -129,31 +129,33 @@ elseif (UNIX)
     set_property(TARGET speech APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/speech.map)
 endif()
 
-# The HTTP server is the one program with a dependency besides ggml: cpp-httplib's single header, vendored in
-# vendor/cpp-httplib from yhirose/cpp-httplib at commit cf3693cb5cc0d39b0e6f4122ba89bda9edb5ac6b (v0.59.0), with
-# its license (docs/adr/0008). It reads requests with the worker's JSON parser.
-add_executable(speech-server tools/server/speech-server.cpp)
-target_include_directories(speech-server PRIVATE tools/worker tools/common vendor/cpp-httplib)
-target_link_libraries(speech-server PRIVATE speech-static)
+# Every program on the library is one executable, speech, with a subcommand each (docs/adr/0017), the library and
+# ggml linked in. The target is speech-cli since the shared library holds the name speech. It has the one dependency
+# besides ggml, cpp-httplib's single header for `speech serve`, vendored in vendor/cpp-httplib from
+# yhirose/cpp-httplib at commit cf3693cb5cc0d39b0e6f4122ba89bda9edb5ac6b (v0.59.0), with its license.
+add_executable(speech-cli
+    tools/cli/main.cpp
+    tools/cli/tts.cpp
+    tools/cli/asr.cpp
+    tools/cli/model.cpp
+    tools/common/command-line.cpp
+    tools/common/json-reader.cpp
+    tools/common/request-options.cpp
+    tools/worker/worker.cpp
+    tools/worker/inbox.cpp
+    tools/server/server.cpp
+    tools/server/openai-api.cpp
+)
+set_target_properties(speech-cli PROPERTIES OUTPUT_NAME speech)
+target_include_directories(speech-cli PRIVATE tools/common tools/cli vendor/cpp-httplib)
+target_link_libraries(speech-cli PRIVATE speech-static)
 if (WIN32)
-    target_compile_definitions(speech-server PRIVATE NOMINMAX)
-    target_link_libraries(speech-server PRIVATE ws2_32)
+    target_compile_definitions(speech-cli PRIVATE NOMINMAX)
+    target_link_libraries(speech-cli PRIVATE ws2_32)
 else()
     find_package(Threads REQUIRED)
-    target_link_libraries(speech-server PRIVATE Threads::Threads)
+    target_link_libraries(speech-cli PRIVATE Threads::Threads)
 endif()
-
-add_executable(speech-worker tools/worker/speech-worker.cpp)
-target_include_directories(speech-worker PRIVATE tools/common)
-target_link_libraries(speech-worker PRIVATE speech-static)
-
-add_executable(speech-tts tools/cli/speech-tts.cpp)
-target_include_directories(speech-tts PRIVATE tools/common)
-target_link_libraries(speech-tts PRIVATE speech-static)
-
-add_executable(speech-asr tools/cli/speech-asr.cpp)
-target_include_directories(speech-asr PRIVATE tools/common)
-target_link_libraries(speech-asr PRIVATE speech-static)
 
 # The checks compare each stage with the reference dumps; they are built but not released.
 add_executable(resample-check checks/resample-check.cpp)
@@ -180,9 +182,9 @@ target_link_libraries(irodori-condition-check PRIVATE irodoritts)
 add_executable(irodori-dit-check checks/irodori-dit-check.cpp)
 target_link_libraries(irodori-dit-check PRIVATE irodoritts)
 
-add_executable(irodori-synthesis-check checks/irodori-synthesis-check.cpp)
-# It reads the dump's meta.json with the worker's string parser.
-target_include_directories(irodori-synthesis-check PRIVATE tools/worker)
+# It reads the dump's meta.json with the JSON reader of `speech`.
+add_executable(irodori-synthesis-check checks/irodori-synthesis-check.cpp tools/common/json-reader.cpp)
+target_include_directories(irodori-synthesis-check PRIVATE tools/common)
 target_link_libraries(irodori-synthesis-check PRIVATE irodoritts)
 
 add_executable(speech-api-check checks/speech-api-check.c checks/speech-api-recognition.c checks/speech-api-common.c)

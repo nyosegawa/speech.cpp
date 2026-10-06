@@ -1,6 +1,6 @@
 # Speech recognition is a task of every entry point
 
-Superseded in part by docs/adr/0014, 0015 and 0016: requests are objects checked against the options each model declares and loading takes no family's fields (0014), the codec is inside the model file and Qwen3-TTS's limit comes from it (0015), and audio at any rate is resampled and a recognition's result carries its tokens and segments with their times (0016).
+Superseded in part by docs/adr/0014, 0015, 0016 and 0017: the request objects and loading, the codec in the model file, resampling and the result object, and the worker's messages, the server and the `speech` executable.
 
 Decided 2026-10-05.
 

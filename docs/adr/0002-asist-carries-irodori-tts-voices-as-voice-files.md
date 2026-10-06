@@ -1,6 +1,6 @@
 # ASIST carries Irodori-TTS voices as voice files
 
-Superseded in part by docs/adr/0015: the codec is inside the model file, and a voice file binds to the hash of the codec's tensors.
+Superseded in part by docs/adr/0015 and docs/adr/0017: the codec is inside the model file, and a voice file binds to the hash of the codec's tensors (0015); `speech voice` makes a voice file, on the CPU unless told otherwise (0017).
 
 Decided 2026-10-01.
 

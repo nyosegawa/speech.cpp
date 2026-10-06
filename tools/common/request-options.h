@@ -1,0 +1,66 @@
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <variant>
+#include <vector>
+
+#include "json-reader.h"
+#include "speech.h"
+
+// The C API's vocabulary of request options as every subcommand reads it: a flag of its name in kebab-case on the
+// command line, a member of its name in the worker's messages and the server's requests, each value read by the
+// option's type and set through the setter of that type, which checks it against the model.
+
+/** A value of an option, of the option's type. */
+using OptionValue = std::variant<std::string, int64_t, double, bool>;
+
+/** An option and its value, as a command line or a message gives it. */
+struct RequestOption {
+    speech_option option;
+    OptionValue value;
+};
+
+/** Every option the library knows, in the order of the vocabulary. */
+std::vector<speech_option> vocabulary();
+
+/** The option named `name` in snake_case, or false for a name the vocabulary does not have. */
+bool option_named(const std::string & name, speech_option & option);
+
+/** The names of the vocabulary in its order, joined for a message: "voice, language, ... and timestamps". */
+std::string option_names();
+
+/** The option's flag on the command line, its name in kebab-case: "--duration-scale". */
+std::string option_flag(speech_option option);
+
+/** The option's type as the command line's help writes its value: "TEXT", "INTEGER" or "NUMBER", "" for a boolean. */
+const char * option_metavar(speech_option option);
+
+/**
+ * The value of an option read from the text a command line gives it, whole: an integer of decimal digits with an
+ * optional minus sign, or a finite decimal number. Anything else throws std::invalid_argument naming what the option
+ * takes. A boolean takes no text, and its flag alone sets it.
+ */
+OptionValue option_from_text(speech_option option, const std::string & text);
+
+/**
+ * The value of an option read from a JSON member: a string, an integer written without a fraction or an exponent, any
+ * finite number, or true or false, by the option's type. Another JSON type throws std::invalid_argument naming what
+ * the option takes.
+ */
+OptionValue option_from_json(speech_option option, const JsonValue & value);
+
+/** Sets each option on `request` through the setter of its type, in order; the library's refusal throws a Failure. */
+void apply_options(speech_request * request, const std::vector<RequestOption> & options);
+
+/**
+ * Whether a recognition with `options` carries its segments and tokens: the timestamps option's value where the
+ * options set it, else the model's default, and false for a model that does not take it.
+ */
+bool timestamps_in_effect(const speech_model_info * info, const std::vector<RequestOption> & options);
+
+/**
+ * The members of a recognition's result in the form of the worker's messages, each after a comma: "text", and with
+ * `timestamps` "segments" and "tokens", each a list of {"start", "end", "text"} with the times in seconds.
+ */
+std::string recognition_members(const speech_result * result, bool timestamps);

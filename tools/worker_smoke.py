@@ -1,129 +1,193 @@
-"""Drives speech-worker the way a caller does: waits for ready, sends two requests in its first voice, cancels
-the second after its first chunk, sends a third, and checks each answer and that every line on stdout is a
-JSON object. Then checks that Irodori-TTS speaks a fixed length of 1 s in at most 1 s and that Qwen3-TTS
-answers a speed and a length with an error, that both answer a speed out of range or not a number with
-one, and that every line the worker cannot read gets an error. Writes the first answer to a WAV.
+"""Drives `speech worker` with a synthesis model through protocol 2 the way a caller does, with every line checked by
+worker_client.py: one JSON object per line, and one terminal message per request and nothing after it.
 
-usage: python3 tools/worker_smoke.py <out.wav> <worker> <model.gguf> [worker options...]
+It checks ready (protocol 2, the release, and the model information of `speech info --json` with the device, the
+threads and the voices of --add-voice), info and count_tokens; that a seed repeats the audio and a drawn seed is
+reported and repeats it too; cancels while a request waits, while it runs, of an unknown id, and after an end, whose id
+a later request then reuses; a second request under an id in flight; each error with its code and option (members the
+message does not have, values of the wrong type, out of range or not taken, a missing text, lines that are not JSON
+objects or have no id or type, the other task's messages); a peek and chunks to a synthesis model; add_voice; for
+Irodori-TTS a fixed length and the progress of a long sampler, and for Qwen3-TTS max_seconds. Writes the first answer
+to a WAV.
+
+usage: python3 tools/worker_smoke.py <out.wav> <speech> <model.gguf> [worker options...]
+       A model that takes voice files needs --add-voice NAME=FILE, whose FILE add_voice adds again under another name.
 """
 
 import base64
-import json
-import subprocess
 import sys
 import time
 import wave
 
-out_wav, *command = sys.argv[1:]
-proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+from worker_client import Worker, short
+
+out_wav, speech, model, *options = sys.argv[1:]
+added = [o.split("=", 1) for i, o in enumerate(options) if i > 0 and options[i - 1] == "--add-voice"]
+w = Worker(speech, model, options)
+ready = w.ready
+info = ready["model"]
+assert ready["protocol"] == 2 and isinstance(ready["version"], str) and info["task"] == "synthesis", short(ready)
+w.check_model_information([name for name, _ in added])
+rate = info["sample_rate"]
+voice = info["voices"][0]["name"]
+irodori = info["architecture"] == "irodori-tts"
+print(f"ready in {time.perf_counter() - w.started:.2f} s: {info['name']} on {info['device']}, protocol 2, speech.cpp {ready['version']}, "
+      f"{len(info['voices'])} voices, model information equal to speech info --json")
+
+TEXT = "明日の東京は晴れで、最高気温は二十四度の予報です。"
+LONG = "これは途中で止める長めの文です。止まったら終わりの知らせの代わりに取り消しの知らせが来ます。"
+
+
+def speak(id, text=TEXT, **members):
+    """The audio and the end of a synthesize."""
+    w.request({"type": "synthesize", "id": id, "text": text, "voice": voice, **members})
+    pcm = bytearray()
+    for m in w.until(id):
+        if m["type"] == "chunk":
+            pcm += base64.b64decode(m["pcm"])
+    if m["type"] != "end":
+        raise SystemExit(f"{id}: {short(m)}")
+    assert m["samples"] * 2 == len(pcm) and m["stop"] in ("complete", "max_seconds", "model_limit"), short(m)
+    return bytes(pcm), m
+
+
+def expect_error(message, code, option):
+    w.request(message)
+    m = w.terminal(message["id"], "error", code, option)
+    print(f"{message['id']}: {code} ({option}) as expected: {m['error']['message']}")
+
+
+w.request({"type": "info", "id": "info"})
+assert w.terminal("info", "end")["model"] == info, "info's model differs from ready's"
+w.request({"type": "count_tokens", "id": "count", "text": TEXT})
+count = w.terminal("count", "end")
+assert isinstance(count["tokens"], int) and 0 < count["tokens"] <= info["max_text_tokens"], short(count)
+print(f"info: the model of ready; count_tokens: {count['tokens']} tokens")
+
 t0 = time.perf_counter()
+pcm_a, end_a = speak("a", seed=11)
+assert end_a["seed"] == 11 and end_a["stop"] == "complete", short(end_a)
+pcm_a2, _ = speak("a2", seed=11)
+assert pcm_a == pcm_a2, "the same seed gave other audio"
+print(f"a: {len(pcm_a) // 2 / rate:.2f} s of audio in {time.perf_counter() - t0:.2f} s, seed 11; the same seed repeats it byte for byte")
+pcm_d, end_d = speak("d")
+assert 0 <= end_d["seed"] < 2 ** 53, short(end_d)
+assert speak("d2", seed=end_d["seed"])[0] == pcm_d, "the reported seed did not repeat the audio"
+print(f"d: drew the seed {end_d['seed']}, which repeats the audio")
 
+# A cancel while the request runs ends it with cancelled; one while it waits, at once, with no chunk.
+w.request({"type": "synthesize", "id": "b", "text": LONG, "voice": voice})
+while (m := w.next_for("b"))["type"] == "progress":
+    pass
+assert m["type"] == "chunk", short(m)
+w.send({"type": "cancel", "id": "b"})
+w.request({"type": "synthesize", "id": "c", "text": "三つ目です。", "voice": voice})
+w.request({"type": "synthesize", "id": "c2", "text": "四つ目です。", "voice": voice})
+w.send({"type": "cancel", "id": "c2"})
+b = w.until("b")[-1]["type"]
+c2 = w.until("c2")
+assert [m["type"] for m in c2] == ["cancelled"], [short(m) for m in c2]
+w.terminal("c", "end")
+assert b == "cancelled", b
+print("b: cancelled while it ran; c2: cancelled while it waited, with no chunk; c answered")
 
-def read():
-    line = proc.stdout.readline()
-    if not line:
-        raise SystemExit("the worker exited")
-    line = line.decode("utf-8").rstrip("\n")
-    if line.endswith("\r"):
-        raise SystemExit("a line ends with \\r")
-    try:
-        message = json.loads(line)
-    except json.JSONDecodeError:
-        message = None
-    if not isinstance(message, dict):
-        raise SystemExit(f"a line on stdout is not a JSON object: {line!r}")
-    return message
+# A cancel of an id no request has, and one after its request ended, change nothing later: the id is reused.
+w.send({"type": "cancel", "id": "nothing"})
+w.send({"type": "cancel", "id": "a"})
+assert speak("a", seed=11)[0] == pcm_a, "the reused id gave other audio"
+print("a cancel of an unknown id and one after the end changed nothing; the id a was answered again")
 
+# A request under an id in flight is refused without an id, and the request in flight is answered.
+w.request({"type": "synthesize", "id": "x", "text": LONG, "voice": voice})
+w.send({"type": "synthesize", "id": "x", "text": "二つ目。", "voice": voice})
+m = w.error_without_id("invalid_argument", "id")
+w.terminal("x", "end")
+print(f"a second request under x: an error without an id ({m['error']['message'][:60]}...); x answered")
 
-def send(obj):
-    proc.stdin.write((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
-    proc.stdin.flush()
-
-
-ready = read()
-assert ready["type"] == "ready", ready
-voice = ready["voices"][0]
-print(f"ready in {time.perf_counter() - t0:.2f} s: {ready['model']} ({ready['architecture']}), rate {ready['sampleRate']}, "
-      f"streaming by {ready['streaming']}, {len(ready['voices'])} voices, languages {ready['languages']}, "
-      f"backend {ready['backend']}, speech.cpp {ready['version']}")
-
-t1 = time.perf_counter()
-send({"id": "a", "text": "明日の東京は晴れで、最高気温は二十四度の予報です。", "voice": voice, "speed": 1.0})
-send({"id": "b", "text": "これは途中で止める長めの文です。止まったら終わりの知らせは来ません。", "voice": voice})
-pcm_a, first_a, cancelled_b, seq_b = bytearray(), None, False, []
-while True:
-    m = read()
-    if m["type"] == "chunk" and m["id"] == "a":
-        if first_a is None:
-            first_a = time.perf_counter() - t1
-        pcm_a += base64.b64decode(m["pcm"])
-    elif m["type"] == "end" and m["id"] == "a":
-        assert m["samples"] * 2 == len(pcm_a), (m, len(pcm_a))
-        print(f"a: first chunk {first_a:.3f} s, {m['samples'] / ready['sampleRate']:.2f} s of audio")
-    elif m["type"] == "chunk" and m["id"] == "b":
-        seq_b.append(m["seq"])
-        if not cancelled_b:
-            send({"type": "cancel", "id": "b"})
-            send({"id": "c", "text": "三つ目です。", "voice": voice})
-            cancelled_b = True
-    elif m["type"] == "end" and m["id"] == "b":
-        raise SystemExit("b ended although it was cancelled")
-    elif m["type"] == "end" and m["id"] == "c":
-        print(f"b: {len(seq_b)} chunk(s) before the cancel took effect, no end; c: {m['samples']} samples")
-        break
-    elif m["type"] in ("error", "fatal"):
-        raise SystemExit(f"unexpected {m}")
-
-send({"id": "d", "text": "声の名前が違います。", "voice": "no-such-voice"})
-m = read()
-assert m["type"] == "error" and m["id"] == "d", m
-print(f"d: error as expected: {m['error']}")
-
-
-def expect_error(request):
-    send(request)
-    m = read()
-    assert m["type"] == "error" and m["id"] == request["id"], m
-    print(f"{request['id']}: error as expected: {m['error']}")
-
-
-if ready["architecture"] == "irodori-tts":
-    send({"id": "e", "text": "三つ目です。", "voice": voice, "seconds": 1})
-    samples = 0
-    while (m := read())["type"] == "chunk":
-        samples += len(base64.b64decode(m["pcm"])) // 2
-    assert m["type"] == "end" and m["id"] == "e" and m["samples"] == samples <= ready["sampleRate"], m
-    print(f"e: a length of 1 s gave {samples / ready['sampleRate']:.3f} s")
+expect_error({"type": "synthesize", "id": "e1", "text": "あ。", "voice": voice, "bogus": 1}, "invalid_argument", "bogus")
+expect_error({"type": "synthesize", "id": "e2", "text": "あ。", "voice": voice, "speed": "fast"}, "invalid_argument", "speed")
+expect_error({"type": "synthesize", "id": "e3", "text": "あ。", "voice": voice, "seed": 1.5}, "invalid_argument", "seed")
+expect_error({"type": "synthesize", "id": "e4", "text": "あ。", "voice": "no-such-voice"}, "out_of_range", "voice")
+expect_error({"type": "synthesize", "id": "e5", "voice": voice}, "invalid_argument", "text")
+expect_error({"type": "synthesize", "id": "e6", "text": "", "voice": voice}, "invalid_argument", "text")
+expect_error({"type": "synthesize", "id": "e7", "text": "あ。"}, "invalid_argument", "voice")
+expect_error({"type": "synthesize", "id": "e8", "text": "あ。", "voice": voice, "timestamps": True}, "unsupported", "timestamps")
+too_long, tokens = TEXT, count["tokens"]
+while tokens <= info["max_text_tokens"]:
+    too_long += too_long
+    w.request({"type": "count_tokens", "id": "count-long", "text": too_long})
+    tokens = w.terminal("count-long", "end")["tokens"]
+expect_error({"type": "synthesize", "id": "e9", "text": too_long, "voice": voice}, "out_of_range", "text")
+expect_error({"type": "pause", "id": "e10"}, "invalid_argument", "type")
+expect_error({"type": "add_voice", "id": "e11", "name": "x"}, "invalid_argument", "path")
+# A member set to null counts as left out, and an option at its neutral value is taken by every model.
+speak("n", text="あ。", language=None, speed=1, duration_scale=1, timestamps=False)
+print("n: null, a speed and a scale of 1 and timestamps false were taken")
+if irodori:
+    expect_error({"type": "synthesize", "id": "e12", "text": "あ。", "voice": voice, "speed": 5}, "out_of_range", "speed")
+    expect_error({"type": "synthesize", "id": "e13", "text": "あ。", "voice": voice, "max_seconds": 1}, "unsupported", "max_seconds")
+    expect_error({"type": "synthesize", "id": "e14", "text": "あ。", "voice": voice, "seconds": 2, "duration_scale": 1.5},
+                 "invalid_argument", "seconds")
+    pcm, end = speak("s", text="三つ目です。", seconds=1)
+    assert end["samples"] <= rate, short(end)
+    print(f"s: a length of 1 s gave {end['samples'] / rate:.3f} s")
+    # A sampler of many steps passes no audio for seconds, and the worker reports its progress at most once a second.
+    w.request({"type": "synthesize", "id": "p", "text": "あ。", "voice": voice, "steps": 160})
+    messages = w.until("p")
+    progress = [m for m in messages if m["type"] == "progress"]
+    assert messages[-1]["type"] == "end" and progress, [short(m) for m in messages if m["type"] != "chunk"]
+    done = [m["done"] for m in progress]
+    gaps = [b["_at"] - a["_at"] for a, b in zip(progress, progress[1:])]
+    assert done == sorted(done) and 0 <= done[0] and done[-1] <= 1 and all(g > 0.9 for g in gaps), (done, gaps)
+    print(f"p: 160 steps, {len(progress)} progress messages ({', '.join(f'{d:.2f}' for d in done)}) at least a second apart")
 else:
-    expect_error({"id": "e", "text": "速くしてください。", "voice": voice, "speed": 1.5})
-    expect_error({"id": "e2", "text": "長さを決めてください。", "voice": voice, "seconds": 2})
-expect_error({"id": "f", "text": "速すぎます。", "voice": voice, "speed": 5})
-expect_error({"id": "g", "text": "数ではありません。", "voice": voice, "speed": "fast"})
+    expect_error({"type": "synthesize", "id": "e12", "text": "あ。", "voice": voice, "speed": 1.5}, "unsupported", "speed")
+    expect_error({"type": "synthesize", "id": "e13", "text": "あ。", "voice": voice, "seconds": 2}, "unsupported", "seconds")
+    expect_error({"type": "synthesize", "id": "e14", "text": "あ。", "voice": voice, "steps": 4}, "unsupported", "steps")
+    pcm, end = speak("s", text=LONG, max_seconds=0.5)
+    assert end["stop"] == "max_seconds" and end["samples"] <= 0.5 * rate, short(end)
+    print(f"s: max_seconds 0.5 stopped it at {end['samples'] / rate:.3f} s ({end['stop']})")
 
-# Lines the worker cannot read are answered too, with the id when one can be read.
-for line, want_id in [
-    ("this is not JSON", None),
-    ('["id", "h"]', None),
-    ('{"id": "h", "text": "あ。"} trailing', None),
-    (json.dumps({"id": "i", "text": "あ。", "voice": voice, "language": None}), "i"),
-    (json.dumps({"id": "j", "text": "あ。", "voice": voice, "speed": {"value": 1}}), "j"),
-    (json.dumps({"text": "あ。", "voice": voice}), None),
-    (json.dumps({"type": "pause", "id": "k"}), "k"),
-]:
-    proc.stdin.write((line + "\n").encode("utf-8"))
-    proc.stdin.flush()
-    m = read()
-    assert m["type"] == "error" and m.get("id") == want_id, (line, m)
-    print(f"{line[:40]!r}: error{' for ' + want_id if want_id else ' without an id'}: {m['error']}")
+# The other task's messages: a chunk opens a recognition request answered unsupported, whose later lines are dropped.
+w.request({"type": "chunk", "id": "r", "seq": 0, "pcm": ""})
+w.terminal("r", "error", "unsupported", "type")
+w.send({"type": "chunk", "id": "r", "seq": 1, "pcm": ""})
+w.send({"type": "transcribe", "id": "r", "sample_rate": 16000})
+w.send({"type": "peek", "id": "r2", "sample_rate": 16000})
+m = w.next_for("r2")
+assert m["type"] == "partial" and m["error"]["code"] == "unsupported", short(m)
+w.request({"type": "transcribe", "id": "r3", "sample_rate": 16000})
+w.terminal("r3", "error", "unsupported", "type")
+print("chunk and transcribe: unsupported once, the request's later lines dropped; peek: a partial with the error")
 
-proc.stdin.close()
-proc.wait(timeout=30)
-rest = proc.stdout.read()
-if rest:
-    raise SystemExit(f"the worker wrote after its last answer: {rest[:200]!r}")
-with wave.open(out_wav, "wb") as w:
-    w.setnchannels(1)
-    w.setsampwidth(2)
-    w.setframerate(ready["sampleRate"])
-    w.writeframes(bytes(pcm_a))
-print("ok, exit", proc.returncode)
+# Lines that name no request are answered without an id.
+for line in ["this is not JSON", '["id", "h"]', '{"type": "synthesize", "text": "あ。"}', '{"type": "synthesize", "id": 5}',
+             '{"type": "info", "id": ""}', '{"type": "cancel", "id": "a", "now": true}']:
+    w.send_line(line)
+    m = w.error_without_id()
+    print(f"{line[:44]!r}: an error without an id: {m['error']['message'][:90]}")
+
+if info["voice_files"]:
+    name, path = added[0]
+    w.request({"type": "add_voice", "id": "v", "name": "added", "path": path})
+    w.terminal("v", "end")
+    w.request({"type": "info", "id": "v-info"})
+    assert [v["name"] for v in w.terminal("v-info", "end")["model"]["voices"]] == [n for n, _ in added] + ["added"]
+    voice = "added"
+    speak("v-speak", text="あ。")
+    expect_error({"type": "add_voice", "id": "v2", "name": "added", "path": path}, "invalid_argument", "name")
+    expect_error({"type": "add_voice", "id": "v3", "name": "other", "path": "/no/such/voice.gguf"}, "io", "path")
+    print("add_voice: the voice was added, info lists it, and a synthesis speaks with it")
+else:
+    expect_error({"type": "add_voice", "id": "v", "name": "x", "path": "x.wav"}, "unsupported", None)
+
+# Requests queued when stdin closes are answered before the worker exits with 0.
+w.request({"type": "synthesize", "id": "last", "text": "おしまい。", "voice": voice})
+rest = w.close()
+assert rest[-1]["type"] == "end" and rest[-1]["id"] == "last", short(rest[-1])
+with wave.open(out_wav, "wb") as f:
+    f.setnchannels(1)
+    f.setsampwidth(2)
+    f.setframerate(rate)
+    f.writeframes(pcm_a)
+print("ok: every request had one terminal message; the worker answered the last after stdin closed and exited with 0")
