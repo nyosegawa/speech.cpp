@@ -30,8 +30,8 @@ void write_voice_file(const std::string & path, const std::vector<float> & laten
     ggml_set_name(t, "latent");
     std::memcpy(t->data, latent.data(), bytes);
     std::unique_ptr<gguf_context, decltype(&gguf_free)> g(gguf_init_empty(), gguf_free);
-    gguf_set_val_str(g.get(), "general.architecture", voice_layout.architecture);
-    gguf_set_val_u32(g.get(), "speech.layout", voice_layout.version);
+    gguf_set_val_str(g.get(), "general.architecture", kVoiceArchitecture);
+    gguf_set_val_u32(g.get(), "speech.layout", kVoiceLayout);
     gguf_set_val_str(g.get(), "speech.requires", kVoiceLayoutRequires);
     gguf_set_val_str(g.get(), "irodori-tts-voice.codec_sha256", codec_sha256.c_str());
     gguf_set_val_f32(g.get(), "irodori-tts-voice.reference_seconds", (float) origin.reference_seconds);

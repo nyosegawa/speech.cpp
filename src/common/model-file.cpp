@@ -1,6 +1,8 @@
 #include "model-file.h"
 
 #include <algorithm>
+#include <cctype>
+#include <climits>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -63,6 +65,29 @@ std::string joined(const std::vector<std::string> & items, size_t at_most) {
     std::string out;
     for (size_t i = 0; i < items.size() && i < at_most; i++) out += (i ? ", " : "") + items[i];
     if (items.size() > at_most) out += " and " + std::to_string(items.size() - at_most) + " more";
+    return out;
+}
+
+/** A shape as README.md writes it, "[2048, 1024]", without the axes of 1 past the last other one. */
+std::string shape_text(const int64_t * ne) {
+    int axes = GGML_MAX_DIMS;
+    while (axes > 1 && ne[axes - 1] == 1) axes--;
+    std::string out = "[";
+    for (int i = 0; i < axes; i++) out += (i ? ", " : "") + std::to_string(ne[i]);
+    return out + "]";
+}
+
+/** A ggml type as README.md writes it: F32, F16, Q8_0. */
+std::string tensor_type_text(ggml_type type) {
+    std::string name = ggml_type_name(type);
+    for (char & c : name) c = (char) std::toupper((unsigned char) c);
+    return name;
+}
+
+/** "F32", or "Q8_0, F16 or F32". */
+std::string types_text(const std::vector<ggml_type> & types) {
+    std::string out;
+    for (size_t i = 0; i < types.size(); i++) out += (i == 0 ? "" : i + 1 == types.size() ? " or " : ", ") + tensor_type_text(types[i]);
     return out;
 }
 
@@ -145,8 +170,9 @@ void ModelFile::open(const Layout & layout) {
 }
 
 void ModelFile::check_tensors(const Layout & layout) const {
-    const std::vector<std::string> wanted = layout.tensors(*this);
-    const std::set<std::string> want(wanted.begin(), wanted.end());
+    const std::vector<TensorSpec> wanted = layout.tensors(*this);
+    std::set<std::string> want;
+    for (const TensorSpec & t : wanted) want.insert(t.name);
     std::set<std::string> have;
     std::vector<std::string> missing, extra;
     for (int64_t i = 0; i < gguf_get_n_tensors(gguf_.get()); i++) {
@@ -154,14 +180,26 @@ void ModelFile::check_tensors(const Layout & layout) const {
         have.insert(name);
         if (!want.count(name)) extra.push_back(name);
     }
-    for (const std::string & name : wanted) {
-        if (!have.count(name)) missing.push_back(name);
+    for (const TensorSpec & t : wanted) {
+        if (!have.count(t.name)) missing.push_back(t.name);
     }
-    if (missing.empty() && extra.empty()) return;
-    std::string what;
-    if (!missing.empty()) what += "it lacks " + joined(missing, 5);
-    if (!extra.empty()) what += std::string(missing.empty() ? "" : ", and ") + "its keys call for no " + joined(extra, 5);
-    throw file_error(path_ + " does not hold the tensors that " + layout_name() + " calls for: " + what + "; " + remedy_);
+    if (!missing.empty() || !extra.empty()) {
+        std::string what;
+        if (!missing.empty()) what += "it lacks " + joined(missing, 5);
+        if (!extra.empty()) what += std::string(missing.empty() ? "" : ", and ") + "its keys call for no " + joined(extra, 5);
+        throw file_error(path_ + " does not hold the tensors that " + layout_name() + " calls for: " + what + "; " + remedy_);
+    }
+    for (const TensorSpec & spec : wanted) {
+        const ggml_tensor * t = ggml_get_tensor(ctx_.get(), spec.name.c_str());
+        if (!std::equal(spec.shape.ne, spec.shape.ne + GGML_MAX_DIMS, t->ne)) {
+            throw file_error("the tensor " + spec.name + " of " + path_ + " has the shape " + shape_text(t->ne) + ", where " + layout_name() +
+                             " gives it the shape " + shape_text(spec.shape.ne) + "; " + remedy_);
+        }
+        if (std::find(spec.types.begin(), spec.types.end(), t->type) == spec.types.end()) {
+            throw file_error("the tensor " + spec.name + " of " + path_ + " has the type " + tensor_type_text(t->type) + ", where " + layout_name() +
+                             " stores it in " + types_text(spec.types) + "; " + remedy_);
+        }
+    }
 }
 
 void ModelFile::load(ggml_backend_t backend, const std::function<bool(const std::string & name)> & keep) {
@@ -223,6 +261,38 @@ int64_t ModelFile::key_id(const std::string & key, gguf_type type, gguf_type ele
 
 uint32_t ModelFile::u32(const std::string & key) const {
     return gguf_get_val_u32(gguf_.get(), key_id(key, GGUF_TYPE_UINT32));
+}
+
+int ModelFile::size(const std::string & key) const {
+    const uint32_t value = u32(key);
+    if (value == 0 || value > (uint32_t) INT_MAX) {
+        throw file_error("the key " + key + " of " + path_ + " is " + std::to_string(value) + ", where " + layout_name() + " takes a size from 1 to " +
+                         std::to_string(INT_MAX) + "; " + remedy_);
+    }
+    return (int) value;
+}
+
+int ModelFile::count(const std::string & key) const {
+    const uint32_t value = u32(key);
+    if (value == 0 || value > tensor_count()) {
+        throw file_error("the key " + key + " of " + path_ + " is " + std::to_string(value) + ", where " + layout_name() +
+                         " takes a number of layers or blocks from 1 to the " + std::to_string(tensor_count()) + " tensors the file holds; " + remedy_);
+    }
+    return (int) value;
+}
+
+int64_t ModelFile::width(const std::string & name, int axis) const {
+    const ggml_tensor * t = ggml_get_tensor(ctx_.get(), name.c_str());
+    if (!t) throw file_error(path_ + " does not hold the tensor " + name + ", which " + layout_name() + " calls for; " + remedy_);
+    if (t->ne[axis] == 0 || t->ne[axis] > INT_MAX) {
+        throw file_error("the tensor " + name + " of " + path_ + " has the shape " + shape_text(t->ne) + ", where " + layout_name() +
+                         " takes a width from 1 to " + std::to_string(INT_MAX) + " on its axis " + std::to_string(axis) + "; " + remedy_);
+    }
+    return t->ne[axis];
+}
+
+int64_t ModelFile::tensor_count() const {
+    return gguf_get_n_tensors(gguf_.get());
 }
 
 float ModelFile::f32(const std::string & key) const {
@@ -322,16 +392,26 @@ void check_model_keys(const ModelFile & file, const char * task, const char * la
         throw file_error(file.path() + " says its speech.language_use is " + file_use + ", where its family's is " + language_use + "; " +
                          file.remedy());
     }
-    if (file.u32("speech.sample_rate") == 0) throw file_error("speech.sample_rate of " + file.path() + " is 0; " + file.remedy());
+    file.size("speech.sample_rate");
     const std::vector<std::string> languages = file.str_array("speech.languages");
     if (languages.empty() || !std::is_sorted(languages.begin(), languages.end())) {
         throw file_error("speech.languages of " + file.path() + " is empty or not sorted; " + file.remedy());
     }
 }
 
-void add_numbered(std::vector<std::string> & names, const std::string & prefix, uint32_t count,
-                  std::initializer_list<const char *> suffixes) {
-    for (uint32_t i = 0; i < count; i++) {
-        for (const char * suffix : suffixes) names.push_back(prefix + std::to_string(i) + (*suffix ? std::string(".") + suffix : ""));
+Shape::Shape(std::initializer_list<int64_t> axes) {
+    if (axes.size() > GGML_MAX_DIMS) throw std::logic_error("a shape has more axes than ggml's tensors");
+    std::copy(axes.begin(), axes.end(), ne);
+}
+
+void add_block(std::vector<TensorSpec> & tensors, const std::string & prefix, std::initializer_list<TensorSpec> parts) {
+    for (const TensorSpec & part : parts) tensors.push_back({prefix + part.name, part.shape, part.types});
+}
+
+void add_numbered(std::vector<TensorSpec> & tensors, const std::string & prefix, int count, std::initializer_list<TensorSpec> parts) {
+    for (int i = 0; i < count; i++) {
+        for (const TensorSpec & part : parts) {
+            tensors.push_back({prefix + std::to_string(i) + (part.name.empty() ? "" : "." + part.name), part.shape, part.types});
+        }
     }
 }

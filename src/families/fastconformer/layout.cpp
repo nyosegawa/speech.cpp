@@ -1,5 +1,7 @@
 #include "layout.h"
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -9,38 +11,61 @@ namespace fastconformer {
 
 namespace {
 
+/**
+ * The types reference/fastconformer/convert.py stores a tensor in by its --type: a matrix of a linear layer in F16 or
+ * F32, and the convolution kernels, the norms, the biases, the frontend and the rest in F32.
+ */
+const std::vector<ggml_type> kMatrix = {GGML_TYPE_F16, GGML_TYPE_F32};
+const std::vector<ggml_type> kF32 = {GGML_TYPE_F32};
+
+/** The width of the subsampling's convolutions, NeMo's default, which the encoder pads by 1 on either side. */
+constexpr int64_t kSubsamplingWidth = 3;
+
 void require(bool condition, const ModelFile & m, const std::string & what) {
     if (!condition) throw Error(Fault::File, m.path() + ": " + what + "; " + m.remedy());
 }
 
 /** Reads every key of the layout, checks the ones that must agree, and names the tensors they call for. */
-std::vector<std::string> tensors(const ModelFile & m) {
+std::vector<TensorSpec> tensors(const ModelFile & m) {
     check_model_keys(m, "recognition", "checked");
     const std::string p = "fastconformer.";
-    for (const char * key : {"n_fft", "hop_length", "n_mels"}) m.u32(p + "frontend." + key);
+    const int n_fft = m.size(p + "frontend.n_fft"), mels = m.size(p + "frontend.n_mels");
+    require((n_fft & (n_fft - 1)) == 0, m, "fastconformer.frontend.n_fft is not a power of two");
+    m.size(p + "frontend.hop_length");
     for (const char * key : {"preemphasis", "log_guard", "std_guard"}) m.f32(p + "frontend." + key);
-    for (const char * key : {"d_model", "num_heads", "conv_kernel"}) m.u32(p + "encoder." + key);
+    const int d = m.size(p + "encoder.d_model"), heads = m.size(p + "encoder.num_heads"), kernel = m.size(p + "encoder.conv_kernel");
+    // The relative positions are encoded as a sine and a cosine for each pair of channels.
+    require(d % 2 == 0 && d % heads == 0, m, "fastconformer.encoder.d_model is odd or not a multiple of fastconformer.encoder.num_heads");
+    require(kernel % 2 == 1, m, "fastconformer.encoder.conv_kernel is not odd");
     for (const char * key : {"norm_eps", "pos_base", "xscale", "ff_factor"}) m.f32(p + "encoder." + key);
     if (m.one_of(p + "encoder.attention", {"rel_pos", "rel_pos_local_attn"}) == "rel_pos_local_attn") {
-        m.u32(p + "encoder.attention_context");
-        m.u32(p + "encoder.global_tokens");
+        m.size(p + "encoder.attention_context");
+        m.size(p + "encoder.global_tokens");
     }
     const uint32_t factor = m.u32(p + "encoder.subsampling_factor");
-    uint32_t halvings = 0;
+    int halvings = 0;
     for (uint32_t f = factor; f > 1; f /= 2) halvings++;
     require(factor >= 2 && (1u << halvings) == factor, m, "fastconformer.encoder.subsampling_factor is not a power of two");
     const bool use_bias = m.boolean(p + "encoder.use_bias");
+    const int layers = m.count(p + "encoder.num_layers");
 
     const bool tdt = m.one_of(p + "decoder.kind", {"tdt", "rnnt"}) == "tdt";
     const uint32_t blank = m.u32(p + "decoder.blank_id");
+    int64_t outputs = (int64_t) blank + 1;
     if (tdt) {
-        m.i32_array(p + "decoder.tdt.durations");
-        m.u32(p + "decoder.tdt.max_symbols");
+        const std::vector<int32_t> durations = m.i32_array(p + "decoder.tdt.durations");
+        require(!durations.empty() && std::all_of(durations.begin(), durations.end(), [](int32_t duration) { return duration >= 0; }), m,
+                "fastconformer.decoder.tdt.durations is empty or holds a negative duration");
+        outputs += (int64_t) durations.size();
+        m.size(p + "decoder.tdt.max_symbols");
     } else {
-        m.u32(p + "decoder.rnnt.beam_size");
+        // BeamRNNTInfer runs greedy_search() instead with a beam of 1.
+        require(m.size(p + "decoder.rnnt.beam_size") >= 2, m, "fastconformer.decoder.rnnt.beam_size is less than 2");
         m.boolean(p + "decoder.rnnt.score_norm");
-        m.f32(p + "decoder.rnnt.max_target_ratio");
+        const float ratio = m.f32(p + "decoder.rnnt.max_target_ratio");
+        require(ratio >= 0 && std::isfinite(ratio), m, "fastconformer.decoder.rnnt.max_target_ratio is negative or not finite");
     }
+    const int prediction_layers = m.count(p + "decoder.prediction_layers");
     m.str_array(p + "segment.separators");
     m.str_array(p + "segment.breaks");
     require(m.str_array(p + "tokenizer.tokens").size() == blank, m, "the blank does not follow the last of fastconformer.tokenizer.tokens");
@@ -49,26 +74,62 @@ std::vector<std::string> tensors(const ModelFile & m) {
     m.boolean(p + "tokenizer.strip_leading_space");
     m.str_array(p + "tokenizer.punctuation");
 
-    std::vector<std::string> names = {"frontend.window", "frontend.filterbank", "sub.conv.0.weight", "sub.conv.0.bias", "sub.out.weight",
-                                      "sub.out.bias",    "pred.embed.weight",   "joint.enc.weight",  "joint.enc.bias",  "joint.pred.weight",
-                                      "joint.pred.bias", "joint.out.weight",    "joint.out.bias"};
-    for (uint32_t i = 1; i < halvings; i++) {
-        const std::string c = "sub.conv." + std::to_string(i) + ".";
-        names.insert(names.end(), {c + "dw.weight", c + "dw.bias", c + "pw.weight", c + "pw.bias"});
+    // The window's length and the widths of the subsampling's channels, the feed-forward layers, the prediction network
+    // and the joint have no key: each is the width of one tensor, which the others are checked against.
+    const int64_t window = m.width("frontend.window", 0), channels = m.width("sub.conv.0.weight", 3);
+    require(window <= n_fft, m, "frontend.window is longer than fastconformer.frontend.n_fft");
+    const int64_t ffn = m.width("blk.0.ff1_up.weight", 1), predicted = m.width("pred.embed.weight", 0), joint = m.width("joint.enc.weight", 1);
+    // Each stride-2 convolution of the subsampling halves the mel axis, rounding up.
+    int64_t subsampled_mels = mels;
+    for (int i = 0; i < halvings; i++) subsampled_mels = (subsampled_mels - 1) / 2 + 1;
+
+    const int64_t k = kSubsamplingWidth;
+    std::vector<TensorSpec> t = {{"frontend.window", {window}, kF32},
+                                 {"frontend.filterbank", {n_fft / 2 + 1, mels}, kF32},
+                                 {"sub.conv.0.weight", {k, k, 1, channels}, kF32},
+                                 {"sub.conv.0.bias", {channels}, kF32},
+                                 {"sub.out.weight", {channels * subsampled_mels, d}, kMatrix},
+                                 {"sub.out.bias", {d}, kF32},
+                                 {"pred.embed.weight", {predicted, (int64_t) blank + 1}, kMatrix},
+                                 {"joint.enc.weight", {d, joint}, kMatrix},
+                                 {"joint.enc.bias", {joint}, kF32},
+                                 {"joint.pred.weight", {predicted, joint}, kMatrix},
+                                 {"joint.pred.bias", {joint}, kF32},
+                                 {"joint.out.weight", {joint, outputs}, kMatrix},
+                                 {"joint.out.bias", {outputs}, kF32}};
+    for (int i = 1; i < halvings; i++) {
+        add_block(t, "sub.conv." + std::to_string(i) + ".",
+                  {{"dw.weight", {k, k, 1, channels}, kF32},
+                   {"dw.bias", {channels}, kF32},
+                   {"pw.weight", {channels, channels}, kMatrix},
+                   {"pw.bias", {channels}, kF32}});
     }
-    add_numbered(names, "blk.", m.u32(p + "encoder.num_layers"),
-                 {"ff1_norm.weight", "ff1_norm.bias", "ff2_norm.weight", "ff2_norm.bias", "attn_norm.weight", "attn_norm.bias",
-                  "conv_norm.weight", "conv_norm.bias", "out_norm.weight", "out_norm.bias", "attn_pos.weight", "attn_pos_bias_u",
-                  "attn_pos_bias_v", "conv_dw.weight", "conv_dw.bias", "ff1_up.weight", "ff1_down.weight", "ff2_up.weight",
-                  "ff2_down.weight", "attn_q.weight", "attn_k.weight", "attn_v.weight", "attn_out.weight", "conv_pw1_a.weight",
-                  "conv_pw1_gate.weight", "conv_pw2.weight"});
+    add_numbered(t, "blk.", layers,
+                 {{"ff1_norm.weight", {d}, kF32},          {"ff1_norm.bias", {d}, kF32},
+                  {"ff2_norm.weight", {d}, kF32},          {"ff2_norm.bias", {d}, kF32},
+                  {"attn_norm.weight", {d}, kF32},         {"attn_norm.bias", {d}, kF32},
+                  {"conv_norm.weight", {d}, kF32},         {"conv_norm.bias", {d}, kF32},
+                  {"out_norm.weight", {d}, kF32},          {"out_norm.bias", {d}, kF32},
+                  {"attn_pos.weight", {d, d}, kMatrix},    {"attn_pos_bias_u", {d / heads, heads}, kF32},
+                  {"attn_pos_bias_v", {d / heads, heads}, kF32}, {"conv_dw.weight", {kernel, d}, kF32},
+                  {"conv_dw.bias", {d}, kF32},             {"ff1_up.weight", {d, ffn}, kMatrix},
+                  {"ff1_down.weight", {ffn, d}, kMatrix},  {"ff2_up.weight", {d, ffn}, kMatrix},
+                  {"ff2_down.weight", {ffn, d}, kMatrix},  {"attn_q.weight", {d, d}, kMatrix},
+                  {"attn_k.weight", {d, d}, kMatrix},      {"attn_v.weight", {d, d}, kMatrix},
+                  {"attn_out.weight", {d, d}, kMatrix},    {"conv_pw1_a.weight", {d, d}, kMatrix},
+                  {"conv_pw1_gate.weight", {d, d}, kMatrix}, {"conv_pw2.weight", {d, d}, kMatrix}});
     if (use_bias) {
-        add_numbered(names, "blk.", m.u32(p + "encoder.num_layers"),
-                     {"ff1_up.bias", "ff1_down.bias", "ff2_up.bias", "ff2_down.bias", "attn_q.bias", "attn_k.bias", "attn_v.bias",
-                      "attn_out.bias", "conv_pw1_a.bias", "conv_pw1_gate.bias", "conv_pw2.bias"});
+        add_numbered(t, "blk.", layers,
+                     {{"ff1_up.bias", {ffn}, kF32},    {"ff1_down.bias", {d}, kF32},   {"ff2_up.bias", {ffn}, kF32},
+                      {"ff2_down.bias", {d}, kF32},    {"attn_q.bias", {d}, kF32},     {"attn_k.bias", {d}, kF32},
+                      {"attn_v.bias", {d}, kF32},      {"attn_out.bias", {d}, kF32},   {"conv_pw1_a.bias", {d}, kF32},
+                      {"conv_pw1_gate.bias", {d}, kF32}, {"conv_pw2.bias", {d}, kF32}});
     }
-    add_numbered(names, "pred.lstm.", m.u32(p + "decoder.prediction_layers"), {"ih.weight", "hh.weight", "bias"});
-    return names;
+    // An LSTM layer's four gates, input, forget, cell and output, are stacked in its matrices and its summed biases.
+    add_numbered(t, "pred.lstm.", prediction_layers,
+                 {{"ih.weight", {predicted, 4 * predicted}, kMatrix}, {"hh.weight", {predicted, 4 * predicted}, kMatrix},
+                  {"bias", {4 * predicted}, kF32}});
+    return t;
 }
 
 }  // namespace

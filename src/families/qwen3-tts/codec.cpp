@@ -83,8 +83,6 @@ struct Graph {
             // The sum reads the old state; put it in the graph before the copy that overwrites the state.
             ggml_build_forward_expand(gf, first);
             keep(ggml_view_2d(ctx, second, out * stride, 1, second->nb[1], (t - 1) * second->nb[1]), state);
-        } else if (k_width != stride) {
-            throw Error(Fault::File, "a transposed convolution of the codec has a width other than its stride or twice it, which this reader does not run");
         }
         return ggml_add(ctx, ggml_reshape_2d(ctx, first, out, stride * t), b);
     }

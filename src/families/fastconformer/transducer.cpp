@@ -1,9 +1,6 @@
 #include "transducer.h"
 
-#include <stdexcept>
 #include <string>
-
-#include "error.h"
 
 namespace fastconformer {
 
@@ -16,17 +13,7 @@ ggml_tensor * linear(ggml_context * ctx, const ModelFile & m, ggml_tensor * x, c
 }  // namespace
 
 PredictionNetwork::PredictionNetwork(const ModelFile & m)
-    : m_(m), layers_((int) m.u32("fastconformer.decoder.prediction_layers")), hidden_((int) m.tensor("pred.embed.weight")->ne[0]) {
-    if (m.tensor("pred.embed.weight")->ne[1] != (int64_t) m.u32("fastconformer.decoder.blank_id") + 1) {
-        throw Error(Fault::File, "pred.embed.weight does not have a row for each token and the blank");
-    }
-    for (int l = 0; l < layers_; l++) {
-        const std::string p = "pred.lstm." + std::to_string(l);
-        if (m.tensor(p + ".ih.weight")->ne[1] != 4 * hidden_ || m.tensor(p + ".hh.weight")->ne[0] != hidden_) {
-            throw Error(Fault::File, p + " does not have four gates of the embedding's width");
-        }
-    }
-}
+    : m_(m), layers_((int) m.u32("fastconformer.decoder.prediction_layers")), hidden_((int) m.tensor("pred.embed.weight")->ne[0]) {}
 
 PredictionState PredictionNetwork::initial_state() const {
     const size_t n = (size_t) hidden_ * (size_t) layers_;

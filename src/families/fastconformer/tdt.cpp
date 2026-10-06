@@ -33,15 +33,7 @@ TdtDecoder::TdtDecoder(const ModelFile & m, const PredictionNetwork & prediction
       joint_(joint),
       blank_((int) m.u32("fastconformer.decoder.blank_id")),
       durations_(m.i32_array("fastconformer.decoder.tdt.durations")),
-      max_symbols_(m.u32("fastconformer.decoder.tdt.max_symbols")) {
-    if (joint_.outputs() != blank_ + 1 + (int) durations_.size()) {
-        throw Error(Fault::File, "joint.out.weight does not have an output for each token, the blank and each duration");
-    }
-    for (int32_t d : durations_) {
-        if (d < 0) throw Error(Fault::File, "fastconformer.decoder.tdt.durations holds a negative duration");
-    }
-    if (max_symbols_ == 0) throw Error(Fault::File, "fastconformer.decoder.tdt.max_symbols is 0");
-}
+      max_symbols_(m.u32("fastconformer.decoder.tdt.max_symbols")) {}
 
 Decoding TdtDecoder::decode(const std::vector<float> & projected, ggml_backend_t backend, const DecodingProgress & progress) const {
     const int hidden = joint_.hidden();

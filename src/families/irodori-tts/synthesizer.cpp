@@ -91,16 +91,8 @@ Voice Synthesizer::load_voice(const std::string & path) {
     if (starts_with_riff(path)) {
         return voice_from_latent(encode_reference(codec_, path, reference_).latent);
     }
-    ModelFile file(path, backend_, voice_layout);
-    const std::string codec = file.str("irodori-tts-voice.codec_sha256");
-    if (codec != codec_.sha256()) {
-        throw Error(Fault::InvalidArgument, path + " was made with the codec of SHA-256 " + codec + ", and " + model_->str("general.name") +
-                                                " has the codec " + codec_.sha256() + "; make the voice again from its WAVE file with this model");
-    }
+    const ModelFile file(path, backend_, voice_layout(*model_));
     ggml_tensor * t = file.tensor("latent");
-    if (t->type != GGML_TYPE_F32 || t->ne[0] != codec_.latent_dim() || ggml_n_dims(t) > 2) {
-        throw Error(Fault::File, path + " holds no latent of " + std::to_string(codec_.latent_dim()) + " channels in float32; " + file.remedy());
-    }
     std::vector<float> latent(ggml_nelements(t));
     ggml_backend_tensor_get(t, latent.data(), 0, ggml_nbytes(t));
     return voice_from_latent(std::move(latent));

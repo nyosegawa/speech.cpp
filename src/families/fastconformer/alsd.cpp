@@ -43,12 +43,7 @@ AlsdDecoder::AlsdDecoder(const ModelFile & m, const PredictionNetwork & predicti
       blank_((int) m.u32("fastconformer.decoder.blank_id")),
       beam_((int) m.u32("fastconformer.decoder.rnnt.beam_size")),
       score_norm_(m.boolean("fastconformer.decoder.rnnt.score_norm")),
-      max_target_ratio_(m.f32("fastconformer.decoder.rnnt.max_target_ratio")) {
-    if (joint_.outputs() != blank_ + 1) throw Error(Fault::File, "joint.out.weight does not have an output for each token and the blank");
-    // BeamRNNTInfer runs greedy_search() instead with a beam of 1.
-    if (beam_ < 2) throw Error(Fault::File, "fastconformer.decoder.rnnt.beam_size is less than 2");
-    if (!(max_target_ratio_ >= 0)) throw Error(Fault::File, "fastconformer.decoder.rnnt.max_target_ratio is negative");
-}
+      max_target_ratio_(m.f32("fastconformer.decoder.rnnt.max_target_ratio")) {}
 
 Decoding AlsdDecoder::decode(const std::vector<float> & projected, ggml_backend_t backend, const DecodingProgress & progress) const {
     const int hidden = joint_.hidden(), outputs = joint_.outputs(), predicted = prediction_.hidden();
