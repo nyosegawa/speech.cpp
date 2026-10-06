@@ -1358,7 +1358,7 @@ family's architecture; only speech.cpp runs these files.
 | `general.source.url` | string | the revision converted: `<general.source.repo_url>/tree/<revision>`, since the specification has no key of its own for a revision | the pin |
 | `general.file_type` | u32 | the type that holds most of the tensors' bytes, as gguf-py's `LlamaFileType` numbers it: 0 (F32), 1 (F16) or 7 (Q8_0); a file whose tensors say otherwise is refused | the converter's `--type` |
 | `general.quantization_version` | u32 | the version of ggml's quantized blocks (2); present when the file holds a quantized tensor | gguf-py's `GGML_QUANT_VERSION` |
-| `general.languages` | [string] | ISO 639 two-letter codes, sorted, which requests and the model information give as BCP 47 tags | Qwen3-TTS: the names of `codec_language_id` through the converter's table of codes, dialects left out; the others: the model card |
+| `general.languages` | [string] | each language's shortest ISO 639 code, sorted, which requests and the model information give as BCP 47 tags: two letters, or three for a language that has no two-letter code (`yue`, `fil`), where the GGUF specification asks for two letters | Qwen3-TTS: the names of `codec_language_id` through the converter's table of codes, dialects left out; Qwen3-ASR: the tags of transformers' `LANGUAGE_CODE_TO_NAME`; the others: the model card |
 | `speech.layout` | u32 | 1, the version of the family's layout | the converter |
 | `speech.requires` | string | `0.7.0`, the first release whose reader takes this layout | the converter's table of layouts |
 | `speech.task` | string | `synthesis` or `recognition`; must be the family's | the converter |

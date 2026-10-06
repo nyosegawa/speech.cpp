@@ -44,8 +44,8 @@ what it leaves out throughout its C++.
 - **The identity and the languages are in the GGUF specification's keys, and the file is named by its convention.**
   The converter writes `general.name`, `organization`, `basename`, `size_label`, `finetune` and `version` where the
   model has them, `license`, `source.repo_url`, `file_type`, `quantization_version` in a quantized file, and
-  `languages` (ISO 639 two-letter codes, which requests give as BCP 47 tags), under the names the specification gives
-  them, and names the file `<basename>-<size label>-<finetune>-<version>-<type>.gguf`
+  `languages` (each language's shortest ISO 639 code, which requests give as BCP 47 tags), under the names the
+  specification gives them, and names the file `<basename>-<size label>-<finetune>-<version>-<type>.gguf`
   (`Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf`). Tools that read GGUF metadata, Hugging Face's file viewer among them,
   show these keys and read these names, and a key of speech.cpp's own where the specification has one would be an
   invented name for a known fact. It does not make the files run anywhere but speech.cpp. The specification has no key
@@ -54,6 +54,11 @@ what it leaves out throughout its C++.
   the convention takes a number. A model whose name has no fine-tune or version has no such key, as the specification
   leaves out what a model lacks; these keys describe the model and steer nothing. `general.file_type` must name the
   type that holds most of the tensors' bytes.
+- **A language is its shortest ISO 639 code**, as BCP 47 names it: two letters (ISO 639-1) where the language has
+  them, and three (ISO 639-2 or 639-3) where it has none, such as `yue` for Cantonese and `fil` for Filipino, which
+  Qwen3-ASR recognizes. The GGUF specification asks for two-letter codes in `general.languages`, and these languages
+  have none; leaving them out would hide languages the model takes, and a code of speech.cpp's own would be an invented
+  name. A converter writes the shortest code, and the reader takes two or three lowercase letters.
 - **The other model-independent keys are under `speech.`**, the built-in voices with the model card's language, gender
   and description among them, and a family's keys under its architecture's name. A key nothing reads is not written.
 - **A voice file binds to its codec by a hash** of the official codec's tensors, which the converter computes and

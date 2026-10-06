@@ -194,10 +194,10 @@ typedef enum speech_option {
      */
     SPEECH_OPT_VOICE = 0,
     /**
-     * "language", a string: "auto" (the neutral value), or a BCP 47 tag that names one of the model's languages or a
-     * region or script of one ("ja", "ja-JP", "zh-Hant"), compared without case. The model's declaration says
-     * whether the language steers the model or is only checked against its languages
-     * (speech_model_info_option_steers()).
+     * "language", a string: "auto" (the neutral value), or a BCP 47 tag that names one of the model's languages, by
+     * its code of two letters or, for a language that has none, of three, alone or with a region or script ("ja",
+     * "ja-JP", "zh-Hant", "yue", "fil-PH"), compared without case. The model's declaration says whether the language
+     * steers the model or is only checked against its languages (speech_model_info_option_steers()).
      */
     SPEECH_OPT_LANGUAGE = 1,
     /**
@@ -399,8 +399,8 @@ SPEECH_API int speech_model_info_incremental(const speech_model_info * info);
 SPEECH_API size_t speech_model_info_language_count(const speech_model_info * info);
 
 /**
- * The language at `index` as a BCP 47 tag, such as "ja": the file's general.languages, whose ISO 639 two-letter codes
- * are BCP 47 tags.
+ * The language at `index` as a BCP 47 tag, such as "ja" or "yue": the file's general.languages, the shortest ISO 639
+ * code of each language, two letters where ISO 639-1 has one and three where it has none, which are BCP 47 tags.
  */
 SPEECH_API const char * speech_model_info_language(const speech_model_info * info, size_t index);
 

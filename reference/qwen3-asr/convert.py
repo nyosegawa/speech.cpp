@@ -171,13 +171,14 @@ with open(os.path.join(os.path.dirname(utils.__file__), "qwen3_asr.py"), encodin
 eos_ids = list(generation["eos_token_id"])
 
 # The languages: transformers' tags of the names the checkpoint supports, which qwen-asr's forced language writes.
-# general.languages takes ISO 639 two-letter codes; Cantonese (yue) and Filipino (fil) have none, so they are left
-# out and recognized only when the model finds the language itself.
+# general.languages holds each language's shortest ISO 639 code, as BCP 47 names it (docs/adr/0015): the ISO 639-1 code
+# of two letters, and for Cantonese and Filipino, which have none, the three letters of ISO 639-3 (yue) and 639-2
+# (fil).
 names = processing_qwen3_asr.LANGUAGE_CODE_TO_NAME
 assert sorted(names.values()) == sorted(config["support_languages"]) == sorted(utils.SUPPORTED_LANGUAGES)
-tags = sorted(tag for tag in names if len(tag) == 2)
-left_out = sorted(names[tag] for tag in names if len(tag) != 2)
-assert left_out == ["Cantonese", "Filipino"], left_out
+tags = sorted(names)
+assert all(re.fullmatch("[a-z]{2,3}", tag) for tag in tags)
+assert sorted(names[tag] for tag in tags if len(tag) == 3) == ["Cantonese", "Filipino"], "a language has a code longer than its shortest"
 
 # The tokenizer: the Qwen2 byte-level BPE with the added tokens, which encoding splits text at and decoding skips when
 # they are special.
