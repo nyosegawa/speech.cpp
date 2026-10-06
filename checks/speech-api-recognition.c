@@ -298,6 +298,14 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
     if (check_info_matches(model_path, model) != 0 || check_option_refusals(model) != 0) return 1;
     speech_model_info * info = NULL;
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
+    // The texts are compared with the dumps byte for byte, which quantized weights do not reproduce: Qwen3-ASR 0.6B in
+    // Q8_0 writes 3 of its 40 dumped requests otherwise, each at a step where the reference's two likeliest tokens lie
+    // within the quantization's error (2026-10-06).
+    const char * file_type = meta_of(info, "general.file_type");
+    if (!file_type || (strcmp(file_type, "0") != 0 && strcmp(file_type, "1") != 0)) {
+        fprintf(stderr, "FAIL: %s does not hold F32 or F16 weights, whose texts alone can equal the dumps' byte for byte\n", model_path);
+        return 1;
+    }
     const int rate = speech_model_info_sample_rate(info);
     const char * use = meta_of(info, "speech.language_use");
     if (speech_model_info_task(info) != SPEECH_TASK_RECOGNITION || speech_model_info_incremental(info) || speech_model_info_voice_count(info) ||

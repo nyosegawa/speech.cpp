@@ -255,7 +255,8 @@ before it starts a worker:
 - `vendor/cpp-httplib/` holds cpp-httplib's header and license, which `speech serve` uses.
 - `checks/` holds a check per ported stage that compares it with the official implementation, and
   `speech-api-check`, which runs the C API through the shared library with a synthesis model and, with
-  `transcribe`, with a recognition model and the dumps of `reference/fastconformer/` or `reference/qwen3-asr/`.
+  `transcribe`, with a recognition model in F32 or F16 and the dumps of `reference/fastconformer/` or
+  `reference/qwen3-asr/`, whose texts it compares byte for byte.
 - `reference/<model>/` pins the official implementation in a uv environment and the checkpoints by revision,
   converts the weights to one GGUF file per model (GGUF files, below) and dumps the tensors the checks compare with;
   `reference/resample/` dumps torchaudio's resampling, which `resample-check` compares the library's with.
