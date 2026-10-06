@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "error.h"
+#include "log.h"
 
 /*
  * Activations are channel-first ([hidden, rows]). Every row has one position, which in Qwen's multimodal RoPE stands
@@ -25,18 +26,64 @@ constexpr int kGraphSize = 8192;
 constexpr int64_t kCacheStep = 256;
 
 /**
- * A cache holds a multiple of this many positions, so that every row of its transposed values starts on 32 bytes in
- * half precision, as ggml aligns a tensor. Metal's matrix-vector product reads a row four values at a time whenever
- * its length is a multiple of four, whatever the stride between rows, and a row that does not start on four bytes
- * reads the wrong values: a cache of 85 positions puts the talker's logits 42% off on Metal.
+ * Flash attention reads the keys and values of a whole number of blocks of this many positions, its mask hiding those
+ * past the sequence, and a cache holds a whole number of blocks. Metal's flash attention reads keys 32 positions at a
+ * time in its kernel for a few rows and 64 in the one for many, and first copies a last block that the positions do not
+ * fill into a buffer of its own: the attention of 28 layers at 400 positions, the shape of both Qwen3-ASR decoders,
+ * took 1.17 ms on the GPU of an Apple M5, and 0.62 ms read as 416 positions with the mask (2026-10-07). A whole number
+ * of blocks also starts every row of the products' transposed values on 32 bytes in half precision, as ggml aligns a
+ * tensor: Metal's matrix-vector product reads a row four values at a time whenever its length is a multiple of four,
+ * whatever the stride between rows, and a row that does not start on four bytes reads the wrong values, so that a
+ * cache of 85 positions put the talker's logits 42% off on Metal.
  */
-constexpr int64_t kCacheAlign = 16;
+constexpr int64_t kAttentionBlock = 64;
 
 int64_t round_up(int64_t n, int64_t step) {
     return (n + step - 1) / step * step;
 }
 
+/** The positions of `rows` rows after `past` positions. */
+std::vector<int32_t> positions_after(int64_t past, int64_t rows) {
+    std::vector<int32_t> positions((size_t) rows);
+    for (int64_t i = 0; i < rows; i++) positions[(size_t) i] = (int32_t) (past + i);
+    return positions;
+}
+
+/**
+ * The mask of `rows` rows after `past` positions over the first `n_kv` positions, [n_kv, rows]: a row sees the
+ * positions before it and its own.
+ */
+std::vector<float> causal_mask(int64_t past, int64_t rows, int64_t n_kv) {
+    std::vector<float> mask((size_t) (n_kv * rows));
+    for (int64_t i = 0; i < rows; i++) {
+        for (int64_t j = 0; j < n_kv; j++) mask[(size_t) (i * n_kv + j)] = j <= past + i ? 0.0f : -INFINITY;
+    }
+    return mask;
+}
+
+/** Whether `backend` computes flash attention of one row over a block of a cache of `cache_type`, the stack's heads. */
+bool computes_flash_attention(ggml_backend_t backend, const Qwen3Shape & s, ggml_type cache_type) {
+    ggml_init_params params = {ggml_tensor_overhead() * 8, nullptr, true};
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> ctx(ggml_init(params), ggml_free);
+    ggml_tensor * q = ggml_new_tensor_3d(ctx.get(), GGML_TYPE_F32, s.head_dim, 1, s.n_head);
+    ggml_tensor * k = ggml_new_tensor_3d(ctx.get(), cache_type, s.head_dim, kAttentionBlock, s.n_kv_head);
+    ggml_tensor * v = ggml_new_tensor_3d(ctx.get(), cache_type, s.head_dim, kAttentionBlock, s.n_kv_head);
+    ggml_tensor * mask = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F16, kAttentionBlock, 1);
+    ggml_tensor * attention = ggml_flash_attn_ext(ctx.get(), q, k, v, mask, 1.0f, 0.0f, 0.0f);
+    ggml_prec_set_acc(attention, GGML_PREC_F32);
+    return ggml_backend_supports_op(backend, attention);
+}
+
 }  // namespace
+
+Qwen3Attention qwen3_attention(ggml_backend_t backend, const Qwen3Shape & shape, ggml_type cache_type) {
+    const bool cpu = ggml_backend_dev_type(ggml_backend_get_device(backend)) == GGML_BACKEND_DEVICE_TYPE_CPU;
+    return !cpu && computes_flash_attention(backend, shape, cache_type) ? Qwen3Attention::Flash : Qwen3Attention::Products;
+}
+
+const char * qwen3_attention_name(Qwen3Attention attention) {
+    return attention == Qwen3Attention::Flash ? "flash attention" : "two matrix products";
+}
 
 Qwen3Shape read_qwen3_shape(const ModelFile & m, const std::string & prefix) {
     Qwen3Shape s;
@@ -77,27 +124,31 @@ void add_qwen3_tensors(std::vector<TensorSpec> & t, const std::string & tensors,
 
 /**
  * The keys and values of every layer for `capacity` positions: the keys a row per position,
- * [kv heads * head dim, capacity], and the values transposed, a row per channel, [capacity, kv heads * head dim].
- * Attention reads both through views, the keys as [head dim, positions, kv heads] and the values as
- * [positions, head dim, kv heads], the operands of its two matrix products, so it reads the cache once and copies
- * none of it. Values kept a row per position need a copy into that layout at every step, with which a step of the 1.7B
- * talker 8192 frames into its speech took 205 ms instead of 28 on Metal and 259 instead of 40 on the CPU of an Apple M5
- * (2026-10-06). ggml_flash_attn_ext reads values a row per position, but it gains at most 3 ms a step there on Metal
- * and takes two to four times as long as the two products on the CPU, where it also sums the values in half precision.
+ * [kv heads * head dim, capacity], and the values in the layout the attention reads. Flash attention reads them a row
+ * per position, as the keys. The two products read them transposed, a row per channel, [capacity, kv heads * head dim],
+ * through a view as [positions, head dim, kv heads], the operand of the second product, so that a step reads the cache
+ * once and copies none of it: values kept a row per position need a copy into that layout at every step, with which a
+ * step of the 1.7B talker 8192 frames into its speech took 259 ms instead of 40 on the CPU of an Apple M5 (2026-10-06).
+ * On that CPU flash attention takes twice as long as the products at 8,000 positions, 51 ms against 22 for 28 layers
+ * of the heads of both Qwen3-ASR decoders (2026-10-07), and sums the values in half precision.
  */
 struct Qwen3Decoder::Cache {
     ggml_context * ctx = nullptr;
     ggml_backend_buffer_t buffer = nullptr;
     std::vector<ggml_tensor *> k, v;
     int64_t capacity = 0;
+    /** Whether the values are kept a row per position, for flash attention. */
+    bool values_by_position = false;
 
     /** A cache with room for `positions` positions, room(positions) in all. */
-    Cache(ggml_backend_t backend, ggml_type type, const Qwen3Shape & s, int64_t positions) : capacity(room(positions)) {
+    Cache(ggml_backend_t backend, ggml_type type, const Qwen3Shape & s, int64_t positions, bool by_position)
+        : capacity(room(positions)), values_by_position(by_position) {
+        const int64_t kv_dim = (int64_t) s.n_kv_head * s.head_dim;
         ggml_init_params params = {ggml_tensor_overhead() * (2 * s.n_layer + 1), nullptr, true};
         ctx = ggml_init(params);
         for (int l = 0; l < s.n_layer; l++) {
-            k.push_back(ggml_new_tensor_2d(ctx, type, (int64_t) s.n_kv_head * s.head_dim, capacity));
-            v.push_back(ggml_new_tensor_2d(ctx, type, capacity, (int64_t) s.n_kv_head * s.head_dim));
+            k.push_back(ggml_new_tensor_2d(ctx, type, kv_dim, capacity));
+            v.push_back(by_position ? ggml_new_tensor_2d(ctx, type, kv_dim, capacity) : ggml_new_tensor_2d(ctx, type, capacity, kv_dim));
         }
         buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
         if (!buffer) {
@@ -112,29 +163,59 @@ struct Qwen3Decoder::Cache {
     Cache(const Cache &) = delete;
     Cache & operator=(const Cache &) = delete;
 
-    /** The positions a cache made for `positions` holds: `positions` rounded up to a multiple of kCacheAlign. */
-    static int64_t room(int64_t positions) { return round_up(positions, kCacheAlign); }
+    /** The positions a cache made for `positions` holds: `positions` rounded up to a multiple of kAttentionBlock. */
+    static int64_t room(int64_t positions) { return round_up(positions, kAttentionBlock); }
 
     /** The keys of layer `l` at positions [from, from + n), [kv dim, n]. */
     ggml_tensor * keys(ggml_context * c, int l, int64_t from, int64_t n) const {
         return ggml_view_2d(c, k[l], k[l]->ne[0], n, k[l]->nb[1], from * k[l]->nb[1]);
     }
-    /** The values of layer `l` at positions [from, from + n), [n, kv dim]. */
+    /** The values of layer `l` at positions [from, from + n): [kv dim, n] by position, [n, kv dim] transposed. */
     ggml_tensor * values(ggml_context * c, int l, int64_t from, int64_t n) const {
+        if (values_by_position) return ggml_view_2d(c, v[l], v[l]->ne[0], n, v[l]->nb[1], from * v[l]->nb[1]);
         return ggml_view_2d(c, v[l], n, v[l]->ne[1], v[l]->nb[1], from * v[l]->nb[0]);
     }
 };
 
+/**
+ * The graph of a step whose input is a row of a table looked up by a token's id, which flash attention computes again
+ * for the steps after it while they read the same cache and block of positions, their id, positions and mask given
+ * anew: a step of the 0.6B Qwen3-ASR decoder at 350 to 450 positions took 6.5 ms building and allocating its graph and
+ * takes 6.3 ms with the kept one on an Apple M5 in Q8_0 on Metal, interleaved in one process (2026-10-07). It has an
+ * allocator of its own, so that no other graph moves its tensors.
+ */
+struct Qwen3Decoder::TokenStep {
+    Graph graph{kGraphSize};
+    ggml_gallocr_t allocr;
+    ggml_tensor * table, * head;
+    int64_t n_kv;
+    ggml_tensor * id = nullptr, * hidden = nullptr, * logits = nullptr;
+    RunInputs inputs;
+
+    TokenStep(ggml_backend_t backend, ggml_tensor * table, ggml_tensor * head, int64_t n_kv)
+        : allocr(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))), table(table), head(head), n_kv(n_kv) {}
+    ~TokenStep() { ggml_gallocr_free(allocr); }
+    TokenStep(const TokenStep &) = delete;
+    TokenStep & operator=(const TokenStep &) = delete;
+};
+
 Qwen3Decoder::Qwen3Decoder(const ModelFile & m, ggml_backend_t backend, std::string tensors, const Qwen3Shape & shape,
-                           int64_t max_positions, ggml_type cache_type, int64_t block_rows)
+                           int64_t max_positions, ggml_type cache_type, int64_t block_rows, std::optional<Qwen3Attention> attention)
     : backend_(backend),
       m_(m),
       tensors_(std::move(tensors)),
       shape_(shape),
       max_positions_(max_positions),
       cache_type_(cache_type),
-      block_rows_(block_rows) {
+      block_rows_(block_rows),
+      flash_(attention.value_or(qwen3_attention(backend, shape, cache_type)) == Qwen3Attention::Flash) {
     if (block_rows_ < 1) throw std::logic_error("a decoder runs at least one row in a graph");
+    if (flash_ && !computes_flash_attention(backend, shape, cache_type)) {
+        throw Error(Fault::Device, std::string("the device ") + ggml_backend_name(backend) + " cannot compute flash attention over heads of " +
+                                       std::to_string(shape.head_dim) + " with a " + ggml_type_name(cache_type) + " cache");
+    }
+    log_message(LogLevel::Info, "the decoder " + tensors_ + " attends with " + qwen3_attention_name(this->attention()) + " on " +
+                                    ggml_backend_name(backend));
     allocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
 }
 
@@ -161,6 +242,10 @@ void Qwen3Decoder::read_cache(int layer, std::vector<float> & keys, std::vector<
         return out;
     };
     keys = as_floats(cache_->k[layer], n_past_ * kv_dim);
+    if (cache_->values_by_position) {
+        values = as_floats(cache_->v[layer], n_past_ * kv_dim);
+        return;
+    }
     const std::vector<float> transposed = as_floats(cache_->v[layer], capacity * kv_dim);
     values.resize((size_t) (n_past_ * kv_dim));
     for (int64_t p = 0; p < n_past_; p++) {
@@ -169,13 +254,27 @@ void Qwen3Decoder::read_cache(int layer, std::vector<float> & keys, std::vector<
 }
 
 void Qwen3Decoder::resize_cache(int64_t positions) {
-    auto next = std::make_unique<Cache>(backend_, cache_type_, shape_, positions);
-    if (n_past_ > 0) {
-        // The positions so far are copied on the device, layer by layer, into the new buffer.
+    // The kept step reads the cache it was built on.
+    token_step_.reset();
+    auto next = std::make_unique<Cache>(backend_, cache_type_, shape_, positions, flash_);
+    // On the device, layer by layer, the positions so far are copied into the new buffer and, for flash attention, the
+    // others are set to zero: flash attention reads the positions of the last block past the sequence, which its mask
+    // hides, and a key or value there that was never written may be a NaN, which no mask hides. Set from the CPU, the
+    // zeros counted every page of the cache in the process's memory footprint: the 1338.42 s input's peak was 6.15 GB
+    // with the 0.6B Qwen3-ASR model in Q8_0 on Metal, against 2.52 GB in 0.7.0 (2026-10-07).
+    if (n_past_ > 0 || flash_) {
         Graph g(kGraphSize);
+        ggml_context * ctx = g.ctx();
+        const int64_t rest = next->capacity - n_past_;
         for (int l = 0; l < shape_.n_layer; l++) {
-            g.copy(cache_->keys(g.ctx(), l, 0, n_past_), next->keys(g.ctx(), l, 0, n_past_));
-            g.copy(cache_->values(g.ctx(), l, 0, n_past_), next->values(g.ctx(), l, 0, n_past_));
+            if (n_past_ > 0) {
+                g.copy(cache_->keys(ctx, l, 0, n_past_), next->keys(ctx, l, 0, n_past_));
+                g.copy(cache_->values(ctx, l, 0, n_past_), next->values(ctx, l, 0, n_past_));
+            }
+            if (flash_) {
+                g.expand(ggml_fill_inplace(ctx, next->keys(ctx, l, n_past_, rest), 0.0f));
+                g.expand(ggml_fill_inplace(ctx, next->values(ctx, l, n_past_, rest), 0.0f));
+            }
         }
         g.compute(backend_, allocr_);
     }
@@ -193,86 +292,132 @@ void Qwen3Decoder::start(int64_t positions, int64_t first) {
     if (cache_capacity() != Cache::room(room)) resize_cache(room);
 }
 
-ggml_tensor * Qwen3Decoder::layers(Graph & g, ggml_tensor * x, int64_t rows) {
+ggml_tensor * Qwen3Decoder::layers(Graph & g, ggml_tensor * x, int64_t rows, bool output, RunInputs & inputs) {
     const ModelFile & m = m_;
     const Qwen3Shape & s = shape_;
     ggml_context * ctx = g.ctx();
     const int64_t kv_dim = (int64_t) s.n_kv_head * s.head_dim;
-    const int64_t n_kv = n_past_ + rows;
+    // The positions attention reads: flash attention reads whole blocks, which the cache holds.
+    const int64_t n_kv = flash_ ? round_up(n_past_ + rows, kAttentionBlock) : n_past_ + rows;
 
-    std::vector<int32_t> positions(rows);
-    for (int64_t i = 0; i < rows; i++) positions[i] = (int32_t) (n_past_ + i);
-    ggml_tensor * pos = g.input(positions, rows);
-    // A row sees the positions before its block and the rows of its block up to itself.
+    ggml_tensor * pos = inputs.positions = g.input(positions_after(n_past_, rows), rows);
     ggml_tensor * mask = nullptr;
-    if (rows > 1) {
-        std::vector<float> causal((size_t) (n_kv * rows));
-        for (int64_t i = 0; i < rows; i++) {
-            for (int64_t j = 0; j < n_kv; j++) causal[i * n_kv + j] = j <= n_past_ + i ? 0.0f : -INFINITY;
-        }
-        mask = g.input(causal, n_kv, rows);
-    }
+    if (flash_) mask = g.half_input(causal_mask(n_past_, rows, n_kv), n_kv, rows);
+    else if (rows > 1) mask = g.input(causal_mask(n_past_, rows, n_kv), n_kv, rows);
+    inputs.mask = mask;
 
     for (int l = 0; l < s.n_layer; l++) {
         const std::string b = tensors_ + ".blk." + std::to_string(l) + ".";
         ggml_tensor * h = ggml_mul(ctx, ggml_rms_norm(ctx, x, s.rms_eps), m.tensor(b + "attn_norm"));
-        ggml_tensor * q = ggml_reshape_3d(ctx, ggml_mul_mat(ctx, m.tensor(b + "attn_q"), h), s.head_dim, s.n_head, rows);
-        ggml_tensor * k = ggml_reshape_3d(ctx, ggml_mul_mat(ctx, m.tensor(b + "attn_k"), h), s.head_dim, s.n_kv_head, rows);
+        ggml_tensor * q = ggml_mul_mat(ctx, m.tensor(b + "attn_q"), h);
+        ggml_tensor * k = ggml_mul_mat(ctx, m.tensor(b + "attn_k"), h);
         ggml_tensor * v = ggml_mul_mat(ctx, m.tensor(b + "attn_v"), h);
-        q = ggml_mul(ctx, ggml_rms_norm(ctx, q, s.rms_eps), m.tensor(b + "attn_q_norm"));
-        k = ggml_mul(ctx, ggml_rms_norm(ctx, k, s.rms_eps), m.tensor(b + "attn_k_norm"));
+        // Nodes that read the same inputs follow one another in the graph: Metal runs a node without waiting for the
+        // one before it when neither writes what the other reads. With the feed-forward's SwiGLU in one node, this took
+        // a step of the 0.6B Qwen3-ASR decoder from 7.86 to 7.67 ms on an Apple M5 (2026-10-07).
+        g.expand(q);
+        g.expand(k);
+        g.expand(v);
+        q = ggml_mul(ctx, ggml_rms_norm(ctx, ggml_reshape_3d(ctx, q, s.head_dim, s.n_head, rows), s.rms_eps), m.tensor(b + "attn_q_norm"));
+        k = ggml_mul(ctx, ggml_rms_norm(ctx, ggml_reshape_3d(ctx, k, s.head_dim, s.n_kv_head, rows), s.rms_eps), m.tensor(b + "attn_k_norm"));
+        g.expand(q);
+        g.expand(k);
+        // On a GPU the rows are written to the cache rows their positions name, so that a kept step's graph writes
+        // where its positions say.
+        if (flash_) g.expand(ggml_set_rows(ctx, cache_->v[l], v, pos));
+        else g.copy(ggml_transpose(ctx, v), cache_->values(ctx, l, n_past_, rows));
         q = ggml_rope_ext(ctx, q, pos, nullptr, s.head_dim, GGML_ROPE_TYPE_NEOX, 0, s.rope_theta, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
         k = ggml_rope_ext(ctx, k, pos, nullptr, s.head_dim, GGML_ROPE_TYPE_NEOX, 0, s.rope_theta, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
-
-        g.copy(ggml_reshape_2d(ctx, k, kv_dim, rows), cache_->keys(ctx, l, n_past_, rows));
-        g.copy(ggml_transpose(ctx, v), cache_->values(ctx, l, n_past_, rows));
+        g.expand(q);
+        if (flash_) g.expand(ggml_set_rows(ctx, cache_->k[l], ggml_reshape_2d(ctx, k, kv_dim, rows), pos));
+        else g.copy(ggml_reshape_2d(ctx, k, kv_dim, rows), cache_->keys(ctx, l, n_past_, rows));
+        // A run whose output nobody reads computes only what the cache keeps: its last layer's keys and values.
+        if (l + 1 == s.n_layer && !output) return nullptr;
 
         ggml_tensor * kc = cache_->k[l];
         ggml_tensor * vc = cache_->v[l];
         ggml_tensor * keys = ggml_view_3d(ctx, kc, s.head_dim, s.n_kv_head, n_kv, ggml_row_size(kc->type, s.head_dim), kc->nb[1], 0);
         ggml_tensor * kh = ggml_permute(ctx, keys, 0, 2, 1, 3);
-        ggml_tensor * vt = ggml_view_3d(ctx, vc, n_kv, s.head_dim, s.n_kv_head, vc->nb[1], s.head_dim * vc->nb[1], 0);
-        // The query is a permuted view like the keys: Vulkan multiplies the keys by a single row in place only when
-        // both are permuted alike, and otherwise copies the keys into a contiguous tensor first.
         ggml_tensor * qh = ggml_permute(ctx, q, 0, 2, 1, 3);
-        ggml_tensor * kq = ggml_mul_mat(ctx, kh, qh);
-        kq = ggml_soft_max_ext(ctx, kq, mask, 1.0f / std::sqrt((float) s.head_dim), 0.0f);
-        ggml_tensor * kqv = ggml_mul_mat(ctx, vt, kq);
-        ggml_tensor * o = ggml_reshape_2d(ctx, ggml_cont(ctx, ggml_permute(ctx, kqv, 0, 2, 1, 3)), (int64_t) s.n_head * s.head_dim, rows);
-        x = ggml_add(ctx, x, ggml_mul_mat(ctx, m.tensor(b + "attn_o"), o));
+        const float scale = 1.0f / std::sqrt((float) s.head_dim);
+        ggml_tensor * o;
+        if (flash_) {
+            ggml_tensor * values = ggml_view_3d(ctx, vc, s.head_dim, s.n_kv_head, n_kv, ggml_row_size(vc->type, s.head_dim), vc->nb[1], 0);
+            o = ggml_flash_attn_ext(ctx, qh, kh, ggml_permute(ctx, values, 0, 2, 1, 3), mask, scale, 0.0f, 0.0f);
+            ggml_prec_set_acc(o, GGML_PREC_F32);
+        } else {
+            ggml_tensor * vt = ggml_view_3d(ctx, vc, n_kv, s.head_dim, s.n_kv_head, vc->nb[1], s.head_dim * vc->nb[1], 0);
+            ggml_tensor * kq = ggml_soft_max_ext(ctx, ggml_mul_mat(ctx, kh, qh), mask, scale, 0.0f);
+            o = ggml_cont(ctx, ggml_permute(ctx, ggml_mul_mat(ctx, vt, kq), 0, 2, 1, 3));
+        }
+        x = ggml_add(ctx, x, ggml_mul_mat(ctx, m.tensor(b + "attn_o"), ggml_reshape_2d(ctx, o, (int64_t) s.n_head * s.head_dim, rows)));
 
         h = ggml_mul(ctx, ggml_rms_norm(ctx, x, s.rms_eps), m.tensor(b + "ffn_norm"));
-        ggml_tensor * gate = ggml_silu(ctx, ggml_mul_mat(ctx, m.tensor(b + "ffn_gate"), h));
-        h = ggml_mul_mat(ctx, m.tensor(b + "ffn_down"), ggml_mul(ctx, gate, ggml_mul_mat(ctx, m.tensor(b + "ffn_up"), h)));
-        x = ggml_add(ctx, x, h);
+        ggml_tensor * gate = ggml_mul_mat(ctx, m.tensor(b + "ffn_gate"), h);
+        ggml_tensor * up = ggml_mul_mat(ctx, m.tensor(b + "ffn_up"), h);
+        g.expand(gate);
+        g.expand(up);
+        x = ggml_add(ctx, x, ggml_mul_mat(ctx, m.tensor(b + "ffn_down"), ggml_swiglu_split(ctx, gate, up)));
     }
     return x;
 }
 
-void Qwen3Decoder::run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head) {
+void Qwen3Decoder::make_room(int64_t n) {
     if (!cache_ || n < 1 || n_past_ + n > positions_) throw std::logic_error("a decoder was fed past the positions of its sequence");
     if (n_past_ + n > cache_->capacity) {
         resize_cache(std::min(positions_, std::max(n_past_ + n, round_up(2 * cache_->capacity, kCacheStep))));
     }
+}
+
+void Qwen3Decoder::outputs(Graph & g, ggml_tensor * last, ggml_tensor * head, ggml_tensor *& hidden, ggml_tensor *& logits) const {
+    ggml_context * ctx = g.ctx();
+    hidden = ggml_mul(ctx, ggml_rms_norm(ctx, last, shape_.rms_eps), m_.tensor(tensors_ + ".norm"));
+    logits = ggml_mul_mat(ctx, head, hidden);
+    g.output(hidden);
+    g.output(logits);
+}
+
+void Qwen3Decoder::run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head) {
+    make_room(n);
     for (int64_t from = 0; from < n; from += block_rows_) {
         const int64_t count = std::min(block_rows_, n - from);
+        const bool output = head && from + count == n;
         Graph g(kGraphSize);
-        ggml_tensor * x = layers(g, rows(g, from, count), count);
+        RunInputs inputs;
+        ggml_tensor * x = layers(g, rows(g, from, count), count, output, inputs);
         ggml_tensor * hidden = nullptr, * logits = nullptr;
-        // A block whose output nobody reads computes only what the cache keeps: its last layer's keys and values.
-        if (head && from + count == n) {
-            ggml_context * ctx = g.ctx();
-            ggml_tensor * last = ggml_view_2d(ctx, x, shape_.hidden, 1, x->nb[1], (count - 1) * x->nb[1]);
-            hidden = ggml_mul(ctx, ggml_rms_norm(ctx, last, shape_.rms_eps), m_.tensor(tensors_ + ".norm"));
-            logits = ggml_mul_mat(ctx, head, hidden);
-            g.output(hidden);
-            g.output(logits);
-        }
+        if (output) outputs(g, ggml_view_2d(g.ctx(), x, shape_.hidden, 1, x->nb[1], (count - 1) * x->nb[1]), head, hidden, logits);
         g.compute(backend_, allocr_);
-        if (hidden) {
-            hidden_ = Graph::read(hidden);
-            logits_ = Graph::read(logits);
+        if (output) {
+            Graph::read(hidden, hidden_);
+            Graph::read(logits, logits_);
         }
         n_past_ += count;
     }
+}
+
+void Qwen3Decoder::step(int32_t id, ggml_tensor * table, ggml_tensor * head) {
+    if (!flash_) {
+        run(1, [&](Graph & g, int64_t, int64_t) { return ggml_get_rows(g.ctx(), table, g.input(std::vector<int32_t>{id}, 1)); }, head);
+        return;
+    }
+    make_room(1);
+    const int64_t n_kv = round_up(n_past_ + 1, kAttentionBlock);
+    TokenStep * s = token_step_.get();
+    if (s && s->table == table && s->head == head && s->n_kv == n_kv) {
+        s->graph.set(s->id, std::vector<int32_t>{id});
+        s->graph.set(s->inputs.positions, positions_after(n_past_, 1));
+        s->graph.set(s->inputs.mask, causal_mask(n_past_, 1, n_kv));
+        s->graph.compute_again(backend_);
+    } else {
+        token_step_ = std::make_unique<TokenStep>(backend_, table, head, n_kv);
+        s = token_step_.get();
+        s->id = s->graph.input(std::vector<int32_t>{id}, 1);
+        ggml_tensor * x = layers(s->graph, ggml_get_rows(s->graph.ctx(), table, s->id), 1, true, s->inputs);
+        outputs(s->graph, x, head, s->hidden, s->logits);
+        s->graph.compute(backend_, s->allocr);
+    }
+    Graph::read(s->hidden, hidden_);
+    Graph::read(s->logits, logits_);
+    n_past_ += 1;
 }

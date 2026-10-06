@@ -228,6 +228,7 @@ void ModelFile::load(ggml_backend_t backend, const std::function<bool(const std:
     buffer_.reset(ggml_backend_alloc_ctx_tensors(loaded_, backend));
     if (!buffer_) throw Error(Fault::OutOfMemory, "cannot allocate the weights of " + path_ + " on " + ggml_backend_name(backend));
     ggml_backend_buffer_set_usage(buffer_.get(), GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+    for (ggml_tensor * t = ggml_get_first_tensor(loaded_); t; t = ggml_get_next_tensor(loaded_, t)) by_name_.emplace(ggml_get_name(t), t);
 
     std::unique_ptr<FILE, decltype(&std::fclose)> f(ggml_fopen(path_.c_str(), "rb"), &std::fclose);
     if (!f) throw Error(Fault::Io, "cannot open " + path_);
@@ -251,9 +252,9 @@ std::string ModelFile::layout_name() const {
 }
 
 ggml_tensor * ModelFile::tensor(const std::string & name) const {
-    ggml_tensor * t = loaded_ ? ggml_get_tensor(loaded_, name.c_str()) : nullptr;
-    if (!t) throw std::logic_error("the tensor " + name + " of " + path_ + " is not loaded");
-    return t;
+    const auto it = by_name_.find(name);
+    if (it == by_name_.end()) throw std::logic_error("the tensor " + name + " of " + path_ + " is not loaded");
+    return it->second;
 }
 
 bool ModelFile::has(const std::string & key) const {

@@ -256,7 +256,8 @@ before it starts a worker:
 - `checks/` holds a check per ported stage that compares it with the official implementation, and
   `speech-api-check`, which runs the C API through the shared library with a synthesis model and, with
   `transcribe`, with a recognition model in F32 or F16 and the dumps of `reference/fastconformer/` or
-  `reference/qwen3-asr/`, whose texts it compares byte for byte.
+  `reference/qwen3-asr/`, whose texts it compares byte for byte. Beside them, `qwen3-asr-timing` and
+  `llama-server-timing.py` time Qwen3-ASR and llama.cpp's server on the same audio (Qwen3-ASR, Speed, below).
 - `reference/<model>/` pins the official implementation in a uv environment and the checkpoints by revision,
   converts the weights to one GGUF file per model (GGUF files, below) and dumps the tensors the checks compare with;
   `reference/resample/` dumps torchaudio's resampling, which `resample-check` compares the library's with, and
@@ -712,8 +713,8 @@ language is `out_of_range`.
 - **Qwen3-ASR** recognizes a request's audio at once, up to 1200 s, and longer audio in parts of up to 1200 s, each
   alone (Qwen3-ASR, below). Its encoder attends within windows of 8 s, so its time grows with the length of the audio
   and with the text it writes. A forced `language` steers it, and a `prompt` tells it the names and terms the audio may
-  hold. A cancel takes effect between two of the encoder's windows, two blocks of 512 rows of the decoder's prefill
-  or two tokens.
+  hold. A cancel takes effect between two of the encoder's graphs of up to four windows, two blocks of 512 rows of the
+  decoder's prefill or two tokens.
 
 A session with Irodori-TTS and one with a recognizer, the second peeking at its request while it collects chunks:
 
@@ -1008,7 +1009,7 @@ of every stage; the check tools compare against them.
 | Codec decoder on Metal | error at -63 dB of the voice |
 | Talker and code predictor, F32, teacher forcing (`talker-check`) | argmax matches on every frame; greedy decode gives the same 54 frames |
 | Tokenizer (`tokenizer-check`) | encodes 27 texts, 8 of which NFC changes, and decodes 1191 sequences of ids as the model's `tokenizer.json` does |
-| Talker's prompt of 5137 rows in blocks of 512 against one block, F32 (`qwen3-decoder-check`) | the same keys, values and logits on the CPU; on Metal, 1.9e-2 at most for a cached row and 2.0e-3 for the logits, with the same argmax |
+| Talker's prompt in blocks of 512 against one block, F32 (`qwen3-decoder-check`) | the same keys, values and logits on the CPU (5137 rows) and on Metal with flash attention (3665 rows); with the two products forced on Metal, 2.3e-3 at most for a cached row and 1.5e-3 for the logits, with the same argmax (3665 rows) |
 
 The tokenizer follows the pre-tokenizer of the `tokenizer.json` that ships with the model. The official
 package loads it through transformers 4.57.3 with `fix_mistral_regex=True`, which swaps in Mistral's
@@ -1029,8 +1030,8 @@ Q8_0 weights, Japanese sentences, after the shaders are compiled:
 
 | Model | Device | First audio | Real-time factor | VRAM |
 |---|---|---|---|---|
-| 0.6B | Apple M5, Metal | 0.04 s | 0.38 | |
-| 1.7B | Apple M5, Metal | 0.07 s | 0.48 | |
+| 0.6B | Apple M5, Metal | 0.04 s | 0.31 | |
+| 1.7B | Apple M5, Metal | 0.07 s | 0.43 | |
 | 0.6B | RTX 2080, Vulkan | 0.07 s | 0.31 | 1.6 GB |
 | 1.7B | RTX 2080, Vulkan | 0.08 s | 0.36 | 2.7 GB |
 
@@ -1385,14 +1386,17 @@ with its windowed encoder, and qwen-asr 0.0.6's code for what transformers leave
   400 points, on the host in double precision,
 - the encoder, on ggml: three 3 × 3 convolutions of stride 2 over each chunk of 1 s, the last padded with zeros to a
   whole chunk, a sinusoid of each token's position within its chunk, 18 (0.6B) or 24 (1.7B) layers that attend within
-  windows of 104 tokens (8 s), one graph per window, and the projector to the decoder's width,
+  windows of 104 tokens (8 s), up to four windows a graph on a GPU and one on the CPU, and the projector to the
+  decoder's width,
 - the prompt as qwen-asr writes it: the checkpoint's chat template with a system turn that holds the request's
   `prompt`, empty without one, the audio's tokens in the user turn, and for a forced `language` the prefill
   `language <Name><asr_text>`, which steers the model; the text on either side of the audio is tokenized with the
   pre-tokenizer of the checkpoint's tokenizer, split first at its added tokens, and the text between them brought to
   NFC as the tokenizers library brings it (Unicode normalization, above),
 - the decoder: the Qwen3 stack it shares with Qwen3-TTS's talker, its output tied to the token embeddings, a
-  key/value cache in F16 that grows with the request, and the prompt read 512 rows at a time,
+  key/value cache in F16 that grows with the request, the prompt read 512 rows at a time, and attention through
+  ggml's flash attention on a GPU whose backend computes it and through two matrix products on the CPU, chosen when the
+  model loads (docs/adr/0019),
 - greedy decoding until an end token or 4096 new tokens, the limit of the model's `generate()`, at which the result
   says `model_limit`,
 - the output decoded without its special tokens and parsed as qwen-asr's `parse_asr_output()` parses it: the text
@@ -1466,7 +1470,7 @@ cd ../..
 build/tokenizer-check <model.gguf> reference/qwen3-asr/out/tokenizer-cases.tsv reference/qwen3-asr/out/decode-cases.tsv
 build/qwen3-asr-frontend-check <model.gguf> reference/qwen3-asr/out
 build/qwen3-asr-encoder-check <model.gguf> reference/qwen3-asr/out [gpu|cpu|device name]
-build/qwen3-asr-decoder-check <model.gguf> reference/qwen3-asr/out [gpu|cpu|device name]
+build/qwen3-asr-decoder-check <model.gguf> reference/qwen3-asr/out [gpu|cpu|device name] [flash|products]
 build/qwen3-asr-split-check <model.gguf> reference/qwen3-asr/out [gpu|cpu|device name]
 ```
 
@@ -1484,7 +1488,7 @@ On an Apple M5, for the 0.6B and the 1.7B model:
 | Features (`qwen3-asr-frontend-check`) | 123.5 to 143.6 dB SNR | the same (on the host) | the same | the same |
 | Projector output from the dump's features (`qwen3-asr-encoder-check`) | 85.6 to 111.0 dB, 94.4 to 112.5 dB | 44.4 to 70.6 dB, 50.2 to 68.6 dB with F32; 49.8 to 66.7 dB, 50.7 to 64.8 dB with F16 | 20.2 to 33.2 dB, 24.3 to 33.0 dB | 20.4 to 38.2 dB, 17.1 to 38.3 dB |
 | Prompt ids (`qwen3-asr-decoder-check`) | the dump's, all 80 | the same | the same | the same |
-| Logits of the prompt's last four rows from the dump's input | 97.4 to 115.1 dB, 96.1 to 114.8 dB | 43.3 to 70.3 dB, 46.6 to 67.1 dB | 19.3 to 33.9 dB, 18.2 to 32.4 dB | 23.3 to 39.5 dB, 21.7 to 37.0 dB |
+| Logits of the prompt's last four rows from the dump's input | 97.4 to 115.1 dB, 96.1 to 114.8 dB | 51.2 to 68.5 dB, 50.1 to 73.2 dB | 19.3 to 33.9 dB, 18.2 to 32.4 dB | 23.1 to 39.5 dB, 21.8 to 37.0 dB |
 | Argmax teacher-forced on the dump's ids (1176 and 1184 steps) | every step | every step | all but 8 and 1 | all but 5 and 1 |
 | Greedy ids from the dump's projector output, every later stage ours | the dump's on all 80 requests | the same | the dump's on 37 and 38 of 40 | on 37 and 39 of 40 |
 | Text from the audio, every stage ours | the dump's on all 80 | the same | on 37 and 35 of 40 | on 37 and 40 of 40 |
@@ -1499,6 +1503,12 @@ of 0.03 to 1.39: the near-silent input with its language forced, where the model
 input, in a name's middle dot (グレン・クッシング for グレンクッシング), a comma, 熱気道 for 熱挙動 and 安定 for 判定; and
 the spaces around a Latin name in the 8.64 s one.
 
+The Metal column is the decoder's flash attention. With the two products forced (`products`), as a GPU without ggml's
+flash attention runs them, the prompt's logits lie 47.9 to 71.3 dB and 48.8 to 66.5 dB from transformers' in F32 and
+23.2 to 39.2 dB and 21.9 to 37.0 dB in Q8_0, the teacher-forced and greedy rows are as above, and every text is as
+above but one: the 1.7B model in Q8_0 writes は、日本語の語源である。 for the near-silent input with its language forced,
+at the step where its greedy decoding from the projector output already takes the other token.
+
 The split is qwen-asr's on five synthetic inputs of 1200 to 3700 s (`split_cases.py`: noise with quiet stretches,
 speech-like bursts, silence, a last part of 0.2 s that is padded, and audio of exactly 1200 s, which is not split)
 and on the 1338.42 s input, cut at 1202.97 s. There, with the 0.6B model in Q8_0 on Metal, the first part's prompt
@@ -1508,31 +1518,38 @@ is the dump's, and so is the joined text.
 
 ### Speed
 
-On an Apple M5 with Q8_0 weights on Metal, after loading, the median of three runs of `speech asr`, the language left
-to the model and, in parentheses, forced; against llama.cpp b11246's `llama-server` (the release ASIST bundles) with
-ggml-org's Qwen3-ASR GGUF files in Q8_0, sent the same audio as 16-bit WAV as ASIST sends it, with its prompt cache off:
+On an Apple M5 with Q8_0 weights on Metal, after loading, the language left to the model and, in parentheses, forced:
+the median of five rounds (three with the 1.7B model) of `build/qwen3-asr-timing`, alternated with
+`checks/llama-server-timing.py`, which asks llama.cpp b11246's `llama-server` (the release ASIST bundles) with
+ggml-org's Qwen3-ASR GGUF files in Q8_0 for the same audio as ASIST asks it, a 16-bit WAV with the prompt cache off:
+
+```sh
+build/qwen3-asr-timing <model.gguf> gpu 1 <dump folder>...
+python3 checks/llama-server-timing.py <llama-server> <model.gguf> <mmproj.gguf> MTL0 1 <dump folder>...
+```
 
 | Audio | 0.6B, speech.cpp | 0.6B, llama.cpp | 1.7B, speech.cpp | 1.7B, llama.cpp |
 |---|---|---|---|---|
-| ja_jp, 6.36 s | 0.23 s (0.18 s) | 0.17 s (0.16 s) | 0.45 s (0.41 s) | 0.44 s (0.44 s) |
-| ja_jp, 10.50 s | 0.33 s (0.28 s) | 0.24 s (0.23 s) | 0.66 s (0.60 s) | 0.57 s (0.58 s) |
-| de_de, 11.16 s | 0.36 s (0.34 s) | 0.30 s (0.29 s) | 0.81 s (0.78 s) | 0.69 s (0.67 s) |
-| en_us, 23.64 s | 0.65 s (0.66 s) | 0.53 s (0.50 s) | 1.48 s (1.41 s) | 1.17 s (1.14 s) |
-| ja_jp, 25.50 s | 0.95 s (0.91 s) | 0.73 s (0.74 s) | 2.01 s (1.95 s) | 1.85 s (1.73 s) |
+| ja_jp, 6.36 s | 0.19 s (0.17 s) | 0.17 s (0.16 s) | 0.43 s (0.38 s) | 0.47 s (0.44 s) |
+| ja_jp, 10.50 s | 0.28 s (0.25 s) | 0.25 s (0.23 s) | 0.64 s (0.59 s) | 0.58 s (0.58 s) |
+| de_de, 11.16 s | 0.34 s (0.32 s) | 0.31 s (0.30 s) | 0.78 s (0.74 s) | 0.74 s (0.71 s) |
+| en_us, 23.64 s | 0.63 s (0.59 s) | 0.52 s (0.51 s) | 1.41 s (1.36 s) | 1.25 s (1.20 s) |
+| ja_jp, 25.50 s | 0.87 s (0.80 s) | 0.78 s (0.75 s) | 1.98 s (1.89 s) | 1.81 s (1.76 s) |
 
-Decoding takes most of the time. Of the 25.50 s input, the 0.6B model's frontend takes 18 ms, the encoder 0.13 s, the
-prefill of its 347 rows 0.12 s and the 87 tokens 0.63 s, 139 a second, where llama.cpp takes 0.16 s for its encoder and
-prompt and 0.55 s for the same tokens, 158 a second; the 1.7B model's encoder takes 0.18 s, the prefill 0.34 s and its
-88 tokens 1.83 s, 48 a second, where llama.cpp takes 0.30 s and 1.50 s, 59 a second. speech.cpp builds a graph for
-every token, where llama.cpp reuses its graphs. llama.cpp's prompt has no system turn, its log-mel one frame more and its last chunk the tokens of
+The decoding is as fast as llama.cpp's: 146 to 158 tokens fed back a second with the 0.6B model against llama.cpp's
+147 to 157, and 58 to 63 with the 1.7B against 58 to 62, the two within the few percent by which one round differs
+from the next. What remains is the encoder and the prompt: of the 25.50 s input, the 0.6B model's encoder takes
+0.133 s and the prefill of its 347 rows 0.110 s, where llama.cpp takes 0.169 s for both, and the 1.7B model's 0.163 s
+and 0.305 s, where llama.cpp takes 0.295 s. llama.cpp computes their matrix products through Metal 4's tensor API,
+which speech.cpp leaves off for a defect of ggml's kernel (docs/adr/0003); without it llama.cpp took 0.250 s and
+0.523 s for them. llama.cpp's prompt has no system turn, its log-mel one frame more and its last chunk the tokens of
 its padding, so its prompt differs from the official one, and it writes another text than the official on 6 of the
-20 requests with the 0.6B model and 4 with the 1.7B: with the 1.7B model 軍港や湖ではカマザタ寿司もヨット for the
-official 群島や湖では必ずしもヨット on the 6.36 s utterance, and with the 0.6B model 光も for 日陰も on the 10.50 s one.
+20 requests with the 0.6B model and 4 with the 1.7B: with the 1.7B model 軍港や湖ではカマザタ寿司もヨット for the official
+群島や湖では必ずしもヨット on the 6.36 s utterance, and with the 0.6B model 光も for 日陰も on the 10.50 s one.
 
-The 1338.42 s input takes 153 s with the 0.6B model, nearly all of it its first part: an encoder of 5.8 s, a prefill
-of 15,654 rows in 19 s, and 4096 tokens in 126 s, 32 a second, as each reads a cache of up to 19,750 positions. The
-process's peak memory footprint is 2.40 GB, against 2.33 GB for the first part alone and 1.17 GB for the 25.50 s
-input: the memory is that of the longest part.
+The 1338.42 s input takes 120 s with the 0.6B model, nearly all of it its first part: an encoder of 5.3 s, a prefill
+of 15,654 rows in 15 s, and 4096 tokens in 94 s, 43 a second, as each reads a cache of up to 19,750 positions. The
+process's peak memory footprint is 2.03 GB: the memory is that of the longest part.
 
 ## GGUF files
 

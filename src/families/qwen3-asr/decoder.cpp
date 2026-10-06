@@ -15,10 +15,11 @@ constexpr int kEmbeddingGraphSize = 8;
 
 }  // namespace
 
-Decoder::Decoder(const ModelFile & m, ggml_backend_t backend, ggml_type cache_type)
+Decoder::Decoder(const ModelFile & m, ggml_backend_t backend, ggml_type cache_type, std::optional<Qwen3Attention> attention)
     : m_(m),
       backend_(backend),
-      stack_(m, backend, "dec", read_qwen3_shape(m, "qwen3-asr.decoder"), m.u32("qwen3-asr.decoder.max_position_embeddings"), cache_type),
+      stack_(m, backend, "dec", read_qwen3_shape(m, "qwen3-asr.decoder"), m.u32("qwen3-asr.decoder.max_position_embeddings"), cache_type,
+             kQwen3BlockRows, attention),
       max_new_tokens_(m.u32("qwen3-asr.generation.max_new_tokens")),
       eos_(m.i32_array("qwen3-asr.generation.eos_ids")),
       allocr_(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))) {}
@@ -65,9 +66,7 @@ bool Decoder::prefill(const std::vector<float> & embeds, int64_t n, const std::f
 }
 
 void Decoder::step(int32_t id) {
-    stack_.run(
-        1, [&](Graph & g, int64_t, int64_t) { return ggml_get_rows(g.ctx(), m_.tensor("dec.token_embd"), g.input(std::vector<int32_t>{id}, 1)); },
-        m_.tensor("dec.token_embd"));
+    stack_.step(id, m_.tensor("dec.token_embd"), m_.tensor("dec.token_embd"));
 }
 
 std::optional<Generation> Decoder::generate(const std::function<bool(size_t tokens)> & keep_going) {

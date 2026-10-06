@@ -7,9 +7,10 @@
 // also times. The dumps are those of the model, in <reference out dir>/<its general.name>/.
 //
 // Where a greedy choice of ours differs from the dump's, the check takes it for the arithmetic's when the dump's margin
-// between the two tokens is within the sum of our errors on their two logits, and for a defect otherwise.
+// between the two tokens is within the sum of our errors on their two logits, and for a defect otherwise. The decoder
+// attends as it chooses on the device, or as the last argument forces it, so that both attentions are checked on a GPU.
 //
-// usage: qwen3-asr-decoder-check <model.gguf> <reference out dir> [gpu|cpu|device name]
+// usage: qwen3-asr-decoder-check <model.gguf> <reference out dir> [gpu|cpu|device name] [flash|products]
 
 #include <algorithm>
 #include <chrono>
@@ -125,21 +126,23 @@ std::vector<int32_t> follow(Decoder & decoder, const Npy & ids, const Npy & top_
 
 int main(int argc, char ** argv) {
     const std::vector<std::string> args = utf8_args(argc, argv);
-    if (args.size() < 3) {
-        std::fprintf(stderr, "usage: %s <model.gguf> <reference out dir> [gpu|cpu|device name]\n", args[0].c_str());
+    if (args.size() < 3 || (args.size() > 4 && args[4] != "flash" && args[4] != "products")) {
+        std::fprintf(stderr, "usage: %s <model.gguf> <reference out dir> [gpu|cpu|device name] [flash|products]\n", args[0].c_str());
         return 2;
     }
     try {
         ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
-        std::printf("backend: %s\n", ggml_backend_name(backend));
+        std::optional<Qwen3Attention> attention;
+        if (args.size() > 4) attention = args[4] == "flash" ? Qwen3Attention::Flash : Qwen3Attention::Products;
         bool ok = true;
         {
-            Recognizer recognizer(args[1], backend);
+            Recognizer recognizer(args[1], backend, attention);
+            std::printf("backend: %s, %s\n", ggml_backend_name(backend), qwen3_attention_name(recognizer.decoder().attention()));
             const ModelFile & m = recognizer.model();
             Decoder & decoder = recognizer.decoder();
             // The stages from the dump's input run with an F32 cache, which leaves the arithmetic of the weights alone;
             // the greedy decodings run as the recognizer does, with its F16 cache.
-            Decoder exact(m, backend, GGML_TYPE_F32);
+            Decoder exact(m, backend, GGML_TYPE_F32, recognizer.decoder().attention());
             // Measured on an Apple M5 on 2026-10-06, the prompt's last logits from the dumps' input against transformers'
             // float32, over the ten inputs and four requests of the 0.6B and the 1.7B model: with F32 weights 97.4 and
             // 96.1 dB on the CPU, and 43.3 and 46.6 dB on Metal, whose matrix kernel rounds its inputs to half precision,

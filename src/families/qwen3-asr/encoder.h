@@ -43,8 +43,9 @@ struct EncoderStages {
  * tokens) from the first token, the last window holding the rest. LayerNorm (ln_post) and the projector, a linear
  * layer, GELU and a linear layer to the decoder's width, follow.
  *
- * Every chunk and every window is computed on its own, so one graph per window gives exactly what the official
- * computes over the whole utterance, and the memory of a graph does not grow with the utterance.
+ * Every chunk and every window is computed on its own, so a graph of a few consecutive windows on a GPU, or of one on
+ * the CPU, each attending within itself, gives what the official computes over the whole utterance, and the memory of
+ * a graph does not grow with the utterance.
  */
 class Encoder {
 public:
@@ -61,15 +62,16 @@ public:
     std::vector<EncoderWindow> windows(int64_t frames) const;
 
     /**
-     * Builds the projector's output for the window `w` of the utterance whose features are `features`, [frames, mels]
-     * row-major: [output_dim, w.tokens].
+     * Builds the projector's output for the consecutive windows `windows` of the utterance whose features are
+     * `features`, [frames, mels] row-major: [output_dim, their tokens]. `stages` takes those of a single window.
      */
-    ggml_tensor * build(Graph & g, const std::vector<float> & features, const EncoderWindow & w, EncoderStages * stages = nullptr) const;
+    ggml_tensor * build(Graph & g, const std::vector<float> & features, const std::vector<EncoderWindow> & windows,
+                        EncoderStages * stages = nullptr) const;
 
     /**
      * The projector's output for every token of the utterance whose features are `features`, [frames, mels]
-     * row-major, computed a window at a time: [tokens, output_dim] row-major. `keep_going`, when given, hears the
-     * windows done after each, and false stops the encoder there, which then returns none.
+     * row-major, computed a few windows at a time: [tokens, output_dim] row-major. `keep_going`, when given, hears the
+     * windows done after each graph, and false stops the encoder there, which then returns none.
      */
     std::optional<std::vector<float>> encode(const std::vector<float> & features,
                                              const std::function<bool(size_t windows)> & keep_going = nullptr);
@@ -83,7 +85,7 @@ private:
     ggml_tensor * linear(ggml_context * ctx, ggml_tensor * x, const std::string & name) const;
     ggml_tensor * layer_norm(ggml_context * ctx, ggml_tensor * x, const std::string & name) const;
     ggml_tensor * convolution(ggml_context * ctx, ggml_tensor * x, const std::string & name) const;
-    ggml_tensor * layer(ggml_context * ctx, ggml_tensor * x, const std::string & name) const;
+    ggml_tensor * layer(ggml_context * ctx, ggml_tensor * x, ggml_tensor * mask, const std::string & name) const;
 
     const ModelFile & m_;
     ggml_backend_t backend_;
@@ -92,6 +94,8 @@ private:
     float eps_;
     /** The sinusoids of a chunk's positions, [d_model, chunk tokens]: sines in the first half of the channels, cosines in the second. */
     std::vector<float> positions_;
+    /** The windows encode() puts in one graph at most. */
+    size_t windows_per_graph_;
     ggml_gallocr_t allocr_ = nullptr;
 };
 

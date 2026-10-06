@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -43,21 +44,40 @@ void add_qwen3_tensors(std::vector<TensorSpec> & t, const std::string & tensors,
 using Qwen3Rows = std::function<ggml_tensor *(Graph & g, int64_t from, int64_t rows)>;
 
 /**
- * The rows one graph of a run computes at most. Each row of a block holds a score for every position before it, so a
- * block's scores take block rows × positions × heads × 4 bytes, against the square of the positions in one graph: for
- * the longest prompt of Qwen3-TTS's talker, 24,576 rows, 0.8 GB where one graph needs 39 GB. On an Apple M5, blocks of
- * 128 to 1024 rows prefilled 5,137 rows equally fast, in 7.0 s with the 1.7B talker on Metal and in 39 to 42 s with
- * the 0.6B on the CPU, both in Q8_0, against 9.7 s and 86 to 99 s in one graph (2026-10-06). ggml_flash_attn_ext would
- * hold no scores at all, but it reads the values a row per position, where the cache keeps them transposed for the
- * steps.
+ * The rows one graph of a run computes at most. On the CPU each row of a block holds a score for every position before
+ * it, so a block's scores take block rows × positions × heads × 4 bytes, against the square of the positions in one
+ * graph: for the longest prompt of Qwen3-TTS's talker, 24,576 rows, 0.8 GB where one graph needs 39 GB. On an Apple
+ * M5, blocks of 128 to 1024 rows prefilled 5,137 rows of the 0.6B talker in Q8_0 on the CPU equally fast, in 39 to
+ * 42 s, against 86 to 99 s in one graph (2026-10-06). Flash attention, on a GPU, holds no scores: there the blocks
+ * bound the other activations, and 3,665 rows of the 0.6B talker in F32 took 1.57 s in blocks of 512 and 1.62 s in one
+ * graph on Metal (2026-10-07).
  */
 constexpr int64_t kQwen3BlockRows = 512;
+
+/** How a Qwen3 decoder stack attends. */
+enum class Qwen3Attention {
+    /** ggml_flash_attn_ext over a cache that keeps the values a row per position. */
+    Flash,
+    /** Two matrix products and a softmax over a cache that keeps the values transposed, a row per channel. */
+    Products,
+};
+
+/**
+ * The attention a stack of shape `shape` with a cache of `cache_type` runs on `backend`: flash attention on a GPU whose
+ * backend computes it for those heads and that cache, and the two products on the CPU and on any other GPU
+ * (docs/adr/0019).
+ */
+Qwen3Attention qwen3_attention(ggml_backend_t backend, const Qwen3Shape & shape, ggml_type cache_type);
+
+/** The attention's name, as a log says it. */
+const char * qwen3_attention_name(Qwen3Attention attention);
 
 /**
  * A Qwen3 decoder stack of a model file: in each layer, RMSNorm, attention with grouped key/value heads, RMSNorm of
  * each head's queries and keys and rotate-half RoPE, and RMSNorm and a SwiGLU feed-forward; and RMSNorm at the end.
  * Its tensors are `<tensors>.blk.<layer>.` attn_norm, attn_q, attn_k, attn_v, attn_q_norm, attn_k_norm, attn_o,
- * ffn_norm, ffn_gate, ffn_up and ffn_down, and `<tensors>.norm`.
+ * ffn_norm, ffn_gate, ffn_up and ffn_down, and `<tensors>.norm`. Its attention is chosen once, when it is made, by
+ * what its device computes (qwen3_attention()).
  *
  * It runs one sequence at a time and keeps the keys and values of the sequence's positions in a cache that grows with
  * the sequence. The rows of a run go through in blocks, each block attending to the positions before it and causally
@@ -70,15 +90,19 @@ class Qwen3Decoder {
 public:
     /**
      * The stack `tensors` of `m`, which outlives it, of shape `shape`, for sequences of at most `max_positions`
-     * positions, with a cache of `cache_type`, running blocks of at most `block_rows` rows.
+     * positions, with a cache of `cache_type`, running blocks of at most `block_rows` rows, and attending as
+     * `attention` says or, without it, as qwen3_attention() chooses; it logs which. Flash attention that the backend
+     * cannot compute throws an Error of the device.
      */
     Qwen3Decoder(const ModelFile & m, ggml_backend_t backend, std::string tensors, const Qwen3Shape & shape,
-                 int64_t max_positions, ggml_type cache_type, int64_t block_rows = kQwen3BlockRows);
+                 int64_t max_positions, ggml_type cache_type, int64_t block_rows = kQwen3BlockRows,
+                 std::optional<Qwen3Attention> attention = std::nullopt);
     ~Qwen3Decoder();
     Qwen3Decoder(const Qwen3Decoder &) = delete;
     Qwen3Decoder & operator=(const Qwen3Decoder &) = delete;
 
     const Qwen3Shape & shape() const { return shape_; }
+    Qwen3Attention attention() const { return flash_ ? Qwen3Attention::Flash : Qwen3Attention::Products; }
     int64_t max_positions() const { return max_positions_; }
     /** The positions of the current sequence that the cache holds. */
     int64_t n_past() const { return n_past_; }
@@ -101,6 +125,13 @@ public:
      */
     void run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head = nullptr);
 
+    /**
+     * Feeds the token `id`, whose row of `table` is its input, after the sequence, and reads its hidden state and its
+     * logits under `head` as run() does. On a GPU the graph of such a step is kept and computed again for the steps
+     * after it while they read the same block of positions.
+     */
+    void step(int32_t id, ggml_tensor * table, ggml_tensor * head);
+
     const std::vector<float> & hidden() const { return hidden_; }
     const std::vector<float> & logits() const { return logits_; }
 
@@ -112,9 +143,26 @@ public:
 
 private:
     struct Cache;
+    struct TokenStep;
 
-    /** Builds the layers over the `rows` rows of `x` that follow the n_past() positions, writing their keys and values. */
-    ggml_tensor * layers(Graph & g, ggml_tensor * x, int64_t rows);
+    /** The inputs of a run's graph that depend on where its rows are in the sequence. */
+    struct RunInputs {
+        /** The rows' positions, which on a GPU are also the cache rows they are written to. */
+        ggml_tensor * positions = nullptr;
+        /** What each row sees of the positions attention reads, or none on the CPU for a single row. */
+        ggml_tensor * mask = nullptr;
+    };
+
+    /**
+     * Builds the layers over the `rows` rows of `x` that follow the n_past() positions, writing their keys and values,
+     * and returns their output, or with `output` false none, the last layer stopping at its keys and values. `inputs`
+     * gets the inputs it made.
+     */
+    ggml_tensor * layers(Graph & g, ggml_tensor * x, int64_t rows, bool output, RunInputs & inputs);
+    /** Builds the hidden state after the final norm of `last`, one row, and its logits under `head`, as outputs of `g`. */
+    void outputs(Graph & g, ggml_tensor * last, ggml_tensor * head, ggml_tensor *& hidden, ggml_tensor *& logits) const;
+    /** Grows the cache when it has no room for `n` more rows. */
+    void make_room(int64_t n);
     /** Moves the cache to one with room for `positions` positions, keeping the n_past() it holds. */
     void resize_cache(int64_t positions);
 
@@ -125,8 +173,11 @@ private:
     const int64_t max_positions_;
     const ggml_type cache_type_;
     const int64_t block_rows_;
+    /** Whether attention runs as ggml_flash_attn_ext rather than as two products. */
+    const bool flash_;
 
     std::unique_ptr<Cache> cache_;
+    std::unique_ptr<TokenStep> token_step_;
     ggml_gallocr_t allocr_ = nullptr;
     int64_t positions_ = 0;
     int64_t n_past_ = 0;
