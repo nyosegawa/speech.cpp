@@ -2,10 +2,11 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <stdexcept>
+#include <optional>
 #include <utility>
 
 #include "error.h"
+#include "utf8.h"
 
 namespace irodori {
 
@@ -99,7 +100,7 @@ void replace_all(std::vector<uint32_t> & text, const std::vector<uint32_t> & fro
     text = std::move(out);
 }
 
-std::vector<uint32_t> u32(const char * utf8) { return decode_utf8(utf8); }
+std::vector<uint32_t> u32(const char * utf8) { return decode_utf8(utf8).value(); }
 
 /** strip_outer_brackets(): removes a pair of brackets as long as it encloses the whole text. */
 void strip_outer_brackets(std::vector<uint32_t> & text) {
@@ -125,46 +126,6 @@ void strip_outer_brackets(std::vector<uint32_t> & text) {
 }
 
 }  // namespace
-
-std::vector<uint32_t> decode_utf8(const std::string & s) {
-    std::vector<uint32_t> out;
-    for (size_t i = 0; i < s.size();) {
-        const unsigned char c = (unsigned char) s[i];
-        const int len = c < 0x80 ? 1 : (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3 : (c >> 3) == 30 ? 4 : 0;
-        if (len == 0 || i + len > s.size()) throw Error(Fault::InvalidArgument, "the text is not valid UTF-8", "text");
-        uint32_t cp = len == 1 ? c : len == 2 ? (c & 0x1F) : len == 3 ? (c & 0x0F) : (c & 0x07);
-        for (int k = 1; k < len; k++) {
-            const unsigned char cc = (unsigned char) s[i + k];
-            if ((cc >> 6) != 2) throw Error(Fault::InvalidArgument, "the text is not valid UTF-8", "text");
-            cp = (cp << 6) | (cc & 0x3F);
-        }
-        out.push_back(cp);
-        i += len;
-    }
-    return out;
-}
-
-std::string encode_utf8(const std::vector<uint32_t> & code_points) {
-    std::string s;
-    for (uint32_t cp : code_points) {
-        if (cp < 0x80) {
-            s += (char) cp;
-        } else if (cp < 0x800) {
-            s += (char) (0xC0 | (cp >> 6));
-            s += (char) (0x80 | (cp & 0x3F));
-        } else if (cp < 0x10000) {
-            s += (char) (0xE0 | (cp >> 12));
-            s += (char) (0x80 | ((cp >> 6) & 0x3F));
-            s += (char) (0x80 | (cp & 0x3F));
-        } else {
-            s += (char) (0xF0 | (cp >> 18));
-            s += (char) (0x80 | ((cp >> 12) & 0x3F));
-            s += (char) (0x80 | ((cp >> 6) & 0x3F));
-            s += (char) (0x80 | (cp & 0x3F));
-        }
-    }
-    return s;
-}
 
 std::vector<uint32_t> nfkc(const std::vector<uint32_t> & text) {
     std::vector<uint32_t> d;
@@ -205,7 +166,9 @@ std::vector<uint32_t> nfkc(const std::vector<uint32_t> & text) {
 }
 
 std::string normalize_text(const std::string & raw) {
-    std::vector<uint32_t> text = decode_utf8(raw);
+    std::optional<std::vector<uint32_t>> decoded = decode_utf8(raw);
+    if (!decoded) throw Error(Fault::InvalidArgument, "the text is not valid UTF-8", "text");
+    std::vector<uint32_t> text = std::move(*decoded);
     static const std::vector<std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> simple = {
         {u32("\t"), {}}, {u32("[n]"), {}}, {u32("\\[n\\]"), {}}, {u32("　"), {}}, {u32("？"), u32("?")},
         {u32("！"), u32("!")}, {u32("♥"), u32("♡")}, {u32("●"), u32("○")}, {u32("◯"), u32("○")},
