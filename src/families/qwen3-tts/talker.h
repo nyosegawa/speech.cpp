@@ -74,8 +74,8 @@ private:
                             ggml_tensor * pos, ggml_tensor * mask, Cache & cache, int64_t n_past, int64_t n_tokens);
     void run_talker(const std::vector<float> * embeds, const int32_t * codes, const std::vector<float> * extra, int64_t n);
     const std::vector<float> & run_cp(int32_t code, int group);
-    /** Moves the talker's cache to a buffer of `capacity` positions, keeping the n_past() it holds. */
-    void resize_cache(int64_t capacity);
+    /** Moves the talker's cache to one with room for `positions` positions, keeping the n_past() it holds. */
+    void resize_cache(int64_t positions);
 
     ggml_backend_t backend_;
     const ModelFile & m_;
