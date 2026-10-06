@@ -1106,8 +1106,16 @@ reader takes the layout it knows; a newer one is refused with a message that nam
 without `speech.layout`, converted for a release before 0.7.0, is refused as such. Every key below is required in
 its family's layout unless the table says when it is present, and has exactly the type listed: a key missing or of
 another type is refused with a message that names it, and so is a string that names a kind other than the ones
-listed. The tensors are exactly the ones the keys call for: a tensor missing or one not called for is refused. A key
-whose meaning the tables leave empty means what the official configuration's field of the same name means.
+listed. The tensors are exactly the ones the keys call for, each of the shape the keys give it and of a type its
+converter writes: a tensor missing, one not called for, and one of another shape or type are refused, naming the
+tensor and the shape or type expected and found, before any weight is loaded. The types are the ones each
+converter's `--type` gives, as its docstring says: the matrices it applies to in Q8_0, F16 or F32 (F16 or F32 for
+FastConformer), Qwen3-TTS's codec's large weights in F16 or F32, and the norms, biases, codebooks and the rest in
+F32. A width that no key gives, listed with each family's tensors, is taken from one tensor, and every other tensor
+of that width is checked against it. A key that sizes the model is refused when it is 0, and so is a value the model
+cannot run with: heads that do not divide their width or are of an odd width, which RoPE cannot turn in pairs, an id
+outside the vocabulary or table it indexes, or a stride the codec does not take. A key whose meaning the tables
+leave empty means what the official configuration's field of the same name means.
 
 ### Keys of every model file
 
@@ -1195,7 +1203,13 @@ length of `codec.upsample_rates`:
   `conv2.{weight,bias}`; `codec.dec.out_snake.{alpha,inv_beta}`, `codec.dec.out_conv.{weight,bias}`.
 
 The three residual units per decoder block (dilations 1, 3 and 9) are the architecture's, as the official module
-builds them, and stay in the C++.
+builds them, and stay in the C++, and so do the widths the official decoder fixes in its code rather than in its
+configuration: 3 for `pre_conv`, 1 for a residual unit's second convolution, 7 for every other convolution, and the
+fourfold width of a ConvNeXt block. The widths that no key gives are the text embedding's width and rows
+(`text_hidden_size` and `text_vocab_size`, from `talker.text_embd`, whose rows must cover `tokenizer.tokens`), the
+codebooks' entries (`codebook_size`, from `codec.vq.first.codebook.0`, which must cover the talker's and the code
+predictor's codes), the decoder's width (`decoder_dim`, from `codec.dec.in_conv.weight`) and the codec transformer's
+feed-forward width (its `intermediate_size`, from `codec.tf.blk.0.ffn_gate`).
 
 ### irodori-tts
 
@@ -1270,9 +1284,18 @@ F the lengths of `codec.encoder_rates` and `codec.decoder_rates`:
   `snake.{alpha,inv_alpha}`, `up.{weight,bias}` and `res.{0,1,2}.` as in the encoder;
   `codec.dec.out_snake.{alpha,inv_alpha}`, `codec.dec.conv_out.{weight,bias}`.
 
+The widths that no key gives are the feed-forward widths of ModernBERT (from `text.blk.0.ffn_act`), of its projector
+(`text.proj.res_up.weight`), of the speaker encoder (`speaker.blk.0.ffn_gate`) and of the DiT (`dit.blk.0.ffn_gate`),
+the duration predictor's width (`duration.in_proj.weight`), the rank of the DiT's AdaLN
+(`dit.blk.0.attn_ada.shift.down`), and the codec's first, latent and decoder widths (`codec.enc.conv_in.weight`,
+`codec.enc.conv_out.weight`, `codec.dec.conv_in.weight`). The codec's strides are even, and each of
+`codec.encoder_rates` and `codec.decoder_rates` multiplies to `codec.hop_length`.
+
 Constants that stay in the C++, since they are not the model's: the decoder's windows of 12 and 48 frames, which are
 how speech.cpp streams a latent the official runtime decodes whole; the encoder's and decoder's margins of 8 and 10
-frames, which follow from the codec's architecture; and SentencePiece's penalty for an unknown piece.
+frames, which follow from the codec's architecture; SentencePiece's penalty for an unknown piece; and the widths
+DACVAE fixes in its code rather than in its configuration, 7 for the first and the last convolution and a residual
+unit's first, 3 for the encoder's last, and 1 for a residual unit's second and the decoder's input projection.
 
 ### fastconformer
 
@@ -1329,6 +1352,12 @@ Tensors, with L = `encoder.num_layers`, K = log2(`encoder.subsampling_factor`) a
 - `joint.enc.{weight,bias}`, `joint.pred.{weight,bias}`, `joint.out.{weight,bias}`; `joint.out` has
   `decoder.blank_id` + 1 outputs, and as many more as `decoder.tdt.durations` has entries for `tdt`.
 
+The widths that no key gives are the window's length (from `frontend.window`, at most `frontend.n_fft`), the
+subsampling's channels (`sub.conv.0.weight`), the feed-forward width (`blk.0.ff1_up.weight`), and the widths of the
+prediction network (`pred.embed.weight`) and the joint (`joint.enc.weight`). The subsampling's convolutions are 3 wide,
+NeMo's default, which the C++ pads by 1 on either side; `encoder.d_model` is even, and `decoder.tdt.durations` is
+not empty.
+
 ### Voice files
 
 A voice file of Irodori-TTS is a GGUF file of its own, layout 1:
@@ -1343,8 +1372,9 @@ A voice file of Irodori-TTS is a GGUF file of its own, layout 1:
 | `irodori-tts-voice.reference_sample_rate` | u32 | the reference recording's rate, before it was resampled |
 | `irodori-tts-voice.device_kind` | string | `cpu`, `gpu` or `igpu`: the kind of device that encoded it |
 
-and one tensor, `latent`, F32 with ne = [`latent_dim`, frames]. Voice files made before 0.7.0 have no `speech.layout`
-and are refused; they are made again from their WAVE files.
+and one tensor, `latent`, F32 with ne = [`latent_dim`, frames], `latent_dim` being the model's. A voice file of another
+codec is refused as the caller's mistake before its latent is checked. Voice files made before 0.7.0 have no
+`speech.layout` and are refused; they are made again from their WAVE files.
 
 ## License
 

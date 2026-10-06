@@ -13,17 +13,31 @@
 
 class ModelFile;
 
+/** A tensor's shape as ggml gives it, ne[0] first; the axes past the ones given are 1. */
+struct Shape {
+    int64_t ne[GGML_MAX_DIMS] = {1, 1, 1, 1};
+
+    Shape(std::initializer_list<int64_t> axes);
+};
+
+/** A tensor a layout calls for: its name, its shape, and the ggml types its converter may store it in. */
+struct TensorSpec {
+    std::string name;
+    Shape shape;
+    std::vector<ggml_type> types;
+};
+
 /**
  * What a reader takes of a GGUF file: the general.architecture it reads, the speech.layout it knows, what to tell
- * the owner of a file it cannot read, and the tensors a file calls for, which `tensors` names after it has read and
- * checked the file's keys.
+ * the owner of a file it cannot read, and the tensors a file calls for, which `tensors` names with the shape and the
+ * types of each after it has read and checked the file's keys.
  */
 struct Layout {
     const char * architecture;
     uint32_t version;
     /** What to do with a file this reader refuses, such as "convert it again with reference/x/convert.py". */
     const char * remedy;
-    std::vector<std::string> (*tensors)(const ModelFile & file);
+    std::function<std::vector<TensorSpec>(const ModelFile & file)> tensors;
 };
 
 /**
@@ -42,8 +56,8 @@ class ModelFile {
 public:
     /**
      * Opens the file, checks its architecture and layout against `layout` and its tensors against the ones its keys
-     * call for, a tensor missing or one not called for included, and only then loads the tensors onto `backend`:
-     * every tensor, or those whose names `keep` accepts.
+     * call for, a tensor missing, one not called for, and one of another shape or type included, and only then loads
+     * the tensors onto `backend`: every tensor, or those whose names `keep` accepts.
      */
     ModelFile(const std::string & path, ggml_backend_t backend, const Layout & layout,
               const std::function<bool(const std::string & name)> & keep = {});
@@ -56,6 +70,24 @@ public:
     ggml_tensor * tensor(const std::string & name) const;
 
     uint32_t u32(const std::string & key) const;
+    /**
+     * A u32 key that sizes the model, such as a width or a number of heads: 0 throws, and so does a value past the
+     * range of int, in which the families hold sizes.
+     */
+    int size(const std::string & key) const;
+    /**
+     * A u32 key that numbers layers or blocks of tensors: 0 throws, and so does a number past the tensors the file
+     * holds, since each layer holds one at least.
+     */
+    int count(const std::string & key) const;
+    /**
+     * Axis `axis` of the tensor `name` as the file stores it, for a layout to take a width that no key gives from one
+     * tensor and check the others against it. A tensor the file does not hold throws, and so does a width of 0 or one
+     * past the range of int.
+     */
+    int64_t width(const std::string & name, int axis) const;
+    /** The number of tensors the file holds. */
+    int64_t tensor_count() const;
     float f32(const std::string & key) const;
     bool boolean(const std::string & key) const;
     std::string str(const std::string & key) const;
@@ -108,9 +140,12 @@ private:
  */
 void check_model_keys(const ModelFile & file, const char * task, const char * language_use);
 
+/** Appends a tensor of each of `parts`, named `prefix` and the part's name, to `tensors`: the tensors of one block. */
+void add_block(std::vector<TensorSpec> & tensors, const std::string & prefix, std::initializer_list<TensorSpec> parts);
+
 /**
- * Appends `prefix` followed by each of 0 to `count` - 1 and each of `suffixes` after a dot, or alone for an empty
- * suffix, to `names`: the tensors of numbered blocks.
+ * Appends, for each of 0 to `count` - 1, a tensor of each of `parts`, named `prefix`, the number and the part's name
+ * after a dot, or `prefix` and the number alone for a part of an empty name, to `tensors`: the tensors of numbered
+ * blocks of the same shapes.
  */
-void add_numbered(std::vector<std::string> & names, const std::string & prefix, uint32_t count,
-                  std::initializer_list<const char *> suffixes);
+void add_numbered(std::vector<TensorSpec> & tensors, const std::string & prefix, int count, std::initializer_list<TensorSpec> parts);

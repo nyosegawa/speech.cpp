@@ -10,12 +10,10 @@ namespace fastconformer {
 
 namespace {
 
-std::vector<double> read_tensor(const ModelFile & m, const std::string & name, int64_t n) {
+/** A tensor that the layout stores in F32, as doubles. */
+std::vector<double> read_tensor(const ModelFile & m, const std::string & name) {
     ggml_tensor * t = m.tensor(name);
-    if (t->type != GGML_TYPE_F32 || ggml_nelements(t) != n) {
-        throw Error(Fault::File, name + " in " + m.path() + " is not float32 with " + std::to_string(n) + " values");
-    }
-    std::vector<float> f(n);
+    std::vector<float> f(ggml_nelements(t));
     ggml_backend_tensor_get(t, f.data(), 0, ggml_nbytes(t));
     return std::vector<double>(f.begin(), f.end());
 }
@@ -51,15 +49,13 @@ Frontend::Frontend(const ModelFile & m)
       preemphasis_(m.f32("fastconformer.frontend.preemphasis")),
       log_guard_(m.f32("fastconformer.frontend.log_guard")),
       std_guard_(m.f32("fastconformer.frontend.std_guard")) {
-    if (n_fft_ <= 0 || (n_fft_ & (n_fft_ - 1)) != 0) throw Error(Fault::File, "fastconformer.frontend.n_fft of " + m.path() + " is not a power of two");
-    const int64_t window = ggml_nelements(m.tensor("frontend.window"));
-    if (window > n_fft_) throw Error(Fault::File, "frontend.window of " + m.path() + " is longer than fastconformer.frontend.n_fft");
-    const std::vector<double> w = read_tensor(m, "frontend.window", window);
+    const std::vector<double> w = read_tensor(m, "frontend.window");
+    const int64_t window = (int64_t) w.size();
     window_.assign(n_fft_, 0.0);
     // torch.stft() centres a window shorter than n_fft in it.
     const int64_t left = (n_fft_ - window) / 2;
     for (int64_t i = 0; i < window; i++) window_[left + i] = w[i];
-    filterbank_ = read_tensor(m, "frontend.filterbank", (int64_t) mels_ * (n_fft_ / 2 + 1));
+    filterbank_ = read_tensor(m, "frontend.filterbank");
     const int bins = n_fft_ / 2 + 1;
     for (int b = 0; b < mels_; b++) {
         int first = 0, last = bins;

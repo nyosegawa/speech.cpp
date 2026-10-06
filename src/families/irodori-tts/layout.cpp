@@ -1,5 +1,8 @@
 #include "layout.h"
 
+#include <algorithm>
+#include <climits>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -11,37 +14,85 @@ namespace irodori {
 
 namespace {
 
+/**
+ * The types reference/irodori-tts/convert.py stores a tensor in by its --type: a matrix of the model in Q8_0, F16 or
+ * F32, F16 standing for Q8_0 where a matrix's rows are no multiple of 32; and the codec, the norms, the biases and the
+ * rest in F32.
+ */
+const std::vector<ggml_type> kMatrix = {GGML_TYPE_Q8_0, GGML_TYPE_F16, GGML_TYPE_F32};
+const std::vector<ggml_type> kF32 = {GGML_TYPE_F32};
+
+/**
+ * The widths DACVAE fixes in its code rather than in its configuration: 7 for the first and the last convolution and
+ * a residual unit's first, 3 for the encoder's last, and 1 for a residual unit's second and the decoder's input
+ * projection.
+ */
+constexpr int64_t kConvWidth = 7;
+constexpr int64_t kEncoderOutWidth = 3;
+
 void require(bool condition, const ModelFile & m, const std::string & what) {
     if (!condition) throw Error(Fault::File, m.path() + ": " + what + "; " + m.remedy());
 }
 
-/** The residual units of a codec block, "<prefix>res.<j>." each. */
-void add_residual_units(std::vector<std::string> & names, const std::string & prefix) {
-    add_numbered(names, prefix + "res.", kCodecResidualUnits,
-                 {"snake1.alpha", "snake1.inv_alpha", "conv1.weight", "conv1.bias", "snake2.alpha", "snake2.inv_alpha", "conv2.weight",
-                  "conv2.bias"});
+/** Checks that `width_key` splits into `heads_key` heads of an even width, which RoPE turns in pairs. */
+void require_heads(const ModelFile & m, const std::string & width_key, int width, const std::string & heads_key, int heads) {
+    require(width % heads == 0 && width / heads % 2 == 0, m,
+            width_key + " does not split into " + heads_key + " heads of an even width, which RoPE turns in pairs");
+}
+
+/**
+ * The strides of the codec's encoder or decoder blocks, whose convolutions of width 2s are padded by s / 2 on either
+ * side: each even, and together the codec's hop length.
+ */
+std::vector<int32_t> strides(const ModelFile & m, const std::string & key, uint32_t hop) {
+    const std::vector<int32_t> s = m.i32_array(key);
+    int64_t product = 1;
+    for (int32_t r : s) {
+        require(r >= 2 && r % 2 == 0, m, key + " holds a stride that is odd or below 2");
+        product = std::min<int64_t>(product * r, (int64_t) hop + 1);
+    }
+    require(product == hop, m, key + " does not multiply to irodori-tts.codec.hop_length");
+    return s;
+}
+
+/** The residual units of a codec block of `c` channels, "<prefix>res.<j>." each. */
+void add_residual_units(std::vector<TensorSpec> & t, const std::string & prefix, int64_t c) {
+    add_numbered(t, prefix + "res.", kCodecResidualUnits,
+                 {{"snake1.alpha", {c}, kF32}, {"snake1.inv_alpha", {c}, kF32}, {"conv1.weight", {c, c, kConvWidth}, kF32},
+                  {"conv1.bias", {c}, kF32},   {"snake2.alpha", {c}, kF32},     {"snake2.inv_alpha", {c}, kF32},
+                  {"conv2.weight", {c, c, 1}, kF32}, {"conv2.bias", {c}, kF32}});
 }
 
 /** Reads every key of the model layout, checks the ones that must agree, and names the tensors they call for. */
-std::vector<std::string> model_tensors(const ModelFile & m) {
+std::vector<TensorSpec> model_tensors(const ModelFile & m) {
     check_model_keys(m, "synthesis", "checked");
     const std::string p = "irodori-tts.";
     const bool meanflow = m.one_of(p + "flow", {"meanflow", "rf_velocity"}) == "meanflow";
-    m.u32(p + "latent_dim");
+    const int latent = m.size(p + "latent_dim");
     m.f32(p + "norm_eps");
     m.f32(p + "rope_theta");
-    for (const char * key : {"hidden_size", "num_heads", "window", "dim", "max_tokens"}) m.u32(p + "text." + key);
+    const int text_hidden = m.size(p + "text.hidden_size"), text_heads = m.size(p + "text.num_heads"), text_dim = m.size(p + "text.dim");
+    require_heads(m, p + "text.hidden_size", text_hidden, p + "text.num_heads", text_heads);
+    for (const char * key : {"window", "max_tokens"}) m.u32(p + "text." + key);
     for (const char * key : {"norm_eps", "rope_theta_global", "rope_theta_local"}) m.f32(p + "text." + key);
-    const uint32_t text_layers = m.u32(p + "text.num_layers");
-    require(m.i32_array(p + "text.layer_global").size() == text_layers, m, "irodori-tts.text.layer_global does not have one entry per layer");
-    for (const char * key : {"dim", "num_heads", "patch_size"}) m.u32(p + "speaker." + key);
-    for (const char * key : {"dim", "num_heads", "timestep_dim"}) m.u32(p + "dit." + key);
-    m.u32(p + "sampler.default_steps");
+    const int text_layers = m.count(p + "text.num_layers");
+    require(m.i32_array(p + "text.layer_global").size() == (size_t) text_layers, m, "irodori-tts.text.layer_global does not have one entry per layer");
+    const int speaker_dim = m.size(p + "speaker.dim"), speaker_heads = m.size(p + "speaker.num_heads");
+    require_heads(m, p + "speaker.dim", speaker_dim, p + "speaker.num_heads", speaker_heads);
+    const int patch = m.size(p + "speaker.patch_size"), speaker_layers = m.count(p + "speaker.num_layers");
+    const int duration_layers = m.count(p + "duration.num_layers");
+    const int dit_dim = m.size(p + "dit.dim"), dit_heads = m.size(p + "dit.num_heads");
+    require_heads(m, p + "dit.dim", dit_dim, p + "dit.num_heads", dit_heads);
+    const int timestep = m.size(p + "dit.timestep_dim"), dit_layers = m.count(p + "dit.num_layers");
+    m.size(p + "sampler.default_steps");
     if (!meanflow) {
         for (const char * key : {"cfg_text", "cfg_speaker", "cfg_min_t", "cfg_max_t"}) m.f32(p + "sampler." + key);
     }
-    require(m.f32(p + "length.min_seconds") <= m.f32(p + "length.max_seconds") && m.f32(p + "length.min_speed") <= m.f32(p + "length.max_speed"),
-            m, "the bounds of irodori-tts.length are reversed");
+    const float min_seconds = m.f32(p + "length.min_seconds"), max_seconds = m.f32(p + "length.max_seconds");
+    const float min_speed = m.f32(p + "length.min_speed"), max_speed = m.f32(p + "length.max_speed");
+    require(min_seconds > 0 && min_seconds <= max_seconds && std::isfinite(max_seconds) && min_speed > 0 && min_speed <= max_speed &&
+                std::isfinite(max_speed),
+            m, "the bounds of irodori-tts.length are not finite, above 0 and in order");
     m.f32(p + "reference.max_seconds");
     m.f32(p + "reference.lufs");
     m.u32(p + "tail.window");
@@ -52,55 +103,157 @@ std::vector<std::string> model_tensors(const ModelFile & m) {
     for (int32_t id : m.i32_array(p + "tokenizer.added_ids")) require(id >= 0 && (size_t) id < pieces, m, "an added token is not a piece");
     require(m.u32(p + "tokenizer.bos_id") < pieces && m.u32(p + "tokenizer.unknown_id") < pieces, m,
             "the tokenizer's <s> or unknown piece is not a piece");
-    m.u32(p + "codec.hop_length");
+    const uint32_t hop = m.u32(p + "codec.hop_length");
+    const std::vector<int32_t> encoder_rates = strides(m, p + "codec.encoder_rates", hop);
+    const std::vector<int32_t> decoder_rates = strides(m, p + "codec.decoder_rates", hop);
     require(m.str(p + "codec.sha256").size() == 64, m, "irodori-tts.codec.sha256 is not a SHA-256 in hexadecimal");
 
-    std::vector<std::string> names = {"text.embd",        "text.embd_norm",          "text.final_norm",          "text.proj.weight",
-                                      "text.proj.bias",   "text.proj.res_norm",      "text.proj.res_up.weight",  "text.proj.res_up.bias",
-                                      "text.proj.res_down.weight", "text.proj.res_down.bias", "text.norm",       "speaker.in_proj.weight",
-                                      "speaker.in_proj.bias", "speaker.norm",        "duration.in_proj.weight",  "duration.in_proj.bias",
-                                      "duration.out_norm", "duration.out_proj.weight", "duration.out_proj.bias", "duration.null_caption",
-                                      "dit.in_proj.weight", "dit.in_proj.bias",      "dit.out_norm",             "dit.out_proj.weight",
-                                      "dit.out_proj.bias"};
-    add_numbered(names, "text.blk.", text_layers, {"attn_q", "attn_k", "attn_v", "attn_out", "ffn_norm", "ffn_act", "ffn_gate", "ffn_down"});
+    // The widths of the feed-forward layers of ModernBERT, its projector, the speaker encoder and the DiT, of the
+    // duration predictor, of the rank of the DiT's AdaLN, and of the codec's first convolution, its latent and its
+    // decoder have no key: each is the width of one tensor, which the others are checked against.
+    const int64_t text_ffn = m.width("text.blk.0.ffn_act", 1), projector = m.width("text.proj.res_up.weight", 1);
+    const int64_t speaker_ffn = m.width("speaker.blk.0.ffn_gate", 1), duration = m.width("duration.in_proj.weight", 1);
+    const int64_t dit_ffn = m.width("dit.blk.0.ffn_gate", 1), rank = m.width("dit.blk.0.attn_ada.shift.down", 1);
+    const int64_t first = m.width("codec.enc.conv_in.weight", 1), codec_latent = m.width("codec.enc.conv_out.weight", 1);
+    const int64_t decoder = m.width("codec.dec.conv_in.weight", 1);
+    std::vector<int64_t> encoder_channels = {first}, decoder_channels = {decoder};
+    for (int32_t r : encoder_rates) {
+        require(encoder_channels.back() <= INT_MAX / r, m,
+                "codec.enc.conv_in.weight has " + std::to_string(first) + " outputs, which the encoder's blocks widen past any tensor's");
+        encoder_channels.push_back(2 * encoder_channels.back());
+    }
+    for (size_t b = 0; b < decoder_rates.size(); b++) {
+        require(decoder_channels.back() % 2 == 0, m,
+                "codec.dec.conv_in.weight has " + std::to_string(decoder) + " outputs, which the decoder's blocks cannot each halve");
+        decoder_channels.push_back(decoder_channels.back() / 2);
+    }
+
+    const int64_t th = text_hidden, td = text_dim, sd = speaker_dim, xd = dit_dim, ld = latent;
+    std::vector<TensorSpec> t = {{"text.embd", {th, (int64_t) pieces}, kMatrix},
+                                 {"text.embd_norm", {th}, kF32},
+                                 {"text.final_norm", {th}, kF32},
+                                 {"text.proj.weight", {th, td}, kMatrix},
+                                 {"text.proj.bias", {td}, kF32},
+                                 {"text.proj.res_norm", {th}, kF32},
+                                 {"text.proj.res_up.weight", {th, projector}, kMatrix},
+                                 {"text.proj.res_up.bias", {projector}, kF32},
+                                 {"text.proj.res_down.weight", {projector, td}, kMatrix},
+                                 {"text.proj.res_down.bias", {td}, kF32},
+                                 {"text.norm", {td}, kF32},
+                                 {"speaker.in_proj.weight", {ld * patch, sd}, kMatrix},
+                                 {"speaker.in_proj.bias", {sd}, kF32},
+                                 {"speaker.norm", {sd}, kF32},
+                                 {"duration.in_proj.weight", {td, duration}, kMatrix},
+                                 {"duration.in_proj.bias", {duration}, kF32},
+                                 {"duration.out_norm", {duration}, kF32},
+                                 {"duration.out_proj.weight", {duration, 1}, kF32},
+                                 {"duration.out_proj.bias", {1}, kF32},
+                                 {"duration.null_caption", {td}, kF32},
+                                 {"dit.in_proj.weight", {ld, xd}, kF32},
+                                 {"dit.in_proj.bias", {xd}, kF32},
+                                 {"dit.out_norm", {xd}, kF32},
+                                 {"dit.out_proj.weight", {xd, ld}, kMatrix},
+                                 {"dit.out_proj.bias", {ld}, kF32}};
+    add_numbered(t, "text.blk.", text_layers,
+                 {{"attn_q", {th, th}, kMatrix},         {"attn_k", {th, th}, kMatrix},           {"attn_v", {th, th}, kMatrix},
+                  {"attn_out", {th, th}, kMatrix},       {"ffn_norm", {th}, kF32},                {"ffn_act", {th, text_ffn}, kMatrix},
+                  {"ffn_gate", {th, text_ffn}, kMatrix}, {"ffn_down", {text_ffn, th}, kMatrix}});
     // ModernBERT normalizes the attention's input of every layer but the first.
-    for (uint32_t l = 1; l < text_layers; l++) names.push_back("text.blk." + std::to_string(l) + ".attn_norm");
-    add_numbered(names, "speaker.blk.", m.u32(p + "speaker.num_layers"),
-                 {"attn_norm", "attn_q", "attn_k", "attn_v", "attn_o", "attn_gate", "q_norm", "k_norm", "ffn_norm", "ffn_gate", "ffn_up",
-                  "ffn_down"});
-    add_numbered(names, "duration.blk.", m.u32(p + "duration.num_layers"),
-                 {"norm", "mod.weight", "mod.bias", "caption_mod.weight", "caption_mod.bias", "ffn_gate", "ffn_up", "ffn_down"});
-    add_numbered(names, "dit.cond.", 3, {""});
-    if (meanflow) add_numbered(names, "dit.delta_cond.", 3, {""});
-    add_numbered(names, "dit.blk.", m.u32(p + "dit.num_layers"),
-                 {"attn_q", "attn_k", "attn_v", "attn_o", "attn_gate", "attn_k_text", "attn_v_text", "attn_k_speaker", "attn_v_speaker",
-                  "q_norm", "k_norm", "ffn_gate", "ffn_up", "ffn_down", "attn_ada.shift.down", "attn_ada.shift.up.weight",
-                  "attn_ada.shift.up.bias", "attn_ada.scale.down", "attn_ada.scale.up.weight", "attn_ada.scale.up.bias",
-                  "attn_ada.gate.down", "attn_ada.gate.up.weight", "attn_ada.gate.up.bias", "ffn_ada.shift.down", "ffn_ada.shift.up.weight",
-                  "ffn_ada.shift.up.bias", "ffn_ada.scale.down", "ffn_ada.scale.up.weight", "ffn_ada.scale.up.bias", "ffn_ada.gate.down",
-                  "ffn_ada.gate.up.weight", "ffn_ada.gate.up.bias"});
+    for (int l = 1; l < text_layers; l++) t.push_back({"text.blk." + std::to_string(l) + ".attn_norm", {th}, kF32});
+    const int64_t speaker_head = sd / speaker_heads;
+    add_numbered(t, "speaker.blk.", speaker_layers,
+                 {{"attn_norm", {sd}, kF32},
+                  {"attn_q", {sd, sd}, kMatrix},
+                  {"attn_k", {sd, sd}, kMatrix},
+                  {"attn_v", {sd, sd}, kMatrix},
+                  {"attn_o", {sd, sd}, kMatrix},
+                  {"attn_gate", {sd, sd}, kMatrix},
+                  {"q_norm", {speaker_head, speaker_heads}, kF32},
+                  {"k_norm", {speaker_head, speaker_heads}, kF32},
+                  {"ffn_norm", {sd}, kF32},
+                  {"ffn_gate", {sd, speaker_ffn}, kMatrix},
+                  {"ffn_up", {sd, speaker_ffn}, kMatrix},
+                  {"ffn_down", {speaker_ffn, sd}, kMatrix}});
+    // A duration block's feed-forward layer is as wide as the block.
+    add_numbered(t, "duration.blk.", duration_layers,
+                 {{"norm", {duration}, kF32},
+                  {"mod.weight", {sd, 3 * duration}, kMatrix},
+                  {"mod.bias", {3 * duration}, kF32},
+                  {"caption_mod.weight", {td, 3 * duration}, kMatrix},
+                  {"caption_mod.bias", {3 * duration}, kF32},
+                  {"ffn_gate", {duration, duration}, kMatrix},
+                  {"ffn_up", {duration, duration}, kMatrix},
+                  {"ffn_down", {duration, duration}, kMatrix}});
+    const auto add_condition = [&](const std::string & prefix) {
+        add_block(t, prefix, {{"0", {timestep, xd}, kMatrix}, {"1", {xd, xd}, kMatrix}, {"2", {xd, 3 * xd}, kMatrix}});
+    };
+    add_condition("dit.cond.");
+    if (meanflow) add_condition("dit.delta_cond.");
+    const int64_t dit_head = xd / dit_heads;
+    add_numbered(t, "dit.blk.", dit_layers,
+                 {{"attn_q", {xd, xd}, kMatrix},
+                  {"attn_k", {xd, xd}, kMatrix},
+                  {"attn_v", {xd, xd}, kMatrix},
+                  {"attn_o", {xd, xd}, kMatrix},
+                  {"attn_gate", {xd, xd}, kMatrix},
+                  {"attn_k_text", {td, xd}, kMatrix},
+                  {"attn_v_text", {td, xd}, kMatrix},
+                  {"attn_k_speaker", {sd, xd}, kMatrix},
+                  {"attn_v_speaker", {sd, xd}, kMatrix},
+                  {"q_norm", {dit_head, dit_heads}, kF32},
+                  {"k_norm", {dit_head, dit_heads}, kF32},
+                  {"ffn_gate", {xd, dit_ffn}, kMatrix},
+                  {"ffn_up", {xd, dit_ffn}, kMatrix},
+                  {"ffn_down", {dit_ffn, xd}, kMatrix}});
+    for (const char * ada : {"attn_ada.", "ffn_ada."}) {
+        for (const char * part : {"shift.", "scale.", "gate."}) {
+            const std::string name = std::string(ada) + part;
+            add_numbered(t, "dit.blk.", dit_layers,
+                         {{name + "down", {xd, rank}, kMatrix}, {name + "up.weight", {rank, xd}, kMatrix}, {name + "up.bias", {xd}, kF32}});
+        }
+    }
 
-    const uint32_t encoder_blocks = (uint32_t) m.i32_array(p + "codec.encoder_rates").size();
-    const uint32_t decoder_blocks = (uint32_t) m.i32_array(p + "codec.decoder_rates").size();
-    names.insert(names.end(), {"codec.enc.conv_in.weight", "codec.enc.conv_in.bias", "codec.enc.snake.alpha", "codec.enc.snake.inv_alpha",
-                               "codec.enc.conv_out.weight", "codec.enc.conv_out.bias", "codec.bottleneck.mean.weight",
-                               "codec.bottleneck.mean.bias", "codec.dec.in_proj.weight", "codec.dec.in_proj.bias", "codec.dec.conv_in.weight",
-                               "codec.dec.conv_in.bias", "codec.dec.out_snake.alpha", "codec.dec.out_snake.inv_alpha",
-                               "codec.dec.conv_out.weight", "codec.dec.conv_out.bias"});
-    add_numbered(names, "codec.enc.blk.", encoder_blocks, {"snake.alpha", "snake.inv_alpha", "down.first", "down.second", "down.bias"});
-    for (uint32_t b = 0; b < encoder_blocks; b++) add_residual_units(names, "codec.enc.blk." + std::to_string(b) + ".");
-    add_numbered(names, "codec.dec.blk.", decoder_blocks, {"snake.alpha", "snake.inv_alpha", "up.weight", "up.bias"});
-    for (uint32_t b = 0; b < decoder_blocks; b++) add_residual_units(names, "codec.dec.blk." + std::to_string(b) + ".");
-    return names;
-}
-
-std::vector<std::string> voice_tensors(const ModelFile & m) {
-    const std::string p = "irodori-tts-voice.";
-    require(m.str(p + "codec_sha256").size() == 64, m, "irodori-tts-voice.codec_sha256 is not a SHA-256 in hexadecimal");
-    require(m.f32(p + "reference_seconds") > 0 && m.u32(p + "reference_sample_rate") > 0, m,
-            "the voice file gives its recording no length or no rate");
-    m.one_of(p + "device_kind", {"cpu", "gpu", "igpu"});
-    return {"latent"};
+    const int64_t e = encoder_channels.back(), out = decoder_channels.back();
+    add_block(t, "codec.",
+              {{"enc.conv_in.weight", {1, first, kConvWidth}, kF32},
+               {"enc.conv_in.bias", {first}, kF32},
+               {"enc.snake.alpha", {e}, kF32},
+               {"enc.snake.inv_alpha", {e}, kF32},
+               {"enc.conv_out.weight", {e, codec_latent, kEncoderOutWidth}, kF32},
+               {"enc.conv_out.bias", {codec_latent}, kF32},
+               {"bottleneck.mean.weight", {codec_latent, ld}, kF32},
+               {"bottleneck.mean.bias", {ld}, kF32},
+               {"dec.in_proj.weight", {ld, codec_latent, 1}, kF32},
+               {"dec.in_proj.bias", {codec_latent}, kF32},
+               {"dec.conv_in.weight", {codec_latent, decoder, kConvWidth}, kF32},
+               {"dec.conv_in.bias", {decoder}, kF32},
+               {"dec.out_snake.alpha", {out}, kF32},
+               {"dec.out_snake.inv_alpha", {out}, kF32},
+               {"dec.conv_out.weight", {out, 1, kConvWidth}, kF32},
+               {"dec.conv_out.bias", {1}, kF32}});
+    for (size_t b = 0; b < encoder_rates.size(); b++) {
+        // A block's strided convolution is stored as its two halves, [s * in, out] each.
+        const int64_t c = encoder_channels[b], s = encoder_rates[b];
+        const std::string prefix = "codec.enc.blk." + std::to_string(b) + ".";
+        add_block(t, prefix,
+                  {{"snake.alpha", {c}, kF32},
+                   {"snake.inv_alpha", {c}, kF32},
+                   {"down.first", {s * c, 2 * c}, kF32},
+                   {"down.second", {s * c, 2 * c}, kF32},
+                   {"down.bias", {2 * c}, kF32}});
+        add_residual_units(t, prefix, c);
+    }
+    for (size_t b = 0; b < decoder_rates.size(); b++) {
+        const int64_t in = decoder_channels[b], o = decoder_channels[b + 1];
+        const std::string prefix = "codec.dec.blk." + std::to_string(b) + ".";
+        add_block(t, prefix,
+                  {{"snake.alpha", {in}, kF32},
+                   {"snake.inv_alpha", {in}, kF32},
+                   {"up.weight", {in, o, 2 * (int64_t) decoder_rates[b]}, kF32},
+                   {"up.bias", {o}, kF32}});
+        add_residual_units(t, prefix, o);
+    }
+    return t;
 }
 
 }  // namespace
@@ -110,6 +263,20 @@ const Layout model_layout = {"irodori-tts", 1,
                              "repository",
                              model_tensors};
 
-const Layout voice_layout = {"irodori-tts-voice", 1, "make it again from its WAVE file with speech-tts make-voice", voice_tensors};
+Layout voice_layout(const ModelFile & model) {
+    return {kVoiceArchitecture, kVoiceLayout, "make it again from its WAVE file with speech voice MODEL REFERENCE.wav VOICE.gguf", [&model](const ModelFile & m) {
+                const std::string p = "irodori-tts-voice.";
+                const std::string codec = m.str(p + "codec_sha256"), own = model.str("irodori-tts.codec.sha256");
+                require(codec.size() == 64, m, "irodori-tts-voice.codec_sha256 is not a SHA-256 in hexadecimal");
+                if (codec != own) {
+                    throw Error(Fault::InvalidArgument, m.path() + " was made with the codec of SHA-256 " + codec + ", and " + model.str("general.name") +
+                                                            " has the codec " + own + "; make the voice again from its WAVE file with this model");
+                }
+                require(m.f32(p + "reference_seconds") > 0 && m.u32(p + "reference_sample_rate") > 0, m,
+                        "the voice file gives its recording no length or no rate");
+                m.one_of(p + "device_kind", {"cpu", "gpu", "igpu"});
+                return std::vector<TensorSpec>{{"latent", {model.size("irodori-tts.latent_dim"), m.width("latent", 1)}, kF32}};
+            }};
+}
 
 }  // namespace irodori
