@@ -14,7 +14,7 @@
 #include "args.h"
 #include "backend.h"
 #include "compare.h"
-#include "fastconformer-dumps.h"
+#include "reference-dumps.h"
 #include "fastconformer/recognizer.h"
 #include "npy.h"
 
@@ -83,7 +83,7 @@ int main(int argc, char ** argv) {
             const int hidden = prediction.hidden(), outputs = joint.outputs(), blank = recognizer.decoder().blank();
             const bool tdt = recognizer.model().str("fastconformer.decoder.kind") == "tdt";
             ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
-            for (const auto & d : fastconformer_dumps(args[2], recognizer.model())) {
+            for (const auto & d : reference_dumps(args[2], recognizer.model())) {
                 const Npy encoded = read_npy((d / "encoded.npy").u8string());
                 const Npy pred_labels = read_npy((d / "pred_labels.npy").u8string());
                 const Npy pred_output = read_npy((d / "pred_output.npy").u8string());
@@ -92,7 +92,7 @@ int main(int argc, char ** argv) {
                 const Npy joint_output = read_npy((d / "joint_output.npy").u8string());
                 const Npy want_ids = read_npy((d / "ids.npy").u8string());
                 const Npy audio = read_npy((d / "audio.npy").u8string());
-                const std::string want_text = fastconformer_text(d);
+                const std::string want_text = dump_text(d / "text.txt");
                 std::printf("%s (%.2f s, %zu prediction steps, %zu joint evaluations)\n", d.filename().u8string().c_str(),
                             (double) audio.f32.size() / recognizer.sample_rate(), pred_labels.i32.size(), joint_frames.i32.size());
 

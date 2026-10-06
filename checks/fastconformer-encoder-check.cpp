@@ -10,7 +10,7 @@
 #include "args.h"
 #include "backend.h"
 #include "compare.h"
-#include "fastconformer-dumps.h"
+#include "reference-dumps.h"
 #include "fastconformer/encoder.h"
 #include "fastconformer/layout.h"
 #include "ggml-cpu.h"
@@ -45,7 +45,7 @@ int main(int argc, char ** argv) {
             const double threshold_db = float32 ? 90 : 25;
             std::printf("encoder output threshold: %.0f dB\n", threshold_db);
             ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
-            for (const auto & d : fastconformer_dumps(args[2], model)) {
+            for (const auto & d : reference_dumps(args[2], model)) {
                 const Npy features = read_npy((d / "features.npy").u8string());
                 const Npy subsampled = read_npy((d / "subsampled.npy").u8string());
                 const Npy layers = read_npy((d / "layers.npy").u8string());

@@ -1,21 +1,21 @@
-// Checks the FastConformer frontend against NeMo's preprocessor: the normalized log-mel features of each dump
-// of reference/fastconformer/dump.py, computed from the dump's own audio. The dumps are those of the model, in
+// Checks the Qwen3-ASR frontend against transformers' feature extractor: the log-mel features of each dump of
+// reference/qwen3-asr/dump.py, computed from the dump's own audio. The dumps are those of the model, in
 // <reference out dir>/<its general.name>/.
 //
-// usage: fastconformer-frontend-check <model.gguf> <reference out dir>
+// usage: qwen3-asr-frontend-check <model.gguf> <reference out dir>
 
 #include <cstdio>
 
 #include "args.h"
 #include "backend.h"
 #include "compare.h"
-#include "reference-dumps.h"
-#include "fastconformer/frontend.h"
-#include "fastconformer/layout.h"
 #include "ggml-cpu.h"
 #include "npy.h"
+#include "qwen3-asr/frontend.h"
+#include "qwen3-asr/layout.h"
+#include "reference-dumps.h"
 
-using namespace fastconformer;
+using namespace qwen3_asr;
 
 int main(int argc, char ** argv) {
     const std::vector<std::string> args = utf8_args(argc, argv);
@@ -29,7 +29,7 @@ int main(int argc, char ** argv) {
         ggml_backend_t backend = ggml_backend_cpu_init();
         bool ok = true;
         {
-            const ModelFile model(args[1], backend, layout);
+            const ModelFile model(args[1], backend, layout, [](const std::string & name) { return name.rfind("frontend.", 0) == 0; });
             const Frontend frontend(model);
             for (const auto & d : reference_dumps(args[2], model)) {
                 const Npy audio = read_npy((d / "audio.npy").u8string());
@@ -38,12 +38,11 @@ int main(int argc, char ** argv) {
                 const Diff diff = compare(got, want.f32);
                 std::printf("%s (%lld frames)\n", d.filename().u8string().c_str(), (long long) want.shape[0]);
                 print_diff("  features", diff);
-                // Measured on an Apple M5: 117 to 127 dB with parakeet-tdt_ctc-0.6b-ja on 2026-10-05 and 94 to 125 dB
-                // with parakeet-tdt-0.6b-v3 on 2026-10-06, the gap between this double precision and torch.stft()'s
-                // float32. The same steps in float64 in PyTorch give the dump's fr_fr-10043298898524273336 the same
-                // 94.0 dB, with the largest difference in the second mel bin. A wrong window, padding, filterbank or
-                // normalization falls far below.
-                ok = ok && got.size() == want.f32.size() && want.shape[1] == frontend.mels() && diff.snr_db > 90;
+                // Measured on an Apple M5 on 2026-10-06: 123.5 to 134.4 dB on the nine inputs of both models, the gap
+                // between this double precision and the float32 of torch.stft() and the mel product. Reflecting the
+                // audio's start one sample off gives 43.9 dB, and a floor 0.001 below the utterance's maximum less 8
+                // gives 70.4 dB.
+                ok = ok && got.size() == want.f32.size() && want.shape[1] == frontend.mels() && diff.snr_db > 100;
             }
         }
         ggml_backend_free(backend);
