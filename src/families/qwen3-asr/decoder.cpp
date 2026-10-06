@@ -66,9 +66,7 @@ bool Decoder::prefill(const std::vector<float> & embeds, int64_t n, const std::f
 }
 
 void Decoder::step(int32_t id) {
-    stack_.run(
-        1, [&](Graph & g, int64_t, int64_t) { return ggml_get_rows(g.ctx(), m_.tensor("dec.token_embd"), g.input(std::vector<int32_t>{id}, 1)); },
-        m_.tensor("dec.token_embd"));
+    stack_.step(id, m_.tensor("dec.token_embd"), m_.tensor("dec.token_embd"));
 }
 
 std::optional<Generation> Decoder::generate(const std::function<bool(size_t tokens)> & keep_going) {

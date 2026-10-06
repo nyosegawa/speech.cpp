@@ -125,6 +125,13 @@ public:
      */
     void run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head = nullptr);
 
+    /**
+     * Feeds the token `id`, whose row of `table` is its input, after the sequence, and reads its hidden state and its
+     * logits under `head` as run() does. On a GPU the graph of such a step is kept and computed again for the steps
+     * after it while they read the same block of positions.
+     */
+    void step(int32_t id, ggml_tensor * table, ggml_tensor * head);
+
     const std::vector<float> & hidden() const { return hidden_; }
     const std::vector<float> & logits() const { return logits_; }
 
@@ -136,12 +143,26 @@ public:
 
 private:
     struct Cache;
+    struct TokenStep;
+
+    /** The inputs of a run's graph that depend on where its rows are in the sequence. */
+    struct RunInputs {
+        /** The rows' positions, which on a GPU are also the cache rows they are written to. */
+        ggml_tensor * positions = nullptr;
+        /** What each row sees of the positions attention reads, or none on the CPU for a single row. */
+        ggml_tensor * mask = nullptr;
+    };
 
     /**
      * Builds the layers over the `rows` rows of `x` that follow the n_past() positions, writing their keys and values,
-     * and returns their output, or with `output` false none, the last layer stopping at its keys and values.
+     * and returns their output, or with `output` false none, the last layer stopping at its keys and values. `inputs`
+     * gets the inputs it made.
      */
-    ggml_tensor * layers(Graph & g, ggml_tensor * x, int64_t rows, bool output);
+    ggml_tensor * layers(Graph & g, ggml_tensor * x, int64_t rows, bool output, RunInputs & inputs);
+    /** Builds the hidden state after the final norm of `last`, one row, and its logits under `head`, as outputs of `g`. */
+    void outputs(Graph & g, ggml_tensor * last, ggml_tensor * head, ggml_tensor *& hidden, ggml_tensor *& logits) const;
+    /** Grows the cache when it has no room for `n` more rows. */
+    void make_room(int64_t n);
     /** Moves the cache to one with room for `positions` positions, keeping the n_past() it holds. */
     void resize_cache(int64_t positions);
 
@@ -156,6 +177,7 @@ private:
     const bool flash_;
 
     std::unique_ptr<Cache> cache_;
+    std::unique_ptr<TokenStep> token_step_;
     ggml_gallocr_t allocr_ = nullptr;
     int64_t positions_ = 0;
     int64_t n_past_ = 0;
