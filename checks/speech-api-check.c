@@ -169,7 +169,10 @@ static int check_voices(speech_model * model, const char * model_path, char ** n
     return ok ? 0 : 1;
 }
 
-/** Qwen3-TTS: max_seconds stops the speech and a refused value leaves it, and a text past the longest is refused. */
+/**
+ * Qwen3-TTS: max_seconds stops the speech and a refused value leaves it, and a text past the longest is refused and
+ * leaves its request to run again with a shorter one.
+ */
 static int check_qwen3_tts(speech_model * model, const speech_model_info * info, const char * voice) {
     const int rate = speech_model_info_sample_rate(info);
     speech_request * r = new_request(model, "これは最大の長さで止める、少し長めの文です。止まったところで終わります。", voice, 3);
@@ -192,10 +195,14 @@ static int check_qwen3_tts(speech_model * model, const speech_model_info * info,
     if (speech_model_info_text_tokens(info, text, &total) != SPEECH_OK) return fail("speech_model_info_text_tokens");
     printf("a text of %zu copies of the sentence is %zu tokens, the model takes %zu\n", copies, total, speech_model_info_max_text_tokens(info));
     Audio none = {NULL, 0, 0};
+    r = new_request(model, text, voice, 4);
     ok &= total > speech_model_info_max_text_tokens(info) &&
-          expect(speak(new_request(model, text, voice, 4), &none, NULL, NULL), SPEECH_ERROR_OUT_OF_RANGE, "text", "a text past the longest") &&
-          none.n == 0;
+          expect(speech_synthesize(r, collect, &none), SPEECH_ERROR_OUT_OF_RANGE, "text", "a text past the longest") && none.n == 0 &&
+          speech_request_set_text(r, "短い文です。") == SPEECH_OK &&
+          expect(speak(r, &none, NULL, NULL), SPEECH_OK, NULL, "the same request run again with a shorter text") && none.n > 0;
+    if (!ok) fprintf(stderr, "FAIL: a text past the longest is not refused, or its request cannot run again with a shorter one\n");
     free(text);
+    free(none.samples);
     return ok ? 0 : 1;
 }
 
@@ -212,7 +219,10 @@ static int check_irodori_tts(speech_model * model, const speech_model_info * inf
     r = new_request(model, SENTENCE, voice, 5);
     speech_request_set_float(r, SPEECH_OPT_SECONDS, 2);
     speech_request_set_float(r, SPEECH_OPT_DURATION_SCALE, 1.2);
-    ok &= expect(speak(r, &audio, NULL, NULL), SPEECH_ERROR_INVALID_ARGUMENT, "seconds", "seconds with a duration scale");
+    audio.n = 0;
+    ok &= expect(speech_synthesize(r, collect, &audio), SPEECH_ERROR_INVALID_ARGUMENT, "seconds", "seconds with a duration scale") &&
+          speech_request_set_float(r, SPEECH_OPT_DURATION_SCALE, 1) == SPEECH_OK &&
+          expect(speak(r, &audio, NULL, NULL), SPEECH_OK, NULL, "the same request run again with a scale of 1") && audio.n > 0;
     r = new_request(model, SENTENCE, voice, 5);
     speech_request_set_float(r, SPEECH_OPT_SECONDS, 30);
     speech_request_set_float(r, SPEECH_OPT_SPEED, 0.5);
@@ -400,12 +410,13 @@ static int check_model(speech_model * model, const char * model_path, const char
     ok &= expect(speech_request_set_audio(r, audio.samples, audio.n, rate), SPEECH_ERROR_UNSUPPORTED, "audio", "audio for a synthesis");
     ok &= expect(speech_transcribe(r), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_transcribe() of a synthesis model");
     ok &= expect(speak(r, &audio, NULL, NULL), SPEECH_ERROR_INVALID_ARGUMENT, "text", "a request without a text");
-    r = new_request(model, SENTENCE, NULL, 14);
-    ok &= expect(speak(r, &audio, NULL, NULL), SPEECH_ERROR_INVALID_ARGUMENT, "voice", "a request without a voice");
-    r = new_request(model, "一回だけです。", voice, 15);
+    // A request refused before its work is fixed and run again; one that has done its work runs once.
+    r = new_request(model, "一回だけです。", NULL, 14);
     audio.n = 0;
-    ok &= expect(speech_synthesize(r, collect, &audio), SPEECH_OK, NULL, "a request's run") &&
-          expect(speech_synthesize(r, collect, &audio), SPEECH_ERROR_INVALID_ARGUMENT, NULL, "the same request run again");
+    ok &= expect(speech_synthesize(r, collect, &audio), SPEECH_ERROR_INVALID_ARGUMENT, "voice", "a request without a voice") &&
+          speech_request_set_string(r, SPEECH_OPT_VOICE, voice) == SPEECH_OK &&
+          expect(speech_synthesize(r, collect, &audio), SPEECH_OK, NULL, "the same request run again with a voice") && audio.n > 0 &&
+          expect(speech_synthesize(r, collect, &audio), SPEECH_ERROR_INVALID_ARGUMENT, NULL, "the same request run again after its work");
     speech_request_free(r);
     if (!ok) return 1;
     free(audio.samples);

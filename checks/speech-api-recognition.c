@@ -150,8 +150,13 @@ static int check_refusals(speech_model * model, const char * model_path, const f
     ok &= expect(speech_synthesize(r, ignore_audio, NULL), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_synthesize() of a recognition model");
     ok &= expect(speech_transcribe(r), SPEECH_ERROR_INVALID_ARGUMENT, "audio", "a recognition without audio");
     speech_request_free(r);
+    // A request refused before its work is fixed and run again.
     if (speech_request_new(model, &r) != SPEECH_OK || speech_request_set_audio(r, samples, 100, rate) != SPEECH_OK) return fail("a request");
-    ok &= expect(speech_transcribe(r), SPEECH_ERROR_OUT_OF_RANGE, "audio", "100 samples of audio");
+    ok &= expect(speech_transcribe(r), SPEECH_ERROR_OUT_OF_RANGE, "audio", "100 samples of audio") &&
+          speech_request_set_audio(r, samples, n, rate) == SPEECH_OK &&
+          expect(speech_transcribe(r), SPEECH_OK, NULL, "the same request run again with its whole audio") &&
+          speech_result_text(speech_request_result(r))[0] != '\0' &&
+          expect(speech_transcribe(r), SPEECH_ERROR_INVALID_ARGUMENT, NULL, "the same request run again after its work");
     speech_request_free(r);
     // A refused value leaves the one set before it.
     if (speech_request_new(model, &r) != SPEECH_OK || speech_request_set_audio(r, samples, n, rate) != SPEECH_OK ||

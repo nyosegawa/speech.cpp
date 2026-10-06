@@ -540,7 +540,8 @@ SPEECH_API speech_status speech_voice_make(const char * model_path, const char *
  * option's is SPEECH_ERROR_INVALID_ARGUMENT. A refused value leaves the request as it was, and setting an option
  * again replaces its value. An option the request does not set takes the model's default. What only the whole request
  * shows (a required option left out, two options that cannot go together, a text longer than the model takes) is
- * refused when the request runs, before any work, and the error names the option or input. A request runs once.
+ * refused when the request runs, before any work, and the error names the option or input; such a request is left as
+ * it was, to be fixed and run again. A request that has started its work runs once.
  */
 typedef struct speech_request speech_request;
 

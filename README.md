@@ -285,7 +285,8 @@ speech_model_free(model);
   Audio at another rate, above), and options through the setter of each option's type. Each value is checked against
   what the model declares as it is set, and the request as a whole when it runs, before any work; a refused value
   leaves the request as it was. `speech_synthesize()` passes the audio to its callback as it is made and
-  `speech_transcribe()` recognizes the whole audio at once; a request runs once. `speech_request_set_progress()` gives
+  `speech_transcribe()` recognizes the whole audio at once. A request that the checks of the whole request refuse is
+  left as it was, to be fixed and run again; one that has started its work runs once. `speech_request_set_progress()` gives
   a callback that hears how far a request has come while it passes no audio: Irodori-TTS's sampler steps and a
   recognition's stages and decoding. `speech_request_cancel()` stops one request, from any thread, at the next audio,
   step or stage, and a request cancelled before it runs returns at once; either returns `SPEECH_CANCELLED`.
@@ -304,7 +305,7 @@ speech_model_free(model);
 |---|---|---|
 | `SPEECH_OK` | `ok` | the call did what it was asked |
 | `SPEECH_CANCELLED` | `cancelled` | `speech_request_cancel()` or a callback stopped the request |
-| `SPEECH_ERROR_INVALID_ARGUMENT` | `invalid_argument` | the caller's mistake: a NULL pointer, an empty text, a value of the wrong type, a required option left out, a request run twice |
+| `SPEECH_ERROR_INVALID_ARGUMENT` | `invalid_argument` | the caller's mistake: a NULL pointer, an empty text, a value of the wrong type, a required option left out, a request run again after its work |
 | `SPEECH_ERROR_UNSUPPORTED` | `unsupported` | the model cannot do it: an option it does not take, at a value other than the neutral one, or the other task |
 | `SPEECH_ERROR_OUT_OF_RANGE` | `out_of_range` | a value the model does not take: outside its range or choices, or a text too long |
 | `SPEECH_ERROR_MODEL_FILE` | `model_file` | a model or voice file that cannot be used |

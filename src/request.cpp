@@ -39,7 +39,10 @@ struct speech_request {
     speech_progress_callback on_progress = nullptr;
     void * progress_data = nullptr;
     std::atomic<bool> cancelled{false};
-    /** Whether speech_synthesize() or speech_transcribe() has taken it, which a request allows once. */
+    /**
+     * Whether a run has started its work, which a request allows once. A run that the request's checks refuse before
+     * any work leaves the request to be fixed and run again.
+     */
     bool ran = false;
     std::unique_ptr<speech_result> result;
 };
@@ -187,6 +190,7 @@ public:
 
     bool audio(const float * samples, size_t n) override {
         if (stopped()) return false;
+        passed_ = true;
         samples_ += n;
         if (on_audio_(samples, n, user_data_) != 0) stop_ = true;
         return !stopped();
@@ -194,6 +198,7 @@ public:
 
     bool progress(double done) override {
         if (stopped()) return false;
+        passed_ = true;
         if (request_.on_progress && request_.on_progress(done, request_.progress_data) != 0) stop_ = true;
         return !stopped();
     }
@@ -201,16 +206,38 @@ public:
     bool stopped() override { return stop_ || request_.cancelled.load(); }
 
     uint64_t samples() const { return samples_; }
+    /** Whether the run has passed audio or progress to the caller, which only work does. */
+    bool passed() const { return passed_; }
 
 private:
     speech_request & request_;
     speech_audio_callback on_audio_;
     void * user_data_;
-    bool stop_ = false;
+    bool stop_ = false, passed_ = false;
     uint64_t samples_ = 0;
 };
 
-/** Takes a request for its one run of `task`, after checking that it can run, and returns its options. */
+/**
+ * Runs the work of a request and spends the request, unless the family's checks of the whole request refused it
+ * before the work passed anything to the caller: a length that the options give together, or a text too long. Such a
+ * request is left as it was, to be fixed and run again.
+ */
+template <typename Body>
+void spend(speech_request & request, const RequestRun & run, Body && body) {
+    try {
+        body();
+    } catch (const Error & e) {
+        const bool refused = e.fault() == Fault::InvalidArgument || e.fault() == Fault::OutOfRange;
+        request.ran = !refused || run.passed();
+        throw;
+    } catch (...) {
+        request.ran = true;
+        throw;
+    }
+    request.ran = true;
+}
+
+/** Checks that a request can run its one run of `task`, and returns its options. */
 RequestValues take(speech_request * request, speech_task task, const char * other) {
     require(request, "request");
     const FileInfo & file = *request->model->file;
@@ -218,7 +245,6 @@ RequestValues take(speech_request * request, speech_task task, const char * othe
         throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.name + " is a model of speech " + task_name(file.family->task) + "; use " + other);
     }
     if (request->ran) throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the request has run; make a new one for the next");
-    request->ran = true;
     if (task == SPEECH_TASK_SYNTHESIS && !request->text) {
         throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the request has no text; set it with speech_request_set_text()", "text");
     }
@@ -344,7 +370,9 @@ speech_status speech_synthesize(speech_request * request, speech_audio_callback 
         result->seed = values.has(SPEECH_OPT_SEED) ? values.integer(SPEECH_OPT_SEED) : -1;
         RequestRun run(*request, on_audio, user_data);
         std::lock_guard<std::mutex> lock(request->model->busy);
-        if (!run.stopped()) result->stop = request->model->engine->speak(*request->text, values, run);
+        spend(*request, run, [&] {
+            if (!run.stopped()) result->stop = request->model->engine->speak(*request->text, values, run);
+        });
         if (run.stopped()) result->stop = SPEECH_STOP_CANCELLED;
         result->samples = run.samples();
         const speech_status status = result->stop == SPEECH_STOP_CANCELLED ? SPEECH_CANCELLED : SPEECH_OK;
@@ -360,15 +388,16 @@ speech_status speech_transcribe(speech_request * request) {
         result->synthesis = false;
         RequestRun run(*request, [](const float *, size_t, void *) { return 0; }, nullptr);
         std::lock_guard<std::mutex> lock(request->model->busy);
-        if (!run.stopped()) {
-            const std::vector<float> samples = Resampler(request->sample_rate, request->model->file->sample_rate)(std::move(request->audio));
+        spend(*request, run, [&] {
+            if (run.stopped()) return;
+            const std::vector<float> samples = Resampler(request->sample_rate, request->model->file->sample_rate)(request->audio);
             Recognized found = request->model->engine->transcribe(samples, values, run);
             if (!run.stopped()) {
                 result->text = std::move(found.text);
                 result->segments = std::move(found.segments);
                 result->tokens = std::move(found.tokens);
             }
-        }
+        });
         result->stop = run.stopped() ? SPEECH_STOP_CANCELLED : SPEECH_STOP_COMPLETE;
         const speech_status status = run.stopped() ? SPEECH_CANCELLED : SPEECH_OK;
         request->result = std::move(result);
