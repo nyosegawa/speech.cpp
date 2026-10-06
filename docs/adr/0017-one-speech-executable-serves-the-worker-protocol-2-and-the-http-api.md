@@ -44,8 +44,8 @@ took WAV only at the model's rate.
 - **The HTTP server derives its status and its error from the library's category alone**, the same for the same
   mistake whenever it happens, with `param` from the input at fault. `/v1/models` carries the model's information,
   transcription takes WAV at any rate and answers `verbose_json` with segments, and the stop reason reaches the client
-  in a `wav` response's headers and in the SSE stream's last event. The members of OpenAI's segment that FastConformer
-  has no value for are left out rather than made up.
+  in a `wav` response's headers and in the SSE stream's last event, and in a transcription's headers. The members of
+  OpenAI's segment that FastConformer has no value for are left out rather than made up.
 
 Writing the worker and the server settled what the design left open, each so that every request still gets its one
 terminal message:

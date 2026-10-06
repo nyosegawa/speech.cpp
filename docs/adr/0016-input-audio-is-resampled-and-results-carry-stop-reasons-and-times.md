@@ -36,6 +36,10 @@ A recognition returned one string, although its decoders know on which encoder f
   Irodori-TTS does not take `max_seconds`, since it fixes the length before it makes the speech. A request without a
   seed gets one drawn from 0 to 2^53 − 1, the integers a JSON reader in JavaScript holds exactly, so that a reported
   seed repeats the audio.
+- **A recognition reports why it stopped as well**: complete, at the model's limit, or cancelled. Qwen3-ASR writes
+  its text token by token up to the 4096 tokens of its file (docs/adr/0018), and a recognition that reaches them
+  returns what it wrote and says so, as a synthesis does at its limit, where a text that merely ends would read as
+  complete.
 - **A recognition returns its text, and on request its tokens and segments with times.** A token's time is the
   encoder frame its decoder emitted it on, and for TDT the frames its predicted duration covers, as NeMo computes
   them, a punctuation mark taking the end of the token before it. For the beam search NeMo records its search step,
