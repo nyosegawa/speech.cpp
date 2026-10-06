@@ -202,7 +202,8 @@ int check_library(void) {
         fprintf(stderr, "FAIL: a status or stop reason the library does not know has a name\n");
         return 1;
     }
-    static const char * options[] = {"voice", "language", "seed", "speed", "seconds", "duration_scale", "steps", "max_seconds", "timestamps"};
+    static const char * options[] = {"voice",       "language",   "seed",  "speed", "seconds", "duration_scale", "steps",
+                                     "max_seconds", "timestamps", "prompt"};
     if (speech_option_count() != sizeof options / sizeof options[0]) {
         fprintf(stderr, "FAIL: the library knows %zu options\n", speech_option_count());
         return 1;
@@ -360,6 +361,7 @@ static speech_status set_neutral(speech_request * r, speech_option option, int *
         case SPEECH_OPT_DURATION_SCALE: return speech_request_set_float(r, option, 1.0);
         case SPEECH_OPT_LANGUAGE: return speech_request_set_string(r, option, "auto");
         case SPEECH_OPT_TIMESTAMPS: return speech_request_set_bool(r, option, 0);
+        case SPEECH_OPT_PROMPT: return speech_request_set_string(r, option, "");
         default: *has = 0; return SPEECH_OK;
     }
 }
@@ -460,7 +462,7 @@ int check_option_refusals(speech_model * model) {
                                                      : speech_request_set_float(r, o, maximum * 2 + 1),
                              SPEECH_ERROR_OUT_OF_RANGE, name, what);
             }
-        } else if (type == SPEECH_TYPE_STRING) {
+        } else if (o == SPEECH_OPT_VOICE || o == SPEECH_OPT_LANGUAGE) {
             snprintf(what, sizeof what, "%s not among its choices", name);
             ok &= expect(speech_request_set_string(r, o, o == SPEECH_OPT_LANGUAGE ? "zz" : "no-such-voice"), SPEECH_ERROR_OUT_OF_RANGE, name,
                          what);
@@ -476,6 +478,23 @@ int check_option_refusals(speech_model * model) {
                 snprintf(region, sizeof region, "%s-XX", speech_model_info_language(info, 0));
                 snprintf(what, sizeof what, "the language %s, a region of one of the model's", region);
                 ok &= expect(speech_request_set_string(r, o, region), SPEECH_OK, NULL, what);
+                // A language of three letters, which has no code of two, is named by all three; its first two name
+                // another language or none.
+                for (size_t l = 0; l < speech_model_info_language_count(info); l++) {
+                    const char * language = speech_model_info_language(info, l);
+                    if (strlen(language) != 3) continue;
+                    char upper[8], two[3] = {language[0], language[1], '\0'};
+                    snprintf(region, sizeof region, "%s-PH", language);
+                    snprintf(upper, sizeof upper, "%c%c%c", language[0] - 32, language[1] - 32, language[2] - 32);
+                    snprintf(what, sizeof what, "the language %s", region);
+                    ok &= expect(speech_request_set_string(r, o, region), SPEECH_OK, NULL, what);
+                    snprintf(what, sizeof what, "the language %s", upper);
+                    ok &= expect(speech_request_set_string(r, o, upper), SPEECH_OK, NULL, what);
+                    int two_is_one = 0;
+                    for (size_t k = 0; k < speech_model_info_language_count(info); k++) two_is_one |= !strcmp(speech_model_info_language(info, k), two);
+                    snprintf(what, sizeof what, "the language %s, the first two letters of %s", two, language);
+                    ok &= expect(speech_request_set_string(r, o, two), two_is_one ? SPEECH_OK : SPEECH_ERROR_OUT_OF_RANGE, two_is_one ? NULL : name, what);
+                }
             }
         }
     }

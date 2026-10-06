@@ -60,7 +60,8 @@ void apply_options(speech_request * request, const std::vector<RequestOption> & 
 bool timestamps_in_effect(const speech_model_info * info, const std::vector<RequestOption> & options);
 
 /**
- * The members of a recognition's result in the form of the worker's messages, each after a comma: "text", and with
- * `timestamps` "segments" and "tokens", each a list of {"start", "end", "text"} with the times in seconds.
+ * The members of a recognition's result in the form of the worker's messages, each after a comma: "text", "stop" (why
+ * the recognition ended, "complete" or "model_limit"), and with `timestamps` "segments" and "tokens", each a list of
+ * {"start", "end", "text"} with the times in seconds.
  */
 std::string recognition_members(const speech_result * result, bool timestamps);

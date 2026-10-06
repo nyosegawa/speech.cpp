@@ -8,9 +8,14 @@ speech.audio.done with the seed, the samples and the stop reason, a drawn seed t
 with its status, type, param and code: the server's own (a member it does not have, a value of the wrong type, no
 input, a format it does not give, a body that is not JSON) and the library's mapped by category (a value it does not
 take, out of range or not taken, an empty or too long input, a voice left out), on a wav and on a stream. For a
-recognition model: json, text and verbose_json with its segments for each dump of reference/fastconformer/dump.py, a
-segment granularity, WAV at three times the model's rate, and the errors of a file that is not WAV or cannot be read, a
-language, a member and a granularity it does not take, and audio the library cannot take.
+recognition model: json and text with X-Speech-Stop for each dump of reference/fastconformer/dump.py or
+reference/qwen3-asr/dump.py, each other request a Qwen3-ASR dump holds with its language and its prompt as form fields,
+verbose_json with its segments and a segment granularity where the model takes timestamps and its refusal where it does
+not, WAV at three times the model's rate, and the errors of a file that is not WAV or cannot be read, a language, a
+prompt, a member and a granularity it does not take, and audio the library cannot take.
+
+The audio goes as 16-bit samples, which move the near-silent input of reference/qwen3-asr/dump.py far enough to change
+the text a forced language makes of it; leave that dump out.
 
 usage: python3 tools/server_smoke.py <speech> <model.gguf> [dump folder...] [-- serve options...]
 """
@@ -28,7 +33,7 @@ import sys
 import time
 import uuid
 
-from worker_client import check_model_information
+from worker_client import check_model_information, dump_requests
 
 args = sys.argv[1:]
 options = args[args.index("--") + 1:] if "--" in args else []
@@ -207,27 +212,38 @@ else:
         body += f"--{boundary}--\r\n".encode()
         return call("POST", "/v1/audio/transcriptions", body, {"Content-Type": f"multipart/form-data; boundary={boundary}"})
 
+    takes = {o["name"] for o in info["options"]}
     first = None
     for d in dumps:
         name = os.path.basename(os.path.normpath(d))
-        with open(os.path.join(d, "text.txt"), encoding="utf-8") as f:
-            want = f.read()
         samples = read_npy(os.path.join(d, "audio.npy"))
         wav = wav_file(samples, rate)
-        first = first or (wav, want, samples)
-        status, _, body = transcribe([("model", info["name"])], [("file", name + ".wav", wav)])
-        assert status == 200 and json.loads(body) == {"text": want}, (name, body)
+        requests = dump_requests(speech, model, d)
+        [(_, _, want)] = [r for r in requests if r[0] == "auto"]
+        if want and not first:
+            first = (wav, want, samples)
+        status, headers, body = transcribe([("model", info["name"])], [("file", name + ".wav", wav)])
+        assert status == 200 and json.loads(body) == {"text": want} and headers["x-speech-stop"] == "complete", (name, body)
         status, headers, body = transcribe([("response_format", "text")], [("file", name + ".wav", wav)])
         assert status == 200 and headers["content-type"].startswith("text/plain") and body.decode() == want, (name, body)
-        status, _, body = transcribe([("response_format", "verbose_json"), ("timestamp_granularities[]", "segment")],
-                                     [("file", name + ".wav", wav)])
+        for request, members, want_request in requests:
+            if request != "auto":
+                status, _, body = transcribe(list(members.items()), [("file", name + ".wav", wav)])
+                assert status == 200 and json.loads(body) == {"text": want_request}, (name, request, body)
+        verbose_form = [("response_format", "verbose_json"), ("timestamp_granularities[]", "segment")]
+        if "timestamps" not in takes:
+            expect_error(transcribe(verbose_form, [("file", name + ".wav", wav)]), 400, "unsupported_parameter", "timestamps",
+                         f"{name}: verbose_json to a model without timestamps")
+            print(f"{name}: json and text give the dump's text and stop, and each of its {len(requests)} requests its text")
+            continue
+        status, _, body = transcribe(verbose_form, [("file", name + ".wav", wav)])
         verbose = json.loads(body)
         assert status == 200 and verbose["task"] == "transcribe" and verbose["text"] == want, body
         assert abs(verbose["duration"] - len(samples) / rate) < 1e-9, verbose["duration"]
         segments = verbose["segments"]
         assert [s["id"] for s in segments] == list(range(len(segments))) and "".join(s["text"] for s in segments) == want, segments
         assert all(set(s) == {"id", "start", "end", "text"} and 0 <= s["start"] <= s["end"] for s in segments), segments
-        print(f"{name}: json, text and verbose_json give the dump's text, {len(segments)} segments joining into it")
+        print(f"{name}: json, text and verbose_json give the dump's text and stop, {len(segments)} segments joining into it")
     wav, want, samples = first
     status, _, body = transcribe([], [("file", "x.wav", wav_file([x for x in samples for _ in range(3)], rate * 3))])
     assert status == 200, body
@@ -236,9 +252,16 @@ else:
     expect_error(transcribe([], [("file", "x.wav", b"RIFF\x00\x00\x00\x00WAVEjunk")]), 400, "invalid_value", "file", "a WAV that cannot be read")
     expect_error(transcribe([], [("file", "x.wav", wav_file(samples[:16], 44101))]), 400, "invalid_value", "file",
                  "a rate the library cannot resample from")
-    expect_error(transcribe([], [("file", "x.wav", wav_file(samples[:1], rate))]), 400, "unsupported_value", "file", "audio too short")
+    # FastConformer takes no less than two of its mel frames; Qwen3-ASR pads short audio with zeros.
+    if info["architecture"] == "fastconformer":
+        expect_error(transcribe([], [("file", "x.wav", wav_file(samples[:1], rate))]), 400, "unsupported_value", "file", "audio too short")
     expect_error(transcribe([("language", "zz")], [("file", "x.wav", wav)]), 400, "unsupported_value", "language", "an unknown language")
-    expect_error(transcribe([("prompt", "x")], [("file", "x.wav", wav)]), 400, "unknown_parameter", "prompt", "an unknown member")
+    if "prompt" in takes:
+        expect_error(transcribe([("prompt", " word" * 70000)], [("file", "x.wav", wav)]), 400, "unsupported_value", "prompt",
+                     "a prompt longer than the model takes")
+    else:
+        expect_error(transcribe([("prompt", "x")], [("file", "x.wav", wav)]), 400, "unsupported_parameter", "prompt", "a prompt not taken")
+    expect_error(transcribe([("temperature", "0")], [("file", "x.wav", wav)]), 400, "unknown_parameter", "temperature", "an unknown member")
     expect_error(transcribe([("response_format", "srt")], [("file", "x.wav", wav)]), 400, "unsupported_value", "response_format", "srt")
     expect_error(transcribe([("response_format", "verbose_json"), ("timestamp_granularities[]", "word")], [("file", "x.wav", wav)]), 400,
                  "unsupported_value", "timestamp_granularities[]", "word timestamps")

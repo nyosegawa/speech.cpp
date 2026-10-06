@@ -2,9 +2,11 @@
  * The recognition half of speech-api-check: the C API with a recognition model, through the shared libspeech. Loads the
  * model without a warm-up, compares the information read without loading with the loaded model's, refuses each
  * option's values with the category and the option's name, recognizes the audio of each dump of
- * reference/fastconformer/dump.py and compares the text with the dump's text byte for byte, gives each its tokens and
- * segments with their times, recognizes audio at three times the model's rate, refuses what a recognition cannot take,
- * reports and stops on progress, and cancels a request from another thread while the encoder runs.
+ * reference/fastconformer/dump.py or reference/qwen3-asr/dump.py and compares the text with the dump's text byte for
+ * byte, gives each its tokens and segments with their times where the model takes timestamps, recognizes each other
+ * request of a Qwen3-ASR dump, with its language forced and with its prompt, recognizes audio at three times the
+ * model's rate, refuses what a recognition cannot take and runs a request it refused before its work again, reports
+ * and stops on progress, and cancels a request from another thread while it runs.
  */
 
 #include <stdlib.h>
@@ -56,26 +58,39 @@ static float * read_audio(const char * dump, size_t * n) {
     return samples;
 }
 
+/** What a recognition asks besides its audio: timestamps, and a language and a prompt where they are not NULL. */
+typedef struct {
+    int timestamps;
+    const char * language;
+    const char * prompt;
+} Asked;
+
 /**
- * Recognizes `n` samples at `rate` with `timestamps`, returning the status and the result's text in `text` (which the
- * caller frees), checking the tokens and segments against the text when they are asked for.
+ * Recognizes `n` samples at `rate` as `asked` asks, returning the status, the result's text in `text` (which the caller
+ * frees) and its stop reason in `stop` when that is not NULL, checking the tokens and segments against the text when
+ * they are asked for.
  */
-static speech_status recognize(speech_model * model, const float * samples, size_t n, int rate, int timestamps, Progress * progress,
-                               char ** text) {
+static speech_status recognize(speech_model * model, const float * samples, size_t n, int rate, Asked asked, Progress * progress,
+                               char ** text, speech_stop * stop) {
     speech_request * r = NULL;
     *text = NULL;
     if (speech_request_new(model, &r) != SPEECH_OK || speech_request_set_audio(r, samples, n, rate) != SPEECH_OK ||
-        speech_request_set_bool(r, SPEECH_OPT_TIMESTAMPS, timestamps) != SPEECH_OK ||
+        speech_request_set_bool(r, SPEECH_OPT_TIMESTAMPS, asked.timestamps) != SPEECH_OK ||
+        (asked.language && speech_request_set_string(r, SPEECH_OPT_LANGUAGE, asked.language) != SPEECH_OK) ||
+        (asked.prompt && speech_request_set_string(r, SPEECH_OPT_PROMPT, asked.prompt) != SPEECH_OK) ||
         (progress && speech_request_set_progress(r, record_progress, progress) != SPEECH_OK)) {
+        fail("a request's audio or option");
         speech_request_free(r);
         return SPEECH_ERROR_INTERNAL;
     }
     const speech_status status = speech_transcribe(r);
     const speech_result * result = speech_request_result(r);
+    const int timestamps = asked.timestamps;
     if (result) {
         const char * t = speech_result_text(result);
         *text = (char *) malloc(strlen(t) + 1);
         strcpy(*text, t);
+        if (stop) *stop = speech_result_stop(result);
     }
     if (status == SPEECH_OK && timestamps) {
         const size_t length = strlen(*text);
@@ -116,6 +131,90 @@ static speech_status recognize(speech_model * model, const float * samples, size
     return status;
 }
 
+/** Whether a file can be opened for reading. */
+static int exists(const char * path) {
+    FILE * f = open_utf8(path, "rb");
+    if (f) fclose(f);
+    return f != NULL;
+}
+
+/**
+ * The folder of a dump that holds the text of a request without options: the dump's own for
+ * reference/fastconformer/dump.py, and its auto/ for reference/qwen3-asr/dump.py, which keeps each request in a folder
+ * of its own.
+ */
+static void request_folder(const char * dump, const char * request, char * out, size_t size) {
+    snprintf(out, size, "%s/%s/meta.json", dump, request);
+    if (exists(out)) snprintf(out, size, "%s/%s", dump, request);
+    else snprintf(out, size, "%s", dump);
+}
+
+/**
+ * The string member `key` of the JSON object in `json`, which the caller frees, or NULL when it is absent, not a
+ * string, or holds an escape json.dump(ensure_ascii=False) does not write: it escapes '"', '\\' and the control
+ * characters alone.
+ */
+static char * json_string_member(const char * json, const char * key) {
+    char pattern[128];
+    snprintf(pattern, sizeof pattern, "\"%s\": ", key);
+    const char * at = strstr(json, pattern);
+    if (!at || at[strlen(pattern)] != '"') return NULL;
+    at += strlen(pattern) + 1;
+    char * out = (char *) malloc(strlen(at) + 1);
+    size_t n = 0;
+    for (; *at && *at != '"'; at++) {
+        if (*at != '\\') {
+            out[n++] = *at;
+            continue;
+        }
+        at++;
+        switch (*at) {
+            case 'b': out[n++] = '\b'; break;
+            case 'f': out[n++] = '\f'; break;
+            case 'n': out[n++] = '\n'; break;
+            case 'r': out[n++] = '\r'; break;
+            case 't': out[n++] = '\t'; break;
+            case 'u': {
+                char hex[5] = {0};
+                for (int k = 0; k < 4 && at[k + 1]; k++) hex[k] = at[k + 1];
+                const unsigned long cp = strtoul(hex, NULL, 16);
+                if (cp >= 0x20) {
+                    free(out);
+                    return NULL;
+                }
+                out[n++] = (char) cp;
+                at += 4;
+                break;
+            }
+            case '"':
+            case '\\':
+            case '/': out[n++] = *at; break;
+            default: free(out); return NULL;
+        }
+    }
+    out[n] = '\0';
+    return out;
+}
+
+/** The index of `item` in a metadata value that is a JSON array of strings without escapes, or -1. */
+static int index_in_array(const char * array, const char * item) {
+    char quoted[256];
+    snprintf(quoted, sizeof quoted, "\"%s\"", item);
+    const char * at = strstr(array, quoted);
+    if (!at) return -1;
+    int index = 0;
+    for (const char * c = array; c < at; c++) index += *c == ',';
+    return index;
+}
+
+/** The value of the metadata entry `key` as JSON text, or NULL. */
+static const char * meta_of(const speech_model_info * info, const char * key) {
+    for (size_t i = 0; i < speech_model_info_meta_count(info); i++) {
+        if (!strcmp(speech_model_info_meta_key(info, i), key)) return speech_model_info_meta_value(info, i);
+    }
+    return NULL;
+}
+
 static int ignore_audio(const float * samples, size_t n, void * user_data) {
     (void) samples;
     (void) n;
@@ -150,26 +249,42 @@ static int check_refusals(speech_model * model, const char * model_path, const f
     ok &= expect(speech_synthesize(r, ignore_audio, NULL), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_synthesize() of a recognition model");
     ok &= expect(speech_transcribe(r), SPEECH_ERROR_INVALID_ARGUMENT, "audio", "a recognition without audio");
     speech_request_free(r);
-    // A request refused before its work is fixed and run again.
-    if (speech_request_new(model, &r) != SPEECH_OK || speech_request_set_audio(r, samples, 100, rate) != SPEECH_OK) return fail("a request");
-    ok &= expect(speech_transcribe(r), SPEECH_ERROR_OUT_OF_RANGE, "audio", "100 samples of audio") &&
-          speech_request_set_audio(r, samples, n, rate) == SPEECH_OK &&
-          expect(speech_transcribe(r), SPEECH_OK, NULL, "the same request run again with its whole audio") &&
+    speech_model_info * info = NULL;
+    if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
+    const int takes_prompt = speech_model_info_takes(info, SPEECH_OPT_PROMPT), takes_timestamps = speech_model_info_takes(info, SPEECH_OPT_TIMESTAMPS);
+    // A request refused before its work is fixed and run again: one with a prompt whose tokens, beside the audio's and
+    // the most the model writes, are more than the decoder's positions, or, for a model that takes no prompt, one of
+    // less audio than the model recognizes.
+    char * long_prompt = NULL;
+    if (takes_prompt) {
+        const size_t words = 70000;
+        long_prompt = (char *) malloc(words * 5 + 1);
+        for (size_t i = 0; i < words; i++) memcpy(long_prompt + 5 * i, " word", 5);
+        long_prompt[words * 5] = '\0';
+    }
+    if (speech_request_new(model, &r) != SPEECH_OK || speech_request_set_audio(r, samples, takes_prompt ? n : 100, rate) != SPEECH_OK ||
+        (takes_prompt && speech_request_set_string(r, SPEECH_OPT_PROMPT, long_prompt) != SPEECH_OK)) {
+        return fail("a request");
+    }
+    ok &= (takes_prompt ? expect(speech_transcribe(r), SPEECH_ERROR_OUT_OF_RANGE, "prompt", "a prompt of 70000 words")
+                        : expect(speech_transcribe(r), SPEECH_ERROR_OUT_OF_RANGE, "audio", "100 samples of audio")) &&
+          (takes_prompt ? speech_request_set_string(r, SPEECH_OPT_PROMPT, "") : speech_request_set_audio(r, samples, n, rate)) == SPEECH_OK &&
+          expect(speech_transcribe(r), SPEECH_OK, NULL, takes_prompt ? "the same request run again without its prompt" : "the same request run again with its whole audio") &&
           speech_result_text(speech_request_result(r))[0] != '\0' &&
           expect(speech_transcribe(r), SPEECH_ERROR_INVALID_ARGUMENT, NULL, "the same request run again after its work");
     speech_request_free(r);
+    free(long_prompt);
     // A refused value leaves the one set before it.
+    const speech_option kept = takes_timestamps ? SPEECH_OPT_TIMESTAMPS : SPEECH_OPT_PROMPT;
     if (speech_request_new(model, &r) != SPEECH_OK || speech_request_set_audio(r, samples, n, rate) != SPEECH_OK ||
-        speech_request_set_bool(r, SPEECH_OPT_TIMESTAMPS, 1) != SPEECH_OK) {
+        (takes_timestamps ? speech_request_set_bool(r, kept, 1) : speech_request_set_string(r, kept, "x")) != SPEECH_OK) {
         return fail("a request");
     }
-    ok &= expect(speech_request_set_float(r, SPEECH_OPT_TIMESTAMPS, 0), SPEECH_ERROR_INVALID_ARGUMENT, "timestamps", "timestamps as a number");
+    ok &= expect(speech_request_set_float(r, kept, 0), SPEECH_ERROR_INVALID_ARGUMENT, speech_option_name(kept), "a value of another type");
     ok &= expect(speech_transcribe(r), SPEECH_OK, NULL, "a recognition after a refused value") &&
-          speech_result_segment_count(speech_request_result(r)) > 0;
+          (!takes_timestamps || speech_result_segment_count(speech_request_result(r)) > 0);
     speech_request_free(r);
-    speech_model_info * info = NULL;
     size_t tokens = 0;
-    if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
     ok &= expect(speech_model_info_text_tokens(info, "明日", &tokens), SPEECH_ERROR_UNSUPPORTED, NULL, "the tokens of a text for a recognition");
     speech_model_info_free(info);
     ok &= expect(speech_voice_add(model, "voice", "voice.gguf"), SPEECH_ERROR_UNSUPPORTED, NULL, "a voice for a recognition");
@@ -184,22 +299,25 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
     speech_model_info * info = NULL;
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
     const int rate = speech_model_info_sample_rate(info);
+    const char * use = meta_of(info, "speech.language_use");
     if (speech_model_info_task(info) != SPEECH_TASK_RECOGNITION || speech_model_info_incremental(info) || speech_model_info_voice_count(info) ||
         speech_model_info_voice_files(info) || speech_model_info_max_text_tokens(info) || rate <= 0 || speech_model_info_language_count(info) == 0 ||
-        speech_model_info_option_steers(info, SPEECH_OPT_LANGUAGE)) {
+        !use || speech_model_info_option_steers(info, SPEECH_OPT_LANGUAGE) != !strcmp(use, "\"steers\"")) {
         fprintf(stderr, "FAIL: the recognition model is not described as speech.h declares\n");
         return 1;
     }
-    speech_model_info_free(info);
+    const int timestamps = speech_model_info_takes(info, SPEECH_OPT_TIMESTAMPS);
+    const Asked plain = {timestamps, NULL, NULL};
 
     float * audio[MAX_DUMPS];
     size_t lengths[MAX_DUMPS];
     char * texts[MAX_DUMPS];
-    int shortest = 0, longest = 0, ok = 1;
+    int shortest = -1, longest = 0, ok = 1;
     for (int d = 0; d < n_dumps; d++) {
         size_t n = 0, text_size = 0;
-        char path[4096];
-        snprintf(path, sizeof path, "%s/text.txt", dumps[d]);
+        char folder[4096], path[4096 + 16];
+        request_folder(dumps[d], "auto", folder, sizeof folder);
+        snprintf(path, sizeof path, "%s/text.txt", folder);
         audio[d] = read_audio(dumps[d], &n);
         lengths[d] = n;
         texts[d] = read_whole(path, &text_size);
@@ -211,17 +329,47 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
         Progress progress;
         memset(&progress, 0, sizeof progress);
         const double start = now_seconds();
-        if (recognize(model, audio[d], n, rate, 1, &progress, &text) != SPEECH_OK) return fail("speech_transcribe");
-        const int equal = !strcmp(text, texts[d]);
+        speech_stop stop = SPEECH_STOP_CANCELLED;
+        if (recognize(model, audio[d], n, rate, plain, &progress, &text, &stop) != SPEECH_OK) return fail("speech_transcribe");
+        const int equal = !strcmp(text, texts[d]) && stop == SPEECH_STOP_COMPLETE;
         printf("%s: %.2f s of audio in %.3f s, text %s\n", dumps[d], (double) n / rate, now_seconds() - start, equal ? "equal to the dump's" : "DIFFERS");
-        if (!equal) printf("  got  %s\n  want %s\n", text, texts[d]);
+        if (!equal) printf("  got  %s (%s)\n  want %s (complete)\n", text, speech_stop_name(stop), texts[d]);
         ok = ok && equal && progress_rises(&progress, 1, "the recognition");
         free(text);
-        if (n < lengths[shortest]) shortest = d;
+        // The other requests of a dump of reference/qwen3-asr/dump.py: its language forced, its prompt, and both.
+        static const char * const others[] = {"forced", "auto-prompt", "forced-prompt"};
+        for (size_t k = 0; strcmp(folder, dumps[d]) != 0 && k < sizeof others / sizeof others[0]; k++) {
+            char request[4096], file[4096 + 16];
+            request_folder(dumps[d], others[k], request, sizeof request);
+            snprintf(file, sizeof file, "%s/meta.json", request);
+            char * meta = read_whole(file, &text_size);
+            snprintf(file, sizeof file, "%s/text.txt", request);
+            char * want = read_whole(file, &text_size);
+            char * name = meta ? json_string_member(meta, "language") : NULL, * prompt = meta ? json_string_member(meta, "prompt") : NULL;
+            const char * names = meta_of(info, "qwen3-asr.language_names");
+            const int at = name && names ? index_in_array(names, name) : -1;
+            Asked asked = {timestamps, at >= 0 ? speech_model_info_language(info, (size_t) at) : NULL, prompt && prompt[0] ? prompt : NULL};
+            if (!want || !prompt || (name && at < 0) || recognize(model, audio[d], n, rate, asked, NULL, &text, NULL) != SPEECH_OK) {
+                fprintf(stderr, "FAIL: %s: the request cannot be read or recognized\n", request);
+                return 1;
+            }
+            const int same = !strcmp(text, want);
+            printf("  %s (language %s, prompt \"%s\"): text %s\n", others[k], asked.language ? asked.language : "auto", prompt,
+                   same ? "equal to the dump's" : "DIFFERS");
+            if (!same) printf("    got  %s\n    want %s\n", text, want);
+            ok = ok && same;
+            free(text);
+            free(meta);
+            free(want);
+            free(name);
+            free(prompt);
+        }
+        if (texts[d][0] && (shortest < 0 || n < lengths[shortest])) shortest = d;
         if (n > lengths[longest]) longest = d;
     }
-    if (!ok) {
-        fprintf(stderr, "FAIL: a text differs from the dump's, or the progress does not rise\n");
+    speech_model_info_free(info);
+    if (!ok || shortest < 0) {
+        fprintf(stderr, "FAIL: a text differs from the dump's, the progress does not rise, or no dump has a text\n");
         return 1;
     }
 
@@ -230,7 +378,9 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
     float * tripled = (float *) malloc(3 * n * sizeof(float));
     for (size_t i = 0; i < 3 * n; i++) tripled[i] = audio[shortest][i / 3];
     char * text = NULL;
-    if (recognize(model, tripled, 3 * n, 3 * rate, 0, NULL, &text) != SPEECH_OK || !text[0]) return fail("audio at three times the rate");
+    if (recognize(model, tripled, 3 * n, 3 * rate, (Asked){0, NULL, NULL}, NULL, &text, NULL) != SPEECH_OK || !text[0]) {
+        return fail("audio at three times the rate");
+    }
     printf("the same audio at %d Hz: %s\n", 3 * rate, text);
     free(text);
     free(tripled);
@@ -239,7 +389,7 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
     Progress stopping;
     memset(&stopping, 0, sizeof stopping);
     stopping.stop_at = 0.5;
-    if (!expect(recognize(model, audio[shortest], n, rate, 1, &stopping, &text), SPEECH_CANCELLED, NULL, "a progress callback that stops at 0.5") ||
+    if (!expect(recognize(model, audio[shortest], n, rate, plain, &stopping, &text, NULL), SPEECH_CANCELLED, NULL, "a progress callback that stops at 0.5") ||
         strcmp(text, "") != 0) {
         fprintf(stderr, "FAIL: a stopped recognition has a text\n");
         return 1;
@@ -247,7 +397,7 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
     free(text);
 
     // The cancel comes 20 ms into the longest audio, within the encoder; the text comes within milliseconds of the
-    // encoder's end, so a request still running well after the cancel must stop.
+    // encoder's end, or of the decoding step under way, so a request still running well after the cancel must stop.
     speech_request * r = NULL;
     if (speech_request_new(model, &r) != SPEECH_OK || speech_request_set_audio(r, audio[longest], lengths[longest], rate) != SPEECH_OK) {
         return fail("a request");
@@ -270,7 +420,7 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
     }
     speech_request_free(r);
 
-    if (recognize(model, audio[shortest], n, rate, 0, NULL, &text) != SPEECH_OK || strcmp(text, texts[shortest]) != 0) {
+    if (recognize(model, audio[shortest], n, rate, (Asked){0, NULL, NULL}, NULL, &text, NULL) != SPEECH_OK || strcmp(text, texts[shortest]) != 0) {
         fprintf(stderr, "FAIL: the request after a cancelled one does not give its text\n");
         return 1;
     }
@@ -300,7 +450,7 @@ int check_recognition(int argc, char ** argv) {
         }
     }
     if (n_dumps == 0) {
-        fprintf(stderr, "give at least one dump folder of reference/fastconformer/dump.py\n");
+        fprintf(stderr, "give at least one dump folder of reference/fastconformer/dump.py or reference/qwen3-asr/dump.py\n");
         return 2;
     }
 

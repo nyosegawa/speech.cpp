@@ -16,6 +16,7 @@ public:
     Recognized transcribe(const std::vector<float> & samples, const RequestValues & values, Run & run) override {
         qwen3_asr::RecognitionRequest request;
         request.language = forced_language(values.string(SPEECH_OPT_LANGUAGE));
+        request.context = values.string(SPEECH_OPT_PROMPT);
         const qwen3_asr::Recognition found = recognizer_.recognize(samples, request, [&](double done) { return run.progress(done); });
         if (run.stopped()) return {};
         run.progress(1);
@@ -48,13 +49,15 @@ private:
 
 /**
  * The table of the options Qwen3-ASR takes. The language steers: a language forced as qwen-asr forces it, by the prefill
- * "language <Name><asr_text>", or auto, with which the model writes the language it hears before the text. The model
- * gives no times, so a request takes timestamps only as false, the neutral value.
+ * "language <Name><asr_text>", or auto, with which the model writes the language it hears before the text. The prompt
+ * is qwen-asr's context, which goes into the system turn of the prompt. The model gives no times, so a request takes
+ * timestamps only as false, the neutral value.
  */
 FamilyInfo describe_qwen3_asr(const std::shared_ptr<const ModelFile> &) {
     FamilyInfo info;
     info.options = {
         {SPEECH_OPT_LANGUAGE, false, true, std::string("auto")},
+        {SPEECH_OPT_PROMPT, false, true, std::string()},
     };
     return info;
 }

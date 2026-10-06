@@ -66,15 +66,15 @@ struct TranscriptionRequest {
     int sample_rate = 0;
     /** "json", "text" or "verbose_json". */
     std::string format = "json";
-    /** The language, and timestamps for verbose_json. */
+    /** The language, the prompt, and timestamps for verbose_json. */
     std::vector<RequestOption> options;
 };
 
 /**
  * Reads a create transcription request from the parts of its form: "file", a WAV file, its channels averaged;
- * "model"; "language"; "response_format"; and "timestamp_granularities[]", "segment" alone, with verbose_json. A
- * member it does not have is refused, and so is one given twice but timestamp_granularities[]. Anything it cannot read
- * throws an ApiError.
+ * "model"; "language"; "prompt", the option prompt; "response_format"; and "timestamp_granularities[]", "segment"
+ * alone, with verbose_json. A member it does not have is refused, and so is one given twice but
+ * timestamp_granularities[]. Anything it cannot read throws an ApiError.
  */
 TranscriptionRequest read_transcription_request(bool multipart, const std::vector<FormPart> & parts, const std::string & model_name);
 

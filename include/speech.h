@@ -58,7 +58,8 @@ extern "C" {
 /**
  * The minor version of this API. It rises when a function, an option or an enum value is added, and returns to 0
  * when the major version rises. A program built against minor version m runs against a library of the same major
- * version and a minor version of m or more.
+ * version and a minor version of m or more. Version 3.0 is first released with speech.cpp 0.7.0, and all that this
+ * header declares, the option prompt included, belongs to it.
  */
 #define SPEECH_API_VERSION_MINOR 0
 
@@ -184,8 +185,8 @@ SPEECH_API speech_status speech_device_memory(size_t index, uint64_t * total, ui
 /*
  * Options: the vocabulary of what a request may ask, the same for every family. A value is never reused, and a later
  * minor version only appends. Each option has one type. Some have a neutral value that every model accepts, whether
- * or not it takes the option: speed 1, duration_scale 1, language "auto" and timestamps false. The others have none,
- * and a model that does not take one refuses any value of it.
+ * or not it takes the option: speed 1, duration_scale 1, language "auto", timestamps false and prompt "". The others
+ * have none, and a model that does not take one refuses any value of it.
  */
 typedef enum speech_option {
     /**
@@ -223,7 +224,13 @@ typedef enum speech_option {
      * "timestamps", a boolean: whether a recognition's result carries its segments and its tokens with their times,
      * false being neutral.
      */
-    SPEECH_OPT_TIMESTAMPS = 8
+    SPEECH_OPT_TIMESTAMPS = 8,
+    /**
+     * "prompt", a string: what a recognition is told of the audio before it hears it, such as the names and terms it may
+     * hold, which the model takes as context rather than as instructions; "" (the neutral value) tells it nothing. A
+     * prompt too long for the model beside the audio is refused when the request runs, naming the option.
+     */
+    SPEECH_OPT_PROMPT = 9
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */

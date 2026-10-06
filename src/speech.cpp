@@ -62,6 +62,7 @@ const OptionName vocabulary[] = {
     {"voice", SPEECH_TYPE_STRING},  {"language", SPEECH_TYPE_STRING},      {"seed", SPEECH_TYPE_INT},
     {"speed", SPEECH_TYPE_FLOAT},   {"seconds", SPEECH_TYPE_FLOAT},        {"duration_scale", SPEECH_TYPE_FLOAT},
     {"steps", SPEECH_TYPE_INT},     {"max_seconds", SPEECH_TYPE_FLOAT},    {"timestamps", SPEECH_TYPE_BOOL},
+    {"prompt", SPEECH_TYPE_STRING},
 };
 constexpr size_t kOptions = sizeof vocabulary / sizeof vocabulary[0];
 

@@ -71,6 +71,7 @@ bool neutral(speech_option option, const OptionValue & value) {
         case SPEECH_OPT_DURATION_SCALE: return std::get<double>(value) == 1;
         case SPEECH_OPT_LANGUAGE: return language_is_auto(std::get<std::string>(value));
         case SPEECH_OPT_TIMESTAMPS: return !std::get<bool>(value);
+        case SPEECH_OPT_PROMPT: return std::get<std::string>(value).empty();
         default: return false;
     }
 }
