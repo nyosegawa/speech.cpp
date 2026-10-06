@@ -155,9 +155,6 @@ struct Qwen3Decoder::Cache {
             ggml_free(ctx);
             throw Error(Fault::OutOfMemory, "cannot allocate a key/value cache of " + std::to_string(capacity) + " positions");
         }
-        // Flash attention reads the positions of the last block past the sequence, which its mask hides: a key or value
-        // there that was never written may be a NaN, which no mask hides.
-        if (by_position) ggml_backend_buffer_clear(buffer, 0);
     }
     ~Cache() {
         ggml_backend_buffer_free(buffer);
@@ -260,12 +257,24 @@ void Qwen3Decoder::resize_cache(int64_t positions) {
     // The kept step reads the cache it was built on.
     token_step_.reset();
     auto next = std::make_unique<Cache>(backend_, cache_type_, shape_, positions, flash_);
-    if (n_past_ > 0) {
-        // The positions so far are copied on the device, layer by layer, into the new buffer.
+    // On the device, layer by layer, the positions so far are copied into the new buffer and, for flash attention, the
+    // others are set to zero: flash attention reads the positions of the last block past the sequence, which its mask
+    // hides, and a key or value there that was never written may be a NaN, which no mask hides. Set from the CPU, the
+    // zeros counted every page of the cache in the process's memory footprint: the 1338.42 s input's peak was 6.15 GB
+    // with the 0.6B Qwen3-ASR model in Q8_0 on Metal, against 2.52 GB in 0.7.0 (2026-10-07).
+    if (n_past_ > 0 || flash_) {
         Graph g(kGraphSize);
+        ggml_context * ctx = g.ctx();
+        const int64_t rest = next->capacity - n_past_;
         for (int l = 0; l < shape_.n_layer; l++) {
-            g.copy(cache_->keys(g.ctx(), l, 0, n_past_), next->keys(g.ctx(), l, 0, n_past_));
-            g.copy(cache_->values(g.ctx(), l, 0, n_past_), next->values(g.ctx(), l, 0, n_past_));
+            if (n_past_ > 0) {
+                g.copy(cache_->keys(ctx, l, 0, n_past_), next->keys(ctx, l, 0, n_past_));
+                g.copy(cache_->values(ctx, l, 0, n_past_), next->values(ctx, l, 0, n_past_));
+            }
+            if (flash_) {
+                g.expand(ggml_fill_inplace(ctx, next->keys(ctx, l, n_past_, rest), 0.0f));
+                g.expand(ggml_fill_inplace(ctx, next->values(ctx, l, n_past_, rest), 0.0f));
+            }
         }
         g.compute(backend_, allocr_);
     }
