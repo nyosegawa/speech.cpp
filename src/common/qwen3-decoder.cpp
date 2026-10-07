@@ -104,7 +104,7 @@ Qwen3Shape read_qwen3_shape(const ModelFile & m, const std::string & prefix) {
 }
 
 void add_qwen3_tensors(std::vector<TensorSpec> & t, const std::string & tensors, const Qwen3Shape & s, const Storage & matrix) {
-    const Storage & f32 = kFloat32;
+    static const Storage f32 = float32_storage();
     const int64_t h = s.hidden, q = (int64_t) s.n_head * s.head_dim, kv = (int64_t) s.n_kv_head * s.head_dim;
     add_numbered(t, tensors + ".blk.", s.n_layer,
                  {{"attn_norm", {h}, f32},

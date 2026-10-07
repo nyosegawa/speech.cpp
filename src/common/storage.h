@@ -41,9 +41,19 @@ const std::vector<WeightType> & weight_types();
 std::string tensor_type_text(ggml_type type);
 
 /**
+ * A type a reader takes a tensor in, and the first release whose reader of the family takes the tensor in that type. A
+ * release before the family's layout was first read, which the file's own speech.requires names, adds nothing.
+ */
+struct Since {
+    ggml_type type;
+    const char * release;
+};
+
+/**
  * How a layout stores a tensor: for a file of each weight type, the types the tensor takes in order, of which the file
- * holds it in the first whose blocks its rows are whole blocks of. A reader takes the tensor in any of these types,
- * whatever the file's weight type, and speech quantize writes the one its rule gives.
+ * holds it in the first whose blocks its rows are whole blocks of; and every type a reader takes the tensor in, whatever
+ * the file's weight type, with the first release of the family that does, which a file that holds the tensor in that
+ * type names in speech.requires. speech quantize writes the type the order gives.
  */
 struct Storage {
     struct Choice {
@@ -51,23 +61,29 @@ struct Storage {
         std::vector<ggml_type> types;
     };
     std::vector<Choice> choices;
+    std::vector<Since> since;
 };
 
-/** Float32 in a file of every weight type: a norm, a bias, a kernel or any tensor that an operation reads in float32. */
-extern const Storage kFloat32;
+/**
+ * Float32 in a file of every weight type, which every reader of the family takes: a norm, a bias, a kernel or any tensor
+ * that an operation reads in float32.
+ */
+Storage float32_storage();
 
 /**
  * A matrix that only ggml_mul_mat() and ggml_get_rows() read, which ggml computes from every weight type on the CPU,
  * Metal and Vulkan: in the file's own type; in Q8_0 instead of a K-quant where its rows are not whole blocks of 256
- * values; and in F16 instead of Q8_0 where they are not whole blocks of 32 (docs/adr/0040).
+ * values; and in F16 instead of Q8_0 where they are not whole blocks of 32; each type read from the release `since`
+ * gives it, which differs from family to family (docs/adr/0040).
  */
-extern const Storage kQuantized;
+Storage quantized_storage(std::vector<Since> since);
 
 /**
- * Float32 in an F32 file and float16 in a file of every other weight type: a weight that an operation reads in F16 or
- * F32 alone, such as a convolution's kernel through ggml_im2col(), or one a family keeps out of quantization.
+ * Float32 in an F32 file and float16 in a file of every other weight type, which every reader of the family takes: a
+ * weight that an operation reads in F16 or F32 alone, such as a convolution's kernel through ggml_im2col(), or one a
+ * family keeps out of quantization.
  */
-extern const Storage kHalf;
+Storage half_storage();
 
 /** A tensor a layout calls for: its name, its shape, and how the layout stores it. */
 struct TensorSpec {
@@ -79,6 +95,8 @@ struct TensorSpec {
     std::vector<ggml_type> types() const;
     /** The type a file of the weight type `file` holds the tensor in. */
     ggml_type type_in(ggml_type file) const;
+    /** The first release whose reader of the family takes the tensor in `type`, one of types(). */
+    const char * first_release(ggml_type type) const;
 };
 
 /** The numbers of a release, MAJOR.MINOR.PATCH as VERSION writes it, or none for text of another form. */

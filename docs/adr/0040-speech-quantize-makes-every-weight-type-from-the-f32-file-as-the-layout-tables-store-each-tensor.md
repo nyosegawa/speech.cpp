@@ -44,9 +44,12 @@ writes the released F16 and Q8_0 files byte for byte (`tools/quantize_compare.py
   its storage at all.
 - **The converters write F32 alone.** F16 goes as well as Q8_0: `speech quantize` writes the converters' F16 byte for
   byte, and a converter that kept it would be a second place deciding the types.
-- **A file names the release that reads it.** `speech.requires` becomes the later of the input's and the weight type's
-  first release: 0.7.0 for F32, F16 and Q8_0, so that the files of those types are the released ones, and 0.8.0 for
-  Q6_K, Q5_K and Q4_K. A reader from 0.8.0 that does not know a file's `general.file_type`, or finds a tensor in a type
+- **A file names the release that reads it.** `speech.requires` becomes the latest of the input's own, the first
+  release that reads the weight type's `general.file_type`, which every family reads alike, and the first release whose
+  reader of the family takes each tensor in its type, which each storage gives per type from the family's history: 0.7's
+  FastConformer reader took its matrices in F16 and F32 alone, where the other families' took Q8_0 as well. A Q6_K, Q5_K
+  or Q4_K file and a FastConformer file of layout 1 in Q8_0 name 0.8.0, and the other F16 and Q8_0 files of layout 1
+  0.7.0, so that they are the released ones. A reader from 0.8.0 that does not know a file's `general.file_type`, or finds a tensor in a type
   its layout does not list, names the release `speech.requires` gives when it comes after its own, as a newer layout is
   refused. `general.file_type` is 18 (MOSTLY_Q6_K), 16 (MOSTLY_Q5_K_S) or 14 (MOSTLY_Q4_K_S), the one of gguf-py's two
   values for Q5_K and Q4_K that names no mix of wider types, and the file is named `-Q6_K`, `-Q5_K` or `-Q4_K`.
@@ -62,6 +65,7 @@ The alternatives were turned down:
   would both decide the types.
 - Q5_0, Q5_1 or IQ4_NL for a matrix a K-quant cannot hold, as llama.cpp substitutes them. Each is a type more for every
   backend and every check, where Q8_0 already runs everywhere and is checked.
+- One first release per weight type for every family. A FastConformer file in Q8_0 would name 0.7.0, which refuses it.
 - A reader that takes a tensor only in the type the rule gives for the file's weight type. The rule could then never
   change without refusing the files made under the one before.
 - A `speech.layout` raised for the K-quant files, so that releases before 0.8.0 would name the release. A layout says
@@ -72,6 +76,7 @@ The alternatives were turned down:
 ## Consequences
 
 Converting a model is two steps, and the F32 file, 8.1 GB for the 1.7B models, is written first. Releases before 0.8.0
-refuse a Q6_K, Q5_K or Q4_K file because its `general.file_type` is none they know, without naming 0.8.0. FastConformer's
+refuse a Q6_K, Q5_K or Q4_K file because its `general.file_type` is none they know, and a FastConformer file in Q8_0
+because its matrices are of a type their layout does not list, each without naming 0.8.0. FastConformer's
 files can be Q8_0 and K-quants. Qwen3-ASR 0.6B's encoder, 896 wide, is Q8_0 in its K-quant files, and FastConformer's
 prediction network and joint, 640 wide, too.

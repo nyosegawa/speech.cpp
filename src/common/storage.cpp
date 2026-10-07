@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
+#include <utility>
 
 #include "error.h"
 
@@ -42,40 +43,33 @@ std::string tensor_type_text(ggml_type type) {
     return name;
 }
 
-const Storage kFloat32 = {{
-    {GGML_TYPE_F32, {GGML_TYPE_F32}},
-    {GGML_TYPE_F16, {GGML_TYPE_F32}},
-    {GGML_TYPE_Q8_0, {GGML_TYPE_F32}},
-    {GGML_TYPE_Q6_K, {GGML_TYPE_F32}},
-    {GGML_TYPE_Q5_K, {GGML_TYPE_F32}},
-    {GGML_TYPE_Q4_K, {GGML_TYPE_F32}},
-}};
+Storage float32_storage() {
+    std::vector<Storage::Choice> choices;
+    for (const WeightType & w : weight_types()) choices.push_back({w.type, {GGML_TYPE_F32}});
+    return {choices, {{GGML_TYPE_F32, kFirstLayoutRelease}}};
+}
 
-const Storage kQuantized = {{
-    {GGML_TYPE_F32, {GGML_TYPE_F32}},
-    {GGML_TYPE_F16, {GGML_TYPE_F16}},
-    {GGML_TYPE_Q8_0, {GGML_TYPE_Q8_0, GGML_TYPE_F16}},
-    {GGML_TYPE_Q6_K, {GGML_TYPE_Q6_K, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
-    {GGML_TYPE_Q5_K, {GGML_TYPE_Q5_K, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
-    {GGML_TYPE_Q4_K, {GGML_TYPE_Q4_K, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
-}};
+Storage quantized_storage(std::vector<Since> since) {
+    return {{
+                {GGML_TYPE_F32, {GGML_TYPE_F32}},
+                {GGML_TYPE_F16, {GGML_TYPE_F16}},
+                {GGML_TYPE_Q8_0, {GGML_TYPE_Q8_0, GGML_TYPE_F16}},
+                {GGML_TYPE_Q6_K, {GGML_TYPE_Q6_K, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
+                {GGML_TYPE_Q5_K, {GGML_TYPE_Q5_K, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
+                {GGML_TYPE_Q4_K, {GGML_TYPE_Q4_K, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
+            },
+            std::move(since)};
+}
 
-const Storage kHalf = {{
-    {GGML_TYPE_F32, {GGML_TYPE_F32}},
-    {GGML_TYPE_F16, {GGML_TYPE_F16}},
-    {GGML_TYPE_Q8_0, {GGML_TYPE_F16}},
-    {GGML_TYPE_Q6_K, {GGML_TYPE_F16}},
-    {GGML_TYPE_Q5_K, {GGML_TYPE_F16}},
-    {GGML_TYPE_Q4_K, {GGML_TYPE_F16}},
-}};
+Storage half_storage() {
+    std::vector<Storage::Choice> choices;
+    for (const WeightType & w : weight_types()) choices.push_back({w.type, {w.type == GGML_TYPE_F32 ? GGML_TYPE_F32 : GGML_TYPE_F16}});
+    return {choices, {{GGML_TYPE_F16, kFirstLayoutRelease}, {GGML_TYPE_F32, kFirstLayoutRelease}}};
+}
 
 std::vector<ggml_type> TensorSpec::types() const {
     std::vector<ggml_type> out;
-    for (const Storage::Choice & choice : storage.get().choices) {
-        for (ggml_type t : choice.types) {
-            if (std::find(out.begin(), out.end(), t) == out.end()) out.push_back(t);
-        }
-    }
+    for (const Since & s : storage.get().since) out.push_back(s.type);
     return out;
 }
 
@@ -83,12 +77,22 @@ ggml_type TensorSpec::type_in(ggml_type file) const {
     for (const Storage::Choice & choice : storage.get().choices) {
         if (choice.file != file) continue;
         for (ggml_type t : choice.types) {
-            if (shape.ne[0] % ggml_blck_size(t) == 0) return t;
+            if (shape.ne[0] % ggml_blck_size(t) != 0) continue;
+            // A type the order gives that the table gives no release for is a defect of the table, which this throws.
+            first_release(t);
+            return t;
         }
         throw std::logic_error("the storage of " + name + " gives a file of " + tensor_type_text(file) + " no type whose blocks its rows of " +
                                std::to_string(shape.ne[0]) + " values are");
     }
     throw std::logic_error("the storage of " + name + " says nothing of a file of " + tensor_type_text(file));
+}
+
+const char * TensorSpec::first_release(ggml_type type) const {
+    for (const Since & s : storage.get().since) {
+        if (s.type == type) return s.release;
+    }
+    throw std::logic_error("the storage of " + name + " gives no release that reads it in " + tensor_type_text(type));
 }
 
 bool release_after(const std::string & a, const std::string & b) {

@@ -230,10 +230,20 @@ void write_model_file(const std::string & in, const std::string & out, const Wei
     }
     std::unordered_map<std::string, TensorSpec> specs;
     for (TensorSpec & spec : layout.tensors(*model)) specs.emplace(spec.name, spec);
-    const std::string release = naming("model_path", [&] {
-        const std::string own = model->str("speech.requires");
-        return release_after(type.release, own) ? std::string(type.release) : own;
-    });
+    const int64_t n = gguf_get_n_tensors(gguf.get()), keys = gguf_get_n_kv(gguf.get());
+    std::vector<ggml_type> types(n);
+    // The file names the latest of the releases that first read its layout, its general.file_type and each tensor's
+    // type in its family.
+    std::string release = naming("model_path", [&] { return model->str("speech.requires"); });
+    const auto at_least = [&](const std::string & r) {
+        if (release_after(r, release)) release = r;
+    };
+    at_least(type.release);
+    for (int64_t i = 0; i < n; i++) {
+        const TensorSpec & spec = specs.at(gguf_get_tensor_name(gguf.get(), i));
+        types[i] = spec.type_in(type.type);
+        at_least(spec.first_release(types[i]));
+    }
 
     std::vector<uint8_t> bytes(gguf_get_data_offset(gguf.get()));
     const File source(ggml_fopen(in.c_str(), "rb"), &std::fclose);
@@ -241,7 +251,6 @@ void write_model_file(const std::string & in, const std::string & out, const Wei
         throw Error(Fault::Io, "cannot read " + in + "; check that the file can be read", "model_path");
     }
     const MetaLayout meta_of_in = read_meta_layout(bytes, in);
-    const int64_t n = gguf_get_n_tensors(gguf.get()), keys = gguf_get_n_kv(gguf.get());
     if ((int64_t) meta_of_in.entries.size() != keys || (int64_t) meta_of_in.infos.size() != n) {
         throw std::logic_error("the metadata of " + in + " has other keys or tensors than gguf read");
     }
@@ -268,13 +277,11 @@ void write_model_file(const std::string & in, const std::string & out, const Wei
         }
     }
     const size_t alignment = gguf_get_alignment(gguf.get());
-    std::vector<ggml_type> types(n);
     uint64_t offset = 0;
     for (int64_t i = 0; i < n; i++) {
         const MetaLayout::Info & info = meta_of_in.infos[i];
         const ggml_tensor * t = ggml_get_tensor(meta_ctx.get(), info.name.c_str());
         if (!t || info.name != gguf_get_tensor_name(gguf.get(), i)) throw std::logic_error("the tensors of " + in + " are not in the order gguf read them");
-        types[i] = specs.at(info.name).type_in(type.type);
         put_bytes(meta, bytes.data() + info.begin, info.type_at - info.begin);
         put<uint32_t>(meta, types[i]);
         put<uint64_t>(meta, offset);

@@ -701,7 +701,8 @@ SPEECH_API const char * speech_model_info_meta_value(const speech_model_info * i
  * values, and F16 instead of Q8_0 where they are not whole blocks of 32; a codec's or a convolution's weights that the
  * family keeps out of quantization take F16; and the rest stays F32. Every key and tensor of the file is kept, in its
  * order, but general.file_type, general.quantization_version, which a quantized file has, and speech.requires, which
- * names the first release that reads the file: 0.8.0 for Q6_K, Q5_K and Q4_K, which releases before it refuse. A file
+ * names the first release that reads the file: 0.8.0 for Q6_K, Q5_K and Q4_K and for FastConformer's Q8_0, which
+ * releases before it refuse. A file
  * whose weights are not F32 is SPEECH_ERROR_INVALID_ARGUMENT naming "model_path": a quantized file is not quantized
  * again, and a type made of F16 weights would hold other bytes than the same type made of the F32 weights. A weight that
  * is not finite, NaN or an infinity, is SPEECH_ERROR_MODEL_FILE naming "model_path". `out_path`, which may not be the

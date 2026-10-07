@@ -72,9 +72,15 @@ feed-forward output, rows of 3680, and its speaker encoder's input, rows of 128,
 feed-forward output, rows of 1996, takes F16 in a Q8_0 file as well.
 
 `general.file_type` is 0 for F32, 1 for F16, 7 for Q8_0, 18 for Q6_K (`MOSTLY_Q6_K`), 16 for Q5_K (`MOSTLY_Q5_K_S`) and
-14 for Q4_K (`MOSTLY_Q4_K_S`), the one of gguf-py's two values for each of these two that names no mix of wider types. A
-Q6_K, Q5_K or Q4_K file says in `speech.requires` that speech.cpp 0.8.0 and later read it; releases before refuse it as
-a `general.file_type` they do not know.
+14 for Q4_K (`MOSTLY_Q4_K_S`), the one of gguf-py's two values for each of these two that names no mix of wider types.
+
+`speech quantize` writes in `speech.requires` the latest of the F32 file's own, the first release that reads the
+`general.file_type`, and the first release whose reader of the family takes each tensor in its type, which each family's
+`layout.cpp` gives with its storages. A Q6_K, Q5_K or Q4_K file names 0.8.0, which releases before refuse as a
+`general.file_type` they do not know, and so does a FastConformer file in Q8_0, whose matrices 0.7's reader took in F16
+and F32 alone. The F16 and Q8_0 files of the other families keep the F32 file's own: 0.7.0 for layout 1, which 0.7.0 and
+0.7.1 read, and 0.8.0 for Irodori-TTS's layout 2. `tools/quantize_releases.py` checks each against `speech` of earlier
+releases built from their tags.
 
 ## File names
 
@@ -150,7 +156,7 @@ names `speech.requires` where it names a later release. A file without `speech.l
 | `general.quantization_version` | u32 | the version of ggml's quantized blocks (2); present when the file holds a quantized tensor | ggml's `GGML_QNT_VERSION`, through `speech quantize` (gguf-py's `GGML_QUANT_VERSION` in the files the converters quantized before 0.8.0) |
 | `general.languages` | [string] | each language's shortest ISO 639 code, sorted, which requests and the model information give as BCP 47 tags: two letters, or three for a language that has no two-letter code (`yue`, `fil`), where the GGUF specification asks for two letters | Qwen3-TTS: the names of `codec_language_id` through the converter's table of codes, dialects left out; Qwen3-ASR: the tags of transformers' `LANGUAGE_CODE_TO_NAME`; the others: the model card |
 | `speech.layout` | u32 | the version of the family's layout: 2 for fastconformer and irodori-tts, 1 for the others | the converter |
-| `speech.requires` | string | the first release whose reader takes this file: `0.8.0` for layout 2 and for Q6_K, Q5_K and Q4_K, `0.7.0` for layout 1 in F32, F16 or Q8_0 | the converter's table of layouts, and `speech quantize`, which writes the later of the F32 file's and the weight type's |
+| `speech.requires` | string | the first release whose reader takes this file: `0.8.0` for layout 2, for Q6_K, Q5_K and Q4_K, and for FastConformer's Q8_0, `0.7.0` for the other files of layout 1 | the converter's table of layouts, and `speech quantize`, which writes the later of the F32 file's and the weight type's |
 | `speech.task` | string | `synthesis` or `recognition`; must be the family's | the converter |
 | `speech.sample_rate` | u32 | the rate of the audio made or recognized | Qwen3-TTS: `speech_tokenizer/config.json` `output_sample_rate`; Irodori-TTS: the DACVAE's `sample_rate`; FastConformer: the featurizer's `sample_rate`; Qwen3-ASR: qwen-asr's `SAMPLE_RATE`, the feature extractor's rate |
 | `speech.language_use` | string | `steers` or `checked`; must be what the family does | `steers` for qwen3-tts and qwen3-asr, `checked` for the others |

@@ -236,7 +236,8 @@ speech quantize MODEL OUT --type f16|q8_0|q6_k|q5_k|q4_k
 - Of the F32 file a released file was converted from, `--type f16` or `--type q8_0` writes the released file byte for
   byte.
 - `q6_k`, `q5_k` and `q4_k` make smaller files that compute less exactly
-  ([checks.md](development/checks.md#lower-bit-widths) gives what each loses), which speech.cpp 0.8.0 and later read.
+  ([checks.md](development/checks.md#lower-bit-widths) gives what each loses), which speech.cpp 0.8.0 and later read, as
+  they read a FastConformer file in `q8_0`, which 0.7 reads in `f16` and `f32` alone.
 - MODEL is a path, and its weights must be F32: a quantized file is not quantized again, and a type made of F16 weights
   would hold other bytes than the same type made of the F32 weights. Either is refused with exit 1
   (`speech: invalid_argument (model_path): ...`), before anything is written.

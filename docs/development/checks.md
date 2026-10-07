@@ -22,6 +22,17 @@ check's results, the evidence for each bound, and the timings behind the numbers
 - `tools/quantize_compare.py` runs `speech quantize` on F32 files and compares what it writes with the converted file of
   the same type, a released one, tensor by tensor, key by key and byte for byte, or with what gguf-py makes of each F32
   tensor ([gguf.md](../gguf.md#convert-a-model)).
+- `quantize-check` quantizes a small model file of a layout of its own and checks the release it names in
+  `speech.requires` and its refusal of weights that are not finite. `tools/quantize_releases.py` quantizes F32 files to
+  every type and checks that `speech` of each earlier release reads a file exactly when it is at or after the file's
+  `speech.requires`; an earlier release is built from its tag, with the submodule's ggml:
+
+  ```sh
+  mkdir -p /tmp/v0.7.1 && git archive v0.7.1 | tar -x -C /tmp/v0.7.1 && rmdir /tmp/v0.7.1/ggml && ln -s "$PWD/ggml" /tmp/v0.7.1/ggml
+  cmake -S /tmp/v0.7.1 -B /tmp/v0.7.1/build && cmake --build /tmp/v0.7.1/build --target speech-cli -j
+  build/quantize-check /tmp/quantize-check
+  python3 tools/quantize_releases.py build/speech /tmp/quantize-releases models/*-F32.gguf --release /tmp/v0.7.0/build/speech /tmp/v0.7.1/build/speech
+  ```
 - The checks need weights and dumps that are not in the repository, so CI builds them but does not run them.
 
 The measurements below are on an Apple M5 unless they say otherwise; the Vulkan ones are on an RTX 2080.

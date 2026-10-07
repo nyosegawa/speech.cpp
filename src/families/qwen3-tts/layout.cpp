@@ -15,13 +15,18 @@ namespace {
 
 /**
  * How the layout stores a tensor in a file of each weight type (docs/adr/0040). A matrix or embedding of the talker or
- * the code predictor, which ggml_mul_mat() and ggml_get_rows() alone read, takes the file's type. A convolution or matrix
- * of the codec takes F16, or F32 in an F32 file: the codec turns codes into samples, and the released Q8_0 files hold
- * it in F16. The rest is F32.
+ * the code predictor, which ggml_mul_mat() and ggml_get_rows() alone read, takes the file's type; 0.7's reader took it in
+ * Q8_0, F16 and F32. A convolution or matrix of the codec takes F16, or F32 in an F32 file: the codec turns codes into
+ * samples, and the released Q8_0 files hold it in F16. The rest is F32.
  */
-const Storage & kMatrix = kQuantized;
-const Storage & kCodecWeight = kHalf;
-const Storage & kF32 = kFloat32;
+const Storage kMatrix = quantized_storage({{GGML_TYPE_F32, kFirstLayoutRelease},
+                                           {GGML_TYPE_F16, kFirstLayoutRelease},
+                                           {GGML_TYPE_Q8_0, kFirstLayoutRelease},
+                                           {GGML_TYPE_Q6_K, "0.8.0"},
+                                           {GGML_TYPE_Q5_K, "0.8.0"},
+                                           {GGML_TYPE_Q4_K, "0.8.0"}});
+const Storage kCodecWeight = half_storage();
+const Storage kF32 = float32_storage();
 
 /**
  * What the official codec decoder fixes in its code rather than in its configuration: the width of pre_conv, the

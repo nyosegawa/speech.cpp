@@ -1,8 +1,10 @@
-// Checks what quantize_model_file(), which speech quantize runs, refuses of the weights it is given. A model file of a
-// layout of the check's own, a matrix that a quantized file quantizes and a vector it keeps in F32, is written in every
-// weight type speech quantize writes with finite weights, and refused, as a file error naming model_path with nothing
-// written, with a NaN, an infinity or a negative infinity in either tensor: ggml's quantizers abort on such a value where
-// assertions are on and write garbage where they are off.
+// Checks what quantize_model_file(), which speech quantize runs, writes of a file and refuses of its weights. A model
+// file of a layout of the check's own, which speech.requires says 0.7.0 reads, holds a matrix that a quantized file
+// quantizes, which its storage says releases from 0.7.0 read in F32 and F16 and from 0.8.0 in Q8_0 and the K-quants, as
+// FastConformer's says, and a vector it keeps in F32. With finite weights it is written in every weight type speech
+// quantize writes, naming in speech.requires 0.7.0 in F16 and 0.8.0 in the others; with a NaN, an infinity or a negative
+// infinity in either tensor it is refused, as a file error naming model_path with nothing written: ggml's quantizers
+// abort on such a value where assertions are on and write garbage where they are off.
 //
 // usage: quantize-check <work dir>
 
@@ -24,8 +26,16 @@ namespace {
 
 constexpr int64_t kRow = 256, kRows = 16;
 
+const Storage kMatrix = quantized_storage({{GGML_TYPE_F32, "0.7.0"},
+                                           {GGML_TYPE_F16, "0.7.0"},
+                                           {GGML_TYPE_Q8_0, "0.8.0"},
+                                           {GGML_TYPE_Q6_K, "0.8.0"},
+                                           {GGML_TYPE_Q5_K, "0.8.0"},
+                                           {GGML_TYPE_Q4_K, "0.8.0"}});
+const Storage kVector = float32_storage();
+
 const Layout kLayout = {"quantize-check", 1, "make it again with quantize-check", [](const ModelFile &) {
-                            return std::vector<TensorSpec>{{"matrix", {kRow, kRows}, kQuantized}, {"vector", {kRow}, kFloat32}};
+                            return std::vector<TensorSpec>{{"matrix", {kRow, kRows}, kMatrix}, {"vector", {kRow}, kVector}};
                         }};
 
 /** Writes the check's F32 model file at `path`, with `bad` at value `at` of `tensor` when `tensor` is not empty. */
@@ -74,9 +84,16 @@ int main(int argc, char ** argv) {
         for (const WeightType & type : weight_types()) {
             if (type.type == GGML_TYPE_F32) continue;
             quantize_model_file(in, out, type, kLayout);
-            const std::string written = read_identity(ModelFile(out, kLayout)).weight_type;
-            std::printf("finite weights in %s: written, %s weights\n", tensor_type_text(type.type).c_str(), written.c_str());
-            failed += written != tensor_type_text(type.type);
+            const ModelFile file(out, kLayout);
+            const std::string written = read_identity(file).weight_type, release = file.str("speech.requires");
+            const std::string wanted = type.type == GGML_TYPE_F16 ? "0.7.0" : "0.8.0";
+            std::printf("finite weights in %s: written, %s weights, speech.requires %s\n", tensor_type_text(type.type).c_str(), written.c_str(),
+                        release.c_str());
+            if (written != tensor_type_text(type.type) || release != wanted) {
+                std::printf("FAIL: %s, where %s weights and speech.requires %s are wanted\n", tensor_type_text(type.type).c_str(),
+                            tensor_type_text(type.type).c_str(), wanted.c_str());
+                failed++;
+            }
             std::filesystem::remove(std::filesystem::u8path(out));
         }
         const float infinity = std::numeric_limits<float>::infinity();
