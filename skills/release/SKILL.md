@@ -18,8 +18,9 @@ is compiled into `speech`, so the files on Hugging Face are settled before the v
 
 A file changes when its family's layout changes, a type is added, or a checkpoint is converted again.
 
-1. Make the files as docs/gguf.md's Convert a model says. Check each with the family's stage checks and
-   `speech-api-check`.
+1. Make the files: `convert.py` writes F32 and `speech quantize F32.gguf OUT --type <type>` the other types
+   (docs/gguf.md, Convert a model); `tools/quantize_compare.py` shows that an unchanged file comes out byte for byte.
+   Check each with the family's stage checks and `speech-api-check`.
 2. Write each file's information beside it: `speech info --json <file> > <file>.json`.
 3. **With the maintainer's approval**, upload to the model's repository, replacing the file of the same name or
    adding the new one: `hf upload sakasegawa/<Upstream>-GGUF <file>` and `<file>.json`. Old files stay in the history.

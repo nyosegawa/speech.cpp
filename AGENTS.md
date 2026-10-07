@@ -34,7 +34,7 @@ keeps the decisions. Read the relevant implementation and its check before chang
 - `src/common/` holds what two families use in the same role. Code moves there when a second family needs
   it, not before, and never as a framework for families that do not exist yet.
 - `tools/` holds `speech`, the one executable for users (docs/adr/0017), with a subcommand per program: `tts`,
-  `asr`, `voice`, `info` and `devices` in `tools/cli/` (with `main.cpp`, which dispatches them), `worker` in
+  `asr`, `voice`, `info`, `devices` and `quantize` in `tools/cli/` (with `main.cpp`, which dispatches them), `worker` in
   `tools/worker/` and `serve` in `tools/server/`, and what they share in `tools/common/`: the one parser of every
   command line, which makes a flag of each option of the C API's vocabulary, the JSON reader, and the request options
   read from text or JSON and set through the library's setters. Every subcommand reaches the models only through the

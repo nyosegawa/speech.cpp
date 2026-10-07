@@ -36,7 +36,7 @@ reproducible, and to write the GGUF file the C++ reads.
 - The file is named from its keys by the GGUF naming convention (`<Name>-<size label>-<type>.gguf`).
 - `speech.layout` names the layout's version and `speech.requires` the release that first reads it; the converter keeps
   a table of both.
-- Write F32 for the checks, and the types the family publishes (docs/gguf.md); which tensors a type may change is the
-  family's `layout.cpp` table's to say.
+- Write F32 alone. F16, Q8_0 and lower types are made with `speech quantize`, which follows the family's `layout.cpp`
+  table; `tools/quantize_compare.py` shows that a file made again equals the released one byte for byte.
 
 Run the conversion twice and compare the bytes: a converter that is not deterministic cannot be pinned.
