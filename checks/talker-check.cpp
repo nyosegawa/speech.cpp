@@ -21,12 +21,15 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <random>
 #include <string>
 
 #include "args.h"
 #include "backend.h"
+#include "json-reader.h"
+#include "json.h"
 #include "npy.h"
 #include "qwen2-tokenizer.h"
 #include "qwen3-tts/layout.h"
@@ -63,15 +66,18 @@ struct Worst {
     }
 };
 
-/** A string member of the dump's meta.json, or "" when it has none. */
-std::string meta_field(const std::string & dir, const std::string & key) {
+/** The dump's meta.json. */
+JsonValue read_meta(const std::string & dir) {
     std::ifstream f(std::filesystem::u8path(dir + "/meta.json"));
-    std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    const size_t k = json.find("\"" + key + "\"");
-    if (k == std::string::npos) return "";
-    const size_t a = json.find('"', json.find(':', k) + 1);
-    const size_t b = json.find('"', a + 1);
-    return json.substr(a + 1, b - a - 1);
+    if (!f) throw std::runtime_error("cannot open " + dir + "/meta.json");
+    return parse_json(std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()));
+}
+
+/** A string member of the dump's meta.json, or "" when it has none. */
+std::string meta_field(const JsonValue & meta, const std::string & key) {
+    const JsonValue * v = meta.member(key);
+    if (v && v->kind != JsonValue::Kind::String) throw std::runtime_error("meta.json's " + key + " is not a string");
+    return v ? v->text : "";
 }
 
 /** The BCP 47 tag of a language as the official API names it, which the dump's meta.json keeps. */
@@ -106,22 +112,23 @@ int main(int argc, char ** argv) {
     const Npy ref_hidden = read_npy(dir + "/talker_hidden.npy");
     const Npy ref_cp = read_npy(dir + "/cp_logits.npy");
     const Npy ref_codes = read_npy(dir + "/codes.npy");
-    const std::string speaker = meta_field(dir, "speaker"), language = language_tag(meta_field(dir, "language"));
+    const JsonValue meta = read_meta(dir);
+    const std::string speaker = meta_field(meta, "speaker"), language = language_tag(meta_field(meta, "language"));
     const int h = talker.hidden(), n_groups = talker.num_code_groups();
     const int n_frames = (int) ref_codes.shape[0];
 
     // The instruction's tokens from speech.cpp's tokenizer, against the official processor's.
     std::vector<int32_t> instruction;
-    const std::string instruct = meta_field(dir, "instruct");
+    const std::string instruct = meta_field(meta, "instruct");
     if (!instruct.empty()) {
         instruction = instruction_ids(Qwen2Tokenizer(model, kTextTokenizer), ids, instruct);
         const Npy ref_instruction = read_npy(dir + "/instruct_ids.npy");
         if (instruction != ref_instruction.i32) {
-            std::printf("FAIL: the instruction \"%s\" is %zu tokens, the official processor's %zu, or other tokens\n", instruct.c_str(),
+            std::printf("FAIL: the instruction %s is %zu tokens, the official processor's %zu, or other tokens\n", json_string(instruct).c_str(),
                         instruction.size(), ref_instruction.i32.size());
             return 1;
         }
-        std::printf("instruction \"%s\": the official processor's %zu tokens\n", instruct.c_str(), instruction.size());
+        std::printf("instruction %s: the official processor's %zu tokens\n", json_string(instruct).c_str(), instruction.size());
     }
 
     const Prompt prompt = build_prompt(talker, ids, input_ids.i32, speaker, language, instruction);

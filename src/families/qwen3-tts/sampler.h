@@ -48,12 +48,13 @@ struct Candidates {
  * transformers keeps every token tied with the k-th. A penalty or a temperature that pushes the largest logit beyond a
  * float throws an Error of its kind naming "repetition_penalty" or "temperature".
  */
-Candidates candidates(std::vector<float> logits, const SamplingParams & p, const std::vector<int32_t> & history,
+Candidates candidates(const std::vector<float> & logits, const SamplingParams & p, const std::vector<int32_t> & history,
                       const std::vector<bool> & banned);
 
 /**
  * Picks a token the way transformers' generate() does: the argmax of the logits with the repetition penalty on the
- * tokens in `history` and the tokens in `banned` removed, or a draw from candidates().
+ * tokens in `history` and the tokens in `banned` removed, or a draw from candidates(). A penalty that pushes the
+ * largest logit beyond a float throws an Error naming "repetition_penalty" in either case.
  */
 int32_t sample(const std::vector<float> & logits, const SamplingParams & p, const std::vector<int32_t> & history,
                const std::vector<bool> & banned, std::mt19937_64 & rng);

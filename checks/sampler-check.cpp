@@ -6,7 +6,9 @@
 // compared: torch.multinomial draws with torch's own generator.
 //
 // The sampler computes the penalty and the temperature in float as torch does, and the probabilities in double from
-// them, so it parts from the softmax of the processors' scores by the order of a sum alone.
+// them, so it parts from the softmax of the processors' scores by the order of a sum alone. It also checks that a
+// repetition penalty that takes a logit beyond a float is refused, naming the option, by a greedy pick as by a draw:
+// an argmax among infinite logits takes the first of them rather than the largest.
 //
 // usage: sampler-check <qwen3-tts model.gguf> <sampling cases dir>
 
@@ -21,6 +23,7 @@
 #include <vector>
 
 #include "args.h"
+#include "error.h"
 #include "json-reader.h"
 #include "npy.h"
 #include "qwen3-tts/layout.h"
@@ -56,6 +59,33 @@ SamplingParams settings_of(const JsonValue & s) {
 bool same_settings(const SamplingParams & a, const SamplingParams & b) {
     return a.greedy == b.greedy && a.temperature == b.temperature && a.top_k == b.top_k && a.top_p == b.top_p &&
            a.repetition_penalty == b.repetition_penalty;
+}
+
+/**
+ * Logits of 1 and 2, both taken before, under a repetition penalty of 1e-40, a float that divides both beyond the range
+ * of a float: the greedy pick and the draw each throw out_of_range naming repetition_penalty.
+ */
+bool refuses_overflowing_penalty() {
+    const std::vector<float> logits = {1.0f, 2.0f};
+    const std::vector<int32_t> history = {0, 1};
+    std::mt19937_64 rng(0);
+    bool ok = true;
+    for (const bool greedy : {true, false}) {
+        SamplingParams p;
+        p.greedy = greedy;
+        p.repetition_penalty = 1e-40f;
+        const char * how = greedy ? "greedy" : "drawing";
+        try {
+            const int32_t got = sample(logits, p, history, {}, rng);
+            std::printf("%-36s picked %d where the penalty was to be refused: FAIL\n", how, got);
+            ok = false;
+        } catch (const Error & e) {
+            const bool refused = e.fault() == Fault::OutOfRange && e.input() == "repetition_penalty";
+            std::printf("%-36s a penalty of 1e-40 refused as out_of_range (%s): %s\n", how, e.input().c_str(), refused ? "ok" : "FAIL");
+            ok &= refused;
+        }
+    }
+    return ok;
 }
 
 }  // namespace
@@ -144,5 +174,6 @@ int main(int argc, char ** argv) {
         }
         ok &= pass;
     }
+    ok &= refuses_overflowing_penalty();
     return ok ? 0 : 1;
 }

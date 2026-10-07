@@ -1088,6 +1088,8 @@ cd reference/qwen3-tts
 uv run python dump.py <Qwen3-TTS 1.7B checkpoint dir> out/1.7b-ja-weather ono_anna japanese "明日の東京は晴れで、最高気温は二十四度の予報です。"
 uv run python dump.py <Qwen3-TTS 1.7B checkpoint dir> out/1.7b-ja-weather-instruct ono_anna japanese \
     "明日の東京は晴れで、最高気温は二十四度の予報です。" --instruct "怒った口調で話してください。"
+uv run python dump.py <Qwen3-TTS 1.7B checkpoint dir> out/1.7b-ja-weather-instruct-quoted ono_anna japanese \
+    "明日の東京は晴れで、最高気温は二十四度の予報です。" --instruct $'Speak "softly" \\ slowly,\nas in a whisper.'
 cd ../..
 build/talker-check <model.gguf, F32> reference/qwen3-tts/out/1.7b-ja-weather-instruct cpu
 build/codec-check <model.gguf> reference/qwen3-tts/out/1.7b-ja-weather cpu
@@ -1101,7 +1103,8 @@ build/codec-check <model.gguf> reference/qwen3-tts/out/1.7b-ja-weather cpu
 | Codec decoder on Metal | error at -63 dB of the voice |
 | Talker and code predictor, F32, teacher forcing (`talker-check`), CPU and Metal | argmax matches on every frame; greedy decode gives the same 54 frames |
 | The same with the instruction 怒った口調で話してください。 (`talker-check`, out/1.7b-ja-weather-instruct), CPU and Metal | the official processor's 13 tokens; the prompt's 44 rows within 1.2e-6 (CPU) and 7.8e-5 (Metal); argmax matches but at one of 855 rows of the code predictor, where the reference's two best codes are 6.7e-4 apart, and greedy decode follows the reference's 57 frames to that row |
-| Sampling against transformers' logits processors as the official `generate()` builds them (`sampler-check`) | on 13 cases of the 1.7B dump's logits, 55 rows of the talker or 300 of the code predictor each, with the official settings and others: the same tokens kept in every row and their probabilities within 6e-15; the same greedy pick in every row; the settings of both files equal to `generation_config.json`'s |
+| The same with an instruction of quotes, a backslash and a line break (out/1.7b-ja-weather-instruct-quoted), CPU and Metal | the official processor's 18 tokens; the prompt's 49 rows within 1.2e-6 (CPU) and 7.7e-5 (Metal); greedy decode gives the reference's 73 frames on the CPU, and on Metal follows them to a row of the code predictor where the reference's two best codes are 1.2e-3 apart |
+| Sampling against transformers' logits processors as the official `generate()` builds them (`sampler-check`) | on 13 cases of the 1.7B dump's logits, 55 rows of the talker or 300 of the code predictor each, with the official settings and others: the same tokens kept in every row and their probabilities within 6e-15; the same greedy pick in every row; the settings of both files equal to `generation_config.json`'s; a repetition penalty of 1e-40, which takes the logits of the tokens taken before beyond a float, refused as `out_of_range` by a greedy pick and by a draw |
 | Tokenizer (`tokenizer-check`) | encodes 27 texts, 8 of which NFC changes, and decodes 1191 sequences of ids as the model's `tokenizer.json` does |
 | Talker's prompt in blocks of 512 against one block, F32 (`qwen3-decoder-check`) | the same keys, values and logits on the CPU (5137 rows) and on Metal with flash attention (3665 rows); with the two products forced on Metal, 2.3e-3 at most for a cached row and 1.5e-3 for the logits, with the same argmax (3665 rows) |
 

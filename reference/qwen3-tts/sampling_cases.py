@@ -11,9 +11,10 @@ Writes one folder per case under <out dir>, each with:
   scores.npy  the logits after the processors, -inf where a token is removed, [rows, vocab]
 
 The talker's rows are the dump's talker_logits, each after the first codes of the frames before it, with the official
-suppress_tokens and min_new_tokens; the code predictor's are its logits of the first frames, each after the codes of its
-frame before it, as its generate() starts from embeddings alone. The processors come from transformers'
-_get_logits_processor() itself, so their order and the conditions under which each applies are transformers' own.
+suppress_tokens and min_new_tokens; the code predictor's are its logits of the first 20 frames, or of every frame of a
+shorter dump, each after the codes of its frame before it, as its generate() starts from embeddings alone. The
+processors come from transformers' _get_logits_processor() itself, so their order and the conditions under which each
+applies are transformers' own.
 torch.multinomial draws with torch's generator, which nothing outside torch reproduces, so the draws themselves are not
 compared.
 """
@@ -38,7 +39,7 @@ cp_penalty = talker_config["code_predictor_config"]["repetition_penalty"]
 talker_logits = np.load(os.path.join(dump_dir, "talker_logits.npy"))
 cp_logits = np.load(os.path.join(dump_dir, "cp_logits.npy"))
 codes = np.load(os.path.join(dump_dir, "codes.npy"))
-cp_frames = 20
+cp_frames = min(20, cp_logits.shape[0])
 
 
 class Generator(GenerationMixin):

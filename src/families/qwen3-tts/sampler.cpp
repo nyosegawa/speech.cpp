@@ -21,8 +21,13 @@ SamplingParams read_params(const ModelFile & m, const std::string & prefix) {
     return p;
 }
 
-/** Applies the repetition penalty to the tokens in `history` and sets the tokens in `banned` to -inf. */
-void restrict(std::vector<float> & logits, const SamplingParams & p, const std::vector<int32_t> & history, const std::vector<bool> & banned) {
+/**
+ * The logits with the repetition penalty on the tokens in `history` and the tokens in `banned` set to -inf, which a
+ * greedy pick and a draw both choose from. A penalty that takes the largest logit beyond a float throws an Error naming
+ * "repetition_penalty": a pick among infinite logits takes the first of them rather than the largest.
+ */
+std::vector<float> restricted(std::vector<float> logits, const SamplingParams & p, const std::vector<int32_t> & history,
+                              const std::vector<bool> & banned) {
     const int n = (int) logits.size();
     if (p.repetition_penalty != 1.0f) {
         std::vector<bool> seen(n, false);
@@ -35,6 +40,14 @@ void restrict(std::vector<float> & logits, const SamplingParams & p, const std::
     for (int i = 0; i < n && i < (int) banned.size(); i++) {
         if (banned[i]) logits[i] = -INFINITY;
     }
+    const float top = *std::max_element(logits.begin(), logits.end());
+    if (top == INFINITY && p.repetition_penalty != 1.0f) {
+        throw Error(Fault::OutOfRange,
+                    "the repetition penalty " + json_number(p.repetition_penalty) + " pushes a logit beyond the range of a float; give a penalty nearer 1",
+                    "repetition_penalty");
+    }
+    if (!std::isfinite(top)) throw std::runtime_error("no token has a finite logit to pick from");
+    return logits;
 }
 
 }  // namespace
@@ -53,18 +66,10 @@ std::vector<bool> Generation::banned(int vocab, int32_t end_of_speech, int frame
     return b;
 }
 
-Candidates candidates(std::vector<float> logits, const SamplingParams & p, const std::vector<int32_t> & history,
+Candidates candidates(const std::vector<float> & raw, const SamplingParams & p, const std::vector<int32_t> & history,
                       const std::vector<bool> & banned) {
-    restrict(logits, p, history, banned);
+    std::vector<float> logits = restricted(raw, p, history, banned);
     const int n = (int) logits.size();
-    const float restricted_max = *std::max_element(logits.begin(), logits.end());
-    if (restricted_max == INFINITY && p.repetition_penalty != 1.0f) {
-        throw Error(Fault::OutOfRange,
-                    "the repetition penalty " + json_number(p.repetition_penalty) + " pushes a logit beyond the range of a float; give a penalty nearer 1",
-                    "repetition_penalty");
-    }
-    if (!std::isfinite(restricted_max)) throw std::runtime_error("no token has a finite logit to sample from");
-
     for (float & l : logits) l /= p.temperature;
     Candidates c;
     c.tokens.resize(n);
@@ -102,9 +107,8 @@ Candidates candidates(std::vector<float> logits, const SamplingParams & p, const
 int32_t sample(const std::vector<float> & logits, const SamplingParams & p, const std::vector<int32_t> & history,
                const std::vector<bool> & banned, std::mt19937_64 & rng) {
     if (p.greedy) {
-        std::vector<float> restricted = logits;
-        restrict(restricted, p, history, banned);
-        return (int32_t) (std::max_element(restricted.begin(), restricted.end()) - restricted.begin());
+        const std::vector<float> r = restricted(logits, p, history, banned);
+        return (int32_t) (std::max_element(r.begin(), r.end()) - r.begin());
     }
     const Candidates c = candidates(logits, p, history, banned);
     std::discrete_distribution<int> pick(c.weights.begin(), c.weights.end());

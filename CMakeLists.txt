@@ -187,7 +187,8 @@ target_link_libraries(unicode-check PRIVATE speechcommon)
 add_executable(codec-check checks/codec-check.cpp)
 target_link_libraries(codec-check PRIVATE qwen3tts)
 
-add_executable(talker-check checks/talker-check.cpp)
+add_executable(talker-check checks/talker-check.cpp tools/common/json-reader.cpp)
+target_include_directories(talker-check PRIVATE tools/common)
 target_link_libraries(talker-check PRIVATE qwen3tts)
 
 # The sampler against transformers' logits processors, on the cases of reference/qwen3-tts/sampling_cases.py.
