@@ -37,6 +37,8 @@ endif()
 
 add_library(speechcommon STATIC
     src/common/model-file.cpp
+    src/common/storage.cpp
+    src/common/quantize.cpp
     src/common/backend.cpp
     src/common/wav.cpp
     src/common/args.cpp
@@ -189,6 +191,7 @@ add_executable(speech-cli
     tools/cli/asr.cpp
     tools/cli/model.cpp
     tools/cli/models.cpp
+    tools/cli/quantize.cpp
     tools/models/catalog.cpp
     tools/models/cache.cpp
     tools/models/fetch.cpp

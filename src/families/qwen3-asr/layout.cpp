@@ -14,13 +14,14 @@ namespace qwen3_asr {
 namespace {
 
 /**
- * The types reference/qwen3-asr/convert.py stores a tensor in by its --type: a matrix of a linear layer or the token
- * embeddings in Q8_0, F16 or F32, a convolution kernel in F16 or F32, and the norms, the biases and the frontend in
- * F32.
+ * How the layout stores a tensor in a file of each weight type (docs/adr/0040): a matrix of a linear layer or the token
+ * embeddings, which are also the decoder's output matrix and which ggml_mul_mat() and ggml_get_rows() alone read, in the
+ * file's type; a convolution kernel, which ggml_im2col() reads in F16 or F32 alone, in F16, or F32 in an F32 file; and the
+ * norms, the biases and the frontend in F32.
  */
-const std::vector<ggml_type> kMatrix = {GGML_TYPE_Q8_0, GGML_TYPE_F16, GGML_TYPE_F32};
-const std::vector<ggml_type> kConv = {GGML_TYPE_F16, GGML_TYPE_F32};
-const std::vector<ggml_type> kF32 = {GGML_TYPE_F32};
+const Storage & kMatrix = kQuantized;
+const Storage & kConv = kHalf;
+const Storage & kF32 = kFloat32;
 
 void require(bool condition, const ModelFile & m, const std::string & what) {
     if (!condition) throw Error(Fault::File, m.path() + ": " + what + "; " + m.remedy());

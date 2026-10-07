@@ -1,6 +1,6 @@
 /*
  * What the parts of speech-api-check share: messages, the checks of the library before a model is loaded, the
- * information read without loading against a loaded model's, the refusal of every option's values, and the requests
+ * quantizing it refuses, the information read without loading against a loaded model's, the refusal of every option's values, and the requests
  * of a synthesis, their audio and their cancellation from another thread.
  */
 
@@ -134,6 +134,31 @@ int check_load_refusals(const char * model_path) {
     return ok ? 0 : 1;
 }
 
+int check_quantize_refusals(const char * model_path) {
+    speech_model_info * info = NULL;
+    if (speech_model_info_open(model_path, &info) != SPEECH_OK) return fail("speech_model_info_open");
+    const int f32 = !strcmp(speech_model_info_weight_type(info), "F32");
+    speech_model_info_free(info);
+    // The folder does not exist, so that no refusal can leave a file behind and a file of F32 weights, which the library
+    // quantizes, is refused only when it comes to create its output.
+    const char * out = "no-such-folder/quantized.gguf";
+    int ok = expect(speech_quantize(NULL, "q8_0", out), SPEECH_ERROR_INVALID_ARGUMENT, "model_path", "quantizing without a model");
+    ok &= expect(speech_quantize(model_path, NULL, out), SPEECH_ERROR_INVALID_ARGUMENT, "type", "quantizing without a type");
+    ok &= expect(speech_quantize(model_path, "q8_0", NULL), SPEECH_ERROR_INVALID_ARGUMENT, "out_path", "quantizing without a path to write");
+    ok &= expect(speech_quantize(model_path, "q3_k", out), SPEECH_ERROR_INVALID_ARGUMENT, "type", "quantizing to Q3_K, a type it does not write");
+    ok &= expect(speech_quantize(model_path, "F32", out), SPEECH_ERROR_INVALID_ARGUMENT, "type", "quantizing to F32, the type it writes from");
+    ok &= expect(speech_quantize("no-such-folder/no-such-model.gguf", "q8_0", out), SPEECH_ERROR_IO, "model_path",
+                 "quantizing a model file that is not there");
+    ok &= expect(speech_quantize(model_path, "Q4_K", model_path), SPEECH_ERROR_INVALID_ARGUMENT, "out_path", "quantizing a model file over itself");
+    if (f32) {
+        ok &= expect(speech_quantize(model_path, "q4_k", out), SPEECH_ERROR_IO, "out_path", "quantizing F32 weights into a folder that is not there");
+    } else {
+        ok &= expect(speech_quantize(model_path, "q4_k", out), SPEECH_ERROR_INVALID_ARGUMENT, "model_path",
+                     "quantizing weights that are not F32");
+    }
+    return ok ? 0 : 1;
+}
+
 /** The JSON value of the metadata entry `key`, or NULL when the file has none. */
 static const char * meta_value_of(const speech_model_info * info, const char * key) {
     for (size_t i = 0; i < speech_model_info_meta_count(info); i++) {
@@ -162,7 +187,7 @@ static int check_identity(const speech_model_info * info) {
     if (!ok) return 0;
     char url[1024];
     snprintf(url, sizeof url, "%s/tree/%s", repository, revision);
-    static const char * const file_types[][2] = {{"0", "F32"}, {"1", "F16"}, {"7", "Q8_0"}};
+    static const char * const file_types[][2] = {{"0", "F32"}, {"1", "F16"}, {"7", "Q8_0"}, {"18", "Q6_K"}, {"16", "Q5_K"}, {"14", "Q4_K"}};
     const char * file_type = meta_value_of(info, "general.file_type"), * weight_type = speech_model_info_weight_type(info);
     int typed = 0;
     for (size_t i = 0; i < sizeof file_types / sizeof file_types[0]; i++) {

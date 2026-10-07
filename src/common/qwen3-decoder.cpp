@@ -103,22 +103,21 @@ Qwen3Shape read_qwen3_shape(const ModelFile & m, const std::string & prefix) {
     return s;
 }
 
-void add_qwen3_tensors(std::vector<TensorSpec> & t, const std::string & tensors, const Qwen3Shape & s,
-                       const std::vector<ggml_type> & matrix_types) {
-    const std::vector<ggml_type> f32 = {GGML_TYPE_F32};
+void add_qwen3_tensors(std::vector<TensorSpec> & t, const std::string & tensors, const Qwen3Shape & s, const Storage & matrix) {
+    const Storage & f32 = kFloat32;
     const int64_t h = s.hidden, q = (int64_t) s.n_head * s.head_dim, kv = (int64_t) s.n_kv_head * s.head_dim;
     add_numbered(t, tensors + ".blk.", s.n_layer,
                  {{"attn_norm", {h}, f32},
                   {"ffn_norm", {h}, f32},
-                  {"attn_q", {h, q}, matrix_types},
-                  {"attn_k", {h, kv}, matrix_types},
-                  {"attn_v", {h, kv}, matrix_types},
-                  {"attn_o", {q, h}, matrix_types},
+                  {"attn_q", {h, q}, matrix},
+                  {"attn_k", {h, kv}, matrix},
+                  {"attn_v", {h, kv}, matrix},
+                  {"attn_o", {q, h}, matrix},
                   {"attn_q_norm", {s.head_dim}, f32},
                   {"attn_k_norm", {s.head_dim}, f32},
-                  {"ffn_gate", {h, s.ffn}, matrix_types},
-                  {"ffn_up", {h, s.ffn}, matrix_types},
-                  {"ffn_down", {s.ffn, h}, matrix_types}});
+                  {"ffn_gate", {h, s.ffn}, matrix},
+                  {"ffn_up", {h, s.ffn}, matrix},
+                  {"ffn_down", {s.ffn, h}, matrix}});
     t.push_back({tensors + ".norm", {h}, f32});
 }
 

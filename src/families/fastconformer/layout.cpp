@@ -12,11 +12,13 @@ namespace fastconformer {
 namespace {
 
 /**
- * The types reference/fastconformer/convert.py stores a tensor in by its --type: a matrix of a linear layer in F16 or
- * F32, and the convolution kernels, the norms, the biases, the frontend and the rest in F32.
+ * How the layout stores a tensor in a file of each weight type (docs/adr/0040): a matrix of a linear layer or the
+ * prediction network's embedding, which ggml_mul_mat() and ggml_get_rows() alone read, in the file's type; and the
+ * convolution kernels, which ggml's direct and depthwise convolutions and ggml_ssm_conv() read in F32 alone, the norms,
+ * the biases, the frontend and the rest in F32.
  */
-const std::vector<ggml_type> kMatrix = {GGML_TYPE_F16, GGML_TYPE_F32};
-const std::vector<ggml_type> kF32 = {GGML_TYPE_F32};
+const Storage & kMatrix = kQuantized;
+const Storage & kF32 = kFloat32;
 
 /** The width of the subsampling's convolutions, NeMo's default, which the encoder pads by 1 on either side. */
 constexpr int64_t kSubsamplingWidth = 3;

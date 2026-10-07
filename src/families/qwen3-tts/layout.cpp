@@ -14,13 +14,14 @@
 namespace {
 
 /**
- * The types reference/qwen3-tts/convert.py stores a tensor in by its --type: a matrix of the talker or the code
- * predictor in Q8_0, F16 or F32, F16 standing for Q8_0 where a matrix's rows are no multiple of 32; a convolution or
- * matrix of the codec in F16 or F32; and the rest in F32.
+ * How the layout stores a tensor in a file of each weight type (docs/adr/0040). A matrix or embedding of the talker or
+ * the code predictor, which ggml_mul_mat() and ggml_get_rows() alone read, takes the file's type. A convolution or matrix
+ * of the codec takes F16, or F32 in an F32 file: the codec turns codes into samples, and the released Q8_0 files hold
+ * it in F16. The rest is F32.
  */
-const std::vector<ggml_type> kMatrix = {GGML_TYPE_Q8_0, GGML_TYPE_F16, GGML_TYPE_F32};
-const std::vector<ggml_type> kCodecWeight = {GGML_TYPE_F16, GGML_TYPE_F32};
-const std::vector<ggml_type> kF32 = {GGML_TYPE_F32};
+const Storage & kMatrix = kQuantized;
+const Storage & kCodecWeight = kHalf;
+const Storage & kF32 = kFloat32;
 
 /**
  * What the official codec decoder fixes in its code rather than in its configuration: the width of pre_conv, the

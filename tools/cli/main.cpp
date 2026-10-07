@@ -28,7 +28,7 @@ namespace {
 
 std::vector<Command> commands() {
     return {tts_command(), asr_command(), voice_command(), info_command(), devices_command(), models_command(), pull_command(), rm_command(),
-            serve_command(), worker_command()};
+            quantize_command(), serve_command(), worker_command()};
 }
 
 std::string overview() {
