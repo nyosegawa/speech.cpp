@@ -211,7 +211,8 @@ Command worker_command() {
     c.summary = "serve a model over JSON Lines on stdin and stdout (protocol 2)";
     c.description =
         "Loads MODEL, warmed up unless --no-warmup, adds the voices of --add-voice, and serves it over the worker protocol\n"
-        "2: one JSON object per line on stdin and on stdout, and nothing else on stdout. The README gives the messages.";
+        "2: one JSON object per line on stdin and on stdout, and nothing else on stdout. speech.cpp's docs/worker.md gives\n"
+        "the messages.";
     c.flags = {
         add_voice_flag(),
         device_flag("auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists"),

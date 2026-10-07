@@ -15,8 +15,8 @@ layout 1 files at 0.8.0's release) must not change what an earlier release loads
 - **A model argument is a path or a name.** A path ends in `.gguf`, in any case, and is used as before. Anything else is
   `NAME[:TYPE]`: NAME is a model's short name or the Hugging Face repository of its converted files
   (`sakasegawa/Qwen3-ASR-0.6B-GGUF`), and TYPE the file's weight type in lower case, `q8_0`, `f16` or `f32`, as
-  llama.cpp's `-hf` takes a quantization. Without a type, a name means the file README's table recommends. The rule
-  reads the argument alone, not the disk, so the same command line means the same thing in every folder.
+  llama.cpp's `-hf` takes a quantization. Without a type, a name means the file the table of docs/models.md recommends.
+  The rule reads the argument alone, not the disk, so the same command line means the same thing in every folder.
 - **A name is the upstream model's own name in lower case, shortened by what tells nothing apart in the catalog**:
   `qwen3-tts-0.6b` and `qwen3-tts-1.7b` (Qwen3-TTS-12Hz-…-CustomVoice: every Qwen3-TTS the catalog holds has the 12Hz
   codec and is CustomVoice), `irodori-tts-mf` and `irodori-tts` (Irodori-TTS-v4.1-Small-MF and v4.1-Small: one version

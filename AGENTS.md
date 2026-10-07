@@ -7,8 +7,8 @@ Windows x64 with Vulkan and Linux x64 with Vulkan or the CPU alone, as a library
 `include/speech.h`, for any program that speaks text or recognizes speech: ASIST's worker, other tools, bindings
 and other people's applications. Each model's official
 implementation is the reference: every stage of a port is checked against tensors dumped from it.
-README.md is the documentation for users; `docs/adr/` keeps the decisions. Read the relevant implementation
-and its check before changing behavior.
+README.md and `docs/` are the documentation for users, `docs/development/` the pages for developers, and `docs/adr/`
+keeps the decisions. Read the relevant implementation and its check before changing behavior.
 
 ## Architecture
 
@@ -91,9 +91,9 @@ another one.
   speech.cpp's own holds a fact the specification has a key for. Every key is required, but for `general.finetune`
   and `general.version` where a model has none and `general.quantization_version` where it is not quantized, and has
   one type, and the tensors are exactly the ones the keys call for. A change of layout changes the converter, the
-  reader and README.md's tables in the same commit, and a change a reader of the previous layout cannot read raises
-  `speech.layout`, adds the release that reads it to the converter's table and brings the previous layout up in the
-  family's one upgrade function. Every model constant lives in the file, from the checkpoint or, where it has none,
+  reader and the tables of `docs/gguf.md` in the same commit, and a change a reader of the previous layout cannot read
+  raises `speech.layout`, adds the release that reads it to the converter's table and brings the previous layout up in
+  the family's one upgrade function. Every model constant lives in the file, from the checkpoint or, where it has none,
   from the official code, and the converter says where.
 - Do not add fallback behavior; fail loudly rather than degrade silently. A GGUF without a key or tensor, a key
   of another type, a tensor the keys do not call for, a layout the reader does not know,
@@ -153,7 +153,7 @@ another one.
 
 ## Text
 
-- The output of the tools, README.md and AGENTS.md are English. Japanese and other languages appear only
+- The output of the tools, README.md, `docs/` and AGENTS.md are English. Japanese and other languages appear only
   as data: texts to speak and model output.
 - An error message names what failed and what to do.
 
@@ -194,6 +194,9 @@ settled a choice or turned an approach down for good; if so, the record goes int
   under the file's name with `.json` added. A changed file goes up under the same name, with its JSON made again, and
   its card's SHA-256 changes with it.
 - The tag's archives, `speech-<VERSION>-<platform>.zip`, are the ones CI builds and checks on every run; a change to
-  what they hold changes the packaging steps of `.github/workflows/build.yml` and README.md's Binaries together.
+  what they hold changes the packaging steps of `.github/workflows/build.yml` and `docs/install.md`'s Release archives
+  together.
 - When a change alters what a user does or sees (the C API, the command line's arguments, the worker protocol, the
-  HTTP server, the GGUF layout), update README.md in the same change.
+  HTTP server, the GGUF layout, the models), the same pull request updates the pages that describe it: README.md where
+  it shows the change, and the page of `docs/` that covers it. No test checks the documentation against the code; the
+  pull request keeps it current.

@@ -23,8 +23,8 @@ divides float32 logits by the temperature and the penalty, so a value far enough
   `repetition_penalty`, transformers' names, which every caller of `generate()` knows. The code predictor's are
   `code_predictor_do_sample`, `code_predictor_top_k`, `code_predictor_top_p` and `code_predictor_temperature`:
   `subtalker` is an argument prefix that nothing else names, while the code predictor is the module's name in the
-  official code and in the file's keys, and README.md says what it predicts. Its repetition penalty stays the file's
-  value, 1, as the official package sets none, and applies to the codes of the frame made so far, as the code
+  official code and in the file's keys, and docs/models/qwen3-tts.md says what it predicts. Its repetition penalty stays
+  the file's value, 1, as the official package sets none, and applies to the codes of the frame made so far, as the code
   predictor's `generate()` sees them.
 - **The defaults are the file's, and none is neutral.** A request that sets none of the options samples as before, with
   the same audio for the same seed on every device. The information shows each default as the decimal the checkpoint

@@ -43,4 +43,4 @@ The alternatives were turned down:
 
 An upgrade leaves the previous release's files until the user removes them, which `speech models` points out. A file
 fetched once serves every program that names it at the same revision. Uninstalling speech.cpp leaves the folder,
-which README says how to remove.
+which docs/install.md says how to remove.

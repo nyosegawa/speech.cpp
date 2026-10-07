@@ -68,8 +68,8 @@ terminal message:
 - The server draws the seed of a speech request that sets none, from the range the library draws from, and sets it on
   the request, since the headers of a `pcm` stream leave before the result that names the seed.
 
-README.md gives the subcommands and their flags, the protocol's messages and the server's mapping of categories to
-statuses.
+docs/cli.md gives the subcommands and their flags, docs/worker.md the protocol's messages and docs/server.md the
+server's mapping of categories to statuses.
 
 The alternatives were turned down:
 

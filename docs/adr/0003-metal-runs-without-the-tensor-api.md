@@ -41,5 +41,5 @@ windows, would leave the DiT, the text encoder and Qwen3-TTS exposed.
 
 On the M5, Irodori-TTS takes a fifth to a third longer to its first audio, still under audio.cpp's 1.22 s
 at 16 steps; Qwen3-TTS keeps its speed. Metal comes closer to the CPU in every check. When a ggml release
-passes the two cases of issue #13 with the tensor API, the setting goes and the M5 numbers in README.md are
-measured again.
+passes the two cases of issue #13 with the tensor API, the setting goes and the M5 numbers in docs/models/ and
+docs/development/checks.md are measured again.

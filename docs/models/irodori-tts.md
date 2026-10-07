@@ -146,7 +146,7 @@ holds a latent), and `ref_ensure_max`, which is on, as the runtime's default.
 
 `instructions`, the runtime's caption, describes the voice and the way of speaking, under the name OpenAI's speech API
 gives it. With a reference, the speech keeps the reference's voice and follows the description where it can. With the
-voice `none`, the description alone chooses the voice:
+voice `none`, the description alone chooses the voice, which the runtime calls VoiceDesign:
 
 ```sh
 speech tts Irodori-TTS-866M-MF-v4.1-F16.gguf --voice none --instructions "低く落ち着いた男性の声で、ゆっくりと読み上げてください。" \
