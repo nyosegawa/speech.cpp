@@ -161,7 +161,7 @@ Command pull_command() {
 Command rm_command() {
     Command c;
     c.name = "rm";
-    c.usage = "rm NAME[:TYPE]... | rm --old";
+    c.usage = "rm NAME[:TYPE]... | speech rm --old";
     c.summary = "remove fetched models, or the files of earlier releases";
     c.description =
         "Removes each model's file from the model folder, with what was fetched of it, or with --old every file there that\n"

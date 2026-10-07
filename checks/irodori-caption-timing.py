@@ -1,8 +1,8 @@
-"""Times Irodori-TTS through `speech worker` with and without instructions (the runtime's caption), as README's speed
-table times it: each sentence of a speech-bench prompts file one request at a time after the worker is ready, in one
-voice, first without instructions and then with each caption given. For each, the median and the 90th percentile of the
-first audio, the time from the request to its first chunk, and the real-time factor, the request's time over its
-audio's. It prints one JSON object per line.
+"""Times Irodori-TTS through `speech worker` with and without instructions (the runtime's caption), as the speed table
+of docs/models/irodori-tts.md times it: each sentence of a speech-bench prompts file one request at a time after the
+worker is ready, in one voice, first without instructions and then with each caption given. For each, the median and the
+90th percentile of the first audio, the time from the request to its first chunk, and the real-time factor, the
+request's time over its audio's. It prints one JSON object per line.
 
 usage: python3 checks/irodori-caption-timing.py <speech> <model.gguf> <prompts.json> <voice NAME=FILE> [--steps N]
                                                  [--caption TEXT]... [-- worker options...]
@@ -17,7 +17,7 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools"))
 from worker_client import Worker  # noqa: E402
 
-# README's example of a caption, the one the design's estimate of the cost was made for.
+# The example of a caption in docs/models/irodori-tts.md, the one the design's estimate of the cost was made for.
 CAPTION = "落ち着いた女性の声で、近い距離感でやわらかく自然に読み上げてください。"
 
 args = sys.argv[1:]
