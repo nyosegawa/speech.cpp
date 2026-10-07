@@ -98,6 +98,7 @@ public:
         r.speaker = values.string(SPEECH_OPT_VOICE);
         r.language = values.string(SPEECH_OPT_LANGUAGE);
         r.seed = (uint64_t) values.integer(SPEECH_OPT_SEED);
+        if (values.has(SPEECH_OPT_INSTRUCTIONS)) r.instructions = values.string(SPEECH_OPT_INSTRUCTIONS);
         r.talker = sampling(values, kTalkerOptions, synth_.generation().talker);
         r.code_predictor = sampling(values, kCodePredictorOptions, synth_.generation().code_predictor);
         const bool capped = values.has(SPEECH_OPT_MAX_SECONDS);
@@ -141,7 +142,7 @@ struct TokenCounter {
  * changing the audio's rate afterwards would change its pitch or add a time stretch's artifacts, so it takes neither:
  * its speech ends where the talker ends it, at the request's max_seconds, or at the model's limit of frames. The talker
  * and the code predictor sample as generate_custom_voice() lets a caller set, with its defaults from the file and the
- * ranges transformers' processors take.
+ * ranges transformers' processors take, and a model that takes_instructions() follows an instruction as it does.
  */
 FamilyInfo describe_qwen3_tts(const std::shared_ptr<const ModelFile> & file) {
     const ModelFile & m = *file;
@@ -161,6 +162,7 @@ FamilyInfo describe_qwen3_tts(const std::shared_ptr<const ModelFile> & file) {
     const Generation generation(m);
     for (const OptionSpec & spec : sampling_specs(kTalkerOptions, generation.talker)) info.options.push_back(spec);
     for (const OptionSpec & spec : sampling_specs(kCodePredictorOptions, generation.code_predictor)) info.options.push_back(spec);
+    if (takes_instructions(m)) info.options.push_back({SPEECH_OPT_INSTRUCTIONS, false, true, std::string()});
     const auto counter = std::make_shared<Lazy<TokenCounter>>(file);
     info.count_tokens = [counter](const std::string & text) { return counter->get().count(text); };
     return info;

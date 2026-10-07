@@ -185,8 +185,8 @@ SPEECH_API speech_status speech_device_memory(size_t index, uint64_t * total, ui
 /*
  * Options: the vocabulary of what a request may ask, the same for every family. A value is never reused, and a later
  * minor version only appends. Each option has one type. Some have a neutral value that every model accepts, whether
- * or not it takes the option: speed 1, duration_scale 1, language "auto", timestamps false and prompt "". The others
- * have none, and a model that does not take one refuses any value of it.
+ * or not it takes the option: speed 1, duration_scale 1, language "auto", timestamps false, prompt "" and
+ * instructions "". The others have none, and a model that does not take one refuses any value of it.
  */
 typedef enum speech_option {
     /**
@@ -270,7 +270,13 @@ typedef enum speech_option {
     /** "code_predictor_top_p", a number: top_p of the code predictor. Added in 3.1. */
     SPEECH_OPT_CODE_PREDICTOR_TOP_P = 18,
     /** "code_predictor_temperature", a number above 0: temperature of the code predictor. Added in 3.1. */
-    SPEECH_OPT_CODE_PREDICTOR_TEMPERATURE = 19
+    SPEECH_OPT_CODE_PREDICTOR_TEMPERATURE = 19,
+    /**
+     * "instructions", a string: how to speak the text, described in words ("怒った口調で", "Speak slowly and softly."), as
+     * OpenAI's speech API names it, for a model trained to follow such a description; "" (the neutral value) gives none.
+     * One too long for the model beside the text is refused when the request runs, naming the option. Added in 3.1.
+     */
+    SPEECH_OPT_INSTRUCTIONS = 20
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */
@@ -551,7 +557,7 @@ SPEECH_API speech_status speech_model_info_option_range(const speech_model_info 
 /**
  * The number of values a string option takes: the voices for "voice", the languages for "language", which also
  * takes "auto" and a region or script of each, and the decodings for "decoding", the default among them. 0 for
- * "prompt", which takes any text, and for an option of another type.
+ * "prompt" and "instructions", which take any text, and for an option of another type.
  */
 SPEECH_API size_t speech_model_info_option_choice_count(const speech_model_info * info, speech_option option);
 

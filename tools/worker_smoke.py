@@ -7,8 +7,8 @@ reported and repeats it too; cancels while a request waits, while it runs, of an
 a later request then reuses; a second request under an id in flight; each error with its code and option (members the
 message does not have, values of the wrong type, out of range or not taken, a missing text, lines that are not JSON
 objects or have no id or type, the other task's messages); a peek and chunks to a synthesis model; add_voice; for
-Irodori-TTS a fixed length and the progress of a long sampler, and for Qwen3-TTS max_seconds and the sampling options.
-Writes the first answer to a WAV.
+Irodori-TTS a fixed length and the progress of a long sampler, for Qwen3-TTS max_seconds and the sampling options, and
+an instruction where the model takes one and its refusal where it does not. Writes the first answer to a WAV.
 
 usage: python3 tools/worker_smoke.py <out.wav> <speech> <model.gguf> [worker options...]
        A model that takes voice files needs --add-voice NAME=FILE, whose FILE add_voice adds again under another name.
@@ -141,8 +141,8 @@ expect_error({"type": "synthesize", "id": "e9", "text": too_long, "voice": voice
 expect_error({"type": "pause", "id": "e10"}, "invalid_argument", "type")
 expect_error({"type": "add_voice", "id": "e11", "name": "x"}, "invalid_argument", "path")
 # A member set to null counts as left out, and an option at its neutral value is taken by every model.
-speak("n", text="あ。", language=None, speed=1, duration_scale=1, timestamps=False)
-print("n: null, a speed and a scale of 1 and timestamps false were taken")
+speak("n", text="あ。", language=None, speed=1, duration_scale=1, timestamps=False, instructions="")
+print("n: null, a speed and a scale of 1, timestamps false and empty instructions were taken")
 if irodori:
     expect_error({"type": "synthesize", "id": "e12", "text": "あ。", "voice": voice, "speed": 5}, "out_of_range", "speed")
     expect_error({"type": "synthesize", "id": "e13", "text": "あ。", "voice": voice, "max_seconds": 1}, "unsupported", "max_seconds")
@@ -177,6 +177,14 @@ else:
     expect_error({"type": "synthesize", "id": "e16", "text": "あ。", "voice": voice, "code_predictor_top_k": -1}, "out_of_range",
                  "code_predictor_top_k")
     expect_error({"type": "synthesize", "id": "e17", "text": "あ。", "voice": voice, "do_sample": "no"}, "invalid_argument", "do_sample")
+# A model that takes an instruction speaks the same seed otherwise with one, and one that takes none refuses it.
+if any(o["name"] == "instructions" for o in info["options"]):
+    told = dict(text="あ。", seed=3)
+    assert speak("i1", **told)[0] != speak("i2", instructions="怒った口調で話してください。", **told)[0], "an instruction changed nothing"
+    print("i1, i2: an instruction gave other audio for the same seed")
+else:
+    expect_error({"type": "synthesize", "id": "e18", "text": "あ。", "voice": voice, "instructions": "怒った口調で"}, "unsupported",
+                 "instructions")
 
 # The other task's messages: a chunk opens a recognition request answered unsupported, whose later lines are dropped.
 w.request({"type": "chunk", "id": "r", "seq": 0, "pcm": ""})

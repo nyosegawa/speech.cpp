@@ -1,10 +1,14 @@
 """Runs the official Qwen3-TTS CustomVoice with greedy decoding and saves the tensors the C++ port is checked against.
 
-usage: uv run python dump.py <model dir> <out dir> <speaker> <language> <text> [max frames]
+usage: uv run python dump.py <model dir> <out dir> <speaker> <language> <text> [max frames] [--instruct TEXT]
+
+--instruct gives the 1.7B model an instruction of how to speak, as generate_custom_voice() does; the 0.6B model takes
+none, and generate_custom_voice() drops it there.
 
 Writes <out dir>/*.npy and meta.json:
   input_ids          the tokenized `<|im_start|>assistant\\n{text}<|im_end|>\\n<|im_start|>assistant\\n`
-  prefill_embeds     what the talker receives before the first frame, [T, hidden]
+  instruct_ids       with --instruct, the tokenized `<|im_start|>user\\n{instruction}<|im_end|>\\n`
+  prefill_embeds     what the talker receives before the first frame, the instruction's rows first, [T, hidden]
   trailing_text      the text embeddings added to each generated frame, [N, hidden]
   step_embeds        the talker input of each generated frame, [frames, hidden]
   talker_logits      the talker logits of each frame, [frames + 1, vocab] (row 0 is the prefill)
@@ -14,17 +18,23 @@ Writes <out dir>/*.npy and meta.json:
   codec_*            the codec decoder stages for `codes`, and wav, [samples]
 """
 
+import argparse
 import json
 import os
-import sys
 
 import numpy as np
 import torch
 
 from qwen_tts import Qwen3TTSModel
 
-model_dir, out_dir, speaker, language, text = sys.argv[1:6]
-max_frames = int(sys.argv[6]) if len(sys.argv) > 6 else 400
+parser = argparse.ArgumentParser()
+for name in ["model_dir", "out_dir", "speaker", "language", "text"]:
+    parser.add_argument(name)
+parser.add_argument("max_frames", type=int, nargs="?", default=400)
+parser.add_argument("--instruct")
+args = parser.parse_args()
+model_dir, out_dir, speaker, language, text, max_frames = (args.model_dir, args.out_dir, args.speaker, args.language, args.text,
+                                                           args.max_frames)
 os.makedirs(out_dir, exist_ok=True)
 torch.manual_seed(0)
 
@@ -66,11 +76,14 @@ talker.code_predictor.register_forward_hook(cp_post, with_kwargs=True)
 
 prompt = tts._build_assistant_text(text)
 input_ids = tts._tokenize_texts([prompt])[0]
+if args.instruct is not None and model.tts_model_size in "0b6":
+    raise SystemExit("the 0.6B model takes no instruction; generate_custom_voice() drops it")
+instruct_ids = None if args.instruct is None else tts._tokenize_texts([tts._build_instruct_text(args.instruct)])[0]
 
 with torch.no_grad():
     codes_list, _ = model.generate(
         input_ids=[input_ids],
-        instruct_ids=[None],
+        instruct_ids=[instruct_ids],
         languages=[language],
         speakers=[speaker],
         non_streaming_mode=True,
@@ -82,6 +95,8 @@ with torch.no_grad():
 codes = codes_list[0]
 
 np.save(f"{out_dir}/input_ids.npy", input_ids[0].numpy().astype(np.int32))
+if instruct_ids is not None:
+    np.save(f"{out_dir}/instruct_ids.npy", instruct_ids[0].numpy().astype(np.int32))
 np.save(f"{out_dir}/prefill_embeds.npy", saved["prefill_embeds"])
 np.save(f"{out_dir}/trailing_text.npy", saved["trailing_text"])
 np.save(f"{out_dir}/step_embeds.npy", np.stack(saved["step_embeds"]))
@@ -120,6 +135,7 @@ import soundfile as sf  # noqa: E402
 sf.write(f"{out_dir}/wav.wav", wav[0, 0].float().numpy(), 24000)
 json.dump({"model_dir": os.path.basename(os.path.normpath(model_dir)), "speaker": speaker, "language": language,
            "text": text, "prompt": prompt, "frames": int(codes.shape[0]),
+           **({} if args.instruct is None else {"instruct": args.instruct}),
            "stages": list(stages.keys())},
           open(f"{out_dir}/meta.json", "w"), ensure_ascii=False, indent=1)
 print("frames", codes.shape[0], "samples", wav.shape[-1], "->", out_dir)

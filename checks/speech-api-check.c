@@ -7,9 +7,9 @@
  * without a warm-up, compares the information read without loading with the loaded model's, adds the voices, refuses
  * each option's values with the category and the option's name and accepts the neutral ones, speaks one sentence into
  * a WAVE file, repeats a drawn seed's audio, gives the same audio with every option set at its default as with none,
- * checks the family's rules of the whole request (Qwen3-TTS's max_seconds, longest text and sampling, Irodori-TTS's
- * lengths, steps and progress), cancels a request from another thread and one before it runs, and runs requests from
- * two threads at once.
+ * checks the family's rules of the whole request (Qwen3-TTS's max_seconds, longest text, sampling and instructions,
+ * Irodori-TTS's lengths, steps and progress), cancels a request from another thread and one before it runs, and runs
+ * requests from two threads at once.
  *
  * With a recognition model (transcribe), speech-api-recognition.c, which takes F32 or F16 weights only.
  *
@@ -253,6 +253,47 @@ static int check_qwen3_tts_sampling(speech_model * model, const char * voice) {
     if (!ok) fprintf(stderr, "FAIL: Qwen3-TTS's sampling options are not followed\n");
     free(a.samples);
     free(b.samples);
+    return ok ? 0 : 1;
+}
+
+/**
+ * Qwen3-TTS's instructions, for a model that takes them: one changes the audio of the same seed, and one whose tokens
+ * leave the text no room is refused naming the option and leaves the request to run once it is cleared.
+ * check_option_refusals() covers a model that takes none.
+ */
+static int check_qwen3_tts_instructions(speech_model * model, const speech_model_info * info, const char * voice) {
+    if (!speech_model_info_takes(info, SPEECH_OPT_INSTRUCTIONS)) return 0;
+    Audio plain = {NULL, 0, 0}, told = {NULL, 0, 0};
+    speech_request * r = new_request(model, "同じ文です。", voice, 5);
+    speech_request_set_float(r, SPEECH_OPT_MAX_SECONDS, 2);
+    int ok = expect(speak(r, &plain, NULL, NULL), SPEECH_OK, NULL, "a request without an instruction");
+    r = new_request(model, "同じ文です。", voice, 5);
+    speech_request_set_float(r, SPEECH_OPT_MAX_SECONDS, 2);
+    ok &= expect(speech_request_set_string(r, SPEECH_OPT_INSTRUCTIONS, "怒った口調で話してください。"), SPEECH_OK, NULL, "an instruction") &&
+          expect(speak(r, &told, NULL, NULL), SPEECH_OK, NULL, "the same request with an instruction");
+    if (ok && plain.n == told.n && memcmp(plain.samples, told.samples, plain.n * sizeof(float)) == 0) {
+        fprintf(stderr, "FAIL: an instruction leaves the audio of the same seed as it was\n");
+        ok = 0;
+    }
+    if (ok) printf("an instruction gives %zu samples where the same seed gave %zu without it\n", told.n, plain.n);
+
+    size_t unit = 0;
+    if (speech_model_info_text_tokens(info, SENTENCE, &unit) != SPEECH_OK) return fail("speech_model_info_text_tokens");
+    const size_t copies = speech_model_info_max_text_tokens(info) / unit + 1, length = strlen(SENTENCE);
+    char * instruction = (char *) malloc(copies * length + 1);
+    for (size_t i = 0; i < copies; i++) memcpy(instruction + i * length, SENTENCE, length);
+    instruction[copies * length] = '\0';
+    Audio none = {NULL, 0, 0};
+    r = new_request(model, "はい。", voice, 6);
+    ok &= expect(speech_request_set_string(r, SPEECH_OPT_INSTRUCTIONS, instruction), SPEECH_OK, NULL, "an instruction of any length") &&
+          expect(speech_synthesize(r, collect, &none), SPEECH_ERROR_OUT_OF_RANGE, "instructions", "an instruction that leaves the text no room") &&
+          none.n == 0 && speech_request_set_string(r, SPEECH_OPT_INSTRUCTIONS, "") == SPEECH_OK &&
+          expect(speak(r, &none, NULL, NULL), SPEECH_OK, NULL, "the same request run again without the instruction") && none.n > 0;
+    if (!ok) fprintf(stderr, "FAIL: Qwen3-TTS's instructions are not followed or not limited\n");
+    free(instruction);
+    free(plain.samples);
+    free(told.samples);
+    free(none.samples);
     return ok ? 0 : 1;
 }
 
@@ -519,7 +560,9 @@ static int check_model(speech_model * model, const char * model_path, const char
     free(again.samples);
 
     if (check_defaults(model, info, voice) != 0) return 1;
-    if (irodori ? check_irodori_tts(model, info, voice) != 0 : check_qwen3_tts(model, info, voice) != 0 || check_qwen3_tts_sampling(model, voice) != 0) {
+    if (irodori ? check_irodori_tts(model, info, voice) != 0
+                : check_qwen3_tts(model, info, voice) != 0 || check_qwen3_tts_sampling(model, voice) != 0 ||
+                      check_qwen3_tts_instructions(model, info, voice) != 0) {
         return 1;
     }
     if (check_threads(model, voice) != 0) return 1;

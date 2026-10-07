@@ -72,6 +72,7 @@ const OptionName vocabulary[] = {
     {"code_predictor_top_k", SPEECH_TYPE_INT},
     {"code_predictor_top_p", SPEECH_TYPE_FLOAT},
     {"code_predictor_temperature", SPEECH_TYPE_FLOAT},
+    {"instructions", SPEECH_TYPE_STRING},
 };
 constexpr size_t kOptions = sizeof vocabulary / sizeof vocabulary[0];
 

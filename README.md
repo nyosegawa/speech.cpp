@@ -140,14 +140,14 @@ for the first GPU or the CPU on a machine without one; `gpu`; `cpu`; or a name `
 N`, the C API's load parameters. `speech tts` and `speech asr` take every request option of the C API's vocabulary
 (Options, below) as a flag of its name in kebab-case, read by the option's type: `--voice`, `--language`, `--seed`,
 `--speed`, `--seconds`, `--duration-scale`, `--steps`, `--max-seconds`, `--timestamps`, `--prompt`, `--decoding`,
-`--do-sample`, `--top-k`, `--top-p`, `--temperature`, `--repetition-penalty` and the code predictor's
-`--code-predictor-do-sample`, `--code-predictor-top-k`, `--code-predictor-top-p` and `--code-predictor-temperature`. A
-flag's value follows it or an `=` (`--seed 7`, `--seed=7`), and a number is read whole: `--steps 4x` is a usage error. A
-boolean option is true by its flag alone and takes `true` or `false` only after an `=` (`--timestamps`,
-`--do-sample=false`), so that the argument after it stays an argument. The model refuses an option it does not take, as
-in the C API: Qwen3-TTS answers `--speed 1.5` with `speech: unsupported (speed): ...`. An argument that begins with `-`,
-such as a text, follows `--`. `speech <subcommand> --help` lists a subcommand's flags, and `speech --version` prints the
-release and the C API's version (`speech.cpp 0.7.0, C API 3.1`).
+`--do-sample`, `--top-k`, `--top-p`, `--temperature`, `--repetition-penalty`, the code predictor's
+`--code-predictor-do-sample`, `--code-predictor-top-k`, `--code-predictor-top-p` and `--code-predictor-temperature`, and
+`--instructions`. A flag's value follows it or an `=` (`--seed 7`, `--seed=7`), and a number is read whole: `--steps 4x`
+is a usage error. A boolean option is true by its flag alone and takes `true` or `false` only after an `=`
+(`--timestamps`, `--do-sample=false`), so that the argument after it stays an argument. The model refuses an option it
+does not take, as in the C API: Qwen3-TTS answers `--speed 1.5` with `speech: unsupported (speed): ...`. An argument
+that begins with `-`, such as a text, follows `--`. `speech <subcommand> --help` lists a subcommand's flags, and `speech
+--version` prints the release and the C API's version (`speech.cpp 0.7.0, C API 3.1`).
 
 | Exit | Meaning |
 |---|---|
@@ -166,6 +166,7 @@ speech tts MODEL -o FILE|- [options] [TEXT]
   --voice NAME --language TAG --seed N --speed X --seconds S --duration-scale X --steps N --max-seconds S
   --do-sample[=false] --top-k N --top-p X --temperature X --repetition-penalty X
   --code-predictor-do-sample[=false] --code-predictor-top-k N --code-predictor-top-p X --code-predictor-temperature X
+  --instructions TEXT
   --add-voice NAME=FILE       add a voice from a voice file or a WAVE file before speaking; repeatable
   --device NAME --threads N
   -v                          report the model, and each request's seed and stop reason
@@ -496,6 +497,7 @@ nothing else.
 | `code_predictor_top_k` | int | none | 0 (every token) to 2147483647, default `qwen3-tts.generation.code_predictor.top_k` (50) | not taken | not taken | not taken |
 | `code_predictor_top_p` | float | none | 0 to 1, default `qwen3-tts.generation.code_predictor.top_p` (1) | not taken | not taken | not taken |
 | `code_predictor_temperature` | float | none | above 0, default `qwen3-tts.generation.code_predictor.temperature` (0.9) | not taken | not taken | not taken |
+| `instructions` | string | `""` | 1.7B: default `""`, any text; steers. 0.6B: not taken | not taken | not taken | not taken |
 
 A value at an option's neutral value is accepted by every model; any other value of an option a model does not take
 is `unsupported`, and an option marked "none" has no neutral value. A string option's value must be one of its
@@ -520,6 +522,11 @@ repetition penalty is none of the options: the official package sets none, and t
 defaults are the official ones, which the model file holds, so a request that sets none of them speaks as it did before
 they were options.
 
+`instructions` tells a model in words how to speak the text (`怒った口調で`, "Speak slowly and softly."), under the name of
+OpenAI's speech API. Qwen3-TTS 1.7B follows it as the official `generate_custom_voice()` follows its `instruct`; the
+0.6B, whose instruction the official code drops, takes none, and its information has no such option (Qwen3-TTS,
+below).
+
 What only the whole request shows is refused when the request runs, before any work, naming the option:
 
 - `voice` left out where it is required: `invalid_argument`.
@@ -532,6 +539,9 @@ What only the whole request shows is refused when the request runs, before any w
   tokens of the normalized text and takes at most `irodori-tts.text.max_tokens` (256). Qwen3-TTS takes what leaves its
   talker room for the longest speech: `qwen3-tts.talker.max_position_embeddings` - `qwen3-tts.generation.max_frames` -
   11, the rows its prompt adds to the text (32768 - 8192 - 11 = 24565 for both sizes).
+- Qwen3-TTS, `instructions` whose tokens, with the text's, are more than `speech_model_info_max_text_tokens()`:
+  `out_of_range`, option `instructions`. The instruction's rows go into the talker's prompt beside the text's: its
+  tokens as `speech_model_info_text_tokens()` counts them and 5 more, the turn that holds it.
 - Audio too short for the model to recognize, two of its mel frames (20 ms for FastConformer): `out_of_range`, option
   `audio`. Qwen3-ASR pads audio under 0.5 s with zeros and takes any.
 - Qwen3-ASR, a `prompt` whose tokens, with those of the longest part of the audio (1200 s at most, 13 tokens a second)
@@ -856,10 +866,10 @@ A speech request is a JSON object:
 | `model` | the loaded model's `id` from `/v1/models`, or left out. Any other model is a 404 (`model_not_found`) |
 | `response_format` | `wav` (the default) or `pcm`. OpenAI's default is `mp3`, which speech.cpp does not encode; `mp3`, `opus`, `aac` and `flac` are refused |
 | `stream_format` | `audio` (the default) or `sse`, which needs `pcm` |
-| `voice`, `language`, `seed`, `speed`, `seconds`, `duration_scale`, `steps`, `max_seconds`, `timestamps`, `prompt`, `decoding`, `do_sample`, `top_k`, `top_p`, `temperature`, `repetition_penalty`, `code_predictor_do_sample`, `code_predictor_top_k`, `code_predictor_top_p`, `code_predictor_temperature` | every option of the vocabulary by its name (Options, above), of the option's type, which the model checks: `voice` is one of the model's voices, a Qwen3-TTS speaker or a voice of `--add-voice`, and required; `speed` and `voice` are OpenAI's, the others speech.cpp's own. A request without `seed` gets one drawn from 0 to 2^53 - 1 |
+| `voice`, `language`, `seed`, `speed`, `seconds`, `duration_scale`, `steps`, `max_seconds`, `timestamps`, `prompt`, `decoding`, `do_sample`, `top_k`, `top_p`, `temperature`, `repetition_penalty`, `code_predictor_do_sample`, `code_predictor_top_k`, `code_predictor_top_p`, `code_predictor_temperature`, `instructions` | every option of the vocabulary by its name (Options, above), of the option's type, which the model checks: `voice` is one of the model's voices, a Qwen3-TTS speaker or a voice of `--add-voice`, and required; `speed`, `voice` and `instructions` are OpenAI's, the others speech.cpp's own. A request without `seed` gets one drawn from 0 to 2^53 - 1 |
 
-A member speech.cpp does not take, OpenAI's `instructions` among them, is refused rather than ignored; a member set to
-`null` counts as left out.
+A member speech.cpp does not take is refused rather than ignored, and so is OpenAI's `instructions` other than `""` for a
+model that takes no instruction, such as Qwen3-TTS 0.6B; a member set to `null` counts as left out.
 
 The response:
 
@@ -1017,11 +1027,14 @@ not add artifacts at the frame boundaries. Implemented:
 - the code predictor that predicts the other 15 codebooks,
 - the 12Hz codec decoder (RVQ dequantization, sliding-window transformer, ConvNeXt upsampling and the
   SnakeBeta decoder), with each stage's causal state carried from one call to the next,
-- the Qwen2 byte-level BPE tokenizer and the CustomVoice prompt,
+- the Qwen2 byte-level BPE tokenizer and the CustomVoice prompt, with the 1.7B model's instruction of how to speak
+  (`instructions`) before it as the official `generate_custom_voice()` puts its `instruct`,
 - sampling as in transformers' `generate()` (temperature, top-k, top-p, repetition penalty), with the official defaults
   unless a request sets the talker's or the code predictor's own (Options, above).
 
-Voice cloning, VoiceDesign, the codec encoder and the speaker encoder are out of scope. The model has no
+Voice cloning, VoiceDesign, the codec encoder and the speaker encoder are out of scope. The 0.6B model takes no
+instruction: the official `generate_custom_voice()` drops it for that size, which the file tells by its
+`general.size_label`, written from the checkpoint's `tts_model_size` (docs/adr/0023). The model has no
 control of its speaking rate or its length, so a request with a speed other than 1 or with a length is
 refused (docs/adr/0007). A request stops at its `max_seconds`, when it sets one, and at the model's limit, 8192
 frames (655 s of speech), the checkpoint's `max_new_tokens`, as the official implementation stops; the result says
@@ -1030,7 +1043,7 @@ than holding the longest from the start, so a short sentence does not take the m
 reads its prompt 512 rows at a time, each against the rows before it, so that the memory of a long text grows with its
 length rather than its square: a prompt of 5137 rows takes 0.18 GB to compute, where reading it whole took 1.8 GB.
 A text of more than 24565 tokens, what the talker's 32768 positions leave beside the longest speech and its prompt,
-is refused.
+is refused, and an instruction's tokens count against the same 24565.
 
 ### Models
 
@@ -1063,14 +1076,26 @@ OpenAI's speech API.
 ### Accuracy
 
 `reference/qwen3-tts/dump.py` runs the official implementation with greedy decoding and saves the tensors
-of every stage; the check tools compare against them.
+of every stage, with an instruction for the 1.7B model where `--instruct` gives one; the check tools compare against
+them:
+
+```sh
+cd reference/qwen3-tts
+uv run python dump.py <Qwen3-TTS 1.7B checkpoint dir> out/1.7b-ja-weather ono_anna japanese "明日の東京は晴れで、最高気温は二十四度の予報です。"
+uv run python dump.py <Qwen3-TTS 1.7B checkpoint dir> out/1.7b-ja-weather-instruct ono_anna japanese \
+    "明日の東京は晴れで、最高気温は二十四度の予報です。" --instruct "怒った口調で話してください。"
+cd ../..
+build/talker-check <model.gguf, F32> reference/qwen3-tts/out/1.7b-ja-weather-instruct cpu
+build/codec-check <model.gguf> reference/qwen3-tts/out/1.7b-ja-weather cpu
+```
 
 | Check | Result |
 |---|---|
 | Codec decoder, whole utterance, CPU, F32 (`codec-check`) | 114 dB SNR against the official decoder |
 | Codec decoder, one frame at a time against whole, CPU | 133 dB SNR |
 | Codec decoder on Metal | error at -63 dB of the voice |
-| Talker and code predictor, F32, teacher forcing (`talker-check`) | argmax matches on every frame; greedy decode gives the same 54 frames |
+| Talker and code predictor, F32, teacher forcing (`talker-check`), CPU and Metal | argmax matches on every frame; greedy decode gives the same 54 frames |
+| The same with the instruction 怒った口調で話してください。 (`talker-check`, out/1.7b-ja-weather-instruct), CPU and Metal | the official processor's 13 tokens; the prompt's 44 rows within 1.2e-6 (CPU) and 7.8e-5 (Metal); argmax matches but at one of 855 rows of the code predictor, where the reference's two best codes are 6.7e-4 apart, and greedy decode follows the reference's 57 frames to that row |
 | Sampling against transformers' logits processors as the official `generate()` builds them (`sampler-check`) | on 13 cases of the 1.7B dump's logits, 55 rows of the talker or 300 of the code predictor each, with the official settings and others: the same tokens kept in every row and their probabilities within 6e-15; the same greedy pick in every row; the settings of both files equal to `generation_config.json`'s |
 | Tokenizer (`tokenizer-check`) | encodes 27 texts, 8 of which NFC changes, and decodes 1191 sequences of ids as the model's `tokenizer.json` does |
 | Talker's prompt in blocks of 512 against one block, F32 (`qwen3-decoder-check`) | the same keys, values and logits on the CPU (5137 rows) and on Metal with flash attention (3665 rows); with the two products forced on Metal, 2.3e-3 at most for a cached row and 1.5e-3 for the logits, with the same argmax (3665 rows) |
@@ -1777,6 +1802,9 @@ From the checkpoint's `config.json` (`talker_config`, its `code_predictor_config
 A frame lasts the product of `upsample_rates` and `upsampling_ratios` (1920) samples at `speech.sample_rate`, 0.08 s.
 The text a request takes at most is `talker.max_position_embeddings` − `generation.max_frames` − 11, the rows its
 prompt adds to the text (24565 tokens for both sizes).
+`general.size_label` is the checkpoint's `tts_model_size` under the specification's name, `0b6` as 0.6B and `1b7` as
+1.7B, which the converter maps one to one; a file of 0.6B takes no instruction (`instructions`), as the official
+`generate_custom_voice()` drops it for that size.
 
 Tensors, with T = `talker.num_hidden_layers`, C = `code_predictor.num_hidden_layers`, G = `talker.num_code_groups`,
 Q = `codec.num_quantizers`, L = `codec.num_hidden_layers`, U = the length of `codec.upsampling_ratios`, B = the

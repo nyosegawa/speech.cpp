@@ -7,14 +7,15 @@ device and the threads) and with --meta, the identity in both as the general key
 worker's audio of the same lines and seed, into a file, into a regular file through stdout, and appended to a file with
 content and through a pipe into cat, where the header cannot be written again in place and keeps its sizes at
 0xFFFFFFFF; that nothing but the WAVE reaches stdout and a failed run leaves no file; for Qwen3-TTS a stop at
---max-seconds reported on stderr, and boolean and sampling flags against the worker's members; and with --reference a
-voice file made by `speech voice` that `speech tts` speaks with. For a recognition model: `speech asr` on WAVE files of
-the dumps of reference/fastconformer/dump.py or reference/qwen3-asr/dump.py against the worker's text of the same
-samples, as text and as JSON with the stop and the languages, the one qwen-asr parsed or none, and where the model takes
-timestamps as text with --timestamps one line per segment and as JSON with them, the segments and tokens the worker's;
-and for a dump that holds requests with a forced language and a prompt, or with a decoding other than the default,
-`speech asr --language --prompt` or `speech asr --decoding` against the worker's text of the same request, and as JSON
-its languages.
+--max-seconds reported on stderr, and boolean and sampling flags against the worker's members; --instructions against
+the worker's member where the model takes it and its refusal where it does not; and with --reference a voice file made
+by `speech voice` that `speech tts` speaks with. For a recognition model: `speech asr` on WAVE files of the dumps of
+reference/fastconformer/dump.py or reference/qwen3-asr/dump.py against the worker's text of the same samples, as text
+and as JSON with the stop and the languages, the one qwen-asr parsed or none, and where the model takes timestamps as
+text with --timestamps one line per segment and as JSON with them, the segments and tokens the worker's; and for a dump
+that holds requests with a forced language and a prompt, or with a decoding other than the default, `speech asr
+--language --prompt` or `speech asr --decoding` against the worker's text of the same request, and as JSON its
+languages.
 
 usage: python3 tools/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav] [-- load options...]
 """
@@ -176,6 +177,21 @@ if info["task"] == "synthesis":
     failure(r, "out_of_range", "voice")
     assert not os.path.exists(path), "a failed run left its WAVE file"
     print("a voice the model does not have: exit 1, speech: out_of_range (voice): ..., and no file left")
+    # --instructions is the worker's member of the same name, and a model that takes no instruction refuses it.
+    if any(o["name"] == "instructions" for o in info["options"]):
+        told = "怒った口調で話してください。"
+        w = Worker(speech, model, options)
+        w.request({"type": "synthesize", "id": "i", "text": lines[0], "voice": voice, "seed": seed, "instructions": told})
+        instructed = b"".join(base64.b64decode(m["pcm"]) for m in w.until("i") if m["type"] == "chunk")
+        w.close()
+        run("tts", model, "-o", path, "--voice", voice, "--seed", str(seed), "--instructions", told, *options, lines[0])
+        with open(path, "rb") as f:
+            expect("--instructions", f.read()[44:], instructed)
+        os.remove(path)
+    else:
+        r = run("tts", model, "-o", path, "--voice", voice, "--instructions", "怒った口調で", *options, lines[0], code=1)
+        failure(r, "unsupported", "instructions")
+        print("--instructions on a model that takes none: exit 1, speech: unsupported (instructions): ...")
     if info["architecture"] == "qwen3-tts":
         r = run("tts", model, "-o", path, "--voice", voice, "--max-seconds", "0.5", *options, lines[0])
         assert "stopped there" in r.stderr.decode(), r.stderr

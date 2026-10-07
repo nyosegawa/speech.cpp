@@ -50,7 +50,18 @@ SynthesisOutcome Synthesizer::synthesize(const SynthesisRequest & r, const Audio
         }
         text_ids.insert(text_ids.end(), body.begin(), body.end());
         text_ids.insert(text_ids.end(), {ids_.im_end, ids_.newline, ids_.im_start, ids_.assistant, ids_.newline});
-        prompt = build_prompt(talker_, ids_, text_ids, r.speaker, r.language);
+        std::vector<int32_t> instruction;
+        if (!r.instructions.empty()) {
+            instruction = naming("instructions", [&] { return instruction_ids(tokenizer_, ids_, r.instructions); });
+            // The instruction's rows take positions of the talker that the text could otherwise have.
+            if (body.size() + instruction.size() > (size_t) max_text_tokens()) {
+                throw Error(Fault::OutOfRange, "the instruction is " + std::to_string(instruction.size()) + " tokens long and the text " +
+                                                   std::to_string(body.size()) + ", and Qwen3-TTS takes at most " +
+                                                   std::to_string(max_text_tokens()) + " of both together; give a shorter instruction or text",
+                            "instructions");
+            }
+        }
+        prompt = build_prompt(talker_, ids_, text_ids, r.speaker, r.language, instruction);
     }
 
     const int n_groups = talker_.num_code_groups();

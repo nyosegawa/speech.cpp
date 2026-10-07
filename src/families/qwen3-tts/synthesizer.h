@@ -19,6 +19,8 @@ struct SynthesisRequest {
     std::string speaker;
     /** A BCP 47 tag of one of the model's languages (`ja`, `ja-JP`), or "auto". */
     std::string language = "auto";
+    /** An instruction of how to speak, for a model that takes_instructions(), or empty for none. */
+    std::string instructions;
     /** The frames to make at most; the model's own limit applies as well. */
     int max_frames = INT_MAX;
     uint64_t seed = 0;
@@ -57,7 +59,8 @@ public:
     /**
      * Speaks `r.text`, decoding the first frame on its own so that audio starts as early as possible and later frames
      * `frames_per_piece` at a time, until the talker ends the speech, `r.max_frames` or the model's limit of frames is
-     * reached, or the sink stops it. A text longer than max_text_tokens() throws.
+     * reached, or the sink stops it. A text longer than max_text_tokens() throws, and so does an instruction whose
+     * tokens leave the text fewer than it has.
      */
     SynthesisOutcome synthesize(const SynthesisRequest & r, const AudioSink & sink, int frames_per_piece = 4,
                                 SynthesisStats * stats = nullptr);
