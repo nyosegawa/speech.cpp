@@ -86,6 +86,10 @@ Every stage is checked against the official implementation's tensors ([checks](.
 | Talker and code predictor, F32, CPU and Metal | the official argmax on every frame; greedy decoding gives the official frames |
 | Tokenizer | the official tokens on 27 texts, and the official text of 1191 sequences of ids |
 
+In the smaller types that `speech quantize` makes, Q6_K, Q5_K and Q4_K, the talker's logits part further from the
+official's, and in Q4_K the 0.6B model spoke two of 20 sentences as other words, where F32 did so with one
+([checks](../development/checks.md#lower-bit-widths)).
+
 ## Speed
 
 Q8_0, Japanese sentences, after the shaders are compiled:

@@ -177,7 +177,9 @@ Every stage is checked against the official implementation's tensors on an Apple
 | Whole synthesis from the official noise | 75 to 110 dB, the official length | 22 to 61 dB, the same length | 58 dB (MF), the same length |
 
 On Metal the audio is the same speech rather than the same waveform: Metal's matrix kernel rounds its inputs to half
-precision, and MeanFlow's four large steps carry the difference into the latent.
+precision, and MeanFlow's four large steps carry the difference into the latent. The smaller types that `speech
+quantize` makes, Q6_K, Q5_K and Q4_K, still speak the text, with lengths that part from the official's
+([checks](../development/checks.md#lower-bit-widths)).
 
 ## Speed
 
