@@ -44,7 +44,7 @@ irm https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.ps1 | ie
 The installer checks the release's archive against its SHA-256, puts `speech` under your home folder, and adds it to
 `PATH`. Run it again to update. On Linux it installs the Vulkan build when the Vulkan loader is installed, and the CPU
 build otherwise; the Linux builds need glibc 2.34 or later. [docs/install.md](docs/install.md) has the options, how to
-uninstall, and what each platform needs.
+uninstall, and what each platform needs. On an Intel Mac or another system, [build from source](docs/build.md).
 
 ## Quick start
 
@@ -70,7 +70,7 @@ uninstall, and what each platform needs.
    speech serve --open
    ```
 
-`speech models` lists every model with the languages it is the one to start with.
+`speech models` lists every model and, for each language, the model to start with.
 
 ## Command line
 
@@ -147,16 +147,6 @@ official text on every check input in F32 and F16.
 
 Each model's page has its accuracy and speed, and [docs/development/checks.md](docs/development/checks.md) has every
 check.
-
-## Build from source
-
-```sh
-git clone --recurse-submodules https://github.com/nyosegawa/speech.cpp.git
-cd speech.cpp
-cmake -B build && cmake --build build --config Release -j
-```
-
-[docs/build.md](docs/build.md) has the backends and the requirements.
 
 ## Documentation
 
