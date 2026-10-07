@@ -1,6 +1,6 @@
 # The HTTP server speaks OpenAI's speech API on cpp-httplib
 
-Superseded in part by docs/adr/0015 and docs/adr/0017: the server takes one model file, derives its statuses from the library's categories, and is `speech serve`, which links cpp-httplib into the one executable.
+Superseded in part by docs/adr/0015, docs/adr/0017, docs/adr/0038 and docs/adr/0039: the server takes one model file, derives its statuses from the library's categories, and is `speech serve`, which links cpp-httplib into the one executable; it holds a model of each task (0038); and it refuses a request from an origin other than its own and those of `--cors-origin` (0039).
 
 Decided 2026-10-05.
 

@@ -2,7 +2,6 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
-#include <ctime>
 #include <memory>
 #include <mutex>
 #include <random>
@@ -19,22 +18,24 @@
 #include "json.h"
 #include "openai-api.h"
 
-// speech serve: serves one model over HTTP with OpenAI's audio API, so that a program that speaks HTTP (a web app,
-// Python with requests, curl) can use speech.cpp without starting the worker. A synthesis model answers
-// POST /v1/audio/speech and a recognition model POST /v1/audio/transcriptions; GET /v1/models gives the model with its
-// information, and GET /health says the server is up, which it is once the model is loaded. A failure of the library
-// becomes OpenAI's error object by its category alone (openai::library_error()). The model serves one request at a
-// time in the order they arrive, and a client that goes away while it waits or while its request runs cancels it.
+#include "access.h"
+#include "page.h"
+#include "served-models.h"
+
+// speech serve: serves a model of each task over HTTP with OpenAI's audio API, so that a program that speaks HTTP (a web
+// app, Python with requests, curl) can use speech.cpp without starting the worker: the synthesis model answers
+// POST /v1/audio/speech and the recognition model POST /v1/audio/transcriptions; GET /v1/models gives the models with
+// their information, and GET /health says the server is up, which it is once the models given are loaded. A failure of
+// the library becomes OpenAI's error object by its category alone (openai::library_error()). A model serves one request
+// at a time in the order they arrive, and a client that goes away while it waits or while its request runs cancels it.
+// On a loopback address the server also serves its page (page.h), which replaces the model of a task by one of the
+// catalog.
 
 using namespace server;
 using openai::ApiError;
+using openai::send_error;
 
 namespace {
-
-void send_error(httplib::Response & res, const ApiError & e) {
-    res.status = e.status;
-    res.set_content(openai::error_json(e), "application/json");
-}
 
 std::string wav_header(size_t data_bytes, int sample_rate) {
     std::string h;
@@ -64,13 +65,20 @@ int64_t draw_seed() {
 /** The interval at which a waiting handler looks whether its client is still there. */
 constexpr auto POLL = std::chrono::milliseconds(50);
 
+/** OpenAI's model object, with the release of speech.cpp and the model's information. */
+std::string model_json(const Served & served) {
+    const auto info = served.info();
+    return "{\"id\":" + json_string(speech_model_info_name(info.get())) + ",\"object\":\"model\",\"created\":" +
+           std::to_string(served.created()) + ",\"owned_by\":\"speech.cpp\",\"version\":" + json_string(speech_version()) +
+           ",\"speech\":" + speech_model_info_json(info.get()) + "}";
+}
+
 class Server {
 public:
-    Server(speech_model * model, std::vector<std::string> cors_origins)
-        : model_(model), info_(model_info(model)), cors_origins_(std::move(cors_origins)), created_((long long) std::time(nullptr)) {}
+    Server(ServedModels & models, const Access & access) : models_(models), access_(access) {}
 
     void route(httplib::Server & http) {
-        http.set_pre_routing_handler([this](const httplib::Request & req, httplib::Response & res) { return cors(req, res); });
+        http.set_pre_routing_handler([this](const httplib::Request & req, httplib::Response & res) { return admit(req, res); });
         http.set_error_handler([](const httplib::Request & req, httplib::Response & res) {
             if (res.body.empty()) {
                 send_error(res, {res.status, res.status == 404 ? "Invalid URL (" + req.method + " " + req.path + ")."
@@ -82,63 +90,69 @@ public:
         });
         http.Get("/health", [](const httplib::Request &, httplib::Response & res) { res.set_content("{\"status\":\"ok\"}", "application/json"); });
         http.Get("/v1/models", [this](const httplib::Request &, httplib::Response & res) {
-            res.set_content("{\"object\":\"list\",\"data\":[" + model_json() + "]}", "application/json");
+            std::string data;
+            for (const auto & served : models_.all()) data += (data.empty() ? "" : ",") + model_json(*served);
+            res.set_content("{\"object\":\"list\",\"data\":[" + data + "]}", "application/json");
         });
         http.Get("/v1/models/(.+)", [this](const httplib::Request & req, httplib::Response & res) {
-            if (req.matches[1] != name()) {
-                send_error(res, {404, "The model " + json_string(req.matches[1]) + " does not exist.", "model", "model_not_found"});
-                return;
+            for (const auto & served : models_.all()) {
+                if (req.matches[1] == speech_model_info_name(served->info().get())) {
+                    res.set_content(model_json(*served), "application/json");
+                    return;
+                }
             }
-            res.set_content(model_json(), "application/json");
+            send_error(res, {404, "The model " + json_string(req.matches[1]) + " does not exist.", "model", "model_not_found"});
         });
         http.Post("/v1/audio/speech", [this](const httplib::Request & req, httplib::Response & res) {
-            if (serves(SPEECH_TASK_SYNTHESIS, req, res)) speech(req, res);
+            if (auto served = held(SPEECH_TASK_SYNTHESIS, req, res)) speech(std::move(served), req, res);
         });
         http.Post("/v1/audio/transcriptions", [this](const httplib::Request & req, httplib::Response & res) {
-            if (serves(SPEECH_TASK_RECOGNITION, req, res)) transcription(req, res);
+            if (auto served = held(SPEECH_TASK_RECOGNITION, req, res)) transcription(std::move(served), req, res);
         });
     }
 
 private:
-    speech_model * model_;
-    /** The information of the model, whose voices are all added before the server listens. */
-    ModelInfo info_;
-    std::vector<std::string> cors_origins_;
-    long long created_;
-    Turns turns_;
+    ServedModels & models_;
+    const Access & access_;
 
-    std::string name() const { return speech_model_info_name(info_.get()); }
-    speech_task task() const { return speech_model_info_task(info_.get()); }
-    int sample_rate() const { return speech_model_info_sample_rate(info_.get()); }
-
-    /** OpenAI's model object, with the release of speech.cpp and the model's information. */
-    std::string model_json() const {
-        return "{\"id\":" + json_string(name()) + ",\"object\":\"model\",\"created\":" + std::to_string(created_) +
-               ",\"owned_by\":\"speech.cpp\",\"version\":" + json_string(speech_version()) + ",\"speech\":" + speech_model_info_json(info_.get()) + "}";
+    /**
+     * The model of the task the endpoint asks for; otherwise answers a 404, as for a path the server does not have,
+     * or a 503 while the page loads one in its place.
+     */
+    std::shared_ptr<Served> held(speech_task wanted, const httplib::Request & req, httplib::Response & res) const {
+        if (auto served = models_.of(wanted)) return served;
+        const std::string task = std::string("speech ") + task_name(wanted);
+        if (const std::string coming = models_.replacing(wanted); !coming.empty()) {
+            res.set_header("Retry-After", "5");
+            send_error(res, {503, "The " + task + " model is being loaded (" + coming + "); send the request again once it is in place.", "",
+                             "model_loading"});
+            return nullptr;
+        }
+        std::string message = "This server holds no " + task + " model, which " + req.path + " is for";
+        const speech_task other = wanted == SPEECH_TASK_SYNTHESIS ? SPEECH_TASK_RECOGNITION : SPEECH_TASK_SYNTHESIS;
+        if (const auto served = models_.of(other)) {
+            message += "; it holds " + std::string(speech_model_info_name(served->info().get())) + ", a speech " + task_name(other) +
+                       " model, " + (other == SPEECH_TASK_SYNTHESIS ? "which /v1/audio/speech is for" : "which /v1/audio/transcriptions is for");
+        }
+        send_error(res, {404, message + ". Give speech serve a " + task + " model" + (access_.loopback() ? ", or pick one on its page." : "."), "", ""});
+        return nullptr;
     }
 
     /**
-     * Whether the model does what the endpoint asks; otherwise answers a 404, as for a path the server does not have,
-     * with a message that names the endpoint of the model's task.
+     * Refuses a request from an origin that may not call the server, adds the CORS headers for an origin --cors-origin
+     * allows, and answers a preflight.
      */
-    bool serves(speech_task wanted, const httplib::Request & req, httplib::Response & res) const {
-        if (task() == wanted) return true;
-        const bool synthesis = task() == SPEECH_TASK_SYNTHESIS;
-        send_error(res, {404, "This server serves " + name() + ", a speech " + task_name(task()) + " model, which " + req.path + " is not for; " +
-                                  (synthesis ? "POST its text to /v1/audio/speech." : "POST its audio to /v1/audio/transcriptions."),
-                         "", ""});
-        return false;
-    }
-
-    /** Adds the CORS headers for an allowed origin, and answers a preflight. */
-    httplib::Server::HandlerResponse cors(const httplib::Request & req, httplib::Response & res) {
+    httplib::Server::HandlerResponse admit(const httplib::Request & req, httplib::Response & res) const {
+        if (const auto refusal = access_.origin_refusal(req)) {
+            send_error(res, *refusal);
+            return httplib::Server::HandlerResponse::Handled;
+        }
         const std::string origin = req.get_header_value("Origin");
-        const bool any = std::find(cors_origins_.begin(), cors_origins_.end(), "*") != cors_origins_.end();
-        const bool allowed = !origin.empty() && (any || std::find(cors_origins_.begin(), cors_origins_.end(), origin) != cors_origins_.end());
+        const bool allowed = access_.cross_origin_allowed(origin);
         if (allowed) {
-            res.set_header("Access-Control-Allow-Origin", any ? "*" : origin);
+            res.set_header("Access-Control-Allow-Origin", access_.any_origin() ? "*" : origin);
             res.set_header("Access-Control-Expose-Headers", "X-Sample-Rate, X-Speech-Seed, X-Speech-Stop");
-            if (!any) res.set_header("Vary", "Origin");
+            if (!access_.any_origin()) res.set_header("Vary", "Origin");
         }
         if (req.method != "OPTIONS") return httplib::Server::HandlerResponse::Unhandled;
         if (allowed) {
@@ -167,16 +181,18 @@ private:
         return true;
     }
 
-    void speech(const httplib::Request & req, httplib::Response & res) {
+    void speech(std::shared_ptr<Served> served, const httplib::Request & req, httplib::Response & res) {
+        const auto info = served->info();
+        const int sample_rate = speech_model_info_sample_rate(info.get());
         openai::SpeechRequest asked;
         try {
-            asked = openai::read_speech_request(req.body, name());
+            asked = openai::read_speech_request(req.body, speech_model_info_name(info.get()));
         } catch (const ApiError & e) {
             send_error(res, e);
             return;
         }
         auto job = std::make_shared<SpeechJob>();
-        job->sample_rate = sample_rate();
+        job->sample_rate = sample_rate;
         std::optional<int64_t> seed;
         std::string voice;
         for (const RequestOption & o : asked.options) {
@@ -184,12 +200,13 @@ private:
             if (o.option == SPEECH_OPT_VOICE) voice = std::get<std::string>(o.value);
         }
         // A pcm stream's headers leave before its result, so the server draws the seed the library would draw.
-        if (!seed && speech_model_info_takes(info_.get(), SPEECH_OPT_SEED)) {
+        if (!seed && speech_model_info_takes(info.get(), SPEECH_OPT_SEED)) {
             seed = draw_seed();
             asked.options.push_back({SPEECH_OPT_SEED, *seed});
         }
+        job->served = served;
         try {
-            job->request = new_request(model_);
+            job->request = new_request(served->get());
             check(speech_request_set_text(job->request.get(), asked.input.c_str()));
             apply_options(job->request.get(), asked.options);
             check(speech_request_set_progress(job->request.get(), on_progress, job.get()));
@@ -199,8 +216,8 @@ private:
         }
         char log[256];
         std::snprintf(log, sizeof log, "speech: voice %s, seed %lld", voice.c_str(), (long long) seed.value_or(-1));
-        const uint64_t ticket = turns_.take();
-        std::thread(synthesize, job, std::ref(turns_), ticket, std::string(log)).detach();
+        const uint64_t ticket = served->turns().take();
+        std::thread(synthesize, job, std::ref(served->turns()), ticket, std::string(log)).detach();
 
         // A wav is sent whole, so it waits for the end; a stream waits until the library has begun the request's work,
         // so that a request it refuses is answered with an error status rather than a stream that breaks off.
@@ -214,11 +231,11 @@ private:
                 return;
             }
         }
-        res.set_header("X-Sample-Rate", std::to_string(sample_rate()));
+        res.set_header("X-Sample-Rate", std::to_string(sample_rate));
         if (seed) res.set_header("X-Speech-Seed", std::to_string(*seed));
         if (whole) {
             res.set_header("X-Speech-Stop", speech_stop_name(job->stop));
-            res.set_content(wav_header(job->pending.size(), sample_rate()) + job->pending, "audio/wav");
+            res.set_content(wav_header(job->pending.size(), sample_rate) + job->pending, "audio/wav");
             return;
         }
         const bool sse = asked.sse;
@@ -234,14 +251,15 @@ private:
      * Recognizes the form's WAV file and answers with its text once it is done, as json, text or verbose_json, which
      * also carries the language the model heard, and with why the recognition ended in X-Speech-Stop.
      */
-    void transcription(const httplib::Request & req, httplib::Response & res) {
+    void transcription(std::shared_ptr<Served> served, const httplib::Request & req, httplib::Response & res) {
+        const auto info = served->info();
         openai::TranscriptionRequest asked;
         try {
             std::vector<openai::FormPart> parts;
             for (const auto & [field_name, field] : req.form.fields) parts.push_back({field_name, field.content, "", false});
             for (const auto & [file_name, file] : req.form.files) parts.push_back({file_name, file.content, file.filename, true});
-            asked = openai::read_transcription_request(req.is_multipart_form_data(), parts, name(),
-                                                       speech_model_info_takes(info_.get(), SPEECH_OPT_TIMESTAMPS));
+            asked = openai::read_transcription_request(req.is_multipart_form_data(), parts, speech_model_info_name(info.get()),
+                                                       speech_model_info_takes(info.get(), SPEECH_OPT_TIMESTAMPS));
         } catch (const ApiError & e) {
             send_error(res, e);
             return;
@@ -249,16 +267,17 @@ private:
         auto job = std::make_shared<TranscriptionJob>();
         job->sample_rate = asked.sample_rate;
         job->duration = (double) asked.samples.size() / asked.sample_rate;
+        job->served = served;
         try {
-            job->request = new_request(model_);
+            job->request = new_request(served->get());
             check(speech_request_set_audio(job->request.get(), asked.samples.data(), asked.samples.size(), asked.sample_rate));
             apply_options(job->request.get(), asked.options);
         } catch (const Failure & e) {
             send_error(res, openai::library_error(e));
             return;
         }
-        const uint64_t ticket = turns_.take();
-        std::thread(transcribe, job, std::ref(turns_), ticket).detach();
+        const uint64_t ticket = served->turns().take();
+        std::thread(transcribe, job, std::ref(served->turns()), ticket).detach();
         std::unique_lock<std::mutex> lock(job->mutex);
         if (!wait(*job, req, lock, [] { return false; })) return;
         if (job->failure) {
@@ -327,27 +346,58 @@ private:
     }
 };
 
+/** Says on stderr which model a task has, as the server starts or the page loads one. */
+void report(const Served & served) {
+    const auto info = served.info();
+    std::fprintf(stderr, "speech serve: %s (%s) on %s, %d Hz, for %s\n", speech_model_info_name(info.get()), speech_model_info_architecture(info.get()),
+                 speech_model_info_device(info.get()), speech_model_info_sample_rate(info.get()),
+                 speech_model_info_task(info.get()) == SPEECH_TASK_SYNTHESIS ? "/v1/audio/speech" : "/v1/audio/transcriptions");
+}
+
 int run_serve(const CommandLine & line, FILE *) {
     const std::string host = line.value("--host").value_or("127.0.0.1");
     const int port = line.integer("--port").value_or(8080);
     if (port < 0 || port > 65535) throw UsageError("--port takes a port from 0 to 65535, not " + std::to_string(port));
-    const Model model = load_model(model_file(line.args[0]), line.loading(true));
-    const ModelInfo info = model_info(model.get());
-    std::fprintf(stderr, "speech serve: %s (%s) on %s, %d Hz, speech.cpp %s\n", speech_model_info_name(info.get()),
-                 speech_model_info_architecture(info.get()), speech_model_info_device(info.get()), speech_model_info_sample_rate(info.get()),
-                 speech_version());
+    const bool open = line.has("--open");
+    if (open && host != "127.0.0.1" && host != "::1" && host != "localhost") {
+        throw UsageError("--open opens the page, which the server has only on 127.0.0.1, ::1 or localhost, not on " + host +
+                         "; leave --host out");
+    }
+    if (line.args.empty() && !open) {
+        throw UsageError(no_model_message("serve MODEL [options]", ModelKind::Any) + "\nOr give --open, and pick the models on the page.");
+    }
+    const Loading loading = line.loading(true);
+    ServedModels models(loading);
+    for (const std::string & argument : line.args) {
+        models.load_given(model_file(argument), is_model_path(argument) ? "" : choice_name(find_model(argument)));
+    }
+    if (!loading.voices.empty()) {
+        const auto synthesis = models.of(SPEECH_TASK_SYNTHESIS);
+        if (!synthesis) throw UsageError("--add-voice adds voices to the synthesis model, and none is given");
+        for (const auto & [name, file] : loading.voices) synthesis->add_voice(name, file);
+    }
+    for (const auto & served : models.all()) report(*served);
 
     httplib::Server http;
     // Nagle's algorithm would hold a small chunk of a stream until the client acknowledges the previous one.
     http.set_tcp_nodelay(true);
-    // A text to speak fits in 1 MB; a file to recognize may take OpenAI's limit for an upload, 25 MB.
-    http.set_payload_max_length(speech_model_info_task(info.get()) == SPEECH_TASK_SYNTHESIS ? 1 << 20 : 25 << 20);
-    Server server(model.get(), line.values("--cors-origin"));
-    server.route(http);
-    if (!http.bind_to_port(host, port)) {
+    // A file to recognize, or a recording to make a voice of, may take OpenAI's limit for an upload, 25 MB.
+    http.set_payload_max_length(25 << 20);
+    const int bound = port == 0 ? http.bind_to_any_port(host) : (http.bind_to_port(host, port) ? port : -1);
+    if (bound < 0) {
         throw Failure(speech_status_name(SPEECH_ERROR_IO), "", "cannot listen on " + host + ":" + std::to_string(port) + "; choose another --port or --host");
     }
-    std::fprintf(stderr, "speech serve: listening on http://%s:%d\n", host.c_str(), port);
+    const Access access(host, bound, line.values("--cors-origin"));
+    Server server(models, access);
+    server.route(http);
+    Page page(models, access, report);
+    page.route(http);
+    const std::string address = host.find(':') == std::string::npos ? host : "[" + host + "]";
+    std::fprintf(stderr, "speech serve: speech.cpp %s, listening on http://%s:%d\n", speech_version(), address.c_str(), bound);
+    if (access.loopback()) {
+        std::fprintf(stderr, "speech serve: the page, which fetches and loads models, is at %s\n", access.page_url().c_str());
+        if (open) open_in_browser(access.page_url());
+    }
     if (!http.listen_after_bind()) throw Failure(speech_status_name(SPEECH_ERROR_IO), "", "the server stopped listening");
     return 0;
 }
@@ -357,15 +407,19 @@ int run_serve(const CommandLine & line, FILE *) {
 Command serve_command() {
     Command c;
     c.name = "serve";
-    c.usage = "serve MODEL [options]";
-    c.summary = "serve a model over HTTP with OpenAI's audio API";
+    c.usage = "serve [MODEL [MODEL]] [options]";
+    c.summary = "serve models over HTTP with OpenAI's audio API, and a page to try them";
     c.description =
-        "Loads MODEL, warmed up unless --no-warmup, adds the voices of --add-voice, and serves it over HTTP: POST\n"
-        "/v1/audio/speech for a synthesis model, POST /v1/audio/transcriptions for a recognition model, GET /v1/models and\n"
-        "GET /health. It has no authentication and no TLS.";
+        "Loads each MODEL, a synthesis model and a recognition model at most, warmed up unless --no-warmup, adds the voices\n"
+        "of --add-voice to the synthesis model, and serves them over HTTP: POST /v1/audio/speech, POST\n"
+        "/v1/audio/transcriptions, GET /v1/models and GET /health. It has no authentication and no TLS, and refuses a\n"
+        "request that a web page at another origin than --cors-origin's sends. On 127.0.0.1, ::1 or localhost it also\n"
+        "serves a page on which to pick models of the catalog, fetch them and try them, at the address with a token\n"
+        "that it prints; --open opens it, and starts the server without a model if none is given.";
     c.flags = {
         {"--host", "ADDRESS", false, "the address to listen on, 127.0.0.1 unless given"},
-        {"--port", "N", false, "the port, 8080 unless given"},
+        {"--port", "N", false, "the port, 8080 unless given; 0 for any free one"},
+        {"--open", "", false, "open the page in the browser once the server listens"},
         {"--cors-origin", "ORIGIN|*", true, "an origin a web page may call the server from, or * for any"},
         add_voice_flag(),
         device_flag("auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists"),
@@ -373,8 +427,7 @@ Command serve_command() {
         no_warmup_flag(),
     };
     c.model = ModelKind::Any;
-    c.min_args = 1;
-    c.max_args = 1;
+    c.max_args = 2;
     c.run = run_serve;
     return c;
 }

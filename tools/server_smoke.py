@@ -64,9 +64,10 @@ status, headers, _ = call("OPTIONS", "/v1/audio/speech", headers={"Origin": ORIG
 assert status == 204 and headers.get("access-control-allow-origin") == ORIGIN, (status, headers)
 status, headers, _ = call("GET", "/health", headers={"Origin": ORIGIN})
 assert "X-Speech-Stop" in headers.get("access-control-expose-headers", ""), headers
-status, headers, _ = call("GET", "/health", headers={"Origin": "http://elsewhere.test"})
-assert "access-control-allow-origin" not in headers, headers
-print("CORS: the preflight answered and the headers exposed for the origin given, none for another")
+expect_error(call("GET", "/health", headers={"Origin": "http://elsewhere.test"}), 403, "origin_not_allowed", None, "GET /health from another origin")
+expect_error(call("OPTIONS", "/v1/audio/speech", headers={"Origin": "http://elsewhere.test", "Access-Control-Request-Method": "POST"}), 403,
+             "origin_not_allowed", None, "a preflight from another origin")
+print("CORS: the preflight answered and the headers exposed for the origin given, and another origin refused")
 rate = info["sample_rate"]
 
 

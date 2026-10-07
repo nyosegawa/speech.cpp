@@ -299,7 +299,7 @@ the C API alone (docs/adr/0017):
 | `speech models` | lists the models a name fetches, what is fetched, and which model to start with (Models by name, above) |
 | `speech pull` | fetches models ahead of their use |
 | `speech rm` | removes fetched models, or the files of earlier releases |
-| `speech serve` | serves a model over HTTP with OpenAI's audio API (The HTTP server, below) |
+| `speech serve` | serves a model of each task over HTTP with OpenAI's audio API, and a page to try models on (The HTTP server, below) |
 | `speech worker` | serves a model over JSON Lines on stdin and stdout (The worker protocol 2, below) |
 
 ```sh
@@ -1103,17 +1103,19 @@ carries voice files (docs/adr/0002).
 
 ## The HTTP server
 
-`speech serve` serves one model over HTTP with OpenAI's audio API, so that a web app, a Python script or curl can
-speak a text or recognize speech without starting the worker. It loads the model as the worker does, listens once the
-model is ready, and logs to stderr.
+`speech serve` serves a synthesis model and a recognition model over HTTP with OpenAI's audio API, so that a web app, a
+Python script or curl can speak a text or recognize speech without starting the worker, and on 127.0.0.1 a page on
+which to pick models of the catalog, fetch them and try them (The page, below). It holds at most one model of each task
+(docs/adr/0038), loads the models given as the worker does, listens once they are ready, and logs to stderr.
 
 ```
-speech serve MODEL [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]... [--add-voice NAME=FILE]...
-                   [--device NAME] [--threads N] [--no-warmup]
+speech serve [MODEL [MODEL]] [--open] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
+             [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup]
 ```
 
 ```sh
-speech serve Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf
+speech serve --open                                   # the page, without a model until one is picked there
+speech serve qwen3-tts-0.6b qwen3-asr-0.6b            # speech and transcriptions
 speech serve Irodori-TTS-848M-MF-v4.1-F16.gguf \
     --add-voice bright=bright-young-woman-10s.voice.gguf --port 8080 --cors-origin http://localhost:5173
 speech serve parakeet-tdt_ctc-0.6B-ja-F16.gguf
@@ -1121,31 +1123,34 @@ speech serve parakeet-tdt_ctc-0.6B-ja-F16.gguf
 
 | Option | Meaning |
 |---|---|
-| `--host ADDRESS` | the address to listen on, 127.0.0.1 unless given; the server has no authentication and no TLS, so a server reachable from other machines belongs behind a proxy that adds them |
-| `--port N` | the port, 8080 unless given |
-| `--cors-origin ORIGIN` | an origin a web page may call the server from, such as `http://localhost:5173`, repeated for more, or `*` for any. Without it the server sends no CORS headers. Preflight requests are answered, and `X-Sample-Rate`, `X-Speech-Seed` and `X-Speech-Stop` are exposed |
-| `--add-voice NAME=FILE`, `--device`, `--threads`, `--no-warmup` | as for the worker (above) |
+| `--host ADDRESS` | the address to listen on, 127.0.0.1 unless given; the server has no authentication and no TLS, so a server reachable from other machines belongs behind a proxy that adds them. On another address than 127.0.0.1, `::1` or `localhost` the page and its endpoints are off |
+| `--port N` | the port, 8080 unless given, or 0 for any free one |
+| `--open` | opens the page in the system's browser once the server listens; without a MODEL the server starts with none |
+| `--cors-origin ORIGIN` | an origin a web page may call the server from, such as `http://localhost:5173`, repeated for more, or `*` for any. A request that a web page at any other origin sends, which a browser marks with its `Origin` header, is refused at every endpoint with a 403 (`origin_not_allowed`); a request without an `Origin`, from curl or a script, is not. For an origin given, preflight requests are answered, and `X-Sample-Rate`, `X-Speech-Seed` and `X-Speech-Stop` are exposed |
+| `--add-voice NAME=FILE` | adds a voice to the synthesis model given |
+| `--device`, `--threads`, `--no-warmup` | as for the worker (above), for every model the server loads, the page's too |
 
 The endpoints:
 
 - `GET /health` answers `{"status":"ok"}`.
-- `GET /v1/models` lists the loaded model as OpenAI's model object (`id` the model's name, `object`, `created`,
-  `owned_by` `"speech.cpp"`) with `version`, the release, and `speech`, the model information (Model information as
-  JSON, above). `GET /v1/models/{id}` gives it alone, and another id is a 404 (`model_not_found`).
+- `GET /v1/models` lists the models held, the synthesis model first, each as OpenAI's model object (`id` the model's
+  name, `object`, `created`, `owned_by` `"speech.cpp"`) with `version`, the release, and `speech`, the model information
+  (Model information as JSON, above). `GET /v1/models/{id}` gives one alone, and another id is a 404 (`model_not_found`).
 - `POST /v1/audio/speech` speaks a text with a synthesis model, as
   [OpenAI's create speech](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create) does.
 - `POST /v1/audio/transcriptions` recognizes the speech in a WAV file with a recognition model, as
   [OpenAI's create transcription](https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create)
   does (below).
 
-The endpoint of the other task answers a 404 whose message names the right one.
+The endpoint of a task the server holds no model of answers a 404 whose message says so and names the model it holds,
+and one whose model the page is replacing a 503 (`model_loading`) with `Retry-After`.
 
 A speech request is a JSON object:
 
 | Member | Meaning |
 |---|---|
 | `input` | the text, required |
-| `model` | the loaded model's `id` from `/v1/models`, or left out. Any other model is a 404 (`model_not_found`) |
+| `model` | the synthesis model's `id` from `/v1/models`, or left out. Any other model is a 404 (`model_not_found`) |
 | `response_format` | `wav` (the default) or `pcm`. OpenAI's default is `mp3`, which speech.cpp does not encode; `mp3`, `opus`, `aac` and `flac` are refused |
 | `stream_format` | `audio` (the default) or `sse`, which needs `pcm` |
 | `voice`, `language`, `seed`, `speed`, `seconds`, `duration_scale`, `steps`, `max_seconds`, `timestamps`, `prompt`, `decoding`, `do_sample`, `top_k`, `top_p`, `temperature`, `repetition_penalty`, `code_predictor_do_sample`, `code_predictor_top_k`, `code_predictor_top_p`, `code_predictor_temperature`, `instructions`, `cfg_scale_text` and the rest of Irodori-TTS's options | every option of the vocabulary by its name (Options, above), of the option's type, which the model checks: `voice` is one of the model's voices, a Qwen3-TTS speaker or a voice of `--add-voice`, and required; `speed`, `voice` and `instructions` are OpenAI's, the others speech.cpp's own. A request without `seed` gets one drawn from 0 to 2^53 - 1 |
@@ -1191,7 +1196,7 @@ begun the request's work, so a request it refuses gets its error status; an erro
 without its last chunk, which the client reads as a broken transfer, and an SSE stream with
 `{"type":"error","error":{...}}`.
 
-The model serves one request at a time, in the order they arrive; the others wait. A client that disconnects
+Each model serves one request at a time, in the order they arrive; the others wait. A client that disconnects
 while it waits is dropped, and one that disconnects while its request runs stops it at the next chunk (Qwen3-TTS),
 sampler step or codec window (Irodori-TTS) or stage (a recognition), as a cancel of the worker does, so the next
 request starts then.
@@ -1237,7 +1242,7 @@ A transcription request is a `multipart/form-data` form, as OpenAI's API referen
 | Member | Meaning |
 |---|---|
 | `file` | the audio, required: a WAV file, 16-, 24- or 32-bit PCM or 32-bit float at any rate, its channels averaged and resampled by the library to the model's `sample_rate` (16000 for FastConformer and Qwen3-ASR). Any other file is refused with a 400 (`param` `file`) rather than guessed at; convert it first (`ffmpeg -i in.mp3 out.wav`) |
-| `model` | the loaded model's `id`, or left out; any other model is a 404 (`model_not_found`) |
+| `model` | the recognition model's `id`, or left out; any other model is a 404 (`model_not_found`) |
 | `language` | the option `language`: a BCP 47 tag of one of the model's languages, or `auto` (the default) |
 | `prompt` | the option `prompt`: what the model is told of the audio before it hears it, for a model that takes it (Qwen3-ASR); OpenAI's own member, which it describes as text to guide the model's style or continue a previous segment |
 | `response_format` | `json` (the default), which answers `{"text":"..."}`; `text`, which answers the text alone as `text/plain`; or `verbose_json`, which answers `{"task":"transcribe","language":…,"duration":…,"text":…,"segments":[{"id":0,"start":…,"end":…,"text":…}]}`, the duration being the file's in seconds and `language` the language the model heard (below). With a model that gives times (FastConformer) it sets the option `timestamps` and carries the segments; with one that gives none (Qwen3-ASR) it carries no segments, which OpenAI's schema does not require. `srt`, `vtt` and `diarized_json` are refused: speech.cpp gives neither subtitles nor speakers |
@@ -1268,6 +1273,53 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav -F respo
 curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav -F language=ja -F prompt="Claude Code、渋谷"
 curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav -F decoding=greedy   # reazonspeech-nemo-v2
 ```
+
+### The page
+
+On 127.0.0.1, `::1` or `localhost`, the server also serves a page on which to try models without writing a request:
+
+```sh
+speech serve --open
+```
+
+It lists the catalog's models in two groups, speaking and transcribing, each with its size, whether it is fetched, and
+the languages for which it is the model to start with. Picking one fetches it with its progress, which can be cancelled
+and is resumed the next time, and loads it in place of the model of its task. Speak takes a text and the synthesis
+model's options, built from its information (the common ones shown, the rest folded away), plays the speech as the
+server streams it, and saves it as a WAVE file; for a model that takes voice files (Irodori-TTS) it makes a voice from
+a recording dropped on it or recorded in the browser. Transcribe takes an audio file in any format the browser decodes,
+or a recording, brought to one channel at the model's rate, and shows the text, the language heard and the segments
+with their times where the model gives them. Errors appear in the server's words next to what caused them. The page
+is plain HTML, CSS and JavaScript built into `speech`, and needs nothing from the network.
+
+The server has no authentication, and any web page open in a browser can send requests to 127.0.0.1, so the page is
+guarded (docs/adr/0039):
+
+- The endpoints that only the page calls take a token that the server makes each time it starts. It prints the page's
+  address with the token after `#`, `http://127.0.0.1:8080/#token=…`, which `--open` opens; the fragment reaches no
+  server log and no referrer, and the page sends the token as `Authorization: Bearer`. Without it they answer 401
+  (`missing_token`), and with another one 403 (`invalid_token`).
+- The page and its endpoints answer only a `Host` of 127.0.0.1, localhost or [::1] with the server's port, against DNS
+  rebinding (403 `host_not_allowed`), and only while the server listens on such an address; elsewhere `GET /` says how
+  to reach the page, through an SSH tunnel with the same port at both ends, and the endpoints answer 404 (`page_off`).
+- Every endpoint, OpenAI's included, refuses a request whose `Origin` is neither the server's own nor one of
+  `--cors-origin` (above).
+- The page loads models of the catalog alone, by their names, and nothing on it removes a file; `speech rm` does.
+
+Its endpoints, for the page and anything that has the token:
+
+- `GET /speech/models` answers `{"catalog": …, "synthesis": {"held": …, "replacing": …}, "recognition": {…}}`: the catalog
+  as `speech models --json` gives it, and for each task the model held, `{"name", "path", "model"}` with the catalog's
+  name it was loaded by (`null` for a file given on the command line) and its model information, and the name of the
+  model the page is loading in its place.
+- `POST /speech/load` with `{"model": "NAME[:TYPE]"}` fetches the model and loads it in place of its task's, answering
+  with server-sent events: `{"type":"fetch","done":…,"total":…}` as the file comes, `{"type":"load"}`, and
+  `{"type":"loaded","task":…,"held":{…}}`, or `{"type":"error","error":{…}}`. A client that goes away stops the fetch,
+  whose part the next load resumes; the model held serves until the fetch is done, and the load replaces it once its
+  requests have ended. A name outside the catalog is a 404 (`model_not_found`), and a second load of a task while one
+  runs a 409 (`model_loading`).
+- `POST /speech/voices`, a form with `name` and a WAVE file `file`, adds a voice made from the recording to the
+  synthesis model, which keeps it while it stays loaded, and answers `{"held": {…}}`.
 
 ## Files on Hugging Face
 

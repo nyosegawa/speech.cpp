@@ -149,13 +149,35 @@ elseif (UNIX)
     set_property(TARGET speech APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/speech.map)
 endif()
 
-# The catalog of the models speech fetches by name goes into it as an array of bytes, since MSVC refuses a string
-# literal of more than 16380 bytes.
-file(READ tools/models/catalog.json SPEECH_CATALOG_HEX HEX)
-string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," SPEECH_CATALOG_BYTES "${SPEECH_CATALOG_HEX}")
-file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/catalog-json.cpp
-     CONTENT "extern const unsigned char speech_catalog_json[] = {@SPEECH_CATALOG_BYTES@0};\n" @ONLY)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS tools/models/catalog.json)
+# Files that go into speech, the catalog of the models it fetches by name and the files of its page, as arrays of bytes
+# with a zero after them, since MSVC refuses a string literal of more than 16380 bytes. A change to a file configures
+# the build again.
+function(speech_embed NAME FILE OUT)
+    file(READ ${FILE} hex HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," bytes "${hex}")
+    set(${OUT} "extern const unsigned char ${NAME}[] = {${bytes}0};\n" PARENT_SCOPE)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${FILE})
+endfunction()
+
+speech_embed(speech_catalog_json ${CMAKE_CURRENT_SOURCE_DIR}/tools/models/catalog.json SPEECH_CATALOG_SOURCE)
+file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/catalog-json.cpp CONTENT "@SPEECH_CATALOG_SOURCE@" @ONLY)
+
+file(GLOB SPEECH_PAGE_FILES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/server/page/*.html
+     ${CMAKE_CURRENT_SOURCE_DIR}/tools/server/page/*.css ${CMAKE_CURRENT_SOURCE_DIR}/tools/server/page/*.js)
+list(SORT SPEECH_PAGE_FILES)
+set(SPEECH_PAGE_SOURCE "#include \"page-files.h\"\n")
+set(SPEECH_PAGE_TABLE "")
+foreach(path ${SPEECH_PAGE_FILES})
+    get_filename_component(name ${path} NAME)
+    string(MAKE_C_IDENTIFIER "speech_page_${name}" id)
+    speech_embed(${id} ${path} bytes)
+    string(APPEND SPEECH_PAGE_SOURCE "${bytes}")
+    string(APPEND SPEECH_PAGE_TABLE "    {\"${name}\", ${id}, sizeof ${id} - 1},\n")
+endforeach()
+list(LENGTH SPEECH_PAGE_FILES SPEECH_PAGE_COUNT)
+string(APPEND SPEECH_PAGE_SOURCE "extern const PageFile speech_page_files[] = {\n${SPEECH_PAGE_TABLE}};\n"
+       "extern const size_t speech_page_file_count = ${SPEECH_PAGE_COUNT};\n")
+file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/page-files.cpp CONTENT "@SPEECH_PAGE_SOURCE@" @ONLY)
 
 # Every program on the library is one executable, speech, with a subcommand each (docs/adr/0017), the library and
 # ggml linked in. The target is speech-cli since the shared library holds the name speech. It has the one dependency
@@ -172,6 +194,7 @@ add_executable(speech-cli
     tools/models/fetch.cpp
     tools/models/sha256.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/catalog-json.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/page-files.cpp
     tools/common/command-line.cpp
     tools/common/json-reader.cpp
     tools/common/request-options.cpp
@@ -179,9 +202,12 @@ add_executable(speech-cli
     tools/worker/inbox.cpp
     tools/server/server.cpp
     tools/server/openai-api.cpp
+    tools/server/served-models.cpp
+    tools/server/access.cpp
+    tools/server/page.cpp
 )
 set_target_properties(speech-cli PROPERTIES OUTPUT_NAME speech)
-target_include_directories(speech-cli PRIVATE tools/common tools/cli tools/models vendor/cpp-httplib)
+target_include_directories(speech-cli PRIVATE tools/common tools/cli tools/models tools/server vendor/cpp-httplib)
 target_link_libraries(speech-cli PRIVATE speech-static)
 if (WIN32)
     target_compile_definitions(speech-cli PRIVATE NOMINMAX)

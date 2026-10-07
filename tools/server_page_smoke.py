@@ -1,0 +1,254 @@
+"""Checks `speech serve` with a model of each task and its page: the page's files, its endpoints under /speech/, the
+protections around them, the OpenAI endpoints with two models held, and the replacement of a model by the page.
+
+The model files are local copies of the catalog's files, found by their size and SHA-256 and linked into a model
+folder of the script's own (SPEECH_MODEL_DIR), so that loading one by its name fetches nothing. It checks:
+
+- a server given no model and no --open, and --open on another address than a loopback one: exit 2;
+- the page: GET / with its Content-Security-Policy, every file it and its modules name, a file it does not have, and a
+  Host that is not 127.0.0.1, localhost or [::1] with the server's port, refused;
+- the token: GET /speech/models, POST /speech/load and POST /speech/voices without it (401), with a wrong one (403),
+  and with it but from a foreign Origin or for a foreign Host (403); with it, the catalog as `speech models --json`
+  gives it and the models held, from the server's own origin as well as from none;
+- every endpoint refusing a foreign Origin, the OpenAI ones included, preflights too, while a request without one (curl,
+  scripts) and one from --cors-origin's origin pass;
+- the OpenAI endpoints with the two models: /v1/models lists both, speech and a transcription of that speech, and a
+  request naming the model of the other task refused;
+- a load of a name outside the catalog (404), of a model file's path (400) and of a body it does not take (400);
+- switching: the page loads the third model in place of its task's, a second load of that task meanwhile is refused
+  (409), the endpoint of that task serves the new model while the other task's stays, and the first model comes back
+  by its catalog name;
+- a fetch the page stops: the load of a model not in the folder, closed at its first progress, leaves a part and the
+  model held as it was (a few megabytes come from Hugging Face; the part is removed after);
+- a voice added to a model that takes voice files, or refused by one that does not;
+- a server on 0.0.0.0, which has no page and answers its endpoints with how to reach them (on Windows its firewall may
+  ask about it).
+
+usage: python3 tools/server_page_smoke.py <speech> <work dir> <synthesis.gguf with voices of its own> <recognition.gguf> <third model.gguf>
+"""
+
+import hashlib
+import http.client
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import uuid
+
+from server_client import Server, expect_error
+
+if len(sys.argv) != 6:
+    raise SystemExit(__doc__.strip().splitlines()[-1])
+speech, work, *files = sys.argv[1:]
+folder = os.path.join(os.path.abspath(work), "page-smoke-models")
+shutil.rmtree(folder, ignore_errors=True)
+os.makedirs(folder)
+env = {**os.environ, "SPEECH_MODEL_DIR": folder}
+ALLOWED = "http://localhost:5173"
+FOREIGN = "http://evil.example"
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(16 << 20):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+catalog = json.loads(subprocess.run([speech, "models", "--json"], env=env, capture_output=True, check=True).stdout)
+given = []
+for path in files:
+    size, digest = os.path.getsize(path), sha256(path)
+    found = [(m, f) for m in catalog["models"] for f in m["files"] if f["size"] == size and f["sha256"] == digest]
+    if not found:
+        raise SystemExit(f"{path} is no file of the catalog")
+    m, f = found[0]
+    os.makedirs(os.path.dirname(f["path"]), exist_ok=True)
+    os.symlink(os.path.abspath(path), f["path"])
+    given.append({"path": path, "name": m["name"] if f["type"] == m["type"] else f"{m['name']}:{f['type']}", "task": m["task"]})
+synthesis, recognition, third = given
+assert synthesis["task"] == "synthesis" and recognition["task"] == "recognition", "give a synthesis model, then a recognition model"
+print(f"linked {', '.join(g['name'] for g in given)} into {folder}")
+
+r = subprocess.run([speech, "serve", "--port", "0"], env=env, capture_output=True)
+starting = {m["name"] for m in catalog["models"] if m["start"]}
+assert r.returncode == 2 and all(n in r.stderr.decode() for n in starting), r.stderr
+r = subprocess.run([speech, "serve", "--open", "--host", "0.0.0.0", "--port", "0"], env=env, capture_output=True)
+assert r.returncode == 2, r.stderr
+print("no model and no --open, and --open on 0.0.0.0: exit 2")
+
+server = Server(speech, [synthesis["path"], recognition["path"], "--cors-origin", ALLOWED], env)
+call, post_json, port, token = server.call, server.post_json, server.port, server.token
+own = f"http://127.0.0.1:{port}"
+assert server.page == f"{own}/#token={token}", server.page
+auth = {"Authorization": f"Bearer {token}"}
+
+status, headers, page = call("GET", "/")
+assert status == 200 and headers["content-type"].startswith("text/html"), (status, headers)
+assert "frame-ancestors 'none'" in headers["content-security-policy"] and headers["referrer-policy"] == "no-referrer", headers
+named, seen = set(re.findall(r'(?:href|src)="(/page/[a-z0-9-]+\.(?:js|css))"', page.decode())), set()
+while named - seen:
+    path = sorted(named - seen)[0]
+    seen.add(path)
+    status, headers, body = call("GET", path)
+    assert status == 200 and headers["content-type"].startswith("text/css" if path.endswith(".css") else "text/javascript"), (path, status)
+    named |= {"/page/" + n for n in re.findall(r"""(?:from |import\(|addModule\()'(?:\./|/page/)([a-z0-9-]+\.js)'""", body.decode())}
+expect_error(call("GET", "/page/no-such-file.js"), 404, None, None, "a file the page does not have")
+for host in ("evil.example", f"evil.example:{port}", f"127.0.0.1:{port + 1}"):
+    expect_error(call("GET", "/", headers={"Host": host}), 403, "host_not_allowed", None, f"the page for the Host {host}")
+print(f"the page and the {len(seen)} files it and its modules name")
+
+for method, path in (("GET", "/speech/models"), ("POST", "/speech/load"), ("POST", "/speech/voices")):
+    status, headers, body = call(method, path)
+    expect_error((status, headers, body), 401, "missing_token", None, f"{method} {path} without the token")
+    assert headers.get("www-authenticate") == "Bearer", headers
+    expect_error(call(method, path, headers={"Authorization": "Bearer " + "0" * 32}), 403, "invalid_token", None, f"{method} {path}, a wrong token")
+    expect_error(call(method, path, headers={**auth, "Origin": FOREIGN}), 403, "origin_not_allowed", None, f"{method} {path} from {FOREIGN}")
+    expect_error(call(method, path, headers={**auth, "Host": f"evil.example:{port}"}), 403, "host_not_allowed", None,
+                 f"{method} {path} for a foreign Host")
+for origin in (None, own, f"http://localhost:{port}"):
+    status, _, body = call("GET", "/speech/models", headers={**auth, **({"Origin": origin} if origin else {})})
+    assert status == 200, (origin, body)
+state = json.loads(body)
+assert state["catalog"]["models"] == json.loads(subprocess.run([speech, "models", "--json"], env=env, capture_output=True).stdout)["models"]
+for g in (synthesis, recognition):
+    held = state[g["task"]]
+    assert held["replacing"] is None and held["held"]["name"] is None and held["held"]["path"] == g["path"], held
+print("the token, the Host and the Origin of /speech/: refused without, wrong, foreign; the catalog and the two models given")
+
+expect_error(call("GET", "/health", headers={"Origin": FOREIGN}), 403, "origin_not_allowed", None, "GET /health from a foreign origin")
+expect_error(call("OPTIONS", "/v1/audio/speech", headers={"Origin": FOREIGN, "Access-Control-Request-Method": "POST"}), 403,
+             "origin_not_allowed", None, "a preflight from a foreign origin")
+status, _, body = call("GET", "/v1/models")
+listed = json.loads(body)["data"]
+assert status == 200 and [m["speech"]["task"] for m in listed] == ["synthesis", "recognition"], body
+info = {m["speech"]["task"]: m["speech"] for m in listed}
+
+
+def speak(text="明日の東京は晴れです。", headers=None):
+    voices = info["synthesis"]["voices"]
+    member = {"input": text, "seed": 5} | ({"voice": voices[0]["name"]} if voices else {})
+    return post_json("/v1/audio/speech", member, headers)
+
+
+def transcribe(wav, headers=None):
+    boundary = uuid.uuid4().hex
+    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"x.wav\"\r\nContent-Type: audio/wav\r\n\r\n").encode()
+    body += wav + f"\r\n--{boundary}--\r\n".encode()
+    return call("POST", "/v1/audio/transcriptions", body, {"Content-Type": f"multipart/form-data; boundary={boundary}", **(headers or {})})
+
+
+def check_tasks():
+    """Speech from the synthesis model, its text from the recognition model, and requests from origins."""
+    if not info["synthesis"]["voices"]:
+        return None
+    status, headers, wav = speak()
+    assert status == 200 and headers["content-type"] == "audio/wav", wav[:200]
+    status, _, body = transcribe(wav)
+    assert status == 200 and json.loads(body)["text"], body
+    expect_error(speak(headers={"Origin": FOREIGN}), 403, "origin_not_allowed", None, "speech from a foreign origin")
+    status, headers, _ = speak(headers={"Origin": ALLOWED})
+    assert status == 200 and headers["access-control-allow-origin"] == ALLOWED, headers
+    return wav, json.loads(body)["text"]
+
+
+def check_voice(wav):
+    """A voice made from a recording, added to a synthesis model that takes voice files and refused by another."""
+    boundary = uuid.uuid4().hex
+    form = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nsmoke\r\n--{boundary}\r\nContent-Disposition: form-data; "
+            f"name=\"file\"; filename=\"x.wav\"\r\n\r\n").encode() + wav + f"\r\n--{boundary}--\r\n".encode()
+    got = call("POST", "/speech/voices", form, {**auth, "Content-Type": f"multipart/form-data; boundary={boundary}"})
+    if info["synthesis"]["voice_files"]:
+        assert got[0] == 200 and "smoke" in [v["name"] for v in json.loads(got[2])["held"]["model"]["voices"]], got[2][:300]
+        info["synthesis"] = json.loads(got[2])["held"]["model"]
+        print(f"a voice made from a recording added to {info['synthesis']['name']}")
+    else:
+        expect_error(got, 400, "unsupported_parameter", None, f"a voice for {info['synthesis']['name']}, which takes no voice files")
+
+
+wav, text = check_tasks()
+check_voice(wav)
+expect_error(post_json("/v1/audio/speech", {"model": info["recognition"]["name"], "input": "あ。"}), 404, "model_not_found", "model",
+             "speech naming the recognition model")
+print(f"two models: /v1/models lists both, speech of {len(wav) - 44} bytes and its text {text!r}, from no origin and --cors-origin's")
+
+expect_error(post_json("/speech/load", {"model": "no-such-model"}, auth), 404, "model_not_found", "model", "a load outside the catalog")
+expect_error(post_json("/speech/load", {"model": f"{recognition['name'].split(':')[0]}:q9_9"}, auth), 404, "model_not_found", "model",
+             "a load of a type the catalog does not hold")
+expect_error(post_json("/speech/load", {"model": "/tmp/x.gguf"}, auth), 400, "invalid_value", "model", "a load of a model file")
+expect_error(call("POST", "/speech/load", b"{not json", auth), 400, "invalid_value", "model", "a load that is not JSON")
+expect_error(post_json("/speech/load", {"model": third["name"], "path": "/tmp"}, auth), 400, "invalid_value", "model", "a load with another member")
+
+
+def load(name, task):
+    r = call("POST", "/speech/load", json.dumps({"model": name}).encode(), {**auth, "Content-Type": "application/json"}, stream=True)
+    assert r.status == 200 and r.getheader("Content-Type") == "text/event-stream", r.status
+    expect_error(post_json("/speech/load", {"model": name}, auth), 409, "model_loading", "model", f"a second load of {task} meanwhile")
+    events = [json.loads(block[6:]) for block in r.read().decode().split("\n\n") if block]
+    assert [e["type"] for e in events][-2:] == ["load", "loaded"], events
+    held = events[-1]["held"]
+    assert events[-1]["task"] == task and held["name"] == name and held["model"]["task"] == task, events[-1]
+    state = json.loads(call("GET", "/speech/models", headers=auth)[2])
+    assert state[task]["held"]["name"] == name and state[task]["replacing"] is None, state[task]
+    return held
+
+
+task, other = third["task"], "recognition" if third["task"] == "synthesis" else "synthesis"
+before = json.loads(call("GET", "/speech/models", headers=auth)[2])[other]["held"]
+held = load(third["name"], task)
+info[task] = held["model"]
+if task == "synthesis":
+    check_voice(wav)
+state = json.loads(call("GET", "/speech/models", headers=auth)[2])
+assert state[other]["held"] == before, "the model of the other task changed"
+status, _, body = call("GET", "/v1/models")
+assert {m["id"] for m in json.loads(body)["data"]} == {info["synthesis"]["name"], info["recognition"]["name"]}, body
+check_tasks()
+back = {"synthesis": synthesis, "recognition": recognition}[task]
+info[task] = load(back["name"], task)["model"]
+check_tasks()
+print(f"switching: {third['name']} in place of the {task} model, a second load meanwhile refused, both tasks served; "
+      f"{back['name']} back by its name")
+
+absent = next(m for m in catalog["models"] if all(m["name"] != g["name"].split(":")[0] for g in given))
+held_before = json.loads(call("GET", "/speech/models", headers=auth)[2])[absent["task"]]["held"]
+connection = http.client.HTTPConnection("127.0.0.1", port, timeout=600)
+connection.request("POST", "/speech/load", json.dumps({"model": absent["name"]}).encode(), {**auth, "Content-Type": "application/json"})
+r = connection.getresponse()
+assert r.status == 200, r.status
+buffer = b""
+while not re.search(rb'"type":"fetch","done":[1-9]', buffer):
+    chunk = r.read1(4096)
+    assert chunk, f"the load of {absent['name']} ended before its fetch: {buffer[-300:]!r}"
+    buffer += chunk
+connection.close()
+for _ in range(100):
+    state = json.loads(call("GET", "/speech/models", headers=auth)[2])
+    if state[absent["task"]]["replacing"] is None:
+        break
+    time.sleep(0.1)
+entry = next(m for m in state["catalog"]["models"] if m["name"] == absent["name"])
+part = next(f for f in entry["files"] if f["type"] == entry["type"])
+assert state[absent["task"]]["replacing"] is None and not part["fetched"] and part["partial"] > 0, (state[absent["task"]], part)
+assert state[absent["task"]]["held"] == held_before, "a stopped fetch changed the model held"
+subprocess.run([speech, "rm", absent["name"]], env=env, capture_output=True, check=True)
+print(f"a fetch the page stopped: {part['partial']} bytes of {absent['name']} kept as a part, the {absent['task']} model as it was")
+
+out = server.stop()
+assert out == b"", out[:200]
+
+elsewhere = Server(speech, [synthesis["path"]], env, host="0.0.0.0")
+assert elsewhere.page is None, elsewhere.lines
+status, headers, body = elsewhere.call("GET", "/")
+assert status == 404 and headers["content-type"].startswith("text/html") and b"127.0.0.1" in body, body
+expect_error(elsewhere.call("GET", "/speech/models", headers={"Authorization": "Bearer " + "0" * 32}), 404, "page_off", None,
+             "/speech/models on 0.0.0.0")
+assert elsewhere.call("GET", "/v1/models")[0] == 200
+elsewhere.stop()
+print("on 0.0.0.0: no page address printed, the page saying how to reach it, and its endpoints off")
+shutil.rmtree(folder)
+print("ok")

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>speech.cpp</title>
+  <link rel="stylesheet" href="/page/style.css">
+  <script type="module" src="/page/main.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <h1>speech.cpp</h1>
+    <p class="muted" id="about"></p>
+  </header>
+
+  <main>
+    <p class="notice" id="page-error" role="alert" hidden></p>
+
+    <section class="panel" aria-labelledby="models-heading">
+      <h2 id="models-heading">Models</h2>
+      <p class="muted">Choose a model to speak with and one to transcribe with. The first time, a model is fetched from
+        Hugging Face, which takes the size it shows; after that it loads from <span id="model-dir">its folder</span>.</p>
+      <div class="columns">
+        <section aria-labelledby="synthesis-heading">
+          <h3 id="synthesis-heading">Speaking</h3>
+          <ul class="model-list" id="synthesis-models"></ul>
+        </section>
+        <section aria-labelledby="recognition-heading">
+          <h3 id="recognition-heading">Transcribing</h3>
+          <ul class="model-list" id="recognition-models"></ul>
+        </section>
+      </div>
+    </section>
+
+    <div class="columns wide">
+      <section class="panel" aria-labelledby="speak-heading">
+        <h2 id="speak-heading">Speak</h2>
+        <p class="muted" id="speak-empty">Choose a speaking model above.</p>
+        <form id="speak-form" novalidate hidden>
+          <p class="model-in-use" id="speak-model"></p>
+          <div class="field">
+            <label for="speak-text">Text</label>
+            <textarea id="speak-text" rows="4" required aria-describedby="speak-text-hint speak-text-error"></textarea>
+            <p class="hint" id="speak-text-hint">Ctrl+Enter or ⌘+Enter speaks it.</p>
+            <p class="error" id="speak-text-error" hidden></p>
+          </div>
+          <div class="fields" id="speak-options"></div>
+          <details class="more">
+            <summary>More options</summary>
+            <div class="fields" id="speak-more"></div>
+          </details>
+          <div class="actions">
+            <button type="submit" class="primary" id="speak-start">Speak</button>
+            <button type="button" id="speak-stop" disabled>Stop</button>
+            <button type="button" id="speak-save" disabled>Save WAVE</button>
+          </div>
+          <p class="status" id="speak-status" role="status"></p>
+          <p class="error" id="speak-error" role="alert" hidden></p>
+        </form>
+        <details class="voice-maker" id="voice-maker" hidden>
+          <summary>Make a voice from a recording</summary>
+          <form id="voice-form" novalidate>
+            <p class="muted">A few seconds of one speaker, without music or noise. The voice lasts as long as the
+              model stays loaded.</p>
+            <div class="audio-slot" id="voice-audio"></div>
+            <div class="field">
+              <label for="voice-name">Name of the voice</label>
+              <input id="voice-name" required autocomplete="off" spellcheck="false">
+            </div>
+            <div class="actions">
+              <button type="submit" class="primary" id="voice-add">Add the voice</button>
+            </div>
+            <p class="status" id="voice-status" role="status"></p>
+            <p class="error" id="voice-error" role="alert" hidden></p>
+          </form>
+        </details>
+      </section>
+
+      <section class="panel" aria-labelledby="transcribe-heading">
+        <h2 id="transcribe-heading">Transcribe</h2>
+        <p class="muted" id="transcribe-empty">Choose a transcribing model above.</p>
+        <form id="transcribe-form" novalidate hidden>
+          <p class="model-in-use" id="transcribe-model"></p>
+          <div class="audio-slot" id="transcribe-audio"></div>
+          <div class="fields" id="transcribe-options"></div>
+          <div class="actions">
+            <button type="submit" class="primary" id="transcribe-start">Transcribe</button>
+            <button type="button" id="transcribe-stop" disabled>Stop</button>
+          </div>
+          <p class="status" id="transcribe-status" role="status"></p>
+          <p class="error" id="transcribe-error" role="alert" hidden></p>
+        </form>
+        <section class="transcript" id="transcript" aria-labelledby="transcript-heading" hidden>
+          <h3 id="transcript-heading">Text</h3>
+          <p class="transcript-text" id="transcript-text"></p>
+          <p class="muted" id="transcript-meta"></p>
+          <table id="segments" hidden>
+            <caption>Segments</caption>
+            <thead><tr><th scope="col">Start</th><th scope="col">End</th><th scope="col">Text</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </section>
+      </section>
+    </div>
+  </main>
+
+  <template id="model-item">
+    <li class="model">
+      <div class="model-text">
+        <div class="model-head">
+          <span class="model-name"></span>
+          <span class="badge" hidden>In use</span>
+        </div>
+        <p class="model-meta"></p>
+        <p class="model-languages"></p>
+      </div>
+      <button type="button" class="model-use"></button>
+      <div class="model-progress-row" hidden>
+        <progress class="model-progress" max="1"></progress>
+        <span class="model-progress-text" aria-live="polite"></span>
+        <button type="button" class="model-cancel">Cancel</button>
+      </div>
+      <p class="error" role="alert" hidden></p>
+    </li>
+  </template>
+
+  <template id="audio-input">
+    <div class="audio-input">
+      <div class="drop" tabindex="-1">
+        <p>Drop an audio file here, or</p>
+        <div class="actions">
+          <button type="button" class="audio-choose">Choose a file</button>
+          <button type="button" class="audio-record" aria-pressed="false">Record</button>
+        </div>
+        <input type="file" class="audio-file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.opus,.webm" hidden>
+      </div>
+      <div class="audio-chosen" hidden>
+        <p class="audio-name"></p>
+        <audio class="audio-preview" controls preload="metadata"></audio>
+      </div>
+      <p class="error" role="alert" hidden></p>
+    </div>
+  </template>
+</body>
+</html>

@@ -5,6 +5,8 @@
 #include <iterator>
 #include <stdexcept>
 
+#include "httplib.h"
+
 #include "base64.h"
 #include "error.h"
 #include "json-reader.h"
@@ -45,6 +47,11 @@ std::string error_object(const ApiError & e) {
 
 std::string error_json(const ApiError & e) {
     return "{\"error\":" + error_object(e) + "}";
+}
+
+void send_error(httplib::Response & res, const ApiError & e) {
+    res.status = e.status;
+    res.set_content(error_json(e), "application/json");
 }
 
 SpeechRequest read_speech_request(const std::string & body, const std::string & model_name) {
