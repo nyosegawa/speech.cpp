@@ -285,6 +285,14 @@ void ModelFile::upgrade_u32(const std::string & key, uint32_t value) {
     gguf_set_val_u32(gguf_.get(), key.c_str(), value);
 }
 
+void ModelFile::upgrade_f32(const std::string & key, float value) {
+    gguf_set_val_f32(gguf_.get(), key.c_str(), value);
+}
+
+void ModelFile::upgrade_bool(const std::string & key, bool value) {
+    gguf_set_val_bool(gguf_.get(), key.c_str(), value);
+}
+
 int ModelFile::size(const std::string & key) const {
     const uint32_t value = u32(key);
     if (value == 0 || value > (uint32_t) INT_MAX) {

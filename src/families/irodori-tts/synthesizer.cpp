@@ -109,11 +109,12 @@ Voice Synthesizer::load_voice(const std::string & path) {
 
 size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const AudioSink & sink, Stats * stats) {
     if (r.guidance && dit_.meanflow()) throw std::logic_error("a MeanFlow model takes no guidance, and the options of its file offer none");
-    const Guidance & guidance = r.guidance ? *r.guidance : sampler_.guidance();
+    const bool reference = voice.speaker_tokens > 0;
+    if (!reference && !has_null_speaker()) throw std::logic_error("a voice without a reference reached a file without the null speaker");
     const TailCut & tail = r.tail ? *r.tail : tail_;
     const int steps = r.steps > 0 ? r.steps : sampler_.default_steps();
     duration_.check(r.length);
-    sampler_.check(guidance, steps);
+    const Guidance guidance = sampler_.check(r.guidance ? *r.guidance : sampler_.guidance(), steps, reference);
     tail_.check(tail);
     Stats local;
     Stats & st = stats ? *stats : local;
@@ -138,8 +139,10 @@ size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
         // The runtime runs the duration predictor only when no length is fixed.
         ggml_tensor * sum = nullptr;
         if (!r.length.fixed()) {
-            const std::vector<float> summary(voice.speaker.begin(), voice.speaker.begin() + speaker_.dim());
-            sum = duration_.build(g, state, g.input(summary, speaker_.dim()));
+            // The speaker's summary is its condition's first token, or the learned null speaker without a reference.
+            ggml_tensor * summary = reference ? g.input(std::vector<float>(voice.speaker.begin(), voice.speaker.begin() + speaker_.dim()), speaker_.dim())
+                                              : model_->tensor("duration.null_speaker");
+            sum = duration_.build(g, state, summary);
             g.output(sum);
         }
         g.compute(backend_, allocr_);

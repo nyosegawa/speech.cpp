@@ -10,7 +10,8 @@ namespace irodori {
 /**
  * What the DiT attends to besides the latent: the text and speaker conditions, channel-first, and the noise that takes
  * the speaker condition's place in a branch of RF's guidance, of the speaker condition's shape, when the request asks
- * for it.
+ * for it. A request without a reference has no speaker tokens, and the DiT then attends to no speaker, as the runtime's
+ * mask of no_ref makes it.
  */
 struct Conditions {
     std::vector<float> text;
@@ -22,12 +23,20 @@ struct Conditions {
 
 /**
  * What one latent of the DiT's batch attends to besides itself. RF's guidance runs the latent again without the text,
- * without the speaker, or with noise in the speaker's place.
+ * without the speaker, or with noise in the speaker's place. `scaled` says whether a request's scale of the speaker's
+ * keys and values reaches the branch, which the runtime leaves off the joint guidance's branch without every condition.
  */
 struct Branch {
     enum class Speaker { Kept, Left, Noise };
     bool text = true;
     Speaker speaker = Speaker::Kept;
+    bool scaled = true;
+};
+
+/** The factor of the speaker's keys and values in the first `layers` blocks, as the runtime's speaker_kv_scale applies it. */
+struct SpeakerScale {
+    float factor = 1;
+    int layers = 0;
 };
 
 /**
@@ -44,11 +53,13 @@ public:
 
     /**
      * The velocity [latent_dim, frames, branches] of the latent x (row-major [frames, latent_dim]) at time t, with
-     * `delta` the step's interval for a MeanFlow model, for each of `branches`, which form the batch. `blocks`, when
-     * given, receives each block's output and `cond` the timestep condition.
+     * `delta` the step's interval for a MeanFlow model, for each of `branches`, which form the batch, with the speaker's
+     * keys and values scaled by `scale` in the branches it reaches. `blocks`, when given, receives each block's output
+     * and `cond` the timestep condition.
      */
     ggml_tensor * build(Graph & g, const std::vector<float> & x, int frames, float t, float delta, const Conditions & c,
-                        const std::vector<Branch> & branches, std::vector<ggml_tensor *> * blocks = nullptr, ggml_tensor ** cond = nullptr) const;
+                        const std::vector<Branch> & branches, const SpeakerScale & scale = {}, std::vector<ggml_tensor *> * blocks = nullptr,
+                        ggml_tensor ** cond = nullptr) const;
 
 private:
     const ModelFile & m_;

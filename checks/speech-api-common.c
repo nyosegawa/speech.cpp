@@ -208,7 +208,8 @@ int check_library(void) {
                                      "code_predictor_top_p", "code_predictor_temperature", "instructions", "cfg_scale_text",
                                      "cfg_scale_speaker", "cfg_guidance_mode", "cfg_min_t", "cfg_max_t", "truncation_factor",
                                      "rescale_k", "rescale_sigma", "speaker_uncond_mode", "sway_coeff", "keep_tail",
-                                     "tail_window_size", "tail_std_threshold", "tail_mean_threshold"};
+                                     "tail_window_size", "tail_std_threshold", "tail_mean_threshold", "speaker_kv_scale",
+                                     "speaker_kv_min_t", "speaker_kv_max_layers"};
     if (speech_option_count() != sizeof options / sizeof options[0]) {
         fprintf(stderr, "FAIL: the library knows %zu options\n", speech_option_count());
         return 1;

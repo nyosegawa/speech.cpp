@@ -39,6 +39,8 @@ Sampler::Sampler(const Dit & dit, const ModelFile & m, ggml_backend_t backend) :
         guidance_.speaker = m.f32("irodori-tts.sampler.cfg_speaker");
         guidance_.min_t = m.f32("irodori-tts.sampler.cfg_min_t");
         guidance_.max_t = m.f32("irodori-tts.sampler.cfg_max_t");
+        guidance_.speaker_kv_min_t = m.f32("irodori-tts.sampler.speaker_kv_min_t");
+        guidance_.speaker_kv_layers = (int) m.u32("irodori-tts.dit.num_layers");
     }
     allocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
 }
@@ -47,7 +49,27 @@ Sampler::~Sampler() {
     if (allocr_) ggml_gallocr_free(allocr_);
 }
 
-void Sampler::check(const Guidance & g, int steps) const {
+Guidance Sampler::check(const Guidance & g, int steps, bool reference) const {
+    if (!reference) {
+        // Without a reference the runtime turns the speaker's guidance off and ignores what would steer it.
+        const char * idle = g.speaker != guidance_.speaker && g.speaker != 0 ? "cfg_scale_speaker"
+                            : g.speaker_noise                                 ? "speaker_uncond_mode"
+                            : g.speaker_kv_scale != 1                         ? "speaker_kv_scale"
+                                                                              : nullptr;
+        if (idle) {
+            throw Error(Fault::InvalidArgument,
+                        std::string("a request without a reference has no speaker condition, so ") + idle + " has no effect; leave it out", idle);
+        }
+    }
+    if (g.speaker_kv_scale == 1) {
+        const char * idle = g.speaker_kv_min_t != guidance_.speaker_kv_min_t    ? "speaker_kv_min_t"
+                            : g.speaker_kv_layers != guidance_.speaker_kv_layers ? "speaker_kv_max_layers"
+                                                                                 : nullptr;
+        if (idle) {
+            throw Error(Fault::InvalidArgument, std::string("with speaker_kv_scale at 1 nothing is scaled, so ") + idle + " has no effect; leave it out",
+                        idle);
+        }
+    }
     if (g.rescale_k.has_value() != g.rescale_sigma.has_value()) {
         const char * missing = g.rescale_k ? "rescale_sigma" : "rescale_k";
         throw Error(Fault::InvalidArgument, std::string("the rescaling takes rescale_k and rescale_sigma together; give ") + missing + " as well",
@@ -59,7 +81,7 @@ void Sampler::check(const Guidance & g, int steps) const {
                         ", so the guidance runs at no step; give a cfg_min_t no greater than cfg_max_t",
                     "cfg_min_t");
     }
-    const bool text = g.text > 0, speaker = g.speaker > 0;
+    const bool text = g.text > 0, speaker = reference && g.speaker > 0;
     if (!text && !speaker) {
         // Without a scale above 0 the runtime runs no guidance and ignores how it would have run.
         const char * idle = g.mode != guidance_.mode       ? "cfg_guidance_mode"
@@ -69,7 +91,8 @@ void Sampler::check(const Guidance & g, int steps) const {
                                                            : nullptr;
         if (idle) {
             throw Error(Fault::InvalidArgument,
-                        std::string("with cfg_scale_text and cfg_scale_speaker at 0 no guidance runs, so ") + idle + " has no effect; leave it out",
+                        std::string(reference ? "with cfg_scale_text and cfg_scale_speaker at 0" : "with cfg_scale_text at 0 and no reference") +
+                            " no guidance runs, so " + idle + " has no effect; leave it out",
                         idle);
         }
     }
@@ -96,6 +119,9 @@ void Sampler::check(const Guidance & g, int steps) const {
                         "sway_coeff");
         }
     }
+    Guidance run = g;
+    if (!reference) run.speaker = 0;
+    return run;
 }
 
 std::vector<float> Sampler::schedule(int steps, float sway) const {
@@ -140,7 +166,7 @@ std::vector<Branch> Sampler::branches(int step, float t, const Guidance & g, std
             }
             break;
         case GuidanceMode::Joint:
-            out.push_back({false, left});
+            out.push_back({false, left, false});
             if (scales) scales->push_back(enabled[0].scale);
             break;
         case GuidanceMode::Alternating: {
@@ -154,12 +180,18 @@ std::vector<Branch> Sampler::branches(int step, float t, const Guidance & g, std
     return out;
 }
 
-std::vector<float> Sampler::velocity(const Conditions & c, const std::vector<float> & x, int frames, int step, float t, float t_next,
+SpeakerScale Sampler::speaker_scale(const Guidance & g, const std::vector<float> & times, int step) const {
+    if (g.speaker_kv_scale == 1 || !(times[step] >= g.speaker_kv_min_t || times[0] < g.speaker_kv_min_t)) return {};
+    return {g.speaker_kv_scale, g.speaker_kv_layers};
+}
+
+std::vector<float> Sampler::velocity(const Conditions & c, const std::vector<float> & x, int frames, const std::vector<float> & times, int step,
                                      const Guidance & g, std::vector<float> * out) {
+    const float t = times[step], t_next = times[step + 1];
     std::vector<float> scales;
     const std::vector<Branch> b = branches(step, t, g, &scales);
     Graph graph;
-    ggml_tensor * result = dit_.build(graph, x, frames, t, t - t_next, c, b);
+    ggml_tensor * result = dit_.build(graph, x, frames, t, t - t_next, c, b, speaker_scale(g, times, step));
     graph.output(result);
     graph.compute(backend_, allocr_);
     std::vector<float> v = Graph::read(result);
@@ -192,7 +224,7 @@ std::vector<float> Sampler::sample(const Conditions & c, std::vector<float> x, i
     }
     for (int i = 0; i < steps; i++) {
         if (progress && !progress((double) i / steps)) return {};
-        const std::vector<float> v = velocity(c, x, frames, i, times[i], times[i + 1], g);
+        const std::vector<float> v = velocity(c, x, frames, times, i, g);
         const float dt = times[i + 1] - times[i];
         for (size_t j = 0; j < x.size(); j++) x[j] = x[j] + v[j] * dt;
     }

@@ -46,6 +46,8 @@ struct FileInfo {
 
     /** The family's declaration of `option`, or null when the model does not take it. */
     const OptionSpec * spec(speech_option option) const;
+    /** What the file lacks for `option`, or for the voice `voice` of SPEECH_OPT_VOICE, or null. */
+    const Lack * lack(speech_option option, const std::string & voice = "") const;
     /** The key and the JSON value of a metadata entry, which live as long as this. */
     const char * meta_key(size_t index) const;
     const char * meta_value(size_t index) const;

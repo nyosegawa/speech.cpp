@@ -337,7 +337,23 @@ typedef enum speech_option {
      * "tail_mean_threshold", a number: how near to 0 the window's mean must lie for it to count as quiet. Added in
      * 3.1.
      */
-    SPEECH_OPT_TAIL_MEAN_THRESHOLD = 34
+    SPEECH_OPT_TAIL_MEAN_THRESHOLD = 34,
+    /**
+     * "speaker_kv_scale", a number above 0: the factor of the keys and values a guided sampler's model attends to of the
+     * voice, which above 1 makes the speech follow the voice more closely, in the first speaker_kv_max_layers layers and
+     * at every step that starts at a time of speaker_kv_min_t or more; 1 leaves them as they are. Added in 3.1.
+     */
+    SPEECH_OPT_SPEAKER_KV_SCALE = 35,
+    /**
+     * "speaker_kv_min_t", a number from 0 to 1: the time below which speaker_kv_scale stops, as speaker_kv_scale says;
+     * one above the first step's time keeps it to the end. Added in 3.1.
+     */
+    SPEECH_OPT_SPEAKER_KV_MIN_T = 36,
+    /**
+     * "speaker_kv_max_layers", an integer of 1 or more: the layers, from the first, that speaker_kv_scale reaches.
+     * Added in 3.1.
+     */
+    SPEECH_OPT_SPEAKER_KV_MAX_LAYERS = 37
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */

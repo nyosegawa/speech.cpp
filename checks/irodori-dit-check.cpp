@@ -41,15 +41,19 @@ int main(int argc, char ** argv) {
         bool ok = !dumps.empty();
         for (const IrodoriDump & d : dumps) {
             auto npy = [&](const char * f) { return read_npy(d.file(f).u8string()); };
-            const Npy text = npy("text_state.npy"), speaker = npy("speaker_state.npy"), noise = npy("noise.npy");
+            const Npy text = npy("text_state.npy"), noise = npy("noise.npy");
             const Npy times = npy("dit_t.npy"), velocity = npy("dit_velocity.npy"), xs = npy("dit_x.npy");
             const Npy cond = npy("dit_cond.npy"), blocks = npy("dit_step0_blocks.npy");
-            const Guidance guidance = dit.meanflow() ? sampler.guidance() : d.guidance(sampler.guidance());
-            Conditions c{text.f32, (int) text.shape[0], speaker.f32, (int) speaker.shape[0], {}};
+            // A request without a reference attends to no speaker.
+            const Npy speaker = d.reference() ? npy("speaker_state.npy") : Npy{};
+            Conditions c{text.f32, (int) text.shape[0], speaker.f32, d.reference() ? (int) speaker.shape[0] : 0, {}};
             const int frames = (int) noise.shape[0], steps = (int) times.shape[0];
             const size_t n = (size_t) frames * dit.latent_dim();
             std::printf("%s (%d frames, %d steps)\n", d.dir().filename().u8string().c_str(), frames, steps);
-            sampler.check(guidance, steps);
+            const Guidance guidance = sampler.check(dit.meanflow() ? sampler.guidance() : d.guidance(sampler.guidance()), steps, d.reference());
+            // The dump's times and the 0 the last step ends at.
+            std::vector<float> dumped = times.f32;
+            dumped.push_back(0.0f);
 
             const std::vector<float> schedule = sampler.schedule(steps, guidance.sway);
             double schedule_error = 0;
@@ -76,7 +80,8 @@ int main(int argc, char ** argv) {
             Graph g;
             std::vector<ggml_tensor *> hidden;
             ggml_tensor * cond_out = nullptr;
-            g.output(dit.build(g, x0, frames, t0, t0 - t1, c, sampler.branches(0, t0, guidance), &hidden, &cond_out));
+            g.output(dit.build(g, x0, frames, t0, t0 - t1, c, sampler.branches(0, t0, guidance), sampler.speaker_scale(guidance, dumped, 0), &hidden,
+                               &cond_out));
             g.output(cond_out);
             for (ggml_tensor * h : hidden) g.output(h);
             g.compute(backend, allocr);
@@ -95,8 +100,7 @@ int main(int argc, char ** argv) {
             int worst_index = 0;
             for (int i = 0; i < steps; i++) {
                 const std::vector<float> x(i == 0 ? x0 : std::vector<float>(xs.f32.begin() + (i - 1) * n, xs.f32.begin() + i * n));
-                const std::vector<float> v =
-                    sampler.velocity(c, x, frames, i, times.f32[i], i + 1 < steps ? times.f32[i + 1] : 0.0f, guidance);
+                const std::vector<float> v = sampler.velocity(c, x, frames, dumped, i, guidance);
                 const Diff dv = compare(v.data(), &velocity.f32[i * n], n);
                 if (dv.snr_db < worst_step.snr_db) {
                     worst_step = dv;
@@ -114,15 +118,17 @@ int main(int argc, char ** argv) {
             // Measured on an Apple M5 for the MF dumps: 86 to 122 dB on the CPU in F32 and 33 to 61 dB on Metal,
             // whose matrix kernel rounds its inputs to half precision, which four large steps amplify; 21 to
             // 41 dB with Q8_0 weights. RF's dumps lie 89 to 123 dB from the official on the CPU and 36 to 67 dB
-            // on Metal (2026-10-07), the least with the strongest guidance (rf-weather-cfg). A wrong operation
-            // gives a few dB.
+            // on Metal (2026-10-07), the least with the strongest guidance (rf-weather-cfg). The speaker's keys
+            // scaled in every layer make the attention sensitive to the keys' rounding: rf-hai-speaker-kv-min1's
+            // worst step lies 31 dB from the official on Metal, and as far on the CPU with the keys alone rounded
+            // to half precision. A wrong operation gives a few dB.
             ok = ok && df.snr_db > 15;
             if (!dit.meanflow() && d.sets_guidance()) {
                 // The request's guidance must move the latent further from the default's than the port is from the
                 // runtime, or a port that ignored it would pass.
                 Conditions plain = c;
                 plain.speaker_noise.clear();
-                const std::vector<float> default_x = sampler.sample(plain, noise.f32, frames, steps, sampler.guidance());
+                const std::vector<float> default_x = sampler.sample(plain, noise.f32, frames, steps, sampler.check(sampler.guidance(), steps, d.reference()));
                 const Diff dd = compare(default_x.data(), &xs.f32[(steps - 1) * n], n);
                 print_diff("  the same with the default guidance", dd);
                 ok = ok && dd.snr_db + 6 < df.snr_db;

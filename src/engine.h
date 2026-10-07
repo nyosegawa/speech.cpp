@@ -47,6 +47,17 @@ struct VoiceInfo {
 };
 
 /**
+ * What a model file lacks that its family takes with files that have it: an option, or one voice, with the message a
+ * request for it is refused with, which names what the file lacks and how to get a file that has it.
+ */
+struct Lack {
+    speech_option option;
+    /** The voice the file lacks, for SPEECH_OPT_VOICE; empty for an option the file does not take. */
+    std::string voice;
+    std::string message;
+};
+
+/**
  * What a family says of a model from its file's metadata, besides what every model file says: what the information
  * shows of it, the table of the options it takes in the order of the vocabulary, and how a synthesis counts a text's
  * tokens.
@@ -58,6 +69,8 @@ struct FamilyInfo {
     std::string voice_codec;
     size_t max_text_tokens = 0;
     std::vector<OptionSpec> options;
+    /** What the file lacks of what the family takes, which a request is refused with by its own message. */
+    std::vector<Lack> lacks;
     /** The tokens of a text as a synthesis counts them against max_text_tokens; empty for a recognition model. */
     std::function<size_t(const std::string & text)> count_tokens;
 };

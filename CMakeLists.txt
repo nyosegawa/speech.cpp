@@ -210,10 +210,11 @@ target_link_libraries(irodori-text-check PRIVATE irodoritts)
 add_executable(irodori-codec-check checks/irodori-codec-check.cpp)
 target_link_libraries(irodori-codec-check PRIVATE irodoritts)
 
-add_executable(irodori-condition-check checks/irodori-condition-check.cpp)
+# These read the dump's meta.json with the JSON reader of `speech`.
+add_executable(irodori-condition-check checks/irodori-condition-check.cpp tools/common/json-reader.cpp)
+target_include_directories(irodori-condition-check PRIVATE tools/common)
 target_link_libraries(irodori-condition-check PRIVATE irodoritts)
 
-# These read the dump's meta.json with the JSON reader of `speech`.
 add_executable(irodori-dit-check checks/irodori-dit-check.cpp tools/common/json-reader.cpp)
 target_include_directories(irodori-dit-check PRIVATE tools/common)
 target_link_libraries(irodori-dit-check PRIVATE irodoritts)

@@ -1,6 +1,6 @@
 """Runs the official Irodori-TTS on the CPU in float32 and saves the tensors the C++ port is checked against.
 
-usage: uv run python dump.py <mf|rf> <out dir> <text> <reference.wav> [--seed n] [--steps n]
+usage: uv run python dump.py <mf|rf> <out dir> <text> (<reference.wav> | --no-ref) [--seed n] [--steps n]
                              [--seconds s | --duration-scale x] [--speed x] [request options]
 
 mf is v4.1-Small-MF with its 4 MeanFlow steps; rf is v4.1-Small with 40 Euler steps and the runtime's
@@ -9,13 +9,15 @@ default guidance (text 3.0 and speaker 5.0, each against a branch without it, wh
 --seconds fixes the length and --duration-scale scales the predicted one, as the runtime's request takes
 them. --speed is OpenAI's speed, which Irodori-TTS-Server divides both by before it calls the runtime;
 meta.json keeps the three as given. With --seconds the duration predictor does not run, and its two files
-are not written.
+are not written. --no-ref speaks without a reference (the runtime's no_ref, speech.cpp's voice none), and
+meta.json's "reference" is then null.
 
 The request options are the C API's names of the runtime's SamplingRequest fields, in kebab-case: for rf
 --cfg-scale-text, --cfg-scale-speaker, --cfg-guidance-mode, --cfg-min-t, --cfg-max-t, --truncation-factor,
---rescale-k, --rescale-sigma, --speaker-uncond-mode and --sway-coeff (Sway Sampling when not 0), and for both
---keep-tail, --tail-window-size, --tail-std-threshold and --tail-mean-threshold. meta.json keeps the ones
-given under the C API's names in "options", and a check takes the model's default for the others.
+--rescale-k, --rescale-sigma, --speaker-uncond-mode, --sway-coeff (Sway Sampling when not 0),
+--speaker-kv-scale, --speaker-kv-min-t and --speaker-kv-max-layers, and for both --keep-tail,
+--tail-window-size, --tail-std-threshold and --tail-mean-threshold. meta.json keeps the ones given under the C
+API's names in "options", and a check takes the model's default for the others.
 
 The official runtime.synthesize() runs once with its stages wrapped, so what is saved is what it computed.
 The finer stages (the text encoder's layers, the speaker encoder, each DiT block of the first step, the
@@ -71,7 +73,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("model", choices=sorted(MODELS))
 parser.add_argument("out_dir")
 parser.add_argument("text")
-parser.add_argument("reference")
+parser.add_argument("reference", nargs="?")
+parser.add_argument("--no-ref", action="store_true")
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--steps", type=int)
 parser.add_argument("--seconds", type=float, default=0.0)
@@ -82,7 +85,9 @@ RF_OPTIONS = {"cfg_scale_text": (float, "cfg_scale_text"), "cfg_scale_speaker": 
               "cfg_guidance_mode": (str, "cfg_guidance_mode"), "cfg_min_t": (float, "cfg_min_t"),
               "cfg_max_t": (float, "cfg_max_t"), "truncation_factor": (float, "truncation_factor"),
               "rescale_k": (float, "rescale_k"), "rescale_sigma": (float, "rescale_sigma"),
-              "speaker_uncond_mode": (str, "speaker_uncond_mode"), "sway_coeff": (float, "sway_coeff")}
+              "speaker_uncond_mode": (str, "speaker_uncond_mode"), "sway_coeff": (float, "sway_coeff"),
+              "speaker_kv_scale": (float, "speaker_kv_scale"), "speaker_kv_min_t": (float, "speaker_kv_min_t"),
+              "speaker_kv_max_layers": (int, "speaker_kv_max_layers")}
 OPTIONS = {**RF_OPTIONS, "tail_window_size": (int, "tail_window_size"), "tail_std_threshold": (float, "tail_std_threshold"),
            "tail_mean_threshold": (float, "tail_mean_threshold")}
 for name, (kind, _) in OPTIONS.items():
@@ -91,6 +96,7 @@ parser.add_argument("--keep-tail", action="store_true")
 args = parser.parse_args()
 # The runtime ignores a duration scale given with seconds; speech.cpp refuses that request.
 assert not (args.seconds > 0 and args.duration_scale != 1.0), "give --seconds or --duration-scale, not both"
+assert (args.reference is None) == args.no_ref, "give a reference or --no-ref"
 options = {name: getattr(args, name) for name in OPTIONS if getattr(args, name) is not None}
 if args.keep_tail:
     options["keep_tail"] = True
@@ -136,7 +142,17 @@ wrap(codec, "encode_waveform", lambda a, k, out: calls["encode_in"].append((a[0]
 wrap(model, "encode_conditions", lambda a, k, out: calls["encode_conditions"].append((k, out)))
 wrap(model, "predict_duration_log_frames", lambda a, k, out: saved.update(
     duration_features=k["duration_features"][0].numpy(), duration_log_frames=out.numpy()))
-wrap(model, "forward_with_encoded_conditions", lambda a, k, out: calls["velocity"].append((k, out)))
+
+
+def record_velocity(a, k, out):
+    # The sampler scales a request's speaker keys and values in place and restores them at speaker_kv_min_t, so the
+    # first call's are copied for its blocks to be computed again below.
+    if not calls["velocity"] and k.get("context_kv_cache") is not None:
+        k = dict(k, context_kv_cache=[tuple(t.clone() for t in layer) for layer in k["context_kv_cache"]])
+    calls["velocity"].append((k, out))
+
+
+wrap(model, "forward_with_encoded_conditions", record_velocity)
 wrap(codec, "decode_latent", lambda a, k, out: calls["decode"].append((a[0], out)))
 
 # Irodori-TTS-Server's mapping of OpenAI's speed
@@ -147,7 +163,7 @@ fields["trim_tail"] = not args.keep_tail
 # speech.cpp's sway_coeff of 0 is the runtime's linear schedule, which Sway Sampling with 0 equals.
 if options.get("sway_coeff", 0.0) != 0.0:
     fields["t_schedule_mode"] = "sway"
-request = ir.SamplingRequest(text=args.text, ref_wav=args.reference, seed=args.seed, seconds=seconds,
+request = ir.SamplingRequest(text=args.text, ref_wav=args.reference, no_ref=args.no_ref, seed=args.seed, seconds=seconds,
                              duration_scale=args.duration_scale / args.speed, num_steps=args.steps, **fields)
 result = runtime.synthesize(request)
 normalized_text = normalize_text(args.text).strip()
@@ -168,22 +184,26 @@ state = model.text_norm(model.text_encoder(backbone, kwargs["text_input_ids"], k
 assert torch.equal(state, text_state[0, :n])
 save("text_state", state)
 
-# Reference: loudness, the DACVAE encoder, the speaker encoder.
-wav_in, latent = calls["encode_in"][0]
-save("ref_wav", wav_in.reshape(-1))
-save("ref_wav_normalized", calls["normalized"][0])
-padded_wav = codec.model._pad(calls["normalized"][0].reshape(1, 1, -1))
-encoded = codec.model.encoder(padded_wav)
-assert torch.equal(codec.model.quantizer.in_proj(encoded).chunk(2, dim=1)[0].transpose(1, 2), latent)
-save("ref_encoder", encoded[0])
-save("ref_latent", latent[0])
-patched, patch_mask = patch_sequence_with_mask(latent, torch.ones(latent.shape[:2], dtype=torch.bool),
-                                               model.cfg.speaker_patch_size)
-speaker_encoded = model.speaker_encoder(patched, patch_mask)
-save("speaker_encoded", speaker_encoded[0])
-recomputed, _ = model._prepend_masked_mean_token(model.speaker_norm(speaker_encoded), patch_mask)
-assert torch.equal(recomputed, speaker_state)
-save("speaker_state", speaker_state[0])
+# Reference: loudness, the DACVAE encoder, the speaker encoder. Without a reference the runtime encodes a zero
+# latent whose every position is masked, which the port leaves out.
+if not args.no_ref:
+    wav_in, latent = calls["encode_in"][0]
+    save("ref_wav", wav_in.reshape(-1))
+    save("ref_wav_normalized", calls["normalized"][0])
+    padded_wav = codec.model._pad(calls["normalized"][0].reshape(1, 1, -1))
+    encoded = codec.model.encoder(padded_wav)
+    assert torch.equal(codec.model.quantizer.in_proj(encoded).chunk(2, dim=1)[0].transpose(1, 2), latent)
+    save("ref_encoder", encoded[0])
+    save("ref_latent", latent[0])
+    patched, patch_mask = patch_sequence_with_mask(latent, torch.ones(latent.shape[:2], dtype=torch.bool),
+                                                   model.cfg.speaker_patch_size)
+    speaker_encoded = model.speaker_encoder(patched, patch_mask)
+    save("speaker_encoded", speaker_encoded[0])
+    recomputed, _ = model._prepend_masked_mean_token(model.speaker_norm(speaker_encoded), patch_mask)
+    assert torch.equal(recomputed, speaker_state)
+    save("speaker_state", speaker_state[0])
+else:
+    assert not bool(speaker_mask.any())
 
 # Sampling: every step, and each block of the first. The steps are regrouped from the DiT's calls, one per step
 # for MeanFlow, RF's independent guidance and an unguided step, two for RF's joint and alternating guidance.
@@ -214,7 +234,8 @@ scales = {}
 if not meanflow:
     text_scale, _, speaker_scale, _ = ir.resolve_cfg_scales(
         cfg_guidance_mode=mode, cfg_scale_text=request.cfg_scale_text, cfg_scale_caption=request.cfg_scale_caption,
-        cfg_scale_speaker=request.cfg_scale_speaker, cfg_scale=request.cfg_scale, use_caption_condition=False)
+        cfg_scale_speaker=request.cfg_scale_speaker, cfg_scale=request.cfg_scale, use_caption_condition=False,
+        use_speaker_condition=not args.no_ref)
     scales = {name: scale for name, scale in (("text", text_scale), ("speaker", speaker_scale)) if scale > 0}
 enabled = list(scales)
 save("dit_t", torch.stack([group[0][0]["t"][0] for group in calls_by_step]))
@@ -291,7 +312,7 @@ for name, array in saved.items():
 meta = {
     "code": CODE, "model": MODELS[args.model], "codec": CODEC, "seed": args.seed,
     "text": args.text, "normalized_text": normalized_text, "tokens": n,
-    "reference": os.path.basename(args.reference),
+    "reference": None if args.no_ref else os.path.basename(args.reference),
     "seconds": args.seconds, "duration_scale": args.duration_scale, "speed": args.speed,
     "steps": len(calls_by_step), "options": options, "branches": branch_names,
     "latent_frames": int(z.shape[1]), "audio_samples": int(result.audio.shape[-1]),

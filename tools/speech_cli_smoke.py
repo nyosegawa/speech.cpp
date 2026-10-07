@@ -43,6 +43,7 @@ if "--reference" in args:
     reference = args[at + 1]
     del args[at:at + 2]
 speech, work, model, *dumps = args
+added = [o.split("=", 1)[0] for i, o in enumerate(options) if i > 0 and options[i - 1] == "--add-voice"]
 SUBCOMMANDS = ["tts", "asr", "voice", "info", "devices", "serve", "worker"]
 
 
@@ -118,7 +119,8 @@ print("the worker's usage error and its device error: fatal on stdout, exit 2 an
 
 if info["task"] == "synthesis":
     w = Worker(speech, model, options)
-    voice, rate = w.ready["model"]["voices"][0]["name"], info["sample_rate"]
+    # An added voice where there is one: the voice an Irodori-TTS file has of its own, none, speaks without a reference.
+    voice, rate = added[0] if added else w.ready["model"]["voices"][0]["name"], info["sample_rate"]
     lines, seed = ["明日の東京は晴れです。", "二つ目の文です。"], 11
     pcm = bytearray()
     for i, line in enumerate(lines):

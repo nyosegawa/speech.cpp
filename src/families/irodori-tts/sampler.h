@@ -40,6 +40,12 @@ struct Guidance {
     std::optional<double> rescale_k, rescale_sigma;
     /** The coefficient of Sway Sampling, which bends the schedule; at 0 the schedule is the linear one. */
     float sway = 0;
+    /**
+     * The factor of the speaker's keys and values in the first `speaker_kv_layers` blocks, at every step that starts at
+     * a time of `speaker_kv_min_t` or more, compared in float32 as the runtime compares its tensors; 1 scales nothing.
+     */
+    float speaker_kv_scale = 1, speaker_kv_min_t = 0;
+    int speaker_kv_layers = 0;
 };
 
 /**
@@ -58,13 +64,15 @@ public:
     const Guidance & guidance() const { return guidance_; }
 
     /**
-     * Throws, naming the option at fault, unless the runtime would run `g` in `steps` steps as it is asked: the
-     * rescaling given whole, a guidance range that is not empty, the scales equal for the joint guidance, a schedule
-     * whose times fall at every step, and no setting that has no effect because of another (a guidance mode, range or
-     * speaker mode without a scale above 0 to use it). The runtime ignores such a setting, mostly without a word, and
-     * raises an error for the others.
+     * Throws, naming the option at fault, unless the runtime would run `g` in `steps` steps, for a voice with a speaker
+     * condition or, without `reference`, for one without, as it is asked: the rescaling given whole, a guidance range
+     * that is not empty, the scales equal for the joint guidance, a schedule whose times fall at every step, and no
+     * setting that has no effect because of another (a guidance mode, range or speaker mode without a scale above 0 to
+     * use it, the speaker's scaling's time or layers without a scale, and the speaker's guidance, noise or scaling
+     * without a reference). The runtime ignores such a setting, mostly without a word, and raises an error for the
+     * others. Returns the guidance as the runtime runs it, which has no speaker's scale without a reference.
      */
-    void check(const Guidance & g, int steps) const;
+    Guidance check(const Guidance & g, int steps, bool reference = true) const;
 
     /** The times the sampler visits, steps + 1 of them, computed in float32 as torch computes them. */
     std::vector<float> schedule(int steps, float sway = 0) const;
@@ -76,6 +84,13 @@ public:
     std::vector<Branch> branches(int step, float t, const Guidance & g, std::vector<float> * scales = nullptr) const;
 
     /**
+     * The scale of the speaker's keys and values at step `step` of the schedule `times`. The runtime scales them once
+     * and restores them after the step from which the time falls below speaker_kv_min_t, so a step is scaled when it
+     * starts at or above it, and every step when the first starts below it.
+     */
+    SpeakerScale speaker_scale(const Guidance & g, const std::vector<float> & times, int step) const;
+
+    /**
      * The latent, row-major [frames, latent_dim], reached from `noise` in `steps` steps. `progress`, when given, is
      * told the fraction of the steps done before each step and once the last is done, and an empty latent comes back
      * once it answers false.
@@ -84,10 +99,10 @@ public:
                               const std::function<bool(double done)> & progress = {});
 
     /**
-     * The velocity of step `step`, from t to t_next, after the guidance and the rescaling; `out`, when given, receives
-     * the DiT's output for each branch.
+     * The velocity of step `step` of the schedule `times`, whose last time is 0, after the guidance and the rescaling;
+     * `out`, when given, receives the DiT's output for each branch.
      */
-    std::vector<float> velocity(const Conditions & c, const std::vector<float> & x, int frames, int step, float t, float t_next,
+    std::vector<float> velocity(const Conditions & c, const std::vector<float> & x, int frames, const std::vector<float> & times, int step,
                                 const Guidance & g, std::vector<float> * out = nullptr);
 
     int default_steps() const { return default_steps_; }

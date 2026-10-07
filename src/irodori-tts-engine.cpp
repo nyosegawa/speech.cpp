@@ -13,6 +13,9 @@
 
 namespace {
 
+/** The voice of a file with the null speaker, which speaks without a reference as the runtime's no_ref. */
+constexpr const char * kNoReference = "none";
+
 /** The frames of the latent a warm-up speaks from, a second of silence, since a model may have no voice when it loads. */
 constexpr int kWarmUpFrames = 25;
 
@@ -24,7 +27,9 @@ constexpr int kWarmUpSteps = 2;
 
 class IrodoriTtsEngine : public Engine {
 public:
-    IrodoriTtsEngine(const std::string & path, ggml_backend_t backend) : synth_(path, backend) {}
+    IrodoriTtsEngine(const std::string & path, ggml_backend_t backend) : synth_(path, backend) {
+        if (synth_.has_null_speaker()) voices_.emplace(kNoReference, irodori::Voice{});
+    }
 
     speech_stop speak(const std::string & text, const RequestValues & values, Run & run) override {
         irodori::Request r;
@@ -79,6 +84,9 @@ private:
         if (values.has(SPEECH_OPT_RESCALE_K)) g.rescale_k = values.number(SPEECH_OPT_RESCALE_K);
         if (values.has(SPEECH_OPT_RESCALE_SIGMA)) g.rescale_sigma = values.number(SPEECH_OPT_RESCALE_SIGMA);
         g.sway = (float) values.number(SPEECH_OPT_SWAY_COEFF);
+        g.speaker_kv_scale = (float) values.number(SPEECH_OPT_SPEAKER_KV_SCALE);
+        g.speaker_kv_min_t = (float) values.number(SPEECH_OPT_SPEAKER_KV_MIN_T);
+        g.speaker_kv_layers = (int) values.integer(SPEECH_OPT_SPEAKER_KV_MAX_LAYERS);
         return g;
     }
 
@@ -109,14 +117,22 @@ struct TokenCounter {
 
 /**
  * The table of the options Irodori-TTS takes, with the bounds of the length and the speed, the sampler's steps and
- * guidance and the cut at the tail its file gives. It has no voices of its own; a request speaks in one added since
- * loading. Its one language is checked and not used. It fixes the length before it makes the speech, so it takes
- * seconds and a scale of the predicted length rather than max_seconds. An RF model takes the official runtime's
- * guidance and schedule, which a MeanFlow model folded into its training and does not take.
+ * guidance and the cut at the tail its file gives. Its one voice of its own is none, which speaks without a reference,
+ * where the file holds the null speaker; a request otherwise speaks in a voice added since loading. Its one language
+ * is checked and not used. It fixes the length before it makes the speech, so it takes seconds and a scale of the
+ * predicted length rather than max_seconds. An RF model takes the official runtime's guidance, schedule and scaling of
+ * the speaker, which a MeanFlow model folded into its training or ignores and does not take.
  */
 FamilyInfo describe_irodori_tts(const std::shared_ptr<const ModelFile> & file) {
     const ModelFile & m = *file;
     FamilyInfo info;
+    if (m.boolean("irodori-tts.duration.null_speaker")) {
+        info.voices.push_back({kNoReference, "", "", "speaks without a reference recording"});
+    } else {
+        info.lacks.push_back({SPEECH_OPT_VOICE, kNoReference,
+                              m.path() + " has layout " + std::to_string(m.layout_version()) +
+                                  ", which lacks the null speaker that the voice none speaks with without a reference; " + m.remedy()});
+    }
     info.voice_codec = m.str("irodori-tts.codec.sha256");
     info.max_text_tokens = m.u32("irodori-tts.text.max_tokens");
     info.options = {
@@ -128,8 +144,9 @@ FamilyInfo describe_irodori_tts(const std::shared_ptr<const ModelFile> & file) {
         {SPEECH_OPT_DURATION_SCALE, false, true, 1.0, 0, INFINITY, true},
         {SPEECH_OPT_STEPS, false, true, (int64_t) m.u32("irodori-tts.sampler.default_steps"), 1, (double) INT_MAX},
     };
-    if (m.one_of("irodori-tts.flow", {"meanflow", "rf_velocity"}) == "rf_velocity") {
-        const std::string s = "irodori-tts.sampler.";
+    const bool rf = m.one_of("irodori-tts.flow", {"meanflow", "rf_velocity"}) == "rf_velocity";
+    const std::string s = "irodori-tts.sampler.";
+    if (rf) {
         const std::vector<std::string> modes(std::begin(irodori::kGuidanceModes), std::end(irodori::kGuidanceModes));
         info.options.insert(info.options.end(), {
             {SPEECH_OPT_CFG_SCALE_TEXT, false, true, (double) m.f32(s + "cfg_text"), 0, INFINITY},
@@ -153,6 +170,14 @@ FamilyInfo describe_irodori_tts(const std::shared_ptr<const ModelFile> & file) {
         {SPEECH_OPT_TAIL_STD_THRESHOLD, false, true, shortest(m.f32("irodori-tts.tail.std_threshold")), 0, INFINITY, true},
         {SPEECH_OPT_TAIL_MEAN_THRESHOLD, false, true, shortest(m.f32("irodori-tts.tail.mean_threshold")), 0, INFINITY, true},
     });
+    if (rf) {
+        const int64_t layers = m.u32("irodori-tts.dit.num_layers");
+        info.options.insert(info.options.end(), {
+            {SPEECH_OPT_SPEAKER_KV_SCALE, false, true, 1.0, 0, INFINITY, true},
+            {SPEECH_OPT_SPEAKER_KV_MIN_T, false, true, shortest(m.f32(s + "speaker_kv_min_t")), 0, 1},
+            {SPEECH_OPT_SPEAKER_KV_MAX_LAYERS, false, true, layers, 1, (double) layers},
+        });
+    }
     const auto counter = std::make_shared<Lazy<TokenCounter>>(file);
     info.count_tokens = [counter](const std::string & text) { return counter->get().count(text); };
     return info;

@@ -18,7 +18,10 @@
 
 namespace irodori {
 
-/** A voice: the latent of its reference and the speaker condition the model makes of it. */
+/**
+ * A voice: the latent of its reference and the speaker condition the model makes of it. A voice without a reference has
+ * neither and speaks as the runtime's no_ref, with the null speaker of a file that holds it.
+ */
 struct Voice {
     std::vector<float> latent;
     int frames = 0;
@@ -103,6 +106,8 @@ public:
     /** The guidance and the cut at the tail of a request that asks for none of its own. */
     const Guidance & default_guidance() const { return sampler_.guidance(); }
     const TailCut & default_tail() const { return tail_; }
+    /** Whether the file holds the null speaker, which a voice without a reference speaks with. */
+    bool has_null_speaker() const { return model_->boolean("irodori-tts.duration.null_speaker"); }
 
     /** The decoder's first window, in frames; a short one brings the first audio early. */
     int first_window = 12;

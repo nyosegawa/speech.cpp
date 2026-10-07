@@ -87,6 +87,9 @@ const OptionName vocabulary[] = {
     {"tail_window_size", SPEECH_TYPE_INT},
     {"tail_std_threshold", SPEECH_TYPE_FLOAT},
     {"tail_mean_threshold", SPEECH_TYPE_FLOAT},
+    {"speaker_kv_scale", SPEECH_TYPE_FLOAT},
+    {"speaker_kv_min_t", SPEECH_TYPE_FLOAT},
+    {"speaker_kv_max_layers", SPEECH_TYPE_INT},
 };
 constexpr size_t kOptions = sizeof vocabulary / sizeof vocabulary[0];
 
@@ -168,6 +171,13 @@ const Family & family_of(const std::string & path) {
 const OptionSpec * FileInfo::spec(speech_option option) const {
     for (const OptionSpec & s : described.options) {
         if (s.option == option) return &s;
+    }
+    return nullptr;
+}
+
+const Lack * FileInfo::lack(speech_option option, const std::string & voice) const {
+    for (const Lack & l : described.lacks) {
+        if (l.option == option && l.voice == voice) return &l;
     }
     return nullptr;
 }
@@ -421,6 +431,11 @@ speech_status speech_voice_add(speech_model * model, const char * name, const ch
         std::lock_guard<std::mutex> lock(model->busy);
         if (model->has_voice(name)) {
             throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, std::string(name) + " is already a voice of " + file.identity.name + "; give the voice another name",
+                           "name");
+        }
+        if (file.lack(SPEECH_OPT_VOICE, name)) {
+            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, std::string(name) + " is the name of a voice that other files of " + file.family->layout.architecture +
+                                                              " have; give the voice another name",
                            "name");
         }
         naming("path", [&] { model->engine->add_voice(name, path); });

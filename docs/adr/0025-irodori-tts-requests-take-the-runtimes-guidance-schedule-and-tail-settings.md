@@ -26,11 +26,13 @@ sets none of the new fields gives the same audio as before.
 - **The fields that need no other weights are options of the C API's vocabulary, by the runtime's names**:
   `cfg_scale_text`, `cfg_scale_speaker`, `cfg_guidance_mode`, `cfg_min_t`, `cfg_max_t`, `truncation_factor`,
   `rescale_k`, `rescale_sigma`, `speaker_uncond_mode`, `sway_coeff`, `keep_tail`, `tail_window_size`,
-  `tail_std_threshold` and `tail_mean_threshold`. Two differ from the runtime's: `t_schedule_mode` and `sway_coeff`
-  are one option, since Sway Sampling at 0 is the linear schedule, bit for bit; and `trim_tail`, true by default, is
-  `keep_tail`, false by default, since a boolean flag on the command line can only set true.
-- **An RF file alone declares the guidance and the schedule.** A MeanFlow file does not take them, so a request that
-  sets one is `unsupported` there, as any option a model does not take; the cut at the tail is both models'.
+  `tail_std_threshold`, `tail_mean_threshold`, `speaker_kv_scale`, `speaker_kv_min_t` and `speaker_kv_max_layers`.
+  Two differ from the runtime's: `t_schedule_mode` and `sway_coeff` are one option, since Sway Sampling at 0 is the
+  linear schedule, bit for bit; and `trim_tail`, true by default, is `keep_tail`, false by default, since a boolean
+  flag on the command line can only set true.
+- **An RF file alone declares the guidance, the schedule and the speaker's scaling.** A MeanFlow file does not take
+  them, so a request that sets one is `unsupported` there, as any option a model does not take; the cut at the tail is
+  both models'.
 - **Defaults come from the file**, where the checkpoint's own (`irodori-tts.sampler.*`, `irodori-tts.tail.*`); the
   guidance mode and the speaker mode default to the runtime's default path, which the port already ran. A default the
   file holds in float32 shows as its shortest decimal (0.05), and the request rounds it back.
@@ -38,7 +40,8 @@ sets none of the new fields gives the same audio as before.
   two settings alone, `cfg_min_t` above `cfg_max_t`, the joint guidance with two scales that differ, a schedule that
   stops, and a value other than the default that another value leaves without effect (the guidance's mode, range and
   speaker mode with both scales at 0, speaker noise without a branch without the speaker, the tail's settings with
-  `keep_tail`). This follows docs/adr/0007 and 0014: a caller that asks for something gets it or an error.
+  `keep_tail`, the speaker's scaling's time and layers with a scale of 1). This follows docs/adr/0007 and 0014: a
+  caller that asks for something gets it or an error.
 - **The other fields are not offered.** A caller wanting several takes makes several requests with seeds of its own:
   each is a take of the same distribution, though not the runtime's candidates, as no seed of speech.cpp's generator
   gives the runtime's noise. The bounds stay the model's, from its file, past which speech.cpp refuses (docs/adr/0014).

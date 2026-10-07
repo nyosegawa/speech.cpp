@@ -13,9 +13,10 @@
 #include "json-reader.h"
 
 /**
- * A dump of reference/irodori-tts/dump.py and the request it was made with, from its meta.json: the length's settings
- * and, under "options", the request options it set by the C API's names. An option it did not set is the model's
- * default, and the dumps made before the options existed set none.
+ * A dump of reference/irodori-tts/dump.py and the request it was made with, from its meta.json: the length's settings,
+ * whether it spoke with a reference or without one, as the voice none does, and, under "options", the request options
+ * it set by the C API's names. An option it did not set is the model's default, and the dumps made before the options
+ * existed set none.
  */
 class IrodoriDump {
 public:
@@ -39,6 +40,8 @@ public:
     /** The model's repository, as general.source.repo_url names it. */
     std::string repository() const { return "https://huggingface.co/" + string(*member(*member(meta_, "model"), "repository")); }
     std::string text() const { return string(*member(meta_, "text")); }
+    /** Whether the request spoke with a reference; meta.json's "reference" is null for one without. */
+    bool reference() const { return member(meta_, "reference")->kind != JsonValue::Kind::Null; }
     /** A number of meta.json, or `absent` when it has none. */
     double number(const std::string & key, double absent) const {
         const JsonValue * v = meta_.member(key);
@@ -75,6 +78,9 @@ public:
             else if (name == "rescale_sigma") g.rescale_sigma = std::stod(v.text);
             else if (name == "speaker_uncond_mode") g.speaker_noise = v.text == irodori::kSpeakerNoise;
             else if (name == "sway_coeff") g.sway = (float) std::stod(v.text);
+            else if (name == "speaker_kv_scale") g.speaker_kv_scale = (float) std::stod(v.text);
+            else if (name == "speaker_kv_min_t") g.speaker_kv_min_t = (float) std::stod(v.text);
+            else if (name == "speaker_kv_max_layers") g.speaker_kv_layers = std::stoi(v.text);
         }
         return g;
     }
@@ -94,7 +100,8 @@ private:
     /** The options dump.py writes. */
     static constexpr const char * kKnown[] = {"cfg_scale_text", "cfg_scale_speaker", "cfg_guidance_mode", "cfg_min_t", "cfg_max_t",
                                               "truncation_factor", "rescale_k", "rescale_sigma", "speaker_uncond_mode", "sway_coeff",
-                                              "keep_tail", "tail_window_size", "tail_std_threshold", "tail_mean_threshold"};
+                                              "keep_tail", "tail_window_size", "tail_std_threshold", "tail_mean_threshold",
+                                              "speaker_kv_scale", "speaker_kv_min_t", "speaker_kv_max_layers"};
 
     static irodori::GuidanceMode mode(const std::string & name) {
         for (size_t i = 0; i < std::size(irodori::kGuidanceModes); i++) {

@@ -1,7 +1,7 @@
 // Checks the whole synthesis of Irodori-TTS against the official runtime: for every dump of
 // reference/irodori-tts/dump.py made with the same model, the dump's text spoken in the voice of the dump's
-// reference latent from the dump's noise and with its request's length, steps, guidance and cut at the tail,
-// against the audio the official synthesize() returned, the cut at the tail included.
+// reference latent, or without a reference, from the dump's noise and with its request's length, steps, guidance and
+// cut at the tail, against the audio the official synthesize() returned, the cut at the tail included.
 //
 // usage: irodori-synthesis-check <model.gguf> <reference out dir> [gpu|cpu|device name]
 
@@ -53,7 +53,11 @@ int main(int argc, char ** argv) {
         bool ok = !dumps.empty();
         for (const IrodoriDump & d : dumps) {
             const std::string name = d.dir().filename().u8string();
-            const Voice voice = synth.voice_from_latent(read_npy(d.file("ref_latent.npy").u8string()).f32);
+            if (!d.reference() && !synth.has_null_speaker()) {
+                std::printf("%s: skipped, the file lacks the null speaker that a request without a reference speaks with\n", name.c_str());
+                continue;
+            }
+            const Voice voice = d.reference() ? synth.voice_from_latent(read_npy(d.file("ref_latent.npy").u8string()).f32) : Voice{};
             const Npy official = read_npy(d.file("audio.npy").u8string());
             Request r;
             r.text = d.text();

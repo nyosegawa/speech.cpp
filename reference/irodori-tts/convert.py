@@ -3,11 +3,11 @@ the C++ port reads.
 
 usage: uv run python convert.py <mf|rf> <out dir> [--type f32|f16|q8_0]
 
-Writes Irodori-TTS-848M-MF-v4.1-<F32|F16|Q8_0>.gguf or Irodori-TTS-841M-v4.1-<F32|F16|Q8_0>.gguf, named under GGUF's
-naming convention, in layout 1: the tokenizer, ModernBERT-ja and the projector that make the text condition, the
-speaker encoder, the duration predictor, the DiT, and Semantic-DACVAE-Japanese-32dim, the codec, with every constant
-the C++ reads, the hash of the codec's tensors, which voice files carry, and the model's identity in the GGUF
-specification's general keys.
+Writes the model's file, named under GGUF's naming convention from its identity and the parameters of its tensors, in
+layout 2: the tokenizer, ModernBERT-ja and the projectors that make the text and the caption conditions from it, the
+speaker encoder, the duration predictor with the null speaker of a request without a reference, the DiT with the
+caption's keys and values, and Semantic-DACVAE-Japanese-32dim, the codec, with every constant the C++ reads, the hash
+of the codec's tensors, which voice files carry, and the model's identity in the GGUF specification's general keys.
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [out, in] is stored as is
 (ne = [in, out]). --type applies to the model's matrices whose rows are a multiple of 32; the codec stays float32,
@@ -45,7 +45,7 @@ from pins import CODEC, MODELS, snapshot
 ARCH = "irodori-tts"
 # Each layout this converter has written, with the first release of speech.cpp whose reader takes it; it writes the
 # last.
-RELEASES = {1: "0.7.0"}
+RELEASES = {1: "0.7.0", 2: "0.8.0"}
 LAYOUT = max(RELEASES)
 # The SPDX identifier of each license a model card names.
 LICENSES = {"mit": "MIT"}
@@ -108,6 +108,9 @@ defaults = {f.name: f.default for f in dataclasses.fields(inference_runtime.Samp
 meanflow = config.get("flow_parameterization", "rf_velocity") == "meanflow"
 assert "num_steps = (4 if is_meanflow else 40) if req.num_steps is None" in inspect.getsource(inference_runtime)
 default_steps = 4 if meanflow else 40
+# The time below which the speaker's keys and values are no longer scaled, when a request scales them and names none.
+assert "0.9 if req.speaker_kv_min_t is None else float(req.speaker_kv_min_t)" in inspect.getsource(inference_runtime)
+speaker_kv_min_t = 0.9
 
 w = GGUFWriter(None, ARCH)
 
@@ -151,19 +154,41 @@ w.add_uint32(p + "speaker.num_heads", int(config["speaker_heads"]))
 w.add_uint32(p + "speaker.patch_size", int(config["speaker_patch_size"]))
 assert config["duration_architecture"] == "token_sum_dual_adarn_zero_no_aux"
 w.add_uint32(p + "duration.num_layers", int(config["duration_layers"]))
+# The predictor's speaker when a request has no reference (the runtime's no_ref), which a checkpoint of a speaker
+# condition holds.
+null_speaker = "duration_predictor.null_speaker" in checkpoint.keys()
+w.add_bool(p + "duration.null_speaker", null_speaker)
+# The caption condition: the shared ModernBERT-ja with the caption's own projector and norm, which the DiT attends to
+# after the speaker and the duration predictor takes as the mean of its tokens. The width is the one
+# ModelConfig.caption_dim_resolved gives, which the duration predictor's caption modulation takes whether or not the
+# file holds the caption's encoder.
+caption = bool(config["use_caption_condition"])
+caption_dim = int(config["text_dim"] if config.get("caption_dim") is None else config["caption_dim"])
+w.add_uint32(p + "caption.dim", caption_dim)
+w.add_bool(p + "caption_condition", caption)
+if caption:
+    # The caption shares the text's tokenizer, <s> and ModernBERT, so it needs no tokenizer or encoder of its own.
+    assert config["caption_tokenizer_repo"] in (None, config["text_tokenizer_repo"])
+    assert config["caption_add_bos"] in (None, config["text_add_bos"]) and config["text_add_bos"]
+    assert config["duration_caption_fusion"] == "adarn_zero" and config["duration_caption_pooling"] == "masked_mean"
+    w.add_uint32(p + "caption.max_tokens", int(config["max_caption_len"]))
 w.add_uint32(p + "dit.dim", int(config["model_dim"]))
 w.add_uint32(p + "dit.num_layers", int(config["num_layers"]))
 w.add_uint32(p + "dit.num_heads", int(config["num_heads"]))
 w.add_uint32(p + "dit.timestep_dim", int(config["timestep_embed_dim"]))
 
-# RF's guidance against a branch without the text and one without the speaker while t is in its range; MeanFlow
-# folded the guidance into its training and takes none.
+# RF's guidance against a branch without the text, one without the speaker and one without the caption while t is in
+# its range, and the time at which a request's scaling of the speaker's keys and values ends; MeanFlow folded the
+# guidance into its training and takes none.
 w.add_uint32(p + "sampler.default_steps", default_steps)
 if not meanflow:
     w.add_float32(p + "sampler.cfg_text", float(defaults["cfg_scale_text"]))
     w.add_float32(p + "sampler.cfg_speaker", float(defaults["cfg_scale_speaker"]))
     w.add_float32(p + "sampler.cfg_min_t", float(defaults["cfg_min_t"]))
     w.add_float32(p + "sampler.cfg_max_t", float(defaults["cfg_max_t"]))
+    w.add_float32(p + "sampler.speaker_kv_min_t", speaker_kv_min_t)
+    if caption:
+        w.add_float32(p + "sampler.cfg_caption", float(defaults["cfg_scale_caption"]))
 w.add_float32(p + "length.min_seconds", float(defaults["min_seconds"]))
 w.add_float32(p + "length.max_seconds", float(defaults["max_seconds"]))
 w.add_float32(p + "length.min_speed", MIN_SPEED)
@@ -234,15 +259,22 @@ for i in range(int(text_config["num_hidden_layers"])):
     add(o + "ffn_down", tensor(a + "mlp.Wo.weight"), True)
 add("text.final_norm", tensor(b + "final_norm.weight"), False)
 
-t = "text_encoder."
-add("text.proj.weight", tensor(t + "projector.weight"), True)
-add("text.proj.bias", tensor(t + "projector.bias"), False)
-add("text.proj.res_norm", tensor(t + "residual_norm.weight"), False)
-add("text.proj.res_up.weight", tensor(t + "residual_up.weight"), True)
-add("text.proj.res_up.bias", tensor(t + "residual_up.bias"), False)
-add("text.proj.res_down.weight", tensor(t + "residual_down.weight"), True)
-add("text.proj.res_down.bias", tensor(t + "residual_down.bias"), False)
+def projector(source, out):
+    """A PretrainedConditionProjector of ModernBERT's output: a linear map plus an RMS-normed residual MLP."""
+    add(out + ".weight", tensor(source + "projector.weight"), True)
+    add(out + ".bias", tensor(source + "projector.bias"), False)
+    add(out + ".res_norm", tensor(source + "residual_norm.weight"), False)
+    add(out + ".res_up.weight", tensor(source + "residual_up.weight"), True)
+    add(out + ".res_up.bias", tensor(source + "residual_up.bias"), False)
+    add(out + ".res_down.weight", tensor(source + "residual_down.weight"), True)
+    add(out + ".res_down.bias", tensor(source + "residual_down.bias"), False)
+
+
+projector("text_encoder.", "text.proj")
 add("text.norm", tensor("text_norm.weight"), False)
+if caption:
+    projector("caption_encoder.", "caption.proj")
+    add("caption.norm", tensor("caption_norm.weight"), False)
 
 
 def swiglu(prefix_in, prefix_out):
@@ -266,7 +298,8 @@ for i in range(int(config["speaker_layers"])):
     swiglu(a + "mlp.", o)
 add("speaker.norm", tensor("speaker_norm.weight"), False)
 
-# The duration predictor; without a caption its caption vector is the learned null one.
+# The duration predictor; without a caption its caption vector is the learned null one, and without a reference its
+# speaker vector.
 d = "duration_predictor."
 add("duration.in_proj.weight", tensor(d + "token_input_proj.weight"), True)
 add("duration.in_proj.bias", tensor(d + "token_input_proj.bias"), False)
@@ -282,8 +315,10 @@ add("duration.out_norm", tensor(d + "token_out_norm.weight"), False)
 add("duration.out_proj.weight", tensor(d + "token_out_proj.weight"), False)
 add("duration.out_proj.bias", tensor(d + "token_out_proj.bias"), False)
 add("duration.null_caption", tensor(d + "null_caption"), False)
+if null_speaker:
+    add("duration.null_speaker", tensor(d + "null_speaker"), False)
 
-# The DiT. The caption's keys and values are left out: without a caption they are all masked.
+# The DiT.
 for i, layer in enumerate((0, 2, 4)):
     add(f"dit.cond.{i}", tensor(f"cond_module.{layer}.weight"), True)
     if meanflow:
@@ -298,6 +333,8 @@ for i in range(int(config["num_layers"])):
     for x in ("k", "v"):
         add(o + f"attn_{x}_text", tensor(a + f"attention.w{x}_text.weight"), True)
         add(o + f"attn_{x}_speaker", tensor(a + f"attention.w{x}_speaker.weight"), True)
+        if caption:
+            add(o + f"attn_{x}_caption", tensor(a + f"attention.w{x}_caption.weight"), True)
     add(o + "q_norm", tensor(a + "attention.q_norm.weight"), False)
     add(o + "k_norm", tensor(a + "attention.k_norm.weight"), False)
     swiglu(a + "mlp.", o)

@@ -1,5 +1,6 @@
 #include "dit.h"
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 
@@ -40,7 +41,8 @@ std::vector<float> timestep_embedding(float t, int dim) {
 }
 
 ggml_tensor * Dit::build(Graph & g, const std::vector<float> & x_in, int frames, float t, float delta, const Conditions & c,
-                         const std::vector<Branch> & branch_list, std::vector<ggml_tensor *> * blocks, ggml_tensor ** cond_out) const {
+                         const std::vector<Branch> & branch_list, const SpeakerScale & scale, std::vector<ggml_tensor *> * blocks,
+                         ggml_tensor ** cond_out) const {
     ggml_context * ctx = g.ctx();
     const Layers l{ctx, m_, eps_};
     const int head_dim = dim_ / heads_, half = heads_ / 2;
@@ -67,7 +69,8 @@ ggml_tensor * Dit::build(Graph & g, const std::vector<float> & x_in, int frames,
     ggml_tensor * x = l.linear(g.input(x_rep, latent_dim_, s, branches), "dit.in_proj");
 
     ggml_tensor * text = g.input(c.text, c.text.size() / c.text_tokens, c.text_tokens);
-    ggml_tensor * speaker = g.input(c.speaker, c.speaker.size() / c.speaker_tokens, c.speaker_tokens);
+    const bool has_speaker = c.speaker_tokens > 0;
+    ggml_tensor * speaker = has_speaker ? g.input(c.speaker, c.speaker.size() / c.speaker_tokens, c.speaker_tokens) : nullptr;
     ggml_tensor * speaker_noise = noise ? g.input(c.speaker_noise, c.speaker.size() / c.speaker_tokens, c.speaker_tokens) : nullptr;
     std::vector<int32_t> positions(s);
     for (int64_t i = 0; i < s; i++) positions[i] = (int32_t) i;
@@ -121,26 +124,34 @@ ggml_tensor * Dit::build(Graph & g, const std::vector<float> & x_in, int frames,
         auto repeat = [&](ggml_tensor * t4) {
             return branches == 1 ? t4 : ggml_repeat(ctx, t4, ggml_new_tensor_4d(ctx, GGML_TYPE_F32, t4->ne[0], t4->ne[1], t4->ne[2], branches));
         };
-        ggml_tensor * k_text = repeat(norm(heads("attn_k_text", text, c.text_tokens, 1), "k_norm"));
-        ggml_tensor * v_text = repeat(heads("attn_v_text", text, c.text_tokens, 1));
-        ggml_tensor * k_speaker = nullptr, * v_speaker = nullptr;
-        if (!noise) {
-            k_speaker = repeat(norm(heads("attn_k_speaker", speaker, c.speaker_tokens, 1), "k_norm"));
-            v_speaker = repeat(heads("attn_v_speaker", speaker, c.speaker_tokens, 1));
-        } else {
-            // Each branch attends to the speaker's keys and values or to those of the noise in its place.
-            ggml_tensor * k_kept = norm(heads("attn_k_speaker", speaker, c.speaker_tokens, 1), "k_norm");
-            ggml_tensor * v_kept = heads("attn_v_speaker", speaker, c.speaker_tokens, 1);
-            ggml_tensor * k_noise = norm(heads("attn_k_speaker", speaker_noise, c.speaker_tokens, 1), "k_norm");
-            ggml_tensor * v_noise = heads("attn_v_speaker", speaker_noise, c.speaker_tokens, 1);
-            for (const Branch & br : branch_list) {
-                const bool n = br.speaker == Branch::Speaker::Noise;
-                k_speaker = k_speaker ? ggml_concat(ctx, k_speaker, n ? k_noise : k_kept, 3) : (n ? k_noise : k_kept);
-                v_speaker = v_speaker ? ggml_concat(ctx, v_speaker, n ? v_noise : v_kept, 3) : (n ? v_noise : v_kept);
-            }
+        ggml_tensor * k = ggml_concat(ctx, k_self, repeat(norm(heads("attn_k_text", text, c.text_tokens, 1), "k_norm")), 2);
+        ggml_tensor * v = ggml_concat(ctx, v_self, repeat(heads("attn_v_text", text, c.text_tokens, 1)), 2);
+        if (has_speaker) {
+            // Each branch attends to the speaker's keys and values or to those of the noise in its place, scaled where
+            // the request's scale reaches it; a batch whose branches all attend to the same ones repeats them.
+            const bool scaling = i < scale.layers && scale.factor != 1;
+            auto per_branch = [&](ggml_tensor * kept, ggml_tensor * noised) {
+                ggml_tensor * variant[2][2] = {{kept, nullptr}, {noised, nullptr}};
+                std::vector<ggml_tensor *> parts;
+                for (const Branch & br : branch_list) {
+                    const int n = br.speaker == Branch::Speaker::Noise, scaled = scaling && br.scaled;
+                    if (!variant[n][scaled]) variant[n][scaled] = ggml_scale(ctx, variant[n][0], scale.factor);
+                    parts.push_back(variant[n][scaled]);
+                }
+                if (std::all_of(parts.begin(), parts.end(), [&](ggml_tensor * p) { return p == parts[0]; })) return repeat(parts[0]);
+                ggml_tensor * out = parts[0];
+                for (size_t b = 1; b < parts.size(); b++) out = ggml_concat(ctx, out, parts[b], 3);
+                return out;
+            };
+            k = ggml_concat(ctx, k,
+                            per_branch(norm(heads("attn_k_speaker", speaker, c.speaker_tokens, 1), "k_norm"),
+                                       noise ? norm(heads("attn_k_speaker", speaker_noise, c.speaker_tokens, 1), "k_norm") : nullptr),
+                            2);
+            v = ggml_concat(ctx, v,
+                            per_branch(heads("attn_v_speaker", speaker, c.speaker_tokens, 1),
+                                       noise ? heads("attn_v_speaker", speaker_noise, c.speaker_tokens, 1) : nullptr),
+                            2);
         }
-        ggml_tensor * k = ggml_concat(ctx, ggml_concat(ctx, k_self, k_text, 2), k_speaker, 2);
-        ggml_tensor * v = ggml_concat(ctx, ggml_concat(ctx, v_self, v_text, 2), v_speaker, 2);
         ggml_tensor * y = l.attention(q, k, v, mask);
         y = ggml_mul(ctx, y, ggml_sigmoid(ctx, mul_mat(ctx, m_.tensor(b + "attn_gate"), h)));
         x = ggml_add(ctx, x, ggml_mul(ctx, mul_mat(ctx, m_.tensor(b + "attn_o"), y), gate));

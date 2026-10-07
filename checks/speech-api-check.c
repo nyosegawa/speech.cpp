@@ -144,8 +144,12 @@ static speech_status speak(speech_request * r, Audio * audio, speech_stop * stop
     return s;
 }
 
-/** Adds the voices of the command line, and checks the voices a model refuses. */
+/** Adds the voices of the command line after the model's own, and checks the voices a model refuses. */
 static int check_voices(speech_model * model, const char * model_path, char ** names, char ** paths, size_t n_voices, int irodori) {
+    speech_model_info * info = NULL;
+    if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
+    const size_t own = speech_model_info_voice_count(info);
+    speech_model_info_free(info);
     for (size_t i = 0; i < n_voices; i++) {
         const double start = now_seconds();
         if (speech_voice_add(model, names[i], paths[i]) != SPEECH_OK) return fail("speech_voice_add");
@@ -161,10 +165,13 @@ static int check_voices(speech_model * model, const char * model_path, char ** n
     ok &= expect(speech_voice_add(model, names[0], paths[0]), SPEECH_ERROR_INVALID_ARGUMENT, "name", "a voice under a name the model has");
     ok &= expect(speech_voice_add(model, "", paths[0]), SPEECH_ERROR_INVALID_ARGUMENT, "name", "a voice without a name");
     ok &= expect(speech_voice_add(model, "missing", "no-such-folder/voice.gguf"), SPEECH_ERROR_IO, "path", "a voice file that is not there");
-    speech_model_info * info = NULL;
+    // The voice none speaks without a reference in a file that holds the null speaker, and its name stays its own in
+    // one that does not.
+    ok &= expect(speech_voice_add(model, "none", paths[0]), SPEECH_ERROR_INVALID_ARGUMENT, "name", "a voice added under the name none");
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
-    ok &= speech_model_info_voice_count(info) == n_voices && !strcmp(speech_model_info_voice_name(info, n_voices - 1), names[n_voices - 1]) &&
-          !strcmp(speech_model_info_voice_language(info, 0), "");
+    ok &= speech_model_info_voice_count(info) == own + n_voices &&
+          !strcmp(speech_model_info_voice_name(info, own + n_voices - 1), names[n_voices - 1]) &&
+          !strcmp(speech_model_info_voice_language(info, own), "");
     if (!ok) fprintf(stderr, "FAIL: the information does not list the voices added\n");
     speech_model_info_free(info);
     return ok ? 0 : 1;
@@ -412,6 +419,12 @@ static int check_irodori_options(speech_model * model, const speech_model_info *
             {"speaker noise without a speaker scale", NULL, -1, 0, -1, -1, 0, 0, "noise", SPEECH_ERROR_INVALID_ARGUMENT, "speaker_uncond_mode"},
             {"a sway that stops the schedule", NULL, -1, -1, -1, -1, 0, -3, NULL, SPEECH_ERROR_OUT_OF_RANGE, "sway_coeff"},
         };
+        r = new_request(model, "はい。", voice, 5);
+        speech_request_set_float(r, SPEECH_OPT_SPEAKER_KV_MIN_T, 0.5);
+        ok &= expect(speak(r, &set, NULL, NULL), SPEECH_ERROR_INVALID_ARGUMENT, "speaker_kv_min_t", "speaker_kv_min_t without a scale");
+        r = new_request(model, "はい。", voice, 5);
+        speech_request_set_int(r, SPEECH_OPT_SPEAKER_KV_MAX_LAYERS, 3);
+        ok &= expect(speak(r, &set, NULL, NULL), SPEECH_ERROR_INVALID_ARGUMENT, "speaker_kv_max_layers", "speaker_kv_max_layers without a scale");
         for (size_t i = 0; i < sizeof refused / sizeof refused[0]; i++) {
             r = new_request(model, "はい。", voice, 5);
             speech_request_set_int(r, SPEECH_OPT_STEPS, 8);
@@ -434,6 +447,9 @@ static int check_irodori_options(speech_model * model, const speech_model_info *
         speech_request_set_float(r, SPEECH_OPT_RESCALE_K, 1.5);
         speech_request_set_float(r, SPEECH_OPT_RESCALE_SIGMA, 1.0);
         speech_request_set_float(r, SPEECH_OPT_SWAY_COEFF, -0.5);
+        speech_request_set_float(r, SPEECH_OPT_SPEAKER_KV_SCALE, 1.5);
+        speech_request_set_float(r, SPEECH_OPT_SPEAKER_KV_MIN_T, 0.6);
+        speech_request_set_int(r, SPEECH_OPT_SPEAKER_KV_MAX_LAYERS, 6);
         set.n = 0;
         ok &= expect(speak(r, &set, NULL, NULL), SPEECH_OK, NULL, "a request of every guidance option") && set.n > 0;
         if (set.n > 0) printf("a request of every guidance option spoke %.2f s\n", (double) set.n / rate);
@@ -442,6 +458,47 @@ static int check_irodori_options(speech_model * model, const speech_model_info *
     free(cut.samples);
     free(kept.samples);
     if (!ok) fprintf(stderr, "FAIL: Irodori-TTS's options of the runtime's request are not followed\n");
+    return ok ? 0 : 1;
+}
+
+/**
+ * Irodori-TTS without a reference: a file with the null speaker lists the voice none, which speaks and refuses what
+ * has no speaker to act on; a file without it refuses none naming the null speaker it lacks.
+ */
+static int check_irodori_without_reference(speech_model * model, const speech_model_info * info) {
+    int has_none = 0;
+    for (size_t i = 0; i < speech_model_info_voice_count(info); i++) has_none |= !strcmp(speech_model_info_voice_name(info, i), "none");
+    int ok = 1;
+    if (!has_none) {
+        speech_request * r = new_request(model, "はい。", NULL, 3);
+        ok &= expect(speech_request_set_string(r, SPEECH_OPT_VOICE, "none"), SPEECH_ERROR_OUT_OF_RANGE, "voice", "the voice none without the null speaker") &&
+              strstr(speech_last_error(), "null speaker") != NULL;
+        speech_request_free(r);
+        if (ok) printf("a file without the null speaker refuses the voice none: %s\n", speech_last_error());
+        else fprintf(stderr, "FAIL: a file without the null speaker does not refuse the voice none by what it lacks\n");
+        return ok ? 0 : 1;
+    }
+    const int rate = speech_model_info_sample_rate(info);
+    Audio audio = {NULL, 0, 0};
+    ok &= expect(speak(new_request(model, SENTENCE, "none", 3), &audio, NULL, NULL), SPEECH_OK, NULL, "the voice none") && audio.n > 0;
+    if (ok) printf("the voice none spoke %.2f s without a reference\n", (double) audio.n / rate);
+    if (speech_model_info_takes(info, SPEECH_OPT_CFG_SCALE_SPEAKER)) {
+        speech_request * r = new_request(model, "はい。", "none", 3);
+        speech_request_set_float(r, SPEECH_OPT_CFG_SCALE_SPEAKER, 3);
+        ok &= expect(speak(r, &audio, NULL, NULL), SPEECH_ERROR_INVALID_ARGUMENT, "cfg_scale_speaker", "a speaker scale without a reference");
+        r = new_request(model, "はい。", "none", 3);
+        speech_request_set_string(r, SPEECH_OPT_SPEAKER_UNCOND_MODE, "noise");
+        ok &= expect(speak(r, &audio, NULL, NULL), SPEECH_ERROR_INVALID_ARGUMENT, "speaker_uncond_mode", "speaker noise without a reference");
+        r = new_request(model, "はい。", "none", 3);
+        speech_request_set_float(r, SPEECH_OPT_SPEAKER_KV_SCALE, 1.5);
+        ok &= expect(speak(r, &audio, NULL, NULL), SPEECH_ERROR_INVALID_ARGUMENT, "speaker_kv_scale", "the speaker's scaling without a reference");
+        r = new_request(model, "はい。", "none", 3);
+        speech_request_set_float(r, SPEECH_OPT_CFG_SCALE_SPEAKER, 0);
+        audio.n = 0;
+        ok &= expect(speak(r, &audio, NULL, NULL), SPEECH_OK, NULL, "a speaker scale of 0 without a reference") && audio.n > 0;
+    }
+    free(audio.samples);
+    if (!ok) fprintf(stderr, "FAIL: the voice none does not speak, or does not refuse what it leaves without effect\n");
     return ok ? 0 : 1;
 }
 
@@ -599,7 +656,8 @@ static int check_model(speech_model * model, const char * model_path, const char
     speech_model_info_free(info);
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
     const int rate = speech_model_info_sample_rate(info);
-    const char * voice = made ? "made" : speech_model_info_voice_name(info, 0);
+    // Irodori-TTS speaks in the first voice added, since its own voice none has no reference.
+    const char * voice = made ? "made" : irodori ? names[0] : speech_model_info_voice_name(info, 0);
 
     size_t tokens = 0;
     if (speech_model_info_text_tokens(info, SENTENCE, &tokens) != SPEECH_OK) return fail("speech_model_info_text_tokens");
@@ -651,7 +709,8 @@ static int check_model(speech_model * model, const char * model_path, const char
     free(again.samples);
 
     if (check_defaults(model, info, voice) != 0) return 1;
-    if (irodori ? check_irodori_tts(model, info, voice) != 0 || check_irodori_options(model, info, voice) != 0
+    if (irodori ? check_irodori_tts(model, info, voice) != 0 || check_irodori_options(model, info, voice) != 0 ||
+                      check_irodori_without_reference(model, info) != 0
                 : check_qwen3_tts(model, info, voice) != 0 || check_qwen3_tts_sampling(model, voice) != 0 ||
                       check_qwen3_tts_instructions(model, info, voice) != 0) {
         return 1;
