@@ -20,7 +20,8 @@ public:
         if (!run.progress(1.0 / 3)) return {};
         const std::vector<float> projected = recognizer_.encode(features, frontend.frames(samples.size()));
         if (!run.progress(2.0 / 3)) return {};
-        const fastconformer::Decoding decoding = recognizer_.decoding(projected, [&](double done) { return run.progress((2 + done) / 3); });
+        const std::string & name = values.has(SPEECH_OPT_DECODING) ? values.string(SPEECH_OPT_DECODING) : recognizer_.decodings().front();
+        const fastconformer::Decoding decoding = recognizer_.decoding(projected, name, [&](double done) { return run.progress((2 + done) / 3); });
         if (run.stopped()) return {};
         const fastconformer::Detokenizer & detokenizer = recognizer_.detokenizer();
         Recognized out;
@@ -52,14 +53,22 @@ private:
 
 /**
  * The table of the options FastConformer takes. The model has no input for a language, so a request's language is
- * checked against the model's and not used; parakeet-tdt-0.6b-v3 finds the language of the audio itself.
+ * checked against the model's and not used; parakeet-tdt-0.6b-v3 finds the language of the audio itself. A model with
+ * more than one decoding, an RNN-T's beam search and greedy decoding, takes the decoding, the one NeMo's transcribe()
+ * runs by default being the default; TDT's one decoding is no choice.
  */
-FamilyInfo describe_fastconformer(const std::shared_ptr<const ModelFile> &) {
+FamilyInfo describe_fastconformer(const std::shared_ptr<const ModelFile> & file) {
     FamilyInfo info;
     info.options = {
         {SPEECH_OPT_LANGUAGE, false, false, std::string("auto")},
         {SPEECH_OPT_TIMESTAMPS, false, true, false},
     };
+    const std::vector<std::string> decodings = fastconformer::decodings(*file);
+    if (decodings.size() > 1) {
+        OptionSpec decoding{SPEECH_OPT_DECODING, false, true, decodings.front()};
+        decoding.choices = decodings;
+        info.options.push_back(decoding);
+    }
     return info;
 }
 

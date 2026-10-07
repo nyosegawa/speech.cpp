@@ -63,6 +63,7 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
         m.boolean(p + "decoder.rnnt.score_norm");
         const float ratio = m.f32(p + "decoder.rnnt.max_target_ratio");
         require(ratio >= 0 && std::isfinite(ratio), m, "fastconformer.decoder.rnnt.max_target_ratio is negative or not finite");
+        m.size(p + "decoder.rnnt.max_symbols");
     }
     const int prediction_layers = m.count(p + "decoder.prediction_layers");
     m.str_array(p + "segment.separators");
@@ -131,11 +132,22 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
     return t;
 }
 
+/**
+ * Brings layout 1, the one before, up: layout 2 adds fastconformer.decoder.rnnt.max_symbols, the most tokens greedy
+ * RNN-T decoding emits on one frame. Layout 1's converter took one RNN-T checkpoint, reazonspeech-nemo-v2, whose
+ * decoding.greedy.max_symbols is 10.
+ */
+void upgrade(ModelFile & m) {
+    if (m.one_of("fastconformer.decoder.kind", {"tdt", "rnnt"}) == "tdt") return;
+    require(m.str("general.name") == "reazonspeech-nemo-v2", m, "it is an RNN-T model of layout 1 other than reazonspeech-nemo-v2");
+    m.upgrade_u32("fastconformer.decoder.rnnt.max_symbols", 10);
+}
+
 }  // namespace
 
-const Layout layout = {"fastconformer", 1,
+const Layout layout = {"fastconformer", 2,
                        "convert it again with reference/fastconformer/convert.py, or download it again from its Hugging Face "
                        "repository",
-                       tensors};
+                       tensors, upgrade};
 
 }  // namespace fastconformer

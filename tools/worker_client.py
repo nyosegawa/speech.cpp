@@ -167,16 +167,21 @@ def check_model_information(speech, model, loaded, added_voices=()):
 def dump_requests(speech, model, dump):
     """The requests of a dump of a recognition model's reference, each as (name, members, text, languages): for one of
     reference/fastconformer/dump.py, the request without options, the dump's text and no language, since FastConformer
-    writes none; for one of reference/qwen3-asr/dump.py, which keeps each request in a folder of its own, auto, forced,
-    auto-prompt and forced-prompt, the forced language given by the tag of general.languages whose name
-    qwen3-asr.language_names gives (read with speech info --json --meta), the prompt by its text, and the language
-    qwen-asr parsed by its tag, or none."""
+    writes none, then, for a model that takes the option decoding (read with speech info --json), a request with each
+    decoding other than the default and the text in the dump's folder of its name; for one of
+    reference/qwen3-asr/dump.py, which keeps each request in a folder of its own, auto, forced, auto-prompt and
+    forced-prompt, the forced language given by the tag of general.languages whose name qwen3-asr.language_names gives
+    (read with speech info --json --meta), the prompt by its text, and the language qwen-asr parsed by its tag, or
+    none."""
     def text(folder):
         with open(os.path.join(folder, "text.txt"), encoding="utf-8") as f:
             return f.read()
 
     if not os.path.isfile(os.path.join(dump, "auto", "meta.json")):
-        return [("auto", {}, text(dump), [])]
+        r = subprocess.run([speech, "info", model, "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        decoding = [o for o in json.loads(r.stdout)["options"] if o["name"] == "decoding"]
+        others = [c for o in decoding for c in o["choices"] if c != o["default"]]
+        return [("auto", {}, text(dump), [])] + [(c, {"decoding": c}, text(os.path.join(dump, c)), []) for c in others]
     r = subprocess.run([speech, "info", model, "--json", "--meta"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     meta = json.loads(r.stdout)["meta"]
     tags = dict(zip(meta["qwen3-asr.language_names"], meta["general.languages"]))

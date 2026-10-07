@@ -32,8 +32,9 @@ struct TensorSpec {
 
 /**
  * What a reader takes of a GGUF file: the general.architecture it reads, the speech.layout it knows, what to tell
- * the owner of a file it cannot read, and the tensors a file calls for, which `tensors` names with the shape and the
- * types of each after it has read and checked the file's keys.
+ * the owner of a file it cannot read, the tensors a file calls for, which `tensors` names with the shape and the
+ * types of each after it has read and checked the file's keys, and how a file of an earlier layout is brought up to
+ * this one.
  */
 struct Layout {
     const char * architecture;
@@ -41,6 +42,12 @@ struct Layout {
     /** What to do with a file this reader refuses, such as "convert it again with reference/x/convert.py". */
     const char * remedy;
     std::function<std::vector<TensorSpec>(const ModelFile & file)> tensors;
+    /**
+     * Brings the metadata of a file of an earlier layout, whose version ModelFile::layout_version() gives, up to this
+     * layout before anything else reads it, setting what the earlier layout lacks with ModelFile::upgrade_u32(). Empty
+     * for a family whose layout has had one version, whose reader refuses every other.
+     */
+    std::function<void(ModelFile & file)> upgrade = {};
 };
 
 /**
@@ -102,9 +109,16 @@ public:
     std::vector<double> f64_array(const std::string & key) const;
     std::vector<std::string> str_array(const std::string & key) const;
 
+    /**
+     * Sets a u32 key of the metadata as it is read, not in the file, for a layout's upgrade of a file of an earlier
+     * layout; the model information then lists it among the file's entries.
+     */
+    void upgrade_u32(const std::string & key, uint32_t value);
+
     const std::string & path() const { return path_; }
     /** The layout's remedy, for a message about the file that a family's reader throws. */
     const std::string & remedy() const { return remedy_; }
+    /** The file's own speech.layout, which an upgrade does not change. */
     uint32_t layout_version() const { return version_; }
 
     /** The size of the file in bytes. */

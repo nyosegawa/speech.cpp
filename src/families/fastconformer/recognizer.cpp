@@ -8,6 +8,17 @@
 
 namespace fastconformer {
 
+namespace {
+
+std::vector<std::unique_ptr<Decoder>> make_decoders(const ModelFile & m, const PredictionNetwork & prediction, const Joint & joint,
+                                                    const std::vector<std::string> & names) {
+    std::vector<std::unique_ptr<Decoder>> decoders;
+    for (const std::string & name : names) decoders.push_back(make_decoder(m, prediction, joint, name));
+    return decoders;
+}
+
+}  // namespace
+
 Recognizer::Recognizer(const std::string & path, ggml_backend_t backend)
     : backend_(backend),
       model_(path, backend, layout),
@@ -15,7 +26,8 @@ Recognizer::Recognizer(const std::string & path, ggml_backend_t backend)
       encoder_(model_),
       prediction_(model_),
       joint_(model_),
-      decoder_(make_decoder(model_, prediction_, joint_)),
+      decoding_names_(fastconformer::decodings(model_)),
+      decoders_(make_decoders(model_, prediction_, joint_, decoding_names_)),
       detokenizer_(model_),
       separators_(model_.str_array("fastconformer.segment.separators")),
       breaks_(model_.str_array("fastconformer.segment.breaks")),
@@ -35,12 +47,19 @@ std::vector<float> Recognizer::encode(const std::vector<float> & features, int64
     return Graph::read(out);
 }
 
-Transcript Recognizer::recognize(const std::vector<float> & samples) {
+Transcript Recognizer::recognize(const std::vector<float> & samples, const std::string & name) {
     const std::vector<float> features = frontend_.features(samples);
     Transcript t;
-    t.decoding = decoding(encode(features, frontend_.frames(samples.size())));
+    t.decoding = decoding(encode(features, frontend_.frames(samples.size())), name);
     t.text = detokenizer_.text(t.decoding.ids);
     return t;
+}
+
+const Decoder & Recognizer::decoder(const std::string & name) const {
+    for (size_t i = 0; i < decoding_names_.size(); i++) {
+        if (decoding_names_[i] == name) return *decoders_[i];
+    }
+    throw std::logic_error(model_.path() + " has no decoding named " + name);
 }
 
 std::vector<Segment> Recognizer::segments(const Decoding & decoding) const {

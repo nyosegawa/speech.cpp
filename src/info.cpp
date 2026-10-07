@@ -43,13 +43,19 @@ std::string string_array(size_t n, Get get) {
     return out + "]";
 }
 
-/** The values a string option takes: the voices for voice, the languages for language. */
+/**
+ * The values a string option takes: the voices for voice, the languages for language and the choices the family
+ * declares for another, or none for an option without them.
+ */
 const std::vector<std::string> * choices(const speech_model_info & info, speech_option option, std::vector<std::string> & voices) {
     if (option == SPEECH_OPT_LANGUAGE) return &info.file->languages;
-    if (option != SPEECH_OPT_VOICE) return nullptr;
-    voices.clear();
-    for (const VoiceInfo & v : info.voices) voices.push_back(v.name);
-    return &voices;
+    if (option == SPEECH_OPT_VOICE) {
+        voices.clear();
+        for (const VoiceInfo & v : info.voices) voices.push_back(v.name);
+        return &voices;
+    }
+    const OptionSpec * s = info.file->spec(option);
+    return s && !s->choices.empty() ? &s->choices : nullptr;
 }
 
 /** The members of the information in the order the JSON form gives them; a member that does not apply is left out. */
@@ -368,10 +374,11 @@ size_t speech_model_info_option_choice_count(const speech_model_info * info, spe
 }
 
 const char * speech_model_info_option_choice(const speech_model_info * info, speech_option option, size_t index) {
-    if (!spec_of(info, option)) return nullptr;
+    const OptionSpec * s = spec_of(info, option);
+    if (!s) return nullptr;
     if (option == SPEECH_OPT_VOICE) return index < info->voices.size() ? info->voices[index].name.c_str() : nullptr;
     if (option == SPEECH_OPT_LANGUAGE) return index < info->file->languages.size() ? info->file->languages[index].c_str() : nullptr;
-    return nullptr;
+    return index < s->choices.size() ? s->choices[index].c_str() : nullptr;
 }
 
 uint64_t speech_model_info_file_bytes(const speech_model_info * info) {

@@ -1,14 +1,17 @@
 // Checks FastConformer's transducer, RNN-T or TDT, against NeMo on each dump of reference/fastconformer/dump.py, in
 // the order data flows: the prediction network on the dump's labels, the joint on the dump's encoder frames and
-// prediction outputs, the decoding and the detokenization from the dump's encoder output, then the whole path
-// from the dump's audio to the text, which it also times. The dumps are those of the model, in
-// <reference out dir>/<its general.name>/.
+// prediction outputs, each decoding of the model and the detokenization from the dump's encoder output, then the
+// whole path from the dump's audio to the text, which it also times with the graphs each decoding computes. The
+// dumps are those of the model, in <reference out dir>/<its general.name>/: the model's default decoding is checked
+// against the dump's own tokens and text, and each other one against those in the dump's folder of its name, which
+// dump.py --greedy writes for an RNN-T's greedy decoding.
 //
 // usage: fastconformer-transducer-check <model.gguf> <reference out dir> [gpu|cpu|device name]
 
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <stdexcept>
 
 #include "args.h"
@@ -80,7 +83,8 @@ int main(int argc, char ** argv) {
             Recognizer recognizer(args[1], backend);
             const PredictionNetwork & prediction = recognizer.prediction();
             const Joint & joint = recognizer.joint();
-            const int hidden = prediction.hidden(), outputs = joint.outputs(), blank = recognizer.decoder().blank();
+            const std::vector<std::string> & decodings = recognizer.decodings();
+            const int hidden = prediction.hidden(), outputs = joint.outputs(), blank = recognizer.decoder(decodings.front()).blank();
             const bool tdt = recognizer.model().str("fastconformer.decoder.kind") == "tdt";
             ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
             for (const auto & d : reference_dumps(args[2], recognizer.model())) {
@@ -90,9 +94,15 @@ int main(int argc, char ** argv) {
                 const Npy joint_frames = read_npy((d / "joint_frames.npy").u8string());
                 const Npy joint_steps = read_npy((d / "joint_steps.npy").u8string());
                 const Npy joint_output = read_npy((d / "joint_output.npy").u8string());
-                const Npy want_ids = read_npy((d / "ids.npy").u8string());
                 const Npy audio = read_npy((d / "audio.npy").u8string());
-                const std::string want_text = dump_text(d / "text.txt");
+                // NeMo's tokens and text of each decoding of the model, in its order.
+                std::vector<std::vector<int32_t>> want_ids;
+                std::vector<std::string> want_text;
+                for (size_t k = 0; k < decodings.size(); k++) {
+                    const std::filesystem::path from = k == 0 ? d : d / std::filesystem::u8path(decodings[k]);
+                    want_ids.push_back(read_npy((from / "ids.npy").u8string()).i32);
+                    want_text.push_back(dump_text(from / "text.txt"));
+                }
                 std::printf("%s (%.2f s, %zu prediction steps, %zu joint evaluations)\n", d.filename().u8string().c_str(),
                             (double) audio.f32.size() / recognizer.sample_rate(), pred_labels.i32.size(), joint_frames.i32.size());
 
@@ -138,39 +148,49 @@ int main(int argc, char ** argv) {
                 if (outputs > blank + 1) std::printf(", durations %.4f", argmax_agreement(got, joint_output.f32, outputs, blank + 1, outputs));
                 std::printf("\n");
 
-                // The decoding and the text from the dump's encoder output.
-                Graph e;
-                ggml_tensor * projected = joint.project_encoder(e.ctx(), e.input(encoded.f32, encoded.shape[1], encoded.shape[0]));
-                e.output(projected);
-                e.compute(backend, allocr);
-                const std::vector<int32_t> ids = recognizer.decode(Graph::read(projected));
-                const std::string text = recognizer.detokenizer().text(ids);
-                std::printf("  decoded ids %s, text %s\n", ids == want_ids.i32 ? "equal" : "DIFFER", text == want_text ? "equal" : "DIFFERS");
-                if (ids != want_ids.i32) std::printf("    got%s\n    want%s\n", ids_text(ids).c_str(), ids_text(want_ids.i32).c_str());
-                if (text != want_text) std::printf("    got  %s\n    want %s\n", text.c_str(), want_text.c_str());
                 // Measured on an Apple M5 on 2026-10-06 with parakeet-tdt_ctc-0.6b-ja and parakeet-tdt-0.6b-v3: the
                 // prediction network 130 to 133 dB on the CPU with F32 weights, 56 to 60 dB with F16, 130 to 134 dB on
                 // Metal with F32 and 66 to 70 dB with F16; the joint 140 to 142 dB on the CPU with F32, 76 to 77 dB with
                 // F16 and 85 to 89 dB on Metal with either. reazonspeech-nemo-v2's the same day: the prediction network
                 // 125 to 128, 61 to 64, 125 to 128 and 69 to 73 dB, the joint 124 to 126, 71 to 72 and 83 to 88 dB. A
                 // wrong gate or a wrong output falls far below.
-                ok = ok && dp.snr_db > 40 && dj.snr_db > 40 && ids == want_ids.i32 && text == want_text;
+                ok = ok && dp.snr_db > 40 && dj.snr_db > 40;
 
-                // The whole path, timed after a first run that builds Metal's pipelines.
-                recognizer.recognize(audio.f32);
+                // Each decoding and its text from the dump's encoder output.
+                Graph e;
+                ggml_tensor * projected = joint.project_encoder(e.ctx(), e.input(encoded.f32, encoded.shape[1], encoded.shape[0]));
+                e.output(projected);
+                e.compute(backend, allocr);
+                const std::vector<float> dump_projected = Graph::read(projected);
+                for (size_t k = 0; k < decodings.size(); k++) {
+                    const Decoding decoding = recognizer.decoding(dump_projected, decodings[k]);
+                    const std::string text = recognizer.detokenizer().text(decoding.ids);
+                    std::printf("  %s decoding: ids %s, text %s, %zu graphs\n", decodings[k].c_str(), decoding.ids == want_ids[k] ? "equal" : "DIFFER",
+                                text == want_text[k] ? "equal" : "DIFFERS", decoding.graphs);
+                    if (decoding.ids != want_ids[k]) std::printf("    got%s\n    want%s\n", ids_text(decoding.ids).c_str(), ids_text(want_ids[k]).c_str());
+                    if (text != want_text[k]) std::printf("    got  %s\n    want %s\n", text.c_str(), want_text[k].c_str());
+                    ok = ok && decoding.ids == want_ids[k] && text == want_text[k];
+                }
+
+                // The whole path with each decoding, timed after a first run that builds Metal's pipelines.
+                for (const std::string & name : decodings) recognizer.recognize(audio.f32, name);
                 const auto t0 = Clock::now();
                 const std::vector<float> features = recognizer.frontend().features(audio.f32);
                 const auto t1 = Clock::now();
                 const std::vector<float> path_projected = recognizer.encode(features, recognizer.frontend().frames(audio.f32.size()));
                 const auto t2 = Clock::now();
-                const std::vector<int32_t> path_ids = recognizer.decode(path_projected);
-                const auto t3 = Clock::now();
-                const std::string path_text = recognizer.detokenizer().text(path_ids);
-                std::printf("  audio to text: ids %s, text %s; frontend %.1f ms, encoder %.1f ms, decoding %.1f ms\n",
-                            path_ids == want_ids.i32 ? "equal" : "DIFFER", path_text == want_text ? "equal" : "DIFFERS", ms(t0, t1), ms(t1, t2),
-                            ms(t2, t3));
-                if (path_text != want_text) std::printf("    got  %s\n    want %s\n", path_text.c_str(), want_text.c_str());
-                ok = ok && path_text == want_text;
+                std::printf("  audio to text: frontend %.1f ms, encoder %.1f ms\n", ms(t0, t1), ms(t1, t2));
+                for (size_t k = 0; k < decodings.size(); k++) {
+                    const auto t3 = Clock::now();
+                    const Decoding decoding = recognizer.decoding(path_projected, decodings[k]);
+                    const auto t4 = Clock::now();
+                    const std::string text = recognizer.detokenizer().text(decoding.ids);
+                    std::printf("    %s decoding: ids %s, text %s; %.1f ms, %zu graphs\n", decodings[k].c_str(),
+                                decoding.ids == want_ids[k] ? "equal" : "DIFFER", text == want_text[k] ? "equal" : "DIFFERS", ms(t3, t4),
+                                decoding.graphs);
+                    if (text != want_text[k]) std::printf("      got  %s\n      want %s\n", text.c_str(), want_text[k].c_str());
+                    ok = ok && text == want_text[k];
+                }
             }
             ggml_gallocr_free(allocr);
         }

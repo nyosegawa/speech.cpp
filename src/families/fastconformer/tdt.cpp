@@ -17,15 +17,6 @@ Allocator new_allocator(ggml_backend_t backend) {
     return a;
 }
 
-/** The index of the largest of `n` values; torch.max() and argmax() keep the first of equal values. */
-int argmax(const float * v, int n) {
-    int best = 0;
-    for (int i = 1; i < n; i++) {
-        if (v[i] > v[best]) best = i;
-    }
-    return best;
-}
-
 }  // namespace
 
 TdtDecoder::TdtDecoder(const ModelFile & m, const PredictionNetwork & prediction, const Joint & joint)
@@ -63,6 +54,7 @@ Decoding TdtDecoder::decode(const std::vector<float> & projected, ggml_backend_t
         g.output(step.h);
         g.output(step.c);
         g.compute(backend, step_allocator.get());
+        d.graphs++;
         state = PredictionNetwork::read_state(step);
         const std::vector<float> prediction = Graph::read(predicted);
         std::vector<float> out = Graph::read(logits);
@@ -70,8 +62,8 @@ Decoding TdtDecoder::decode(const std::vector<float> & projected, ggml_backend_t
         int64_t label_frame;
         int32_t duration;
         for (;;) {
-            label = argmax(out.data(), blank_ + 1);
-            duration = durations_[(size_t) argmax(out.data() + blank_ + 1, (int) durations_.size())];
+            label = first_argmax(out.data(), blank_ + 1);
+            duration = durations_[(size_t) first_argmax(out.data() + blank_ + 1, (int) durations_.size())];
             if (label == blank_ && duration == 0) duration = 1;
             label_frame = t;
             t += duration;
@@ -80,6 +72,7 @@ Decoding TdtDecoder::decode(const std::vector<float> & projected, ggml_backend_t
             ggml_tensor * next = joint_.build(j.ctx(), j.input(frame(t), hidden), j.input(prediction, hidden));
             j.output(next);
             j.compute(backend, joint_allocator.get());
+            d.graphs++;
             out = Graph::read(next);
         }
         if (label == blank_) break;

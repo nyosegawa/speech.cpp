@@ -202,8 +202,8 @@ int check_library(void) {
         fprintf(stderr, "FAIL: a status or stop reason the library does not know has a name\n");
         return 1;
     }
-    static const char * options[] = {"voice",       "language",   "seed",  "speed", "seconds", "duration_scale", "steps",
-                                     "max_seconds", "timestamps", "prompt"};
+    static const char * options[] = {"voice",       "language",   "seed",   "speed",   "seconds", "duration_scale", "steps",
+                                     "max_seconds", "timestamps", "prompt", "decoding"};
     if (speech_option_count() != sizeof options / sizeof options[0]) {
         fprintf(stderr, "FAIL: the library knows %zu options\n", speech_option_count());
         return 1;
@@ -388,13 +388,23 @@ static int check_declaration(const speech_model_info * info, speech_option optio
         fprintf(stderr, "FAIL: the default of %s is %s where %s was expected\n", name, speech_status_name(s), speech_status_name(want));
         return 1;
     }
+    // A string option other than voice and language has the choices its family declares, among them its default, or
+    // none, as prompt, which takes any text.
     size_t choices = speech_model_info_option_choice_count(info, option);
     size_t want_choices = !speech_model_info_takes(info, option) ? 0
                           : option == SPEECH_OPT_VOICE           ? speech_model_info_voice_count(info)
                           : option == SPEECH_OPT_LANGUAGE        ? speech_model_info_language_count(info)
+                          : option == SPEECH_OPT_PROMPT          ? 0
+                          : type == SPEECH_TYPE_STRING           ? choices
                                                                  : 0;
     if (choices != want_choices || (choices > 0 && speech_model_info_option_choice(info, option, choices) != NULL)) {
         fprintf(stderr, "FAIL: %s has %zu choices where %zu were expected\n", name, choices, want_choices);
+        return 1;
+    }
+    int default_chosen = s != SPEECH_OK || type != SPEECH_TYPE_STRING || choices == 0 || option == SPEECH_OPT_LANGUAGE;
+    for (size_t k = 0; k < choices && !default_chosen; k++) default_chosen = !strcmp(speech_model_info_option_choice(info, option, k), text);
+    if (!default_chosen) {
+        fprintf(stderr, "FAIL: the default of %s, %s, is not among its choices\n", name, text);
         return 1;
     }
     if (s == SPEECH_OK) {
@@ -462,6 +472,20 @@ int check_option_refusals(speech_model * model) {
                                                      : speech_request_set_float(r, o, maximum * 2 + 1),
                              SPEECH_ERROR_OUT_OF_RANGE, name, what);
             }
+        } else if (o != SPEECH_OPT_VOICE && o != SPEECH_OPT_LANGUAGE && speech_model_info_option_choice_count(info, o) > 0) {
+            // The choices a family declares are compared with case.
+            for (size_t k = 0; k < speech_model_info_option_choice_count(info, o); k++) {
+                const char * choice = speech_model_info_option_choice(info, o, k);
+                char upper[256];
+                snprintf(upper, sizeof upper, "%s", choice);
+                for (char * c = upper; *c; c++) *c = (char) (*c >= 'a' && *c <= 'z' ? *c - 32 : *c);
+                snprintf(what, sizeof what, "%s %s, one of its choices", name, choice);
+                ok &= expect(speech_request_set_string(r, o, choice), SPEECH_OK, NULL, what);
+                snprintf(what, sizeof what, "%s %s, one of its choices in other case", name, upper);
+                ok &= expect(speech_request_set_string(r, o, upper), SPEECH_ERROR_OUT_OF_RANGE, name, what);
+            }
+            snprintf(what, sizeof what, "%s not among its choices", name);
+            ok &= expect(speech_request_set_string(r, o, "no-such-choice"), SPEECH_ERROR_OUT_OF_RANGE, name, what);
         } else if (o == SPEECH_OPT_VOICE || o == SPEECH_OPT_LANGUAGE) {
             snprintf(what, sizeof what, "%s not among its choices", name);
             ok &= expect(speech_request_set_string(r, o, o == SPEECH_OPT_LANGUAGE ? "zz" : "no-such-voice"), SPEECH_ERROR_OUT_OF_RANGE, name,

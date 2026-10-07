@@ -97,6 +97,7 @@ add_library(fastconformer STATIC
     src/families/fastconformer/decoder.cpp
     src/families/fastconformer/tdt.cpp
     src/families/fastconformer/alsd.cpp
+    src/families/fastconformer/rnnt-greedy.cpp
     src/families/fastconformer/detokenizer.cpp
     src/families/fastconformer/times.cpp
     src/families/fastconformer/recognizer.cpp

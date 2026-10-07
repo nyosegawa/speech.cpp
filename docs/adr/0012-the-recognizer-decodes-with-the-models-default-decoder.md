@@ -1,5 +1,8 @@
 # The recognizer decodes with the model's default decoder
 
+Superseded in part by docs/adr/0021: reazonspeech-nemo-v2 also decodes greedily when a request asks for it, its beam
+search staying the default.
+
 Decided 2026-10-06.
 
 ## Context

@@ -230,7 +230,14 @@ typedef enum speech_option {
      * hold, which the model takes as context rather than as instructions; "" (the neutral value) tells it nothing. A
      * prompt too long for the model beside the audio is refused when the request runs, naming the option.
      */
-    SPEECH_OPT_PROMPT = 9
+    SPEECH_OPT_PROMPT = 9,
+    /**
+     * "decoding", a string: how a recognition chooses its tokens from the model's outputs, one of the names the model
+     * takes (speech_model_info_option_choice()), compared with case: "beam", a beam search, or "greedy", the most
+     * likely token at each step, which takes less time and can write another text. Taken by a model that runs more
+     * than one; it has no neutral value. Added in 3.1.
+     */
+    SPEECH_OPT_DECODING = 10
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */
@@ -509,8 +516,9 @@ SPEECH_API speech_status speech_model_info_option_range(const speech_model_info 
                                                         double * minimum, double * maximum, int * minimum_exclusive);
 
 /**
- * The number of values a string option takes: the voices for "voice", and the languages for "language", which also
- * takes "auto" and a region or script of each. 0 for an option of another type.
+ * The number of values a string option takes: the voices for "voice", the languages for "language", which also
+ * takes "auto" and a region or script of each, and the decodings for "decoding", the default among them. 0 for
+ * "prompt", which takes any text, and for an option of another type.
  */
 SPEECH_API size_t speech_model_info_option_choice_count(const speech_model_info * info, speech_option option);
 

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -127,6 +128,14 @@ void check(const speech_request & request, speech_option option, speech_type typ
             for (const VoiceInfo & v : request.model->added()) names.push_back(v.name);
             throw ApiError(SPEECH_ERROR_OUT_OF_RANGE, file.identity.name + " has no voice named \"" + voice + "\"; " +
                                                           (names.empty() ? "add one with speech_voice_add()" : "its voices are " + joined(names)),
+                           name);
+        }
+    }
+    if (!spec->choices.empty()) {
+        const std::string & v = std::get<std::string>(value);
+        if (std::find(spec->choices.begin(), spec->choices.end(), v) == spec->choices.end()) {
+            throw ApiError(SPEECH_ERROR_OUT_OF_RANGE, std::string("the option ") + name + " is \"" + v + "\"; " + file.identity.name + " takes one of " +
+                                                          joined(spec->choices),
                            name);
         }
     }
