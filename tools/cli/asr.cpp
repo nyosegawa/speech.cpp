@@ -6,6 +6,7 @@
 
 #include "commands.h"
 #include "error.h"
+#include "fetch.h"
 #include "json.h"
 #include "wav.h"
 
@@ -38,7 +39,7 @@ int run_asr(const CommandLine & line, FILE * out) {
     if (format != "text" && format != "json") throw UsageError("--format takes text or json, not \"" + format + "\"");
 
     const auto t0 = Clock::now();
-    const Model model = load_model(line.args[0], line.loading(false));
+    const Model model = load_model(model_file(line.args[0]), line.loading(false));
     const ModelInfo info = model_info(model.get());
     const speech_model_info * m = info.get();
     std::fprintf(stderr, "load %.2f s: %s on %s\n", seconds_since(t0), speech_model_info_name(m), speech_model_info_device(m));
@@ -118,6 +119,7 @@ Command asr_command() {
         verbose_flag("also report the release, the sample rate and the model's languages"),
     };
     c.request_options = true;
+    c.model = ModelKind::Recognition;
     c.min_args = 2;
     c.max_args = SIZE_MAX;
     c.run = run_asr;

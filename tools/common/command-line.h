@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "catalog.h"
 #include "library.h"
 #include "request-options.h"
 
@@ -38,6 +39,11 @@ struct Command {
     std::vector<Flag> flags;
     /** Whether every request option of the vocabulary is a flag of the subcommand. */
     bool request_options = false;
+    /**
+     * For a subcommand whose first argument is MODEL, the models that fit it: a command line without one is told what
+     * MODEL is and which model to start with.
+     */
+    std::optional<ModelKind> model;
     size_t min_args = 0;
     size_t max_args = 0;
     int (*run)(const CommandLine & line, FILE * out) = nullptr;

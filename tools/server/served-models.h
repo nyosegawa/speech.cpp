@@ -1,0 +1,92 @@
+#pragma once
+
+#include <ctime>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
+
+#include "jobs.h"
+#include "library.h"
+
+// The models the server holds: at most one for speech synthesis and one for speech recognition, so that a page can
+// speak and transcribe with one server while no more than one model of a task takes memory. A model given on the
+// command line is loaded before the server listens; the page replaces the one of a task by a model of the catalog.
+
+namespace server {
+
+/** A model the server holds, which each request that runs on it keeps until it ends. */
+class Served {
+public:
+    Served(Model model, std::string path, std::string catalog_name);
+
+    speech_model * get() const { return model_.get(); }
+    /** The file the model was loaded from. */
+    const std::string & path() const { return path_; }
+    /** The catalog's NAME[:TYPE] the page loaded it by, or "" for a file the command line gave. */
+    const std::string & catalog_name() const { return catalog_name_; }
+    long long created() const { return created_; }
+    /** The order in which the requests on this model take it. */
+    Turns & turns() { return turns_; }
+
+    /** The model's information as of its last voice. */
+    std::shared_ptr<const speech_model_info> info() const;
+    /** Adds a voice from a voice file or a WAVE file, and reads the information again, which then lists it. */
+    void add_voice(const std::string & name, const std::string & file);
+
+private:
+    Model model_;
+    std::string path_, catalog_name_;
+    long long created_ = (long long) std::time(nullptr);
+    Turns turns_;
+    mutable std::mutex mutex_;
+    std::shared_ptr<const speech_model_info> info_;
+};
+
+/**
+ * The model of each task, and a replacement under way: while the page fetches a model, the one it replaces still serves;
+ * once the file is there, the old model is let go, its requests end, and the new one is loaded in its place.
+ */
+class ServedModels {
+public:
+    /** `loading` is how every model loads: the device, the threads and the warm-up; its voices go to no model. */
+    explicit ServedModels(Loading loading);
+
+    /**
+     * Loads a model given on the command line in the place of its task, which must be empty: a file, or the catalog's
+     * file of `catalog_name`, "" for a file named by its path.
+     */
+    void load_given(const std::string & path, const std::string & catalog_name);
+
+    /** The model of a task, or nullptr while there is none or one is being loaded in its place. */
+    std::shared_ptr<Served> of(speech_task task) const;
+    /** Every model held, synthesis first. */
+    std::vector<std::shared_ptr<Served>> all() const;
+    /** The NAME[:TYPE] of the model the page is replacing a task's with, or "". */
+    std::string replacing(speech_task task) const;
+
+    /** Marks a task's model as being replaced by `catalog_name`; false when another replacement of it is under way. */
+    bool begin_replacing(speech_task task, const std::string & catalog_name);
+    /** Ends a replacement that did not get as far as the load, leaving the model held as it was. */
+    void cancel_replacing(speech_task task);
+    /**
+     * Lets the task's model go, waits for its requests to end, and loads the file at `path` in its place; a failure to
+     * load leaves the task without a model and throws.
+     */
+    std::shared_ptr<Served> replace(speech_task task, const std::string & path);
+
+private:
+    struct Place {
+        std::shared_ptr<Served> model;
+        std::string replacing;
+    };
+
+    Place & place(speech_task task) { return task == SPEECH_TASK_SYNTHESIS ? synthesis_ : recognition_; }
+    const Place & place(speech_task task) const { return task == SPEECH_TASK_SYNTHESIS ? synthesis_ : recognition_; }
+
+    Loading loading_;
+    mutable std::mutex mutex_;
+    Place synthesis_, recognition_;
+};
+
+}  // namespace server

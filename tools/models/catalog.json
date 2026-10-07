@@ -1,0 +1,121 @@
+{
+  "models": [
+    {
+      "name": "qwen3-tts-0.6b",
+      "repository": "sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF",
+      "type": "q8_0",
+      "start": ["de", "en", "es", "fr", "it", "ja", "ko", "pt", "ru", "zh"],
+      "revision": "2d4d7aea381798737778af3a375e007050029689",
+      "task": "synthesis",
+      "languages": ["de", "en", "es", "fr", "it", "ja", "ko", "pt", "ru", "zh"],
+      "voice_files": false,
+      "files": [
+        {"type": "q8_0", "file": "Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf", "size": 1213534464, "sha256": "f606ea3981aa42762b16db9a94826d2d560eb60f0b102001618f40d5a2f78cc6"}
+      ]
+    },
+    {
+      "name": "qwen3-tts-1.7b",
+      "repository": "sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF",
+      "type": "q8_0",
+      "start": [],
+      "revision": "0e6b15bd7e51aaee4363ccb128c89730addc5942",
+      "task": "synthesis",
+      "languages": ["de", "en", "es", "fr", "it", "ja", "ko", "pt", "ru", "zh"],
+      "voice_files": false,
+      "files": [
+        {"type": "q8_0", "file": "Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf", "size": 2287780352, "sha256": "1bc0ef69547c003507b6536639a6080c8856382f4d0963b15d4475528330592d"}
+      ]
+    },
+    {
+      "name": "irodori-tts-mf",
+      "repository": "sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF",
+      "type": "f16",
+      "start": [],
+      "revision": "99e5d77f6d92a70d4b9bff52829ac118fa1bf7d3",
+      "task": "synthesis",
+      "languages": ["ja"],
+      "voice_files": true,
+      "files": [
+        {"type": "f16", "file": "Irodori-TTS-848M-MF-v4.1-F16.gguf", "size": 1885438016, "sha256": "d59b2fca0b0884f80d02562a58b2f6c344871a92e4cf3607971d78affcc11987"}
+      ]
+    },
+    {
+      "name": "irodori-tts",
+      "repository": "sakasegawa/Irodori-TTS-v4.1-Small-GGUF",
+      "type": "f16",
+      "start": [],
+      "revision": "ec4559786501eda493300f420655caf431bdda27",
+      "task": "synthesis",
+      "languages": ["ja"],
+      "voice_files": true,
+      "files": [
+        {"type": "f16", "file": "Irodori-TTS-841M-v4.1-F16.gguf", "size": 1871020064, "sha256": "70ab9f5e0de5269b232468af75cc1b97cdb216009abc6ed41329e7728567202a"}
+      ]
+    },
+    {
+      "name": "qwen3-asr-0.6b",
+      "repository": "sakasegawa/Qwen3-ASR-0.6B-GGUF",
+      "type": "q8_0",
+      "start": ["ar", "cs", "da", "de", "el", "en", "es", "fa", "fi", "fil", "fr", "hi", "hu", "id", "it", "ko", "mk", "ms", "nl", "pl", "pt", "ro", "ru", "sv", "th", "tr", "vi", "yue", "zh"],
+      "revision": "450483d7e7ffc6ddb47048094247db782f7dda04",
+      "task": "recognition",
+      "languages": ["ar", "cs", "da", "de", "el", "en", "es", "fa", "fi", "fil", "fr", "hi", "hu", "id", "it", "ja", "ko", "mk", "ms", "nl", "pl", "pt", "ro", "ru", "sv", "th", "tr", "vi", "yue", "zh"],
+      "voice_files": false,
+      "files": [
+        {"type": "q8_0", "file": "Qwen3-ASR-0.6B-Q8_0.gguf", "size": 841502336, "sha256": "416e10c15b4a3d9002bd337d18fc450233fdf68502b6e10d1379d2789838afd0"}
+      ]
+    },
+    {
+      "name": "qwen3-asr-1.7b",
+      "repository": "sakasegawa/Qwen3-ASR-1.7B-GGUF",
+      "type": "q8_0",
+      "start": [],
+      "revision": "d1b1ebcc7569cae80209262a5fc147d65bebd7bd",
+      "task": "recognition",
+      "languages": ["ar", "cs", "da", "de", "el", "en", "es", "fa", "fi", "fil", "fr", "hi", "hu", "id", "it", "ja", "ko", "mk", "ms", "nl", "pl", "pt", "ro", "ru", "sv", "th", "tr", "vi", "yue", "zh"],
+      "voice_files": false,
+      "files": [
+        {"type": "q8_0", "file": "Qwen3-ASR-1.7B-Q8_0.gguf", "size": 2176109216, "sha256": "5f219b78a1d9c3b9e97da27708b36f8a0bc1bfc1650b541c0a6dbaf87c9a62d0"}
+      ]
+    },
+    {
+      "name": "reazonspeech-v2",
+      "repository": "sakasegawa/reazonspeech-nemo-v2-GGUF",
+      "type": "f16",
+      "start": ["ja"],
+      "revision": "cb9e436cf3f9d9563c610cb5318adcfc5c0fe098",
+      "task": "recognition",
+      "languages": ["ja"],
+      "voice_files": false,
+      "files": [
+        {"type": "f16", "file": "reazonspeech-nemo-619M-v2-F16.gguf", "size": 1240465696, "sha256": "1492147d7d18fbb0503db2cbbb05df4932cb3451e391524c6a2411632e4823bf"}
+      ]
+    },
+    {
+      "name": "parakeet-tdt_ctc-0.6b-ja",
+      "repository": "sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF",
+      "type": "f16",
+      "start": [],
+      "revision": "48060c6e292b01c84edac8988db0163fd41d3fe2",
+      "task": "recognition",
+      "languages": ["ja"],
+      "voice_files": false,
+      "files": [
+        {"type": "f16", "file": "parakeet-tdt_ctc-0.6B-ja-F16.gguf", "size": 1240656832, "sha256": "71ddc10381a9d3b59e18fbc51422059293f1268676b1ca62adb45b791df05497"}
+      ]
+    },
+    {
+      "name": "parakeet-tdt-0.6b-v3",
+      "repository": "sakasegawa/parakeet-tdt-0.6b-v3-GGUF",
+      "type": "f16",
+      "start": ["bg", "et", "hr", "lt", "lv", "mt", "sk", "sl", "uk"],
+      "revision": "304eaf83fc16e3087425b61b6652c4eafe003dc4",
+      "task": "recognition",
+      "languages": ["bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hr", "hu", "it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk"],
+      "voice_files": false,
+      "files": [
+        {"type": "f16", "file": "parakeet-tdt-0.6B-v3-F16.gguf", "size": 1255370688, "sha256": "7b74de31ac48427934104f0d074613f8d759d7d108777c114476346789d94426"}
+      ]
+    }
+  ]
+}

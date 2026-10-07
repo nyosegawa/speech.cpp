@@ -27,16 +27,13 @@ usage: python3 tools/server_smoke.py <speech> <model.gguf> [dump folder...] [-- 
 import array
 import ast
 import base64
-import http.client
 import json
 import os
-import socket
 import struct
-import subprocess
 import sys
-import time
 import uuid
 
+from server_client import Server, expect_error
 from worker_client import check_model_information, dump_requests
 
 args = sys.argv[1:]
@@ -46,47 +43,9 @@ speech, model, *dumps = args
 added = [o.split("=", 1)[0] for i, o in enumerate(options) if i > 0 and options[i - 1] == "--add-voice"]
 ORIGIN = "http://localhost:5173"
 
-with socket.socket() as s:
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-server = subprocess.Popen([speech, "serve", model, "--port", str(port), "--cors-origin", ORIGIN, *options],
-                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-
-
-def call(method, path, body=None, headers=None, stream=False):
-    """The status, the headers and the body, or the open response of a stream."""
-    c = http.client.HTTPConnection("127.0.0.1", port, timeout=600)
-    c.request(method, path, body=body, headers=headers or {})
-    r = c.getresponse()
-    if stream:
-        return r
-    data = r.read()
-    c.close()
-    return r.status, {k.lower(): v for k, v in r.getheaders()}, data
-
-
-def post_json(path, member):
-    return call("POST", path, json.dumps(member, ensure_ascii=False).encode(), {"Content-Type": "application/json"})
-
-
-def expect_error(got, status, code, param, what):
-    s, _, body = got
-    error = json.loads(body).get("error", {}) if body else {}
-    kind = "server_error" if status >= 500 else "invalid_request_error"
-    if s != status or error.get("code") != code or error.get("param") != param or error.get("type") != kind or not error.get("message"):
-        raise SystemExit(f"{what}: expected {status} {code} ({param}), got {s} {body[:300]!r}")
-    print(f"{what}: {status} {kind} {code} ({param}) as expected: {error['message'][:90]}")
-
-
-t0 = time.perf_counter()
-while True:
-    if server.poll() is not None:
-        raise SystemExit(f"the server exited with {server.returncode}")
-    try:
-        status, _, body = call("GET", "/health")
-        break
-    except OSError:
-        time.sleep(0.2)
+server = Server(speech, [model, "--cors-origin", ORIGIN, *options])
+call, post_json = server.call, server.post_json
+status, _, body = call("GET", "/health")
 assert status == 200 and json.loads(body) == {"status": "ok"}, body
 status, _, body = call("GET", "/v1/models")
 listed = json.loads(body)
@@ -98,16 +57,17 @@ assert isinstance(entry["created"], int) and isinstance(entry["version"], str), 
 check_model_information(speech, model, info, added)
 status, _, body = call("GET", "/v1/models/" + info["name"])
 assert status == 200 and json.loads(body) == entry, body
-print(f"up in {time.perf_counter() - t0:.2f} s: {info['name']} on {info['device']}, speech.cpp {entry['version']}; /health, /v1/models and "
+print(f"up in {server.started:.2f} s: {info['name']} on {info['device']}, speech.cpp {entry['version']}; /health, /v1/models and "
       f"/v1/models/{{id}} as expected, the model information equal to speech info --json")
 expect_error(call("GET", "/v1/models/tts-1"), 404, "model_not_found", "model", "GET /v1/models/tts-1")
 status, headers, _ = call("OPTIONS", "/v1/audio/speech", headers={"Origin": ORIGIN, "Access-Control-Request-Method": "POST"})
 assert status == 204 and headers.get("access-control-allow-origin") == ORIGIN, (status, headers)
 status, headers, _ = call("GET", "/health", headers={"Origin": ORIGIN})
 assert "X-Speech-Stop" in headers.get("access-control-expose-headers", ""), headers
-status, headers, _ = call("GET", "/health", headers={"Origin": "http://elsewhere.test"})
-assert "access-control-allow-origin" not in headers, headers
-print("CORS: the preflight answered and the headers exposed for the origin given, none for another")
+expect_error(call("GET", "/health", headers={"Origin": "http://elsewhere.test"}), 403, "origin_not_allowed", None, "GET /health from another origin")
+expect_error(call("OPTIONS", "/v1/audio/speech", headers={"Origin": "http://elsewhere.test", "Access-Control-Request-Method": "POST"}), 403,
+             "origin_not_allowed", None, "a preflight from another origin")
+print("CORS: the preflight answered and the headers exposed for the origin given, and another origin refused")
 rate = info["sample_rate"]
 
 
@@ -312,9 +272,7 @@ else:
     expect_error(transcribe([("model", "whisper-1")], [("file", "x.wav", wav)]), 404, "model_not_found", "model", "another model")
     expect_error(transcribe([("language", info["languages"][0])], []), 400, "missing_required_parameter", "file", "no file")
 
-server.terminate()
-server.wait(timeout=30)
-out = server.stdout.read()
+out = server.stop()
 if out:
     raise SystemExit(f"the server wrote to stdout: {out[:200]!r}")
 print("ok")

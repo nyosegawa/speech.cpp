@@ -38,7 +38,10 @@ and its check before changing behavior.
   `tools/worker/` and `serve` in `tools/server/`, and what they share in `tools/common/`: the one parser of every
   command line, which makes a flag of each option of the C API's vocabulary, the JSON reader, and the request options
   read from text or JSON and set through the library's setters. Every subcommand reaches the models only through the
-  C API. The worker's protocol 2 is JSON Lines, one JSON object per line on stdin and stdout, and is the contract of
+  C API. `tools/models/` names models: the catalog of the release (`catalog.json`, which `update_catalog.py` writes
+  from Hugging Face and the build compiles in), the cache folder, and the fetching of a named model with the system's
+  curl, which `models`, `pull` and `rm` and every subcommand that takes a model share; the library never reaches the
+  network (docs/adr/0033 to 0036). The worker's protocol 2 is JSON Lines, one JSON object per line on stdin and stdout, and is the contract of
   every program that starts it, ASIST among them: stdout carries the protocol and nothing else, every log goes to
   stderr, and every request gets exactly one terminal message. Its `ready` message carries the protocol's version, the
   release and the model's information.
@@ -48,16 +51,21 @@ and its check before changing behavior.
   (`speech-api-recognition.c`), what they share in `speech-api-common.c` and what differs by the operating system in
   `speech-api-platform.c`. Checks reach into
   `src/` for the stage they check; they are built but not released.
-- `tools/server/` holds `speech serve`, which serves one model over HTTP with OpenAI's audio API
-  (`POST /v1/audio/speech` for a synthesis model, `POST /v1/audio/transcriptions` for a recognition model,
-  `GET /v1/models`, `GET /health`) for programs that speak HTTP. Like the worker it reaches the model only
-  through the C API; `openai-api.cpp` reads OpenAI's requests and writes its errors, mapped from the library's
-  categories alone, and its stream events, and `jobs.h` runs one request at a time in arrival order and cancels the
-  request of a client that goes away.
+- `tools/server/` holds `speech serve`, which serves a synthesis model and a recognition model over HTTP with
+  OpenAI's audio API (`POST /v1/audio/speech`, `POST /v1/audio/transcriptions`, `GET /v1/models`, `GET /health`)
+  for programs that speak HTTP. Like the worker it reaches the models only through the C API; `openai-api.cpp` reads
+  OpenAI's requests and writes its errors, mapped from the library's categories alone, and its stream events,
+  `jobs.h` runs one request at a time in arrival order and cancels the request of a client that goes away, and
+  `served-models.cpp` holds one model of each task and replaces it once its requests have ended. `page/` is the page
+  of `speech serve --open`, plain HTML, CSS and JavaScript modules compiled into `speech`, which `page.cpp` serves
+  with the endpoints that fetch and load models; `access.cpp` guards them with the token, the Host and the Origin
+  (docs/adr/0038, 0039).
 - The smoke scripts in `tools/` drive each entry point as its caller does and fail on a defect:
   `worker_smoke.py` and `worker_recognition_smoke.py` the worker protocol 2 through `worker_client.py`, which checks
-  every line and one terminal message per request, `server_smoke.py` every endpoint and the mapping of errors, and
-  `speech_cli_smoke.py` the command line against the worker.
+  every line and one terminal message per request, `server_smoke.py` every endpoint and the mapping of errors and
+  `server_page_smoke.py` the page's endpoints and every guard, both through `server_client.py`, which stops the
+  server however the script ends, `speech_cli_smoke.py` the command line against the worker, and `models_smoke.py`
+  the naming, fetching and removing of models against a temporary model folder.
 - `reference/<model>/` holds, per model, a uv environment that pins the official code, PyTorch and the rest,
   `pins.py`, which pins the checkpoints by revision, the conversion of the official weights to one GGUF file per
   model, and the scripts that run the official implementation to dump reference tensors. Dumps go to
@@ -162,8 +170,8 @@ settled a choice or turned an approach down for good; if so, the record goes int
   committing code. A change to the C API or the worker also runs `speech-api-check` and
   `tools/worker_smoke.py` for both synthesis families, and `speech-api-check transcribe` and
   `tools/worker_recognition_smoke.py` for both recognition families; a change to the server runs
-  `tools/server_smoke.py`, and one to the command line or the parser `tools/speech_cli_smoke.py`, with a model
-  of each family.
+  `tools/server_smoke.py` and `tools/server_page_smoke.py`, one to the command line or the parser
+  `tools/speech_cli_smoke.py`, with a model of each family, and one to `tools/models/` `tools/models_smoke.py`.
 - Never commit on main. Every change reaches main through a pull request, one coherent unit each: a
   model's stage, a fix, a refactor or a documentation change.
 - Commit messages and pull request titles are one English sentence in the imperative, without a prefix

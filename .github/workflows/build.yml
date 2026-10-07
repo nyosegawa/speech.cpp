@@ -233,6 +233,85 @@ jobs:
           name: speech-linux-x64-${{ matrix.backend }}
           path: ${{ env.ARCHIVE }}
 
+  # install.sh as a user runs it, against the published releases, in home folders of the job's own: a first install of
+  # an earlier release, an update to the latest that removes it, a run that finds it installed, a build of another
+  # archive of the same version replaced, the line it adds to PATH once however often it runs, and an archive whose
+  # SHA-256 differs from SHA256SUMS refused with nothing installed. It checks the script, not this commit's build.
+  installer:
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install, update and run again
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          home="$RUNNER_TEMP/home"
+          mkdir -p "$home"
+          HOME="$home" sh install.sh --version 0.7.0 --no-modify-path
+          test "$("$home/.local/bin/speech" --version | cut -d, -f1)" = "speech.cpp 0.7.0"
+          HOME="$home" sh install.sh --no-modify-path
+          test "$("$home/.local/bin/speech" --version | cut -d, -f1)" = "speech.cpp ${latest#v}"
+          test "$(ls "$home/.local/share/speech.cpp")" = "${latest#v}"
+          before=$(ls -l "$home/.local/bin/speech")
+          HOME="$home" sh install.sh --no-modify-path
+          test "$(ls -l "$home/.local/bin/speech")" = "$before"
+          for profile in .profile .bashrc .bash_profile .zshrc; do test ! -e "$home/$profile"; done
+          "$home/.local/bin/speech" devices
+          if [ "$(uname -s)" = Linux ]; then ldd "$home/.local/bin/speech"; fi
+      # A Linux CPU build stays the same version once the Vulkan loader is installed, and the run that follows installs
+      # the Vulkan build in its place; the record of the archive installed is set to another one's here.
+      - name: Replace a build of another archive of the same version
+        run: |
+          home="$RUNNER_TEMP/rebuild"
+          mkdir -p "$home"
+          HOME="$home" sh install.sh --no-modify-path
+          version=$(ls "$home/.local/share/speech.cpp")
+          record="$home/.local/share/speech.cpp/$version/.archive"
+          chosen=$(cat "$record")
+          echo "speech-$version-another-build.zip" > "$record"
+          HOME="$home" sh install.sh --no-modify-path
+          test "$(cat "$record")" = "$chosen"
+          "$home/.local/bin/speech" --version
+      - name: Add to PATH once
+        run: |
+          home="$RUNNER_TEMP/path"
+          mkdir -p "$home"
+          HOME="$home" SHELL=/bin/bash sh install.sh
+          HOME="$home" SHELL=/bin/bash sh install.sh
+          profile="$home/.bashrc"
+          if [ "$(uname -s)" = Darwin ]; then profile="$home/.bash_profile"; fi
+          test "$(grep -cxF 'export PATH="$HOME/.local/bin:$PATH"' "$profile")" = 1
+          (export HOME="$home"; . "$profile"; test "$(command -v speech)" = "$home/.local/bin/speech")
+      # A curl that zeroes every sum of the SHA256SUMS it downloads.
+      - name: Refuse an archive that SHA256SUMS does not sum
+        run: |
+          mkdir "$RUNNER_TEMP/fake"
+          cat > "$RUNNER_TEMP/fake/curl" <<'EOF'
+          #!/bin/sh
+          out= url= previous=
+          for a in "$@"; do
+              [ "$previous" = -o ] && out=$a
+              case "$a" in https://*) url=$a ;; esac
+              previous=$a
+          done
+          /usr/bin/curl "$@" || exit $?
+          case "$url" in
+              */SHA256SUMS) awk '{ print "0000000000000000000000000000000000000000000000000000000000000000  " $2 }' "$out" > "$out.0" && mv "$out.0" "$out" ;;
+          esac
+          EOF
+          chmod +x "$RUNNER_TEMP/fake/curl"
+          home="$RUNNER_TEMP/broken"
+          mkdir -p "$home"
+          if HOME="$home" PATH="$RUNNER_TEMP/fake:$PATH" sh install.sh --no-modify-path; then
+            echo "::error::install.sh installed an archive whose SHA-256 is not the one SHA256SUMS gives."
+            exit 1
+          fi
+          test -z "$(ls -A "$home")"
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [macos-metal, windows-vulkan, linux]

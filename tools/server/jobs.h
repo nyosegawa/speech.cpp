@@ -13,11 +13,13 @@
 
 #include "library.h"
 
-// How the server runs requests on its one model: each set up by its HTTP handler as it arrives, so that the library
+// How the server runs requests on a model it holds: each set up by its HTTP handler as it arrives, so that the library
 // refuses a value at once, then run in the order the requests arrived, each on a thread of its own that hands what it
 // makes to the handler, and stopped when its client goes away.
 
 namespace server {
+
+class Served;
 
 using Clock = std::chrono::steady_clock;
 
@@ -59,6 +61,8 @@ private:
 
 /** What every request's run shares: the library's request, its state, which the HTTP handler waits on, and its client's departure. */
 struct Job {
+    /** The model the request runs on, which the server keeps until the request has ended and been freed. */
+    std::shared_ptr<Served> served;
     /** The request as its handler set it up, which the run spends and a client that goes away cancels. */
     Request request{nullptr, speech_request_free};
     std::mutex mutex;

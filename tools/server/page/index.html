@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>speech.cpp</title>
+  <link rel="stylesheet" href="/page/style.css">
+  <script type="module" src="/page/main.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <h1>speech.cpp</h1>
+    <p class="muted" id="about"></p>
+  </header>
+
+  <main>
+    <p class="notice" id="page-error" role="alert" hidden></p>
+
+    <div class="panels">
+      <section class="panel" id="speak" aria-labelledby="speak-heading">
+        <h2 id="speak-heading">Speak</h2>
+        <div class="picker-slot" data-task="synthesis"></div>
+        <form id="speak-form" novalidate hidden>
+          <div class="field">
+            <label for="speak-text">Text</label>
+            <textarea id="speak-text" rows="4" required aria-describedby="speak-text-hint speak-text-error"></textarea>
+            <p class="hint" id="speak-text-hint">Ctrl+Enter or ⌘+Enter speaks it.</p>
+            <p class="error" id="speak-text-error" hidden></p>
+          </div>
+          <div class="fields" id="speak-options"></div>
+          <details class="more">
+            <summary>More options</summary>
+            <div class="fields" id="speak-more"></div>
+          </details>
+          <div class="actions">
+            <button type="submit" class="primary" id="speak-start">Speak</button>
+            <button type="button" id="speak-stop" hidden>Stop</button>
+            <p class="status" id="speak-status" role="status"></p>
+          </div>
+          <p class="error" id="speak-error" role="alert" hidden></p>
+        </form>
+        <div class="result speech-result" id="speech-result" hidden>
+          <div class="player">
+            <button type="button" class="icon-button" id="speech-play" aria-label="Play">
+              <svg class="icon-play" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg>
+              <svg class="icon-pause" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/></svg>
+            </button>
+            <div class="wave">
+              <canvas id="speech-wave" aria-hidden="true"></canvas>
+              <input type="range" id="speech-seek" min="0" max="1" step="0.001" value="0" aria-label="Position in the speech">
+            </div>
+            <span class="time" id="speech-time">0:00</span>
+          </div>
+          <div class="result-actions">
+            <button type="button" id="speech-save">Save WAVE</button>
+            <button type="button" id="speech-transcribe">Transcribe this</button>
+          </div>
+          <p class="meta" id="speech-meta"></p>
+        </div>
+        <details class="voice-maker" id="voice-maker" hidden>
+          <summary>Make a voice from a recording</summary>
+          <form id="voice-form" novalidate>
+            <p class="muted">A few seconds of one speaker, without music or noise. The voice lasts while the model stays
+              loaded.</p>
+            <div class="audio-slot" id="voice-audio"></div>
+            <div class="field">
+              <label for="voice-name">Name of the voice</label>
+              <input id="voice-name" required autocomplete="off" spellcheck="false" aria-describedby="voice-error">
+            </div>
+            <div class="actions">
+              <button type="submit" class="primary" id="voice-add">Add the voice</button>
+              <p class="status" id="voice-status" role="status"></p>
+            </div>
+            <p class="error" id="voice-error" role="alert" hidden></p>
+          </form>
+        </details>
+      </section>
+
+      <section class="panel" id="transcribe" aria-labelledby="transcribe-heading">
+        <h2 id="transcribe-heading">Transcribe</h2>
+        <div class="picker-slot" data-task="recognition"></div>
+        <form id="transcribe-form" novalidate>
+          <div class="audio-slot" id="transcribe-audio"></div>
+          <div class="fields" id="transcribe-options"></div>
+          <div class="actions">
+            <button type="submit" class="primary" id="transcribe-start" disabled>Transcribe</button>
+            <button type="button" id="transcribe-stop" hidden>Stop</button>
+            <p class="status" id="transcribe-status" role="status"></p>
+          </div>
+          <p class="error" id="transcribe-error" role="alert" hidden></p>
+        </form>
+        <section class="result transcript" id="transcript" aria-labelledby="transcript-heading" hidden>
+          <div class="transcript-head">
+            <h3 id="transcript-heading">Text</h3>
+            <button type="button" id="transcript-copy">Copy</button>
+          </div>
+          <p class="transcript-text" id="transcript-text"></p>
+          <p class="meta" id="transcript-meta"></p>
+          <details class="segments" id="segments" hidden>
+            <summary></summary>
+            <table>
+              <thead><tr><th scope="col">Start</th><th scope="col">End</th><th scope="col">Text</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </details>
+        </section>
+      </section>
+    </div>
+  </main>
+
+  <template id="picker">
+    <div class="picker">
+      <button type="button" class="picker-button" aria-haspopup="dialog">
+        <span class="picker-name"></span>
+        <span class="picker-size"></span>
+        <svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>
+      </button>
+      <div class="picker-progress" hidden>
+        <progress max="1"></progress>
+        <span class="picker-progress-text" role="status"></span>
+        <button type="button" class="picker-cancel">Cancel</button>
+      </div>
+      <p class="error" role="alert" hidden></p>
+      <dialog class="picker-dialog">
+        <div class="dialog-head">
+          <h3></h3>
+          <button type="button" class="icon-button dialog-close" aria-label="Close">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+          </button>
+        </div>
+        <ul class="model-list"></ul>
+        <p class="dialog-foot muted"></p>
+      </dialog>
+    </div>
+  </template>
+
+  <template id="model-item">
+    <li class="model">
+      <div class="model-text">
+        <p class="model-head"><span class="model-name"></span><span class="badge in-use" hidden>In use</span></p>
+        <p class="model-meta"></p>
+        <div class="model-languages"></div>
+      </div>
+      <button type="button" class="model-use"></button>
+    </li>
+  </template>
+
+  <template id="audio-input">
+    <div class="audio-input">
+      <div class="drop">
+        <p class="drop-empty">Drop an audio file here, or</p>
+        <div class="drop-chosen" hidden>
+          <audio class="audio-preview" controls preload="metadata"></audio>
+          <p class="audio-name"></p>
+        </div>
+        <div class="drop-recording" hidden>
+          <span class="recording-dot" aria-hidden="true"></span>
+          <span class="recording-time" role="status"></span>
+        </div>
+        <div class="actions">
+          <button type="button" class="audio-choose">Choose a file</button>
+          <button type="button" class="audio-record" aria-pressed="false">Record</button>
+          <button type="button" class="audio-remove" hidden>Remove</button>
+        </div>
+        <input type="file" class="audio-file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.opus,.webm" hidden>
+      </div>
+      <p class="error" role="alert" hidden></p>
+    </div>
+  </template>
+</body>
+</html>

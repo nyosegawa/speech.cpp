@@ -7,6 +7,10 @@
 #include "failure.h"
 #include "request-options.h"
 
+namespace httplib {
+struct Response;
+}
+
 // OpenAI's audio API as speech.cpp reads and writes it: the create speech request, the create transcription request,
 // the error object with the library's categories mapped onto it, and the events of an SSE stream. The shapes follow
 // OpenAI's API reference, components CreateSpeechRequest, CreateTranscriptionRequest, CreateTranscriptionResponseJson,
@@ -36,6 +40,9 @@ std::string error_object(const ApiError & e);
 
 /** An error response's body: {"error": {...}}. */
 std::string error_json(const ApiError & e);
+
+/** Answers with the error's status and body. */
+void send_error(httplib::Response & res, const ApiError & e);
 
 /** A create speech request as read from its JSON body. */
 struct SpeechRequest {
