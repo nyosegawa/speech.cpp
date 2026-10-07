@@ -141,13 +141,14 @@ N`, the C API's load parameters. `speech tts` and `speech asr` take every reques
 (Options, below) as a flag of its name in kebab-case, read by the option's type: `--voice`, `--language`, `--seed`,
 `--speed`, `--seconds`, `--duration-scale`, `--steps`, `--max-seconds`, `--timestamps`, `--prompt`, `--decoding`,
 `--do-sample`, `--top-k`, `--top-p`, `--temperature`, `--repetition-penalty`, the code predictor's
-`--code-predictor-do-sample`, `--code-predictor-top-k`, `--code-predictor-top-p` and `--code-predictor-temperature`, and
-`--instructions`. A flag's value follows it or an `=` (`--seed 7`, `--seed=7`), and a number is read whole: `--steps 4x`
-is a usage error. A boolean option is true by its flag alone and takes `true` or `false` only after an `=`
-(`--timestamps`, `--do-sample=false`), so that the argument after it stays an argument. The model refuses an option it
-does not take, as in the C API: Qwen3-TTS answers `--speed 1.5` with `speech: unsupported (speed): ...`. An argument
-that begins with `-`, such as a text, follows `--`. `speech <subcommand> --help` lists a subcommand's flags, and `speech
---version` prints the release and the C API's version (`speech.cpp 0.7.0, C API 3.1`).
+`--code-predictor-do-sample`, `--code-predictor-top-k`, `--code-predictor-top-p` and `--code-predictor-temperature`,
+`--instructions`, and Irodori-TTS's options from `--cfg-scale-text` to `--tail-mean-threshold`. A flag's value follows
+it or an `=` (`--seed 7`, `--seed=7`), and a number is read whole: `--steps 4x` is a usage error. A boolean option is
+true by its flag alone and takes `true` or `false` only after an `=` (`--timestamps`, `--do-sample=false`,
+`--keep-tail`), so that the argument after it stays an argument. The model refuses an option it does not take, as in
+the C API: Qwen3-TTS answers `--speed 1.5` with `speech: unsupported (speed): ...`. An argument that begins with `-`,
+such as a text, follows `--`. `speech <subcommand> --help` lists a subcommand's flags, and `speech --version` prints
+the release and the C API's version (`speech.cpp 0.7.0, C API 3.1`).
 
 | Exit | Meaning |
 |---|---|
@@ -167,6 +168,7 @@ speech tts MODEL -o FILE|- [options] [TEXT]
   --do-sample[=false] --top-k N --top-p X --temperature X --repetition-penalty X
   --code-predictor-do-sample[=false] --code-predictor-top-k N --code-predictor-top-p X --code-predictor-temperature X
   --instructions TEXT
+  --cfg-scale-text X ... --keep-tail ...    and every other option of the vocabulary (Options, below)
   --add-voice NAME=FILE       add a voice from a voice file or a WAVE file before speaking; repeatable
   --device NAME --threads N
   -v                          report the model, and each request's seed and stop reason
@@ -499,11 +501,32 @@ nothing else.
 | `code_predictor_temperature` | float | none | above 0, default `qwen3-tts.generation.code_predictor.temperature` (0.9) | not taken | not taken | not taken |
 | `instructions` | string | `""` | 1.7B: default `""`, any text; steers. 0.6B: not taken | not taken | not taken | not taken |
 
+The options after `prompt` are Irodori-TTS's, fields of the official runtime's request that a request sets as the
+runtime takes them (Irodori-TTS, Guidance, schedule and the tail, below). The other families do not take them, and
+none has a neutral value. An RF file (v4.1-Small) takes the guidance and the schedule, which a MeanFlow file
+(v4.1-Small-MF) does not take, since MeanFlow folded the guidance into its training and the runtime ignores them for
+it:
+
+| Option | Type | RF (v4.1-Small) | MeanFlow (v4.1-Small-MF) |
+|---|---|---|---|
+| `cfg_scale_text` | float | 0 or more, default `irodori-tts.sampler.cfg_text` (3) | not taken |
+| `cfg_scale_speaker` | float | 0 or more, default `irodori-tts.sampler.cfg_speaker` (5) | not taken |
+| `cfg_guidance_mode` | string | `independent` (the default), `joint` or `alternating` | not taken |
+| `cfg_min_t`, `cfg_max_t` | float | 0 to 1, defaults `irodori-tts.sampler.cfg_min_t` and `cfg_max_t` (0.5 and 1) | not taken |
+| `truncation_factor` | float | above 0, no default | not taken |
+| `rescale_k`, `rescale_sigma` | float | above 0, no default | not taken |
+| `speaker_uncond_mode` | string | `mask` (the default) or `noise` | not taken |
+| `sway_coeff` | float | default 0 | not taken |
+| `keep_tail` | bool | default false | default false |
+| `tail_window_size` | int | 1 to the frames of the longest speech (750), default `irodori-tts.tail.window` (20) | the same |
+| `tail_std_threshold`, `tail_mean_threshold` | float | above 0, defaults `irodori-tts.tail.std_threshold` and `mean_threshold` (0.05 and 0.1) | the same |
+
 A value at an option's neutral value is accepted by every model; any other value of an option a model does not take
 is `unsupported`, and an option marked "none" has no neutral value. A string option's value must be one of its
-choices (`voice` compared with case; `language` also takes `auto` and a region or script of a choice, compared
-without case); a number outside the range is `out_of_range`. "Checked" means the language is compared with the
-model's languages and then not used: Irodori-TTS and the Japanese recognizers have one language, and
+choices (`voice`, `cfg_guidance_mode` and `speaker_uncond_mode` compared with case; `language` also takes `auto` and a
+region or script of a choice, compared without case); a number outside the range is `out_of_range`. "Checked" means
+the language is compared with the model's languages and then not used: Irodori-TTS and the Japanese recognizers have
+one language, and
 parakeet-tdt-0.6b-v3 finds the language of the audio itself. Qwen3-ASR is told a language that steers it, or finds it
 itself with `auto`. `prompt` is what a recognition is told of the audio before it hears it, the names and terms it may
 hold (Qwen3-ASR, below). `decoding` is how a recognition chooses its tokens: `beam`, the beam search that
@@ -535,6 +558,17 @@ What only the whole request shows is refused when the request runs, before any w
 - Irodori-TTS, when `duration_scale` or `speed` is not 1, the predicted length times `duration_scale / speed` outside
   0.5 to 30 s: `out_of_range`, option `duration_scale`, or `speed` when the scale is 1. At 1 and 1 the predicted
   length is kept within the bounds, as the official runtime keeps it.
+- Irodori-TTS, one of `rescale_k` and `rescale_sigma` without the other: `invalid_argument`, option the one left out.
+- Irodori-TTS, `cfg_min_t` above `cfg_max_t`: `invalid_argument`, option `cfg_min_t`.
+- Irodori-TTS, the `joint` guidance with `cfg_scale_text` and `cfg_scale_speaker` both above 0 and not equal:
+  `invalid_argument`, option `cfg_guidance_mode`.
+- Irodori-TTS, a `sway_coeff` that leaves two of the request's steps at the same time: `out_of_range`, option
+  `sway_coeff`.
+- Irodori-TTS, a value other than the default that another value of the request leaves without effect:
+  `invalid_argument`, naming it. These are `cfg_guidance_mode`, `cfg_min_t`, `cfg_max_t` and `speaker_uncond_mode`
+  with both scales at 0, which run no guidance; `speaker_uncond_mode` `noise` with `cfg_scale_speaker` at 0 and
+  another guidance than `joint`, which runs no branch without the speaker; and `tail_window_size`,
+  `tail_std_threshold` and `tail_mean_threshold` with `keep_tail`. The runtime ignores each, mostly without a word.
 - A text longer than `speech_model_info_max_text_tokens()`: `out_of_range`, option `text`. Irodori-TTS counts the
   tokens of the normalized text and takes at most `irodori-tts.text.max_tokens` (256). Qwen3-TTS takes what leaves its
   talker room for the longest speech: `qwen3-tts.talker.max_position_embeddings` - `qwen3-tts.generation.max_frames` -
@@ -866,7 +900,7 @@ A speech request is a JSON object:
 | `model` | the loaded model's `id` from `/v1/models`, or left out. Any other model is a 404 (`model_not_found`) |
 | `response_format` | `wav` (the default) or `pcm`. OpenAI's default is `mp3`, which speech.cpp does not encode; `mp3`, `opus`, `aac` and `flac` are refused |
 | `stream_format` | `audio` (the default) or `sse`, which needs `pcm` |
-| `voice`, `language`, `seed`, `speed`, `seconds`, `duration_scale`, `steps`, `max_seconds`, `timestamps`, `prompt`, `decoding`, `do_sample`, `top_k`, `top_p`, `temperature`, `repetition_penalty`, `code_predictor_do_sample`, `code_predictor_top_k`, `code_predictor_top_p`, `code_predictor_temperature`, `instructions` | every option of the vocabulary by its name (Options, above), of the option's type, which the model checks: `voice` is one of the model's voices, a Qwen3-TTS speaker or a voice of `--add-voice`, and required; `speed`, `voice` and `instructions` are OpenAI's, the others speech.cpp's own. A request without `seed` gets one drawn from 0 to 2^53 - 1 |
+| `voice`, `language`, `seed`, `speed`, `seconds`, `duration_scale`, `steps`, `max_seconds`, `timestamps`, `prompt`, `decoding`, `do_sample`, `top_k`, `top_p`, `temperature`, `repetition_penalty`, `code_predictor_do_sample`, `code_predictor_top_k`, `code_predictor_top_p`, `code_predictor_temperature`, `instructions`, `cfg_scale_text` and the rest of Irodori-TTS's options | every option of the vocabulary by its name (Options, above), of the option's type, which the model checks: `voice` is one of the model's voices, a Qwen3-TTS speaker or a voice of `--add-voice`, and required; `speed`, `voice` and `instructions` are OpenAI's, the others speech.cpp's own. A request without `seed` gets one drawn from 0 to 2^53 - 1 |
 
 A member speech.cpp does not take is refused rather than ignored, and so is OpenAI's `instructions` other than `""` for a
 model that takes no instruction, such as Qwen3-TTS 0.6B; a member set to `null` counts as left out.
@@ -1157,11 +1191,13 @@ runtime's guidance, text 3.0 and speaker 5.0 while t ≥ 0.5):
 - the SentencePiece Unigram tokenizer with byte fallback, and ModernBERT-ja with its projector,
 - the reference's loudness normalization and the codec encoder, in windows of 100 frames,
 - the speaker encoder, the duration predictor with the runtime's `seconds` and `duration_scale`, the DiT and
-  both samplers,
-- the tail cut where the latent goes flat, and the codec decoder, a first window of 12 frames (0.48 s) and
-  then 48 at a time, each window giving the samples of decoding the whole latent at once.
+  both samplers, RF's with the runtime's guidance modes and scales, Sway Sampling, the truncation of the noise and
+  the temporal score rescaling,
+- the tail cut where the latent goes flat, with the runtime's settings, and the codec decoder, a first window of 12
+  frames (0.48 s) and then 48 at a time, each window giving the samples of decoding the whole latent at once.
 
-Not implemented: captions (VoiceDesign), speaker-inversion embeddings and SilentCipher's watermark. The noise comes
+Not implemented: captions (VoiceDesign), speaking without a reference, voices of several references or another
+loudness, speaker-inversion embeddings, LoRA adapters and SilentCipher's watermark. The noise comes
 from speech.cpp's own generator, so a seed gives other audio than the same seed in the official runtime. A reference
 at another rate than 48 kHz is resampled with the library's filter, not with the runtime's torchaudio defaults (Audio
 at another rate, above).
@@ -1214,6 +1250,45 @@ caller asked for a length the model does not make (docs/adr/0014).
 
 The audio may end before the length where the latent goes flat, as in the runtime. The frames are the
 official runtime's for every combination the dumps cover (`irodori-condition-check`, `irodori-synthesis-check`).
+
+### Guidance, schedule and the tail
+
+A request may set the rest of what the official runtime's request (`SamplingRequest`) takes without other weights,
+under the C API's names (Options, above), and a request that sets none of them speaks as before, sample for sample:
+
+- **Guidance, RF.** v4.1-Small runs its DiT on a batch, the latent with every condition and the latent with one left
+  out, and moves along the first plus each scale times its difference from the others, while the step's time lies
+  from `cfg_min_t` to `cfg_max_t`. `cfg_scale_text` and `cfg_scale_speaker` are the scales, and 0 leaves that branch
+  out. `cfg_guidance_mode` `joint` leaves out the text and the speaker in one branch at one scale, and `alternating`
+  leaves out one condition a step, in turn by the step's number, unguided steps counted. `speaker_uncond_mode`
+  `noise` gives the branch without the speaker noise of the speaker condition's spread in its place, drawn from the
+  request's seed after the latent's noise.
+- **Schedule and noise, RF.** `sway_coeff` bends the linear schedule as Sway Sampling (F5-TTS) does, which the runtime
+  runs with `t_schedule_mode` `sway`: below 0 it gathers the steps near the noise, above 0 near the speech, and at 0,
+  the default, the schedule is the linear one; the runtime's own coefficient for `sway` is -1. `truncation_factor`
+  multiplies the starting noise, and `rescale_k` and `rescale_sigma` rescale each step's velocity (temporal score
+  rescaling, Xu et al., 2025).
+- **The tail, both models.** The speech ends at the first frame from which `tail_window_size` frames of the latent
+  have a standard deviation under `tail_std_threshold` and a mean within `tail_mean_threshold` of 0; `keep_tail`
+  keeps the whole length.
+
+v4.1-Small-MF takes none of RF's options: MeanFlow folded the guidance into its training, and the runtime ignores
+the guidance, the schedule and the noise's settings for it. Where the runtime ignores a setting that another one
+leaves without effect, or clamps a value, speech.cpp refuses it (Options, above).
+
+The runtime's request takes more, which speech.cpp does not offer:
+
+- `num_candidates` and `decode_mode`: several takes from one batch, where a request gives one stream of audio. A
+  caller makes a request per take with seeds of its own; each is a take of the same distribution, though not the
+  runtime's candidate, whose noise comes from the runtime's generator, as every seed's does.
+- `context_kv_cache`: whether the keys and values of the conditions are computed once for every step, which does not
+  change the audio.
+- `cfg_scale`: the runtime's deprecated single scale, which the two scales at one value give.
+- `min_seconds`, `max_seconds`, `max_ref_seconds`, `max_text_len` and `max_caption_len`: the model's bounds, which
+  its file gives and past which speech.cpp refuses where the runtime clamps or cuts.
+- `ref_latent` and `ref_latents`: latents saved with `torch.save()`, which is Python's pickle; a voice file holds a
+  reference's latent.
+- `ref_ensure_max`: on, as the runtime's default; it bounds the peak of a reference that is not normalized.
 
 ### Accuracy
 

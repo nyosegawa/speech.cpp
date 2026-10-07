@@ -276,7 +276,68 @@ typedef enum speech_option {
      * OpenAI's speech API names it, for a model trained to follow such a description; "" (the neutral value) gives none.
      * One too long for the model beside the text is refused when the request runs, naming the option. Added in 3.1.
      */
-    SPEECH_OPT_INSTRUCTIONS = 20
+    SPEECH_OPT_INSTRUCTIONS = 20,
+    /**
+     * "cfg_scale_text", a number of 0 or more: how strongly a guided sampler follows the text, against a branch of the
+     * batch that runs without it; 0 runs no such branch. Added in 3.1.
+     */
+    SPEECH_OPT_CFG_SCALE_TEXT = 21,
+    /**
+     * "cfg_scale_speaker", a number of 0 or more: how strongly a guided sampler follows the voice, as cfg_scale_text.
+     * Added in 3.1.
+     */
+    SPEECH_OPT_CFG_SCALE_SPEAKER = 22,
+    /**
+     * "cfg_guidance_mode", a string: how a guided sampler forms the branches it guides against. "independent", a
+     * branch without each condition that guides; "joint", one branch without every condition, which takes the scales
+     * that guide equal; "alternating", one branch, without each condition that guides in turn from step to step. Added
+     * in 3.1.
+     */
+    SPEECH_OPT_CFG_GUIDANCE_MODE = 23,
+    /**
+     * "cfg_min_t", a number from 0 to 1, and "cfg_max_t": the guidance runs at the sampler's steps whose time, which
+     * falls from 1 at the noise to 0 at the speech, lies from cfg_min_t to cfg_max_t. Added in 3.1.
+     */
+    SPEECH_OPT_CFG_MIN_T = 24,
+    /** "cfg_max_t", a number from 0 to 1: the latest time of the guidance, as cfg_min_t says. Added in 3.1. */
+    SPEECH_OPT_CFG_MAX_T = 25,
+    /** "truncation_factor", a number above 0: the factor of the sampler's starting noise. Added in 3.1. */
+    SPEECH_OPT_TRUNCATION_FACTOR = 26,
+    /**
+     * "rescale_k", a number above 0, and "rescale_sigma": the temporal score rescaling of each step's velocity (Xu et
+     * al., 2025), which a request sets with both or neither. Added in 3.1.
+     */
+    SPEECH_OPT_RESCALE_K = 27,
+    /** "rescale_sigma", a number above 0: the other setting of the rescaling, as rescale_k says. Added in 3.1. */
+    SPEECH_OPT_RESCALE_SIGMA = 28,
+    /**
+     * "speaker_uncond_mode", a string: what the branch without the voice attends to in its place. "mask", nothing;
+     * "noise", noise of the voice condition's spread. Added in 3.1.
+     */
+    SPEECH_OPT_SPEAKER_UNCOND_MODE = 29,
+    /**
+     * "sway_coeff", a number: the coefficient of Sway Sampling (F5-TTS), which moves the sampler's steps toward the
+     * noise when below 0 and toward the speech when above; 0 spaces them evenly. A coefficient that leaves two steps
+     * at the same time with the request's steps is refused when the request runs. Added in 3.1.
+     */
+    SPEECH_OPT_SWAY_COEFF = 30,
+    /**
+     * "keep_tail", a boolean: whether the speech keeps all of its length, rather than ending where the model's output
+     * turns flat and quiet. Added in 3.1.
+     */
+    SPEECH_OPT_KEEP_TAIL = 31,
+    /**
+     * "tail_window_size", an integer: the frames over which the model's output must be flat for the speech to end.
+     * Added in 3.1.
+     */
+    SPEECH_OPT_TAIL_WINDOW_SIZE = 32,
+    /** "tail_std_threshold", a number: the standard deviation below which the window counts as flat. Added in 3.1. */
+    SPEECH_OPT_TAIL_STD_THRESHOLD = 33,
+    /**
+     * "tail_mean_threshold", a number: how near to 0 the window's mean must lie for it to count as quiet. Added in
+     * 3.1.
+     */
+    SPEECH_OPT_TAIL_MEAN_THRESHOLD = 34
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */
@@ -556,8 +617,9 @@ SPEECH_API speech_status speech_model_info_option_range(const speech_model_info 
 
 /**
  * The number of values a string option takes: the voices for "voice", the languages for "language", which also
- * takes "auto" and a region or script of each, and the decodings for "decoding", the default among them. 0 for
- * "prompt" and "instructions", which take any text, and for an option of another type.
+ * takes "auto" and a region or script of each, the decodings for "decoding", the default among them, and the modes for
+ * "cfg_guidance_mode" and "speaker_uncond_mode". 0 for "prompt" and "instructions", which take any text, and for an
+ * option of another type.
  */
 SPEECH_API size_t speech_model_info_option_choice_count(const speech_model_info * info, speech_option option);
 

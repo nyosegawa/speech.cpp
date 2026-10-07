@@ -205,7 +205,10 @@ int check_library(void) {
     static const char * options[] = {"voice", "language", "seed", "speed", "seconds", "duration_scale", "steps", "max_seconds",
                                      "timestamps", "prompt", "decoding", "do_sample", "top_k", "top_p", "temperature",
                                      "repetition_penalty", "code_predictor_do_sample", "code_predictor_top_k",
-                                     "code_predictor_top_p", "code_predictor_temperature", "instructions"};
+                                     "code_predictor_top_p", "code_predictor_temperature", "instructions", "cfg_scale_text",
+                                     "cfg_scale_speaker", "cfg_guidance_mode", "cfg_min_t", "cfg_max_t", "truncation_factor",
+                                     "rescale_k", "rescale_sigma", "speaker_uncond_mode", "sway_coeff", "keep_tail",
+                                     "tail_window_size", "tail_std_threshold", "tail_mean_threshold"};
     if (speech_option_count() != sizeof options / sizeof options[0]) {
         fprintf(stderr, "FAIL: the library knows %zu options\n", speech_option_count());
         return 1;

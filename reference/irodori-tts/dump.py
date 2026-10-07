@@ -1,7 +1,7 @@
 """Runs the official Irodori-TTS on the CPU in float32 and saves the tensors the C++ port is checked against.
 
-usage: uv run python dump.py <mf|rf> <out dir> <text> <reference.wav> [--seed n]
-                             [--seconds s | --duration-scale x] [--speed x]
+usage: uv run python dump.py <mf|rf> <out dir> <text> <reference.wav> [--seed n] [--steps n]
+                             [--seconds s | --duration-scale x] [--speed x] [request options]
 
 mf is v4.1-Small-MF with its 4 MeanFlow steps; rf is v4.1-Small with 40 Euler steps and the runtime's
 default guidance (text 3.0 and speaker 5.0, each against a branch without it, while t >= 0.5).
@@ -10,6 +10,12 @@ default guidance (text 3.0 and speaker 5.0, each against a branch without it, wh
 them. --speed is OpenAI's speed, which Irodori-TTS-Server divides both by before it calls the runtime;
 meta.json keeps the three as given. With --seconds the duration predictor does not run, and its two files
 are not written.
+
+The request options are the C API's names of the runtime's SamplingRequest fields, in kebab-case: for rf
+--cfg-scale-text, --cfg-scale-speaker, --cfg-guidance-mode, --cfg-min-t, --cfg-max-t, --truncation-factor,
+--rescale-k, --rescale-sigma, --speaker-uncond-mode and --sway-coeff (Sway Sampling when not 0), and for both
+--keep-tail, --tail-window-size, --tail-std-threshold and --tail-mean-threshold. meta.json keeps the ones
+given under the C API's names in "options", and a check takes the model's default for the others.
 
 The official runtime.synthesize() runs once with its stages wrapped, so what is saved is what it computed.
 The finer stages (the text encoder's layers, the speaker encoder, each DiT block of the first step, the
@@ -28,12 +34,15 @@ result as synthesize(). Writes <out dir>/*.npy and meta.json:
   speaker_state        after its norm, with the masked mean prepended, [1 + T / 4, 768]
   duration_features    the 14 features of the text, [14]
   duration_log_frames  the predictor's log(1 + frames), [1]
-  noise                the sampler's starting point, [S, 32]
+  noise                the sampler's draw of noise, before a truncation factor scales it, [S, 32]
+  speaker_noise        rf with speaker_uncond_mode noise: the draw after it, [1 + T / 4, 768]
+  speaker_uncond       the same, scaled by the speaker condition's spread: the branch without the speaker
   dit_t                each step's time, [steps]
   dit_delta            mf: each step's interval, [steps]
-  dit_branches         rf: the DiT output of each branch (all, no text, no speaker) of the guided steps,
-                       [guided steps, 3, S, 32]
-  dit_velocity         the velocity of each step, after guidance for rf, [steps, S, 32]
+  dit_branches         rf: the DiT output of each branch of the guided steps, the branch with every condition
+                       first, [guided steps, branches, S, 32]; meta.json's "branches" names the others by the
+                       condition each leaves out (text, speaker, or all for the joint guidance)
+  dit_velocity         the velocity of each step, after guidance and rescaling for rf, [steps, S, 32]
   dit_x                the latent after each step, [steps, S, 32]
   dit_step0_blocks     the output of each DiT block in the first step, [12, branches, S, 1280]
   dit_cond             the timestep condition of each step, [steps, 3840]
@@ -52,6 +61,7 @@ import numpy as np
 import torch
 
 from irodori_tts import inference_runtime as ir
+from irodori_tts import rf
 from irodori_tts.codec import DACVAECodec
 from irodori_tts.model import get_timestep_embedding, patch_sequence_with_mask
 from irodori_tts.text_normalization import normalize_text
@@ -63,12 +73,29 @@ parser.add_argument("out_dir")
 parser.add_argument("text")
 parser.add_argument("reference")
 parser.add_argument("--seed", type=int, default=0)
+parser.add_argument("--steps", type=int)
 parser.add_argument("--seconds", type=float, default=0.0)
 parser.add_argument("--duration-scale", type=float, default=1.0)
 parser.add_argument("--speed", type=float, default=1.0)
+# The request options, by the C API's names, with the SamplingRequest field each sets.
+RF_OPTIONS = {"cfg_scale_text": (float, "cfg_scale_text"), "cfg_scale_speaker": (float, "cfg_scale_speaker"),
+              "cfg_guidance_mode": (str, "cfg_guidance_mode"), "cfg_min_t": (float, "cfg_min_t"),
+              "cfg_max_t": (float, "cfg_max_t"), "truncation_factor": (float, "truncation_factor"),
+              "rescale_k": (float, "rescale_k"), "rescale_sigma": (float, "rescale_sigma"),
+              "speaker_uncond_mode": (str, "speaker_uncond_mode"), "sway_coeff": (float, "sway_coeff")}
+OPTIONS = {**RF_OPTIONS, "tail_window_size": (int, "tail_window_size"), "tail_std_threshold": (float, "tail_std_threshold"),
+           "tail_mean_threshold": (float, "tail_mean_threshold")}
+for name, (kind, _) in OPTIONS.items():
+    parser.add_argument("--" + name.replace("_", "-"), type=kind)
+parser.add_argument("--keep-tail", action="store_true")
 args = parser.parse_args()
 # The runtime ignores a duration scale given with seconds; speech.cpp refuses that request.
 assert not (args.seconds > 0 and args.duration_scale != 1.0), "give --seconds or --duration-scale, not both"
+options = {name: getattr(args, name) for name in OPTIONS if getattr(args, name) is not None}
+if args.keep_tail:
+    options["keep_tail"] = True
+# MeanFlow's sampler takes none of RF's options, which the runtime drops with a message.
+assert args.model == "rf" or not any(name in RF_OPTIONS for name in options), "the rf options are not mf's"
 os.makedirs(args.out_dir, exist_ok=True)
 torch.set_grad_enabled(False)
 
@@ -115,8 +142,14 @@ wrap(codec, "decode_latent", lambda a, k, out: calls["decode"].append((a[0], out
 # Irodori-TTS-Server's mapping of OpenAI's speed
 # (Aratako/Irodori-TTS-Server@61012c760f22f7b4a6c21c5c5f8f9e148120b6f9, src/irodori_openai_tts/app.py).
 seconds = args.seconds / args.speed if args.seconds > 0 else None
-result = runtime.synthesize(ir.SamplingRequest(text=args.text, ref_wav=args.reference, seed=args.seed, seconds=seconds,
-                                               duration_scale=args.duration_scale / args.speed))
+fields = {OPTIONS[name][1]: value for name, value in options.items() if name != "keep_tail"}
+fields["trim_tail"] = not args.keep_tail
+# speech.cpp's sway_coeff of 0 is the runtime's linear schedule, which Sway Sampling with 0 equals.
+if options.get("sway_coeff", 0.0) != 0.0:
+    fields["t_schedule_mode"] = "sway"
+request = ir.SamplingRequest(text=args.text, ref_wav=args.reference, seed=args.seed, seconds=seconds,
+                             duration_scale=args.duration_scale / args.speed, num_steps=args.steps, **fields)
+result = runtime.synthesize(request)
 normalized_text = normalize_text(args.text).strip()
 
 # Text: the runtime pads to 256 tokens; the port runs the valid ones only.
@@ -152,33 +185,76 @@ recomputed, _ = model._prepend_masked_mean_token(model.speaker_norm(speaker_enco
 assert torch.equal(recomputed, speaker_state)
 save("speaker_state", speaker_state[0])
 
-# Sampling: every step, and each block of the first.
-steps = calls["velocity"]
+# Sampling: every step, and each block of the first. The steps are regrouped from the DiT's calls, one per step
+# for MeanFlow, RF's independent guidance and an unguided step, two for RF's joint and alternating guidance.
+calls_by_step = []
+for k, out in calls["velocity"]:
+    if calls_by_step and bool(calls_by_step[-1][0][0]["t"][0] == k["t"][0]):
+        calls_by_step[-1].append((k, out))
+    else:
+        calls_by_step.append([(k, out)])
 meanflow = model.cfg.flow_parameterization == "meanflow"
-save("noise", steps[0][0]["x_t"][0])
-save("dit_t", torch.stack([k["t"][0] for k, _ in steps]))
-velocities, branches = [], []
-for k, out in steps:
-    if out.shape[0] == 1:
-        velocities.append(out)
-        continue
-    # The sampler's own order of operations, so that the latent comes out bit for bit.
-    v = out[0:1]
-    for scale, branch in zip((3.0, 5.0), out[1:]):
-        v = v + scale * (out[0:1] - branch[None])
+# A guided step's latent is repeated for each branch of the batch; the first is the sampler's.
+first = calls_by_step[0][0][0]["x_t"][0:1]
+S = first.shape[1]
+# The draws of the runtime's generator, made again: the latent's noise, then the speaker's in noise mode.
+rng = torch.Generator(device="cpu").manual_seed(args.seed)
+noise = torch.randn((1, S, model.cfg.patched_latent_dim), generator=rng)
+truncation = request.truncation_factor
+assert torch.equal(noise * float(truncation) if truncation is not None else noise, first)
+save("noise", noise[0])
+mode = str(request.cfg_guidance_mode).strip().lower()
+uncond_mode = str(request.speaker_uncond_mode).strip().lower()
+if not meanflow and uncond_mode == "noise":
+    speaker_noise = torch.randn(speaker_state.shape, generator=rng)
+    speaker_uncond = speaker_noise * speaker_state.std().clamp_min(1e-6)
+    save("speaker_noise", speaker_noise[0])
+    save("speaker_uncond", speaker_uncond[0])
+scales = {}
+if not meanflow:
+    text_scale, _, speaker_scale, _ = ir.resolve_cfg_scales(
+        cfg_guidance_mode=mode, cfg_scale_text=request.cfg_scale_text, cfg_scale_caption=request.cfg_scale_caption,
+        cfg_scale_speaker=request.cfg_scale_speaker, cfg_scale=request.cfg_scale, use_caption_condition=False)
+    scales = {name: scale for name, scale in (("text", text_scale), ("speaker", speaker_scale)) if scale > 0}
+enabled = list(scales)
+save("dit_t", torch.stack([group[0][0]["t"][0] for group in calls_by_step]))
+velocities, branches, branch_names = [], [], []
+x = first
+xs = []
+for i, group in enumerate(calls_by_step):
+    k, out = group[0]
+    assert torch.equal(k["x_t"][0:1], x)
+    if len(group) == 1 and out.shape[0] == 1:
+        v = out
+    elif len(group) == 1:
+        # The independent guidance: one branch without each enabled condition, added in the sampler's order.
+        v = out[0:1]
+        for name, branch in zip(enabled, out[1:], strict=True):
+            v = v + scales[name] * (out[0:1] - branch[None])
+        branches.append(out)
+        branch_names.append(enabled)
+    else:
+        (_, cond), (_, uncond) = group
+        name = "all" if mode == "joint" else enabled[i % len(enabled)]
+        v = cond + scales[enabled[0] if mode == "joint" else name] * (cond - uncond)
+        branches.append(torch.cat([cond, uncond]))
+        branch_names.append([name])
+    if request.rescale_k is not None:
+        v = rf.temporal_score_rescale(v, x, k["t"][0], float(request.rescale_k), float(request.rescale_sigma))
+    t_next = calls_by_step[i + 1][0][0]["t"][0] if i + 1 < len(calls_by_step) else torch.zeros_like(k["t"][0])
+    x = x + v * (t_next - k["t"][0])
     velocities.append(v)
-    branches.append(out)
+    xs.append(x[0])
 if meanflow:
-    save("dit_delta", torch.stack([k["delta_t"][0] for k, _ in steps]))
-else:
+    save("dit_delta", torch.stack([group[0][0]["delta_t"][0] for group in calls_by_step]))
+elif branches:
     save("dit_branches", torch.stack(branches))
 save("dit_velocity", torch.cat(velocities))
-xs, x = [], steps[0][0]["x_t"][0:1]
-for i, (k, _) in enumerate(steps):
-    t_next = steps[i + 1][0]["t"][0] if i + 1 < len(steps) else torch.zeros_like(k["t"][0])
-    x = x + velocities[i] * (t_next - k["t"][0])
-    xs.append(x[0])
 save("dit_x", torch.stack(xs))
+if not meanflow and uncond_mode == "noise" and mode == "independent" and "speaker" in enabled:
+    batched = calls_by_step[0][0][0]["speaker_state"]
+    assert torch.equal(batched[1 + enabled.index("speaker")], speaker_uncond[0])
+steps = [group[0] for group in calls_by_step]
 cond = []
 for k, _ in steps:
     c = model.cond_module(get_timestep_embedding(k["t"][0:1], model.cfg.timestep_embed_dim))
@@ -188,10 +264,10 @@ for k, _ in steps:
 save("dit_cond", torch.stack(cond))
 blocks = []
 hooks = [b.register_forward_hook(lambda m, a, out: blocks.append(out)) for b in model.blocks]
-first = model.forward_with_encoded_conditions(**steps[0][0])
+again = model.forward_with_encoded_conditions(**steps[0][0])
 for h in hooks:
     h.remove()
-assert torch.equal(first, steps[0][1])
+assert torch.equal(again, steps[0][1])
 save("dit_step0_blocks", torch.stack(blocks))
 
 # Codec: the decoder's stages on the final latent.
@@ -217,6 +293,7 @@ meta = {
     "text": args.text, "normalized_text": normalized_text, "tokens": n,
     "reference": os.path.basename(args.reference),
     "seconds": args.seconds, "duration_scale": args.duration_scale, "speed": args.speed,
+    "steps": len(calls_by_step), "options": options, "branches": branch_names,
     "latent_frames": int(z.shape[1]), "audio_samples": int(result.audio.shape[-1]),
     "unpadded_text_max_abs_diff": unpadded_error,
     "messages": result.messages,

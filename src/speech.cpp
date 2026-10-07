@@ -73,6 +73,20 @@ const OptionName vocabulary[] = {
     {"code_predictor_top_p", SPEECH_TYPE_FLOAT},
     {"code_predictor_temperature", SPEECH_TYPE_FLOAT},
     {"instructions", SPEECH_TYPE_STRING},
+    {"cfg_scale_text", SPEECH_TYPE_FLOAT},
+    {"cfg_scale_speaker", SPEECH_TYPE_FLOAT},
+    {"cfg_guidance_mode", SPEECH_TYPE_STRING},
+    {"cfg_min_t", SPEECH_TYPE_FLOAT},
+    {"cfg_max_t", SPEECH_TYPE_FLOAT},
+    {"truncation_factor", SPEECH_TYPE_FLOAT},
+    {"rescale_k", SPEECH_TYPE_FLOAT},
+    {"rescale_sigma", SPEECH_TYPE_FLOAT},
+    {"speaker_uncond_mode", SPEECH_TYPE_STRING},
+    {"sway_coeff", SPEECH_TYPE_FLOAT},
+    {"keep_tail", SPEECH_TYPE_BOOL},
+    {"tail_window_size", SPEECH_TYPE_INT},
+    {"tail_std_threshold", SPEECH_TYPE_FLOAT},
+    {"tail_mean_threshold", SPEECH_TYPE_FLOAT},
 };
 constexpr size_t kOptions = sizeof vocabulary / sizeof vocabulary[0];
 

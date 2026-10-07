@@ -8,8 +8,8 @@
  * each option's values with the category and the option's name and accepts the neutral ones, speaks one sentence into
  * a WAVE file, repeats a drawn seed's audio, gives the same audio with every option set at its default as with none,
  * checks the family's rules of the whole request (Qwen3-TTS's max_seconds, longest text, sampling and instructions,
- * Irodori-TTS's lengths, steps and progress), cancels a request from another thread and one before it runs, and runs
- * requests from two threads at once.
+ * Irodori-TTS's lengths, steps, progress, cut at the tail and guidance), cancels a request from another thread and one
+ * before it runs, and runs requests from two threads at once.
  *
  * With a recognition model (transcribe), speech-api-recognition.c, which takes F32 or F16 weights only.
  *
@@ -354,6 +354,97 @@ static int check_irodori_tts(speech_model * model, const speech_model_info * inf
     return ok ? 0 : 1;
 }
 
+/** Whether `a` and `b` hold the same samples, bit for bit. */
+static int same_audio(const Audio * a, const Audio * b) {
+    return a->n == b->n && memcmp(a->samples, b->samples, a->n * sizeof(float)) == 0;
+}
+
+/**
+ * Irodori-TTS's options of the official runtime's request: the cut at the tail and, for an RF model, the guidance and
+ * the schedule. A request that sets each of them speaks, and what only the whole request shows is refused naming the
+ * option.
+ */
+static int check_irodori_options(speech_model * model, const speech_model_info * info, const char * voice) {
+    const int rate = speech_model_info_sample_rate(info);
+    const int rf = speech_model_info_takes(info, SPEECH_OPT_CFG_SCALE_TEXT);
+    Audio set = {NULL, 0, 0}, cut = {NULL, 0, 0}, kept = {NULL, 0, 0};
+    int ok = 1;
+
+    // The latent of v4.1 never turns as flat as the default thresholds ask, even in the silence after "はい。" in 3 s,
+    // which keep_tail therefore leaves as it is; thresholds of 0.6 and 0.2 cut it in that silence, and the cut audio
+    // is the start of the whole.
+    Audio whole = {NULL, 0, 0};
+    speech_request * r = new_request(model, "はい。", voice, 5);
+    speech_request_set_float(r, SPEECH_OPT_SECONDS, 3);
+    ok &= expect(speak(r, &whole, NULL, NULL), SPEECH_OK, NULL, "はい。 in 3 s");
+    r = new_request(model, "はい。", voice, 5);
+    speech_request_set_float(r, SPEECH_OPT_SECONDS, 3);
+    speech_request_set_bool(r, SPEECH_OPT_KEEP_TAIL, 1);
+    ok &= expect(speak(r, &kept, NULL, NULL), SPEECH_OK, NULL, "はい。 in 3 s with keep_tail");
+    r = new_request(model, "はい。", voice, 5);
+    speech_request_set_float(r, SPEECH_OPT_SECONDS, 3);
+    speech_request_set_float(r, SPEECH_OPT_TAIL_STD_THRESHOLD, 0.6);
+    speech_request_set_float(r, SPEECH_OPT_TAIL_MEAN_THRESHOLD, 0.2);
+    ok &= expect(speak(r, &cut, NULL, NULL), SPEECH_OK, NULL, "はい。 in 3 s with thresholds of 0.6 and 0.2");
+    printf("はい。 in 3 s: %.3f s, %.3f s with keep_tail, %.3f s cut by thresholds of 0.6 and 0.2\n", (double) whole.n / rate,
+           (double) kept.n / rate, (double) cut.n / rate);
+    ok &= whole.n == (size_t) 3 * rate && same_audio(&whole, &kept) && cut.n < whole.n &&
+          memcmp(cut.samples, whole.samples, cut.n * sizeof(float)) == 0;
+    free(whole.samples);
+    r = new_request(model, "はい。", voice, 5);
+    speech_request_set_bool(r, SPEECH_OPT_KEEP_TAIL, 1);
+    speech_request_set_int(r, SPEECH_OPT_TAIL_WINDOW_SIZE, 8);
+    ok &= expect(speak(r, &kept, NULL, NULL), SPEECH_ERROR_INVALID_ARGUMENT, "tail_window_size", "keep_tail with a window");
+
+    if (rf) {
+        struct {
+            const char * what;
+            const char * mode;
+            double text, speaker, min_t, max_t, rescale_k, sway;
+            const char * uncond;
+            speech_status status;
+            const char * option;
+        } refused[] = {
+            {"the joint guidance with two scales", "joint", 3, 5, -1, -1, 0, 0, NULL, SPEECH_ERROR_INVALID_ARGUMENT, "cfg_guidance_mode"},
+            {"rescale_k alone", NULL, -1, -1, -1, -1, 1.5, 0, NULL, SPEECH_ERROR_INVALID_ARGUMENT, "rescale_sigma"},
+            {"cfg_min_t above cfg_max_t", NULL, -1, -1, 0.9, 0.5, 0, 0, NULL, SPEECH_ERROR_INVALID_ARGUMENT, "cfg_min_t"},
+            {"a guidance mode without a scale", "alternating", 0, 0, -1, -1, 0, 0, NULL, SPEECH_ERROR_INVALID_ARGUMENT, "cfg_guidance_mode"},
+            {"speaker noise without a speaker scale", NULL, -1, 0, -1, -1, 0, 0, "noise", SPEECH_ERROR_INVALID_ARGUMENT, "speaker_uncond_mode"},
+            {"a sway that stops the schedule", NULL, -1, -1, -1, -1, 0, -3, NULL, SPEECH_ERROR_OUT_OF_RANGE, "sway_coeff"},
+        };
+        for (size_t i = 0; i < sizeof refused / sizeof refused[0]; i++) {
+            r = new_request(model, "はい。", voice, 5);
+            speech_request_set_int(r, SPEECH_OPT_STEPS, 8);
+            if (refused[i].mode) speech_request_set_string(r, SPEECH_OPT_CFG_GUIDANCE_MODE, refused[i].mode);
+            if (refused[i].text >= 0) speech_request_set_float(r, SPEECH_OPT_CFG_SCALE_TEXT, refused[i].text);
+            if (refused[i].speaker >= 0) speech_request_set_float(r, SPEECH_OPT_CFG_SCALE_SPEAKER, refused[i].speaker);
+            if (refused[i].min_t >= 0) speech_request_set_float(r, SPEECH_OPT_CFG_MIN_T, refused[i].min_t);
+            if (refused[i].max_t >= 0) speech_request_set_float(r, SPEECH_OPT_CFG_MAX_T, refused[i].max_t);
+            if (refused[i].rescale_k > 0) speech_request_set_float(r, SPEECH_OPT_RESCALE_K, refused[i].rescale_k);
+            if (refused[i].sway != 0) speech_request_set_float(r, SPEECH_OPT_SWAY_COEFF, refused[i].sway);
+            if (refused[i].uncond) speech_request_set_string(r, SPEECH_OPT_SPEAKER_UNCOND_MODE, refused[i].uncond);
+            Audio none = {NULL, 0, 0};
+            ok &= expect(speak(r, &none, NULL, NULL), refused[i].status, refused[i].option, refused[i].what) && none.n == 0;
+        }
+        r = new_request(model, SENTENCE, voice, 5);
+        speech_request_set_int(r, SPEECH_OPT_STEPS, 8);
+        speech_request_set_string(r, SPEECH_OPT_CFG_GUIDANCE_MODE, "alternating");
+        speech_request_set_string(r, SPEECH_OPT_SPEAKER_UNCOND_MODE, "noise");
+        speech_request_set_float(r, SPEECH_OPT_TRUNCATION_FACTOR, 0.9);
+        speech_request_set_float(r, SPEECH_OPT_RESCALE_K, 1.5);
+        speech_request_set_float(r, SPEECH_OPT_RESCALE_SIGMA, 1.0);
+        speech_request_set_float(r, SPEECH_OPT_SWAY_COEFF, -0.5);
+        set.n = 0;
+        ok &= expect(speak(r, &set, NULL, NULL), SPEECH_OK, NULL, "a request of every guidance option") && set.n > 0;
+        if (set.n > 0) printf("a request of every guidance option spoke %.2f s\n", (double) set.n / rate);
+    }
+    free(set.samples);
+    free(cut.samples);
+    free(kept.samples);
+    if (!ok) fprintf(stderr, "FAIL: Irodori-TTS's options of the runtime's request are not followed\n");
+    return ok ? 0 : 1;
+}
+
 /**
  * A request that sets every option the model declares with a default, at that default, gives the audio of one that
  * sets none, for the same seed: the defaults the information shows are the ones a request runs with.
@@ -560,7 +651,7 @@ static int check_model(speech_model * model, const char * model_path, const char
     free(again.samples);
 
     if (check_defaults(model, info, voice) != 0) return 1;
-    if (irodori ? check_irodori_tts(model, info, voice) != 0
+    if (irodori ? check_irodori_tts(model, info, voice) != 0 || check_irodori_options(model, info, voice) != 0
                 : check_qwen3_tts(model, info, voice) != 0 || check_qwen3_tts_sampling(model, voice) != 0 ||
                       check_qwen3_tts_instructions(model, info, voice) != 0) {
         return 1;

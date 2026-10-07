@@ -1,4 +1,8 @@
 #include <climits>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <iterator>
 #include <map>
 #include <string>
 #include <vector>
@@ -30,6 +34,13 @@ public:
         r.length.seconds = values.has(SPEECH_OPT_SECONDS) ? values.number(SPEECH_OPT_SECONDS) : 0;
         r.length.duration_scale = values.number(SPEECH_OPT_DURATION_SCALE);
         r.length.speed = values.number(SPEECH_OPT_SPEED);
+        // An RF file alone declares the guidance, and with it a default of every option of it that has one.
+        if (values.has(SPEECH_OPT_CFG_SCALE_TEXT)) r.guidance = guidance(values);
+        r.tail.emplace();
+        r.tail->keep = values.boolean(SPEECH_OPT_KEEP_TAIL);
+        r.tail->window = (int) values.integer(SPEECH_OPT_TAIL_WINDOW_SIZE);
+        r.tail->std_threshold = (float) values.number(SPEECH_OPT_TAIL_STD_THRESHOLD);
+        r.tail->mean_threshold = (float) values.number(SPEECH_OPT_TAIL_MEAN_THRESHOLD);
         r.progress = [&](double done) { return run.progress(done); };
         synth_.synthesize(r, voices_.at(values.string(SPEECH_OPT_VOICE)), [&](const float * samples, size_t n) { return run.audio(samples, n); });
         return SPEECH_STOP_COMPLETE;
@@ -52,9 +63,40 @@ public:
     }
 
 private:
+    /** The RF sampler's settings of a request, which the scales, the noise's factor and Sway's coefficient give in float32 as the runtime's tensors take them. */
+    static irodori::Guidance guidance(const RequestValues & values) {
+        irodori::Guidance g;
+        g.text = (float) values.number(SPEECH_OPT_CFG_SCALE_TEXT);
+        g.speaker = (float) values.number(SPEECH_OPT_CFG_SCALE_SPEAKER);
+        const std::string & mode = values.string(SPEECH_OPT_CFG_GUIDANCE_MODE);
+        for (size_t i = 0; i < std::size(irodori::kGuidanceModes); i++) {
+            if (mode == irodori::kGuidanceModes[i]) g.mode = (irodori::GuidanceMode) i;
+        }
+        g.min_t = values.number(SPEECH_OPT_CFG_MIN_T);
+        g.max_t = values.number(SPEECH_OPT_CFG_MAX_T);
+        g.speaker_noise = values.string(SPEECH_OPT_SPEAKER_UNCOND_MODE) == irodori::kSpeakerNoise;
+        if (values.has(SPEECH_OPT_TRUNCATION_FACTOR)) g.truncation = (float) values.number(SPEECH_OPT_TRUNCATION_FACTOR);
+        if (values.has(SPEECH_OPT_RESCALE_K)) g.rescale_k = values.number(SPEECH_OPT_RESCALE_K);
+        if (values.has(SPEECH_OPT_RESCALE_SIGMA)) g.rescale_sigma = values.number(SPEECH_OPT_RESCALE_SIGMA);
+        g.sway = (float) values.number(SPEECH_OPT_SWAY_COEFF);
+        return g;
+    }
+
     irodori::Synthesizer synth_;
     std::map<std::string, irodori::Voice> voices_;
 };
+
+/**
+ * The shortest decimal that reads back as `v` in float32, so that a default the model file holds in float32 shows as
+ * the official code writes it (0.05, not 0.05000000074505806); the request rounds it back to `v`.
+ */
+double shortest(float v) {
+    char text[32];
+    for (int digits = 1;; digits++) {
+        std::snprintf(text, sizeof text, "%.*g", digits, (double) v);
+        if ((float) std::strtod(text, nullptr) == v) return std::strtod(text, nullptr);
+    }
+}
 
 /** The tokens of a text as the synthesis counts them: those of its normalized form, <s> included. */
 struct TokenCounter {
@@ -66,10 +108,11 @@ struct TokenCounter {
 }  // namespace
 
 /**
- * The table of the options Irodori-TTS takes, with the bounds of the length and the speed and the sampler's steps its
- * file gives. It has no voices of its own; a request speaks in one added since loading. Its one language is checked and
- * not used. It fixes the length before it makes the speech, so it takes seconds and a scale of the predicted length
- * rather than max_seconds.
+ * The table of the options Irodori-TTS takes, with the bounds of the length and the speed, the sampler's steps and
+ * guidance and the cut at the tail its file gives. It has no voices of its own; a request speaks in one added since
+ * loading. Its one language is checked and not used. It fixes the length before it makes the speech, so it takes
+ * seconds and a scale of the predicted length rather than max_seconds. An RF model takes the official runtime's
+ * guidance and schedule, which a MeanFlow model folded into its training and does not take.
  */
 FamilyInfo describe_irodori_tts(const std::shared_ptr<const ModelFile> & file) {
     const ModelFile & m = *file;
@@ -85,6 +128,31 @@ FamilyInfo describe_irodori_tts(const std::shared_ptr<const ModelFile> & file) {
         {SPEECH_OPT_DURATION_SCALE, false, true, 1.0, 0, INFINITY, true},
         {SPEECH_OPT_STEPS, false, true, (int64_t) m.u32("irodori-tts.sampler.default_steps"), 1, (double) INT_MAX},
     };
+    if (m.one_of("irodori-tts.flow", {"meanflow", "rf_velocity"}) == "rf_velocity") {
+        const std::string s = "irodori-tts.sampler.";
+        const std::vector<std::string> modes(std::begin(irodori::kGuidanceModes), std::end(irodori::kGuidanceModes));
+        info.options.insert(info.options.end(), {
+            {SPEECH_OPT_CFG_SCALE_TEXT, false, true, (double) m.f32(s + "cfg_text"), 0, INFINITY},
+            {SPEECH_OPT_CFG_SCALE_SPEAKER, false, true, (double) m.f32(s + "cfg_speaker"), 0, INFINITY},
+            {SPEECH_OPT_CFG_GUIDANCE_MODE, false, true, modes[0], -INFINITY, INFINITY, false, modes},
+            {SPEECH_OPT_CFG_MIN_T, false, true, (double) m.f32(s + "cfg_min_t"), 0, 1},
+            {SPEECH_OPT_CFG_MAX_T, false, true, (double) m.f32(s + "cfg_max_t"), 0, 1},
+            {SPEECH_OPT_TRUNCATION_FACTOR, false, true, std::nullopt, 0, INFINITY, true},
+            {SPEECH_OPT_RESCALE_K, false, true, std::nullopt, 0, INFINITY, true},
+            {SPEECH_OPT_RESCALE_SIGMA, false, true, std::nullopt, 0, INFINITY, true},
+            {SPEECH_OPT_SPEAKER_UNCOND_MODE, false, true, std::string(irodori::kSpeakerMasked), -INFINITY, INFINITY, false,
+             {irodori::kSpeakerMasked, irodori::kSpeakerNoise}},
+            {SPEECH_OPT_SWAY_COEFF, false, true, 0.0},
+        });
+    }
+    // A window as long as the longest speech reaches every frame of any speech.
+    const int longest = (int) std::floor(m.f32("irodori-tts.length.max_seconds") * m.u32("speech.sample_rate") / (double) m.u32("irodori-tts.codec.hop_length"));
+    info.options.insert(info.options.end(), {
+        {SPEECH_OPT_KEEP_TAIL, false, true, false},
+        {SPEECH_OPT_TAIL_WINDOW_SIZE, false, true, (int64_t) m.u32("irodori-tts.tail.window"), 1, (double) longest},
+        {SPEECH_OPT_TAIL_STD_THRESHOLD, false, true, shortest(m.f32("irodori-tts.tail.std_threshold")), 0, INFINITY, true},
+        {SPEECH_OPT_TAIL_MEAN_THRESHOLD, false, true, shortest(m.f32("irodori-tts.tail.mean_threshold")), 0, INFINITY, true},
+    });
     const auto counter = std::make_shared<Lazy<TokenCounter>>(file);
     info.count_tokens = [counter](const std::string & text) { return counter->get().count(text); };
     return info;

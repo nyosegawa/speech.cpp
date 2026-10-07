@@ -7,12 +7,27 @@
 
 namespace irodori {
 
-/** What the DiT attends to besides the latent: the text and speaker conditions, channel-first. */
+/**
+ * What the DiT attends to besides the latent: the text and speaker conditions, channel-first, and the noise that takes
+ * the speaker condition's place in a branch of RF's guidance, of the speaker condition's shape, when the request asks
+ * for it.
+ */
 struct Conditions {
     std::vector<float> text;
     int text_tokens = 0;
     std::vector<float> speaker;
     int speaker_tokens = 0;
+    std::vector<float> speaker_noise;
+};
+
+/**
+ * What one latent of the DiT's batch attends to besides itself. RF's guidance runs the latent again without the text,
+ * without the speaker, or with noise in the speaker's place.
+ */
+struct Branch {
+    enum class Speaker { Kept, Left, Noise };
+    bool text = true;
+    Speaker speaker = Speaker::Kept;
 };
 
 /**
@@ -28,13 +43,12 @@ public:
     int latent_dim() const { return latent_dim_; }
 
     /**
-     * The velocity [latent_dim, frames, branches] of the latent x (row-major [frames, latent_dim]) at time
-     * t, with `delta` the step's interval for a MeanFlow model. With 3 branches the batch holds the latent
-     * with every condition, without the text, and without the speaker, as RF's guidance needs. `blocks`,
-     * when given, receives each block's output and `cond` the timestep condition.
+     * The velocity [latent_dim, frames, branches] of the latent x (row-major [frames, latent_dim]) at time t, with
+     * `delta` the step's interval for a MeanFlow model, for each of `branches`, which form the batch. `blocks`, when
+     * given, receives each block's output and `cond` the timestep condition.
      */
     ggml_tensor * build(Graph & g, const std::vector<float> & x, int frames, float t, float delta, const Conditions & c,
-                        int branches, std::vector<ggml_tensor *> * blocks = nullptr, ggml_tensor ** cond = nullptr) const;
+                        const std::vector<Branch> & branches, std::vector<ggml_tensor *> * blocks = nullptr, ggml_tensor ** cond = nullptr) const;
 
 private:
     const ModelFile & m_;

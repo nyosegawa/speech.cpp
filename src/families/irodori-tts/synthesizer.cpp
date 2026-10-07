@@ -38,6 +38,15 @@ TailCut::TailCut(const ModelFile & m)
       std_threshold(m.f32("irodori-tts.tail.std_threshold")),
       mean_threshold(m.f32("irodori-tts.tail.mean_threshold")) {}
 
+void TailCut::check(const TailCut & asked) const {
+    if (!asked.keep) return;
+    const char * idle = asked.window != window                 ? "tail_window_size"
+                        : asked.std_threshold != std_threshold   ? "tail_std_threshold"
+                        : asked.mean_threshold != mean_threshold ? "tail_mean_threshold"
+                                                                 : nullptr;
+    if (idle) throw Error(Fault::InvalidArgument, std::string("keep_tail leaves the tail uncut, so ") + idle + " has no effect; leave out one of them", idle);
+}
+
 int TailCut::flattening_point(const std::vector<float> & latent, int frames, int latent_dim) const {
     for (int i = 0; i < frames; i++) {
         double sum = 0, squares = 0;
@@ -99,7 +108,13 @@ Voice Synthesizer::load_voice(const std::string & path) {
 }
 
 size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const AudioSink & sink, Stats * stats) {
+    if (r.guidance && dit_.meanflow()) throw std::logic_error("a MeanFlow model takes no guidance, and the options of its file offer none");
+    const Guidance & guidance = r.guidance ? *r.guidance : sampler_.guidance();
+    const TailCut & tail = r.tail ? *r.tail : tail_;
+    const int steps = r.steps > 0 ? r.steps : sampler_.default_steps();
     duration_.check(r.length);
+    sampler_.check(guidance, steps);
+    tail_.check(tail);
     Stats local;
     Stats & st = stats ? *stats : local;
     const auto start = std::chrono::steady_clock::now();
@@ -136,19 +151,29 @@ size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
     std::vector<float> x;
     {
         Timer t{st.sampling};
-        const Conditions c{text_state, tokens, voice.speaker, voice.speaker_tokens};
-        const size_t n = (size_t) frames * codec_.latent_dim();
-        if (!r.noise.empty() && r.noise.size() != n) {
-            throw std::runtime_error("the given noise has " + std::to_string(r.noise.size() / codec_.latent_dim()) + " frames and the speech " +
-                                     std::to_string(frames));
+        Conditions c{text_state, tokens, voice.speaker, voice.speaker_tokens, {}};
+        const size_t n = (size_t) frames * codec_.latent_dim(), m = guidance.speaker_noise ? voice.speaker.size() : 0;
+        std::vector<float> noise = r.noise, speaker_draw = r.speaker_noise;
+        if (noise.empty()) {
+            // The runtime draws the speaker's noise after the latent's from the same generator.
+            noise = gaussian_noise(r.seed, n + m);
+            speaker_draw.assign(noise.begin() + (std::ptrdiff_t) n, noise.end());
+            noise.resize(n);
         }
-        x = sampler_.sample(c, r.noise.empty() ? gaussian_noise(r.seed, n) : r.noise, frames, r.steps > 0 ? r.steps : sampler_.default_steps(),
-                            r.progress);
+        if (noise.size() != n || speaker_draw.size() != m) {
+            throw std::runtime_error("the given noise has " + std::to_string(noise.size() / codec_.latent_dim()) + " frames and the speech " +
+                                     std::to_string(frames) + ", or its speaker noise " + std::to_string(speaker_draw.size()) + " values where " +
+                                     std::to_string(m) + " are wanted");
+        }
+        if (guidance.speaker_noise) c.speaker_noise = speaker_noise(speaker_draw, voice.speaker);
+        x = sampler_.sample(c, std::move(noise), frames, steps, guidance, r.progress);
     }
     if (x.empty()) return 0;
-    const int flat = tail_.flattening_point(x, frames, codec_.latent_dim());
     int64_t samples = length.samples;
-    if (flat > 0) samples = std::min(samples, (int64_t) flat * codec_.hop());
+    if (!tail.keep) {
+        const int flat = tail.flattening_point(x, frames, codec_.latent_dim());
+        if (flat > 0) samples = std::min(samples, (int64_t) flat * codec_.hop());
+    }
 
     size_t emitted = 0;
     {
