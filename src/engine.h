@@ -25,8 +25,9 @@ constexpr int64_t kMaxSeed = (int64_t(1) << 53) - 1;
 
 /**
  * One option a family takes, as its table declares it: whether a request must set it, whether its value steers the
- * model or is only checked, its default, and the range of a number, its minimum excluded where `minimum_exclusive`
- * says so. The choices of a string option are the model's voices or languages, which the information holds.
+ * model or is only checked, its default, the range of a number, its minimum excluded where `minimum_exclusive` says
+ * so, and the values a string option takes. The values of voice and language are the model's voices and languages,
+ * which the information holds, and a string option without choices, such as prompt, takes any text.
  */
 struct OptionSpec {
     speech_option option;
@@ -35,6 +36,8 @@ struct OptionSpec {
     std::optional<OptionValue> default_value = std::nullopt;
     double minimum = -INFINITY, maximum = INFINITY;
     bool minimum_exclusive = false;
+    /** The values of a string option other than voice and language, compared with case. */
+    std::vector<std::string> choices = {};
 };
 
 /** A voice as the model information shows it; what the model file does not say is empty. */

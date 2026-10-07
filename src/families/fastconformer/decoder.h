@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "transducer.h"
@@ -16,6 +17,8 @@ struct Decoding {
     std::vector<int64_t> frames;
     /** The duration in frames TDT predicted with each token; empty for a decoding that predicts none. */
     std::vector<int32_t> durations;
+    /** The graphs the decoding computed. Each is a round trip to the backend, so that on a GPU its time grows with them. */
+    size_t graphs = 0;
 };
 
 /**
@@ -24,7 +27,7 @@ struct Decoding {
  */
 using DecodingProgress = std::function<bool(double done)>;
 
-/** A decoding of the transducer's outputs into tokens, the one NeMo's transcribe() runs for the model by default. */
+/** A decoding of the transducer's outputs into tokens. */
 class Decoder {
 public:
     virtual ~Decoder() = default;
@@ -39,9 +42,16 @@ public:
 };
 
 /**
- * The decoding fastconformer.decoder.kind names: greedy TDT ("tdt", TdtDecoder) or the alignment-length synchronous beam
- * search over RNN-T ("rnnt", AlsdDecoder).
+ * The decodings of a model with the file `m`, by the names of the request option decoding, the one NeMo's transcribe()
+ * runs by default first: "greedy" for fastconformer.decoder.kind "tdt" (TdtDecoder), and "beam", the beam search its
+ * checkpoint configures (AlsdDecoder), and "greedy" (RnntGreedyDecoder) for "rnnt".
  */
-std::unique_ptr<Decoder> make_decoder(const ModelFile & m, const PredictionNetwork & prediction, const Joint & joint);
+std::vector<std::string> decodings(const ModelFile & m);
+
+/** The decoding of decodings(m) named `name`. */
+std::unique_ptr<Decoder> make_decoder(const ModelFile & m, const PredictionNetwork & prediction, const Joint & joint, const std::string & name);
+
+/** The index of the largest of `n` values, the first of equal ones, as torch.max() and argmax() choose it. */
+int first_argmax(const float * v, int n);
 
 }  // namespace fastconformer

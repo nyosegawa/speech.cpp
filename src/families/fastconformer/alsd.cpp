@@ -65,6 +65,7 @@ Decoding AlsdDecoder::decode(const std::vector<float> & projected, ggml_backend_
     std::vector<int> tokens((size_t) blank_);
     // The frame the search has passed for every hypothesis, which only rises.
     int64_t passed = 0;
+    size_t graphs = 0;
     for (int64_t i = 0; i < frames + max_labels; i++) {
         Hypotheses active;
         std::vector<int64_t> at;
@@ -106,6 +107,7 @@ Decoding AlsdDecoder::decode(const std::vector<float> & projected, ggml_backend_
         ggml_tensor * logits = joint_.build(g.ctx(), g.input(f, hidden, (int64_t) n), joint_.project_prediction(g.ctx(), columns));
         g.output(logits);
         g.compute(backend, allocr.get());
+        graphs++;
         for (const auto & c : computed) {
             predictions[c.first] = std::make_shared<const Prediction>(Prediction{Graph::read(c.second.output), PredictionNetwork::read_state(c.second)});
             cache[active[c.first]->labels] = predictions[c.first];
@@ -165,7 +167,7 @@ Decoding AlsdDecoder::decode(const std::vector<float> & projected, ggml_backend_
         std::stable_sort(ranked.begin(), ranked.end(), [&](const auto & a, const auto & b) { return key(*a) > key(*b); });
     }
     const Hypothesis & best = *ranked.front();
-    return Decoding{std::vector<int32_t>(best.labels.begin() + 1, best.labels.end()), best.frames, {}};
+    return Decoding{std::vector<int32_t>(best.labels.begin() + 1, best.labels.end()), best.frames, {}, graphs};
 }
 
 }  // namespace fastconformer

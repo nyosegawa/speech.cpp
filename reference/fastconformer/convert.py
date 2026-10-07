@@ -3,11 +3,12 @@
 usage: uv run python convert.py <model> <out dir> [--type f32|f16]
 
 Writes parakeet-tdt_ctc-0.6B-ja-<F32|F16>.gguf, parakeet-tdt-0.6B-v3-<F32|F16>.gguf or
-reazonspeech-nemo-619M-v2-<F32|F16>.gguf, named under GGUF's naming convention, in layout 1: the frontend's window and
+reazonspeech-nemo-619M-v2-<F32|F16>.gguf, named under GGUF's naming convention, in layout 2: the frontend's window and
 mel filterbank, the subsampling, the conformer layers, the prediction network and the joint, with the SentencePiece
 pieces the token ids name, the settings of the decoding transcribe() runs (greedy TDT's durations and limit, or the
-beam and length of RNN-T's alignment-length synchronous beam search), every other constant the C++ reads and the
-model's identity in the GGUF specification's general keys. A hybrid checkpoint's CTC head is left out, since
+beam and length of RNN-T's alignment-length synchronous beam search) and, for RNN-T, the limit of the greedy decoding
+NeMo also runs on it, every other constant the C++ reads and the model's identity in the GGUF specification's general
+keys. A hybrid checkpoint's CTC head is left out, since
 NeMo decodes with its transducer.
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [out, in] is stored as is
@@ -33,7 +34,7 @@ from pins import MODELS, restore
 ARCH = "fastconformer"
 # Each layout this converter has written, with the first release of speech.cpp whose reader takes it; it writes the
 # last.
-RELEASES = {1: "0.7.0"}
+RELEASES = {1: "0.7.0", 2: "0.8.0"}
 LAYOUT = max(RELEASES)
 # The ISO 639 two-letter codes of the languages each checkpoint transcribes, from its model card, which requests give as
 # BCP 47 tags. None takes a language: parakeet-tdt-0.6b-v3 finds the language of the audio itself.
@@ -124,6 +125,11 @@ else:
     assert beam.beam_size > 1 and beam.return_best_hypothesis and beam.softmax_temperature == 1.0
     assert beam.language_model is None and beam.ngram_lm is None and not beam.hat_subtract_ilm
     assert beam.blank == beam.vocab_size and isinstance(beam.alsd_max_target_length, float)
+    # The greedy decoding a caller may choose instead, GreedyBatchedRNNTInfer or GreedyRNNTInfer, takes the most tokens
+    # on one frame as RNNTDecoding reads it from the configuration's greedy settings; without a limit it would emit
+    # tokens on one frame for as long as the joint gives them.
+    greedy_max_symbols = decoding.cfg.greedy.get("max_symbols", None) or decoding.cfg.greedy.get("max_symbols_per_step", None)
+    assert isinstance(greedy_max_symbols, int) and greedy_max_symbols > 0, greedy_max_symbols
     durations = []
 assert dec.blank_as_pad and dec.blank_idx == decoding.blank_id and not dec.random_state_sampling
 # LSTMDropout is the plain LSTM rnn() makes without a normalization; its dropout is off in evaluation.
@@ -205,6 +211,8 @@ else:
     w.add_bool("fastconformer.decoder.rnnt.score_norm", bool(beam.score_norm))
     # The most labels a hypothesis takes, as a multiple of the encoder's frames.
     w.add_float32("fastconformer.decoder.rnnt.max_target_ratio", float(beam.alsd_max_target_length))
+    # The most tokens greedy decoding emits on one frame before it moves to the next.
+    w.add_uint32("fastconformer.decoder.rnnt.max_symbols", greedy_max_symbols)
 # The marks that end a segment where a word ends: the checkpoint's decoding segment_seperators, or NeMo's default
 # (".", "?", "!") when it sets none, as the decoding object takes them.
 add_array("fastconformer.segment.separators", list(decoding.segment_seperators), GGUFValueType.STRING)

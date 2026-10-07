@@ -66,7 +66,7 @@ struct TranscriptionRequest {
     int sample_rate = 0;
     /** "json", "text" or "verbose_json". */
     std::string format = "json";
-    /** The language, the prompt, and timestamps for verbose_json. */
+    /** The language, the prompt, the decoding, and timestamps for verbose_json. */
     std::vector<RequestOption> options;
     /** Whether the options set timestamps, so that the answer carries the segments. */
     bool timestamps = false;
@@ -74,10 +74,11 @@ struct TranscriptionRequest {
 
 /**
  * Reads a create transcription request from the parts of its form: "file", a WAV file, its channels averaged;
- * "model"; "language"; "prompt", the option prompt; "response_format"; and "timestamp_granularities[]", "segment"
- * alone, with verbose_json. verbose_json sets the option timestamps for a model that `gives_times`, and for any model
- * when the request names a granularity, which a model without times then refuses. A member it does not have is
- * refused, and so is one given twice but timestamp_granularities[]. Anything it cannot read throws an ApiError.
+ * "model"; "language"; "prompt", the option prompt; "response_format"; "decoding", the option decoding, speech.cpp's
+ * own; and "timestamp_granularities[]", "segment" alone, with verbose_json. verbose_json sets the option timestamps for
+ * a model that `gives_times`, and for any model when the request names a granularity, which a model without times then
+ * refuses. A member it does not have is refused, and so is one given twice but timestamp_granularities[]. Anything it
+ * cannot read throws an ApiError.
  */
 TranscriptionRequest read_transcription_request(bool multipart, const std::vector<FormPart> & parts, const std::string & model_name,
                                                 bool gives_times);

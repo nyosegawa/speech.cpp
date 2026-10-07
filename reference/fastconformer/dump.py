@@ -2,6 +2,7 @@
 
 usage: uv run python dump.py <model> <out dir> <audio.wav>...
        uv run python dump.py --times <model> <out dir>
+       uv run python dump.py --greedy <model> <out dir>
 
 Each WAVE file, mono at the model's sample rate, goes to <out dir>/<model>/<file name without .wav>/. The
 stages are those of the official forward pass and of the default decoding of its transducer (greedy TDT, or beam
@@ -40,9 +41,20 @@ segments.txt holds the text of each segment on a line of its own, and times.json
 token's text and the settings the times depend on: the separators, whether the checkpoint sets them, the punctuation
 marks, the subsampling factor and the window stride. With --times, the times alone are added to every dump of the
 model under <out dir>/<model>/, from the audio.npy each holds.
+
+With --greedy, for a model whose default decoding is RNN-T's beam search, every dump of the model under
+<out dir>/<model>/ gains a folder greedy/ with NeMo's greedy decoding of the dump's encoder output, as
+change_decoding_strategy() sets it up for the strategy greedy_batch with the rest of the checkpoint's decoding
+settings, its greedy max_symbols among them: GreedyBatchedRNNTInfer's label looping. It holds ids.npy and text.txt,
+meta.json with the text, the most tokens on one frame and the evaluations of the joint and steps of the prediction
+network the decoding took, and the times of transcribe(timestamps=True) with the same decoding, as above, whose
+token_timestep is the frame each token was emitted on. The ids and their frames are asserted to be those of the
+strategy greedy as well (GreedyRNNTInfer, which goes frame by frame), and the text that of transcribe() of the dump's
+audio. The folder holds no features.npy, so that the checks do not take it for a dump of the default decoding.
 """
 
 import argparse
+import copy
 import json
 import os
 import tempfile
@@ -50,21 +62,29 @@ import tempfile
 import numpy as np
 import soundfile
 import torch
+from omegaconf import open_dict
 
 from pins import MODELS, NEMO, restore
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--times", action="store_true", help="add the times to the model's existing dumps")
+parser.add_argument("--greedy", action="store_true", help="add NeMo's greedy decoding to the model's existing dumps")
 parser.add_argument("model", choices=sorted(MODELS))
 parser.add_argument("out_dir")
 parser.add_argument("audio", nargs="*")
 args = parser.parse_args()
-if args.times == bool(args.audio):
-    parser.error("give WAVE files, or --times without them")
+if args.times and args.greedy:
+    parser.error("give --times or --greedy, not both")
+if (args.times or args.greedy) == bool(args.audio):
+    parser.error("give WAVE files, or --times or --greedy without them")
 
 pin = MODELS[args.model]
 model = restore(pin)
 sample_rate = int(model.cfg.preprocessor.sample_rate)
+# The checkpoint's own decoding settings, which change_decoding_strategy() replaces with the ones it is given.
+checkpoint_decoding = copy.deepcopy(model.cfg.decoding)
+if args.greedy and type(model.decoding.decoding).__name__ != "BeamRNNTInfer":
+    parser.error(f"{args.model} decodes greedily by default; its dumps hold that decoding already")
 # A hybrid checkpoint has a CTC head beside its transducer; transcribe() decodes with the transducer while cur_decoder
 # is "rnnt".
 assert getattr(model, "cur_decoder", "rnnt") == "rnnt"
@@ -238,21 +258,107 @@ def dump_times(path, out):
     print(json.dumps({"dump": out, "tokens": len(ids), "segments": len(segments)}, ensure_ascii=False))
 
 
+def wave_file(out, tmp):
+    """The dump's samples as a WAVE file in `tmp` for transcribe(), which reads files; written as 32-bit float, they
+    read back unchanged."""
+    path = os.path.join(tmp, os.path.basename(out) + ".wav")
+    soundfile.write(path, np.load(os.path.join(out, "audio.npy")), sample_rate, subtype="FLOAT")
+    return path
+
+
+def use_decoding(strategy):
+    """Switches the model to the decoding `strategy`, with the rest of the checkpoint's decoding settings."""
+    cfg = copy.deepcopy(checkpoint_decoding)
+    with open_dict(cfg):
+        cfg.strategy = strategy
+    model.change_decoding_strategy(cfg, verbose=False)
+
+
+def decode(out):
+    """The hypothesis of the model's decoding of the dump's encoder output, and the evaluations of the joint and the
+    steps of the prediction network it took."""
+    model.eval()
+    encoded = torch.from_numpy(np.load(os.path.join(out, "encoded.npy"))).T[None].contiguous()
+    counts = {"joint": 0, "prediction": 0}
+
+    def counting_predict(y, *a, **k):
+        counts["prediction"] += 1 if y is None else y.shape[0]
+        return predict(y, *a, **k)
+
+    def counting_joint(f, g):
+        out = joint_after_projection(f, g)
+        counts["joint"] += out.numel() // out.shape[-1]
+        return out
+
+    model.decoder.predict, model.joint.joint_after_projection = counting_predict, counting_joint
+    try:
+        hypothesis = model.decoding.rnnt_decoder_predictions_tensor(
+            encoder_output=encoded, encoded_lengths=torch.tensor([encoded.shape[2]]), return_hypotheses=True)[0]
+    finally:
+        model.decoder.predict, model.joint.joint_after_projection = predict, joint_after_projection
+    return hypothesis, counts
+
+
+def ids_and_frames(hypothesis):
+    """The token ids of a greedy hypothesis and the frame each was emitted on."""
+    return [int(i) for i in torch.as_tensor(hypothesis.y_sequence).tolist()], [int(t) for t in torch.as_tensor(hypothesis.timestamp).tolist()]
+
+
+def dump_greedy(dumps):
+    """Saves NeMo's greedy decoding of each dump's encoder output, and its times, into the dump's folder greedy/."""
+    use_decoding("greedy")
+    assert type(model.decoding.decoding).__name__ == "GreedyRNNTInfer"
+    frame_by_frame = {out: ids_and_frames(decode(out)[0]) for out in dumps}
+    use_decoding("greedy_batch")
+    greedy = model.decoding.decoding
+    assert type(greedy).__name__ == "GreedyBatchedRNNTInfer" and greedy.loop_labels
+    assert type(greedy.decoding_computer).__name__ == "GreedyBatchedRNNTLabelLoopingComputer"
+    assert not greedy.decoding_computer.has_fusion_models()
+    # NeMo takes greedy.max_symbols, or greedy.max_symbols_per_step where the configuration has no max_symbols.
+    assert greedy.max_symbols == (checkpoint_decoding.greedy.get("max_symbols") or checkpoint_decoding.greedy.get("max_symbols_per_step"))
+    outs = []
+    for out in dumps:
+        hypothesis, counts = decode(out)
+        ids, frames = ids_and_frames(hypothesis)
+        assert (ids, frames) == frame_by_frame[out], f"greedy and greedy_batch decode {out} differently"
+        text = hypothesis.text
+        assert model.decoding.decode_tokens_to_str_with_strip_punctuation(ids) == text
+        with tempfile.TemporaryDirectory() as tmp:
+            official = model.transcribe([wave_file(out, tmp)], batch_size=1, verbose=False)[0].text
+        assert text == official, f"the greedy decoding of the encoder output gives {text!r}, transcribe() gives {official!r}"
+        greedy_out = os.path.join(out, "greedy")
+        os.makedirs(greedy_out, exist_ok=True)
+        np.save(os.path.join(greedy_out, "ids.npy"), np.array(ids, dtype=np.int32))
+        with open(os.path.join(greedy_out, "text.txt"), "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        meta = {
+            "nemo": NEMO, "model": pin, "strategy": "greedy_batch", "max_symbols": int(greedy.max_symbols),
+            "encoded_frames": int(np.load(os.path.join(out, "encoded.npy")).shape[0]), "tokens": len(ids),
+            "prediction_steps": counts["prediction"], "joint_evaluations": counts["joint"], "text": text,
+        }
+        json.dump(meta, open(os.path.join(greedy_out, "meta.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        print(json.dumps({"dump": greedy_out, **{k: v for k, v in meta.items() if k not in ("nemo", "model")}}, ensure_ascii=False))
+        outs.append(greedy_out)
+    for out, greedy_out in zip(dumps, outs):
+        with tempfile.TemporaryDirectory() as tmp:
+            dump_times(wave_file(out, tmp), greedy_out)
+
+
 # The times come from transcribe() as it runs without the recording wrappers, and after the stages of every file, since
 # transcribe(timestamps=True) changes the model's decoding for good.
-outs = [] if args.times else [dump_stages(path) for path in args.audio]
+outs = [] if args.times or args.greedy else [dump_stages(path) for path in args.audio]
 model.decoder.predict, model.joint.project_encoder, model.joint.project_prednet, model.joint.joint_after_projection = (
     predict, project_encoder, project_prednet, joint_after_projection)
-if args.times:
+if args.times or args.greedy:
     root = os.path.join(args.out_dir, args.model)
     dumps = sorted(os.path.join(root, d) for d in os.listdir(root) if os.path.isfile(os.path.join(root, d, "audio.npy")))
     assert dumps, f"no dump of this script is under {root}"
-    for out in dumps:
-        # transcribe() reads files; the dump's samples, written as 32-bit float, read back unchanged.
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, os.path.basename(out) + ".wav")
-            soundfile.write(path, np.load(os.path.join(out, "audio.npy")), sample_rate, subtype="FLOAT")
-            dump_times(path, out)
+    if args.greedy:
+        dump_greedy(dumps)
+    else:
+        for out in dumps:
+            with tempfile.TemporaryDirectory() as tmp:
+                dump_times(wave_file(out, tmp), out)
 else:
     for path, out in zip(args.audio, outs):
         dump_times(path, out)

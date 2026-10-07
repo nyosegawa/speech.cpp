@@ -4,17 +4,20 @@ worker_client.py: one JSON object per line, and one terminal message per request
 It sends the audio of each dump of reference/fastconformer/dump.py or reference/qwen3-asr/dump.py as 16-bit chunks of
 one second and checks that the text is the dump's, the languages the one qwen-asr parsed by its tag or none (for
 FastConformer, which writes none, a member left out), and the stop complete, for each request a Qwen3-ASR dump holds
-with its forced language and its prompt, that a language the model only checks changes nothing, and with timestamps,
-where the model takes them, that the segments and tokens join into the text in time order; peeks at a request while it
-collects chunks, with and without timestamps, and checks that a peek at the whole audio and the request's one end then
-carry the dump's text and languages; checks that a peek of a request cancelled before the peek's turn is dropped, and
-that a peek of an id that is not collecting is a partial with an error; that the chunks of two requests may interleave
-and the requests are answered in the order of their transcribes; cancels while a request collects chunks (whose later
-lines are dropped and whose id a chunk 0 starts again), while it waits and while it runs; that audio at three times the
-model's rate is recognized; each error with its code and option (a chunk out of order, not base64 or of odd bytes, a
-sample rate missing or 0, an unknown language or member, a prompt the model does not take or too long, audio missing,
-the other task's messages); info, also answered while a recognition runs, and the model information of ready; progress
-for a recording longer than a minute; and the error of a request still collecting chunks when stdin closes.
+with its forced language and its prompt and each decoding other than the default that a FastConformer dump holds, that
+a language the model only checks changes nothing, and with timestamps, where the model takes them, that the segments
+and tokens join into the text in time order; peeks at a request while it collects chunks, with and without
+timestamps, and checks that a peek at the whole audio and the request's one end then carry the dump's text and
+languages; checks that a peek of a request cancelled before the peek's turn is dropped, and that a peek of an id that
+is not collecting is a partial with an error; that the chunks of two requests may interleave and the requests are
+answered in the order of their transcribes; cancels while a request collects chunks (whose later lines are dropped and
+whose id a chunk 0 starts again), while it waits and while it runs; that audio at three times the model's rate is
+recognized; each error with its code and option (a chunk out of order, not base64 or of odd bytes, a sample rate
+missing or 0, an unknown language or member, a prompt the model does not take or too long, a decoding it does not take
+or does not have, audio missing, the other task's messages); info, also answered while a recognition runs, and the
+model information of ready; progress for a recognition that runs for more than two seconds, which the worker reports
+a second after the request starts and then at most once a second; and the error of a request still collecting chunks
+when stdin closes.
 
 The audio goes as 16-bit samples, which move the near-silent input of reference/qwen3-asr/dump.py far enough to change
 the text a forced language makes of it; leave that dump out.
@@ -106,6 +109,7 @@ for d in dumps:
         id = f"{name}/{request}"
         t1 = time.perf_counter()
         send_audio(id, audio[name], **members, **timed)
+        sent = time.perf_counter()
         messages = w.until(id)
         m = messages[-1]
         assert m["type"] == "end" and m["stop"] == "complete", short(m)
@@ -119,8 +123,10 @@ for d in dumps:
         progress = [p for p in messages if p["type"] == "progress"]
         gaps = [b["_at"] - a["_at"] for a, b in zip(progress, progress[1:])]
         assert all(g > 0.9 for g in gaps) and all(0 <= p["done"] <= 1 for p in progress), [short(p) for p in progress]
-        if seconds > 60:
-            assert progress, f"{name}: {seconds:.0f} s of audio sent no progress"
+        # Greedy decoding recognizes a minute of audio in under a second on a GPU, so the length of the audio does not
+        # tell whether a progress is due; a run of more than a second ends with one, as done reaches 1.
+        if m["_at"] - sent > 2:
+            assert progress, f"{id}: a recognition of {m['_at'] - sent:.1f} s sent no progress"
         print(f"{id} {members}: {seconds:.2f} s, the dump's text and languages {want_languages} in {time.perf_counter() - t1:.3f} s"
               + (f", {len(m['segments'])} segments and {len(m['tokens'])} tokens joining into it" if timed else "")
               + f", {len(progress)} progress messages")
@@ -247,6 +253,12 @@ if "prompt" in options:
 else:
     send_audio("j3", short_pcm, prompt="x")
     expect_error("j3", "unsupported", "prompt", "a prompt to a model that takes none")
+if "decoding" in options:
+    send_audio("j4", short_pcm, decoding="no-such-decoding")
+    expect_error("j4", "out_of_range", "decoding", "a decoding the model does not have")
+else:
+    send_audio("j4", short_pcm, decoding="greedy")
+    expect_error("j4", "unsupported", "decoding", "a decoding to a model that takes none")
 w.request({"type": "transcribe", "id": "k", "sample_rate": rate})
 expect_error("k", "invalid_argument", "audio", "a transcribe without chunks")
 w.request({"type": "synthesize", "id": "l", "text": "明日の東京は晴れです。", "voice": "x"})

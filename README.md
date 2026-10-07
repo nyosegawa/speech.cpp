@@ -140,11 +140,11 @@ for the first GPU or the CPU on a machine without one; `gpu`; `cpu`; or a name `
 N`, the C API's load parameters. `speech tts` and `speech asr` take every request option of the C API's vocabulary
 (Options, below) as a flag of its name in kebab-case, read by the option's type: `--voice`, `--language`, `--seed`,
 `--speed`, `--seconds`, `--duration-scale`, `--steps`, `--max-seconds`, `--timestamps`, which, a boolean, is a flag
-without a value, and `--prompt`. A flag's value follows it or an `=` (`--seed 7`, `--seed=7`), and a number is read
-whole: `--steps 4x` is a usage error. The model refuses an option it does not take, as in the C API: Qwen3-TTS answers
-`--speed 1.5` with `speech: unsupported (speed): ...`. An argument that begins with `-`, such as a text, follows `--`.
-`speech <subcommand> --help` lists a subcommand's flags, and `speech --version` prints the release and the C API's
-version (`speech.cpp 0.7.0, C API 3.0`).
+without a value, `--prompt` and `--decoding`. A flag's value follows it or an `=` (`--seed 7`, `--seed=7`), and a
+number is read whole: `--steps 4x` is a usage error. The model refuses an option it does not take, as in the C API:
+Qwen3-TTS answers `--speed 1.5` with `speech: unsupported (speed): ...`. An argument that begins with `-`, such as a
+text, follows `--`. `speech <subcommand> --help` lists a subcommand's flags, and `speech --version` prints the release
+and the C API's version (`speech.cpp 0.7.0, C API 3.1`).
 
 | Exit | Meaning |
 |---|---|
@@ -189,7 +189,7 @@ gave several lines.
 
 ```
 speech asr MODEL [options] AUDIO.wav...
-  --language TAG --timestamps --prompt TEXT
+  --language TAG --timestamps --prompt TEXT --decoding beam|greedy
   --format text|json          text (the default) or one JSON object per file and line
   --device NAME --threads N -v
 ```
@@ -481,6 +481,7 @@ nothing else.
 | `max_seconds` | float | none | above 0 to the model's limit, `qwen3-tts.generation.max_frames` frames (8192 × 0.08 s = 655.36 s); no default | not taken | not taken | not taken |
 | `timestamps` | bool | false | not taken | not taken | default false | not taken |
 | `prompt` | string | `""` | not taken | not taken | not taken | default `""`, any text; steers |
+| `decoding` | string | none | not taken | not taken | reazonspeech-nemo-v2: default `beam`, or `greedy`; steers. The parakeet models: not taken | not taken |
 
 A value at an option's neutral value is accepted by every model; any other value of an option a model does not take
 is `unsupported`, and an option marked "none" has no neutral value. A string option's value must be one of its
@@ -489,7 +490,10 @@ without case); a number outside the range is `out_of_range`. "Checked" means the
 model's languages and then not used: Irodori-TTS and the Japanese recognizers have one language, and
 parakeet-tdt-0.6b-v3 finds the language of the audio itself. Qwen3-ASR is told a language that steers it, or finds it
 itself with `auto`. `prompt` is what a recognition is told of the audio before it hears it, the names and terms it may
-hold (Qwen3-ASR, below).
+hold (Qwen3-ASR, below). `decoding` is how a recognition chooses its tokens: `beam`, the beam search that
+reazonspeech-nemo-v2's checkpoint configures and NeMo's `transcribe()` runs, or `greedy`, the likeliest token at each
+step as NeMo's greedy decoding takes it, which computes a fifth of the beam search's graphs and can write another text
+(FastConformer, below); its choices are compared with case. A model with one decoding does not take it.
 
 What only the whole request shows is refused when the request runs, before any work, naming the option:
 
@@ -810,7 +814,7 @@ A speech request is a JSON object:
 | `model` | the loaded model's `id` from `/v1/models`, or left out. Any other model is a 404 (`model_not_found`) |
 | `response_format` | `wav` (the default) or `pcm`. OpenAI's default is `mp3`, which speech.cpp does not encode; `mp3`, `opus`, `aac` and `flac` are refused |
 | `stream_format` | `audio` (the default) or `sse`, which needs `pcm` |
-| `voice`, `language`, `seed`, `speed`, `seconds`, `duration_scale`, `steps`, `max_seconds`, `timestamps`, `prompt` | every option of the vocabulary by its name (Options, above), of the option's type, which the model checks: `voice` is one of the model's voices, a Qwen3-TTS speaker or a voice of `--add-voice`, and required; `speed` and `voice` are OpenAI's, the others speech.cpp's own. A request without `seed` gets one drawn from 0 to 2^53 - 1 |
+| `voice`, `language`, `seed`, `speed`, `seconds`, `duration_scale`, `steps`, `max_seconds`, `timestamps`, `prompt`, `decoding` | every option of the vocabulary by its name (Options, above), of the option's type, which the model checks: `voice` is one of the model's voices, a Qwen3-TTS speaker or a voice of `--add-voice`, and required; `speed` and `voice` are OpenAI's, the others speech.cpp's own. A request without `seed` gets one drawn from 0 to 2^53 - 1 |
 
 A member speech.cpp does not take, OpenAI's `instructions` among them, is refused rather than ignored; a member set to
 `null` counts as left out.
@@ -904,6 +908,7 @@ A transcription request is a `multipart/form-data` form, as OpenAI's API referen
 | `prompt` | the option `prompt`: what the model is told of the audio before it hears it, for a model that takes it (Qwen3-ASR); OpenAI's own member, which it describes as text to guide the model's style or continue a previous segment |
 | `response_format` | `json` (the default), which answers `{"text":"..."}`; `text`, which answers the text alone as `text/plain`; or `verbose_json`, which answers `{"task":"transcribe","language":…,"duration":…,"text":…,"segments":[{"id":0,"start":…,"end":…,"text":…}]}`, the duration being the file's in seconds and `language` the language the model heard (below). With a model that gives times (FastConformer) it sets the option `timestamps` and carries the segments; with one that gives none (Qwen3-ASR) it carries no segments, which OpenAI's schema does not require. `srt`, `vtt` and `diarized_json` are refused: speech.cpp gives neither subtitles nor speakers |
 | `timestamp_granularities[]` | `segment`, with `verbose_json`, OpenAI's default, which a model that gives no times refuses (`unsupported_parameter`, `param` `timestamps`); `word` is refused |
+| `decoding` | the option `decoding`, speech.cpp's own: `beam` (the default) or `greedy` for a model that takes it (reazonspeech-nemo-v2), refused by the others |
 
 Every answer carries `X-Speech-Stop`, why the recognition ended: `complete`, or `model_limit` when it reached the most
 tokens the model writes, with the text written up to there. OpenAI's `verbose_json` requires `language` and describes
@@ -917,15 +922,17 @@ members of OpenAI's segment that the recognizers have no value for (`seek`, `tok
 members (`temperature`, `stream`, `include[]` and the rest) are refused with a 400 rather than ignored, and so is a
 member given twice. Audio the library cannot take is a 400 by its category with `param` `file`: no samples or fewer
 than the model needs, or a rate it cannot resample from; a language the model does not recognize is a 400
-`unsupported_value` with `param` `language`, and a `prompt` to a model that takes none a 400 `unsupported_parameter`.
-The upload may be up to 25 MB, OpenAI's limit; the model recognizes the whole file at once, so a file should be one
-utterance for FastConformer's parakeet models, where Qwen3-ASR takes up to 1200 s at once (below). The request waits its
-turn like a speech request, and a client that goes away cancels it.
+`unsupported_value` with `param` `language`, a `decoding` the model does not have a 400 `unsupported_value` with
+`param` `decoding`, and a `prompt` or a `decoding` to a model that takes none a 400 `unsupported_parameter`. The upload
+may be up to 25 MB, OpenAI's limit; the model recognizes the whole file at once, so a file should be one utterance for
+FastConformer's parakeet models, where Qwen3-ASR takes up to 1200 s at once (below). The request waits its turn like a
+speech request, and a client that goes away cancels it.
 
 ```sh
 curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@utterance.wav -F response_format=text
 curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav -F response_format=verbose_json
 curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav -F language=ja -F prompt="Claude Code、渋谷"
+curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav -F decoding=greedy   # reazonspeech-nemo-v2
 ```
 
 ## Files on Hugging Face
@@ -1198,7 +1205,10 @@ punctuation, for recordings of many minutes), with its RNN-T decoder:
   frames) and at most 10 tokens on one frame, as configured in the checkpoint,
 - ReazonSpeech's RNN-T decoder: the same prediction network and a joint without durations, and the beam search its
   checkpoint configures, NeMo's alignment-length synchronous search (`alsd`) with a beam of 4, the best finished
-  hypothesis chosen by its score per label, on the host,
+  hypothesis chosen by its score per label, on the host; or, when a request asks for it with the option `decoding`,
+  NeMo's greedy decoding of the strategy `greedy_batch` with the checkpoint's limit of 10 tokens on one frame, in one
+  graph per token: the prediction for the last token and the joint at a run of frames from the current one, the first
+  frame whose label is a token chosen on the host,
 - the SentencePiece pieces turned into text as NeMo's decoding writes it, with the space before each of the
   vocabulary's punctuation marks removed.
 
@@ -1211,11 +1221,15 @@ it calls `transcribe()`; speech.cpp does not, so its text is NeMo's for the audi
 
 The parakeet-ja checkpoint's CTC head is not converted: NeMo decodes with TDT by default, and the two write a
 different text on some utterances ([ADR 0012](docs/adr/0012-the-recognizer-decodes-with-the-models-default-decoder.md)).
-For the same reason ReazonSpeech decodes with its beam search alone, not with the greedy decoding NeMo could also run
-on it: of the eight FLEURS utterances and the 65 s input of the checks below, NeMo's greedy decoding writes another
-text for four: each lacks some of the commas and full stops the beam search writes, and one also has another word. Why recognition goes through this port is in
-[ADR 0009](docs/adr/0009-speech-recognition-runs-through-a-fastconformer-port.md), and how it reaches the C API, the
-worker, the server and the command line in [ADR 0011](docs/adr/0011-speech-recognition-is-a-task-of-every-entry-point.md).
+For the same reason ReazonSpeech decodes with its beam search unless a request sets `decoding` to `greedy`, NeMo's
+greedy decoding, which computes a fifth of the beam search's graphs (Speed, below) and writes another text for five of
+the ten inputs of the checks below, the eight FLEURS utterances and the two long inputs: each lacks some of the commas
+and full stops the beam search writes, one has サウスカロライナ where the beam search has サウスカロロナイナ, and the
+311 s input has a few other words ([ADR 0021](docs/adr/0021-an-rnnt-model-decodes-greedily-when-a-request-asks.md)).
+The parakeet models have one decoding, greedy TDT, and do not take the option. Why recognition goes through this port
+is in [ADR 0009](docs/adr/0009-speech-recognition-runs-through-a-fastconformer-port.md), and how it reaches the C API,
+the worker, the server and the command line in
+[ADR 0011](docs/adr/0011-speech-recognition-is-a-task-of-every-entry-point.md).
 
 ### Models
 
@@ -1238,9 +1252,10 @@ uv run python convert.py reazonspeech-nemo-v2 ../../models --type f16       # re
 
 `--type f32` writes the same at 2.5 GB. The converter refuses a checkpoint with an option the C++ does not run
 (another subsampling, attention or decoding, a prompt, a language tag to strip, a tokenizer piece it cannot write)
-rather than write a file that would recognize differently from NeMo. GGUF files converted before 0.7.0 have no
-layout and are refused; convert them again. The parakeet weights are NVIDIA's, under CC-BY-4.0, and ReazonSpeech's
-are reazon-research's, under the Apache License 2.0.
+rather than write a file that would recognize differently from NeMo. It writes layout 2, which speech.cpp 0.8.0 and
+later read; the files of layout 1 in the repositories, converted for 0.7.0, are read as they are (GGUF files,
+below). GGUF files converted before 0.7.0 have no layout and are refused; convert them again. The parakeet weights
+are NVIDIA's, under CC-BY-4.0, and ReazonSpeech's are reazon-research's, under the Apache License 2.0.
 
 ### Use
 
@@ -1248,6 +1263,7 @@ are reazon-research's, under the Apache License 2.0.
 speech asr parakeet-tdt_ctc-0.6B-ja-F16.gguf utterance.wav        # the text on stdout
 speech asr parakeet-tdt-0.6B-v3-F16.gguf --timestamps utterance.wav
 speech asr reazonspeech-nemo-619M-v2-F16.gguf meeting.wav         # a recording of minutes, whole
+speech asr reazonspeech-nemo-619M-v2-F16.gguf --decoding greedy meeting.wav   # the same with greedy decoding
 speech worker parakeet-tdt_ctc-0.6B-ja-F16.gguf                    # a recognition worker (The worker protocol 2, above)
 speech serve parakeet-tdt-0.6B-v3-F16.gguf                         # POST /v1/audio/transcriptions
 ```
@@ -1273,6 +1289,7 @@ uv run python dump.py parakeet-tdt_ctc-0.6b-ja out <16 kHz mono WAVE files>
 uv run python dump.py parakeet-tdt-0.6b-v3 out <16 kHz mono WAVE files>
 uv run python dump.py reazonspeech-nemo-v2 out <16 kHz mono WAVE files>
 uv run python dump.py --times reazonspeech-nemo-v2 out   # NeMo's times alone, added to the dumps already there
+uv run python dump.py --greedy reazonspeech-nemo-v2 out  # NeMo's greedy decoding, added to the dumps already there
 cd ../..
 build/fastconformer-frontend-check <model.gguf> reference/fastconformer/out
 build/fastconformer-encoder-check <model.gguf> reference/fastconformer/out [gpu|cpu|device name]
@@ -1281,7 +1298,12 @@ build/fastconformer-times-check <model.gguf> reference/fastconformer/out [gpu|cp
 ```
 
 `dump.py` writes the dumps of each model to `out/<model>/<file name>/`, and each check reads those of the model
-it is given, by the GGUF file's `general.name`.
+it is given, by the GGUF file's `general.name`. `--greedy` adds to each of reazonspeech-nemo-v2's a folder `greedy/`
+with the tokens, the text and the times of NeMo's greedy decoding of the dump's encoder output, as
+`change_decoding_strategy()` sets it up for the strategy `greedy_batch` with the checkpoint's other settings, and
+checks that the strategy `greedy`, which goes frame by frame, gives the same tokens on the same frames;
+`fastconformer-transducer-check`, `fastconformer-times-check` and `speech-api-check transcribe` check the option
+`decoding`'s `greedy` against it.
 
 On three utterances of FLEURS ja_jp's test split (12677001980660723842, 6.36 s; 13903496305700695803, 10.50 s;
 2630315561484880103, 25.50 s), on an Apple M5:
@@ -1331,7 +1353,9 @@ of its `test.tsv` joined end to end (64.80 s and 311.22 s), on an Apple M5:
 | Prediction network on the dump's labels, along the beam's hypotheses | 125 to 128 dB | 61 to 64 dB | 125 to 128 dB | 69 to 73 dB |
 | Joint log-probabilities on the dump's frames and prediction outputs | 124 to 126 dB | 71 to 72 dB | 83 to 88 dB | 83 to 88 dB |
 | Beam search's tokens and text from the dump's encoder output | equal | equal | equal | equal |
+| Greedy decoding's tokens and text from the dump's encoder output | equal | equal | equal | equal |
 | Text from the audio, every stage ours | equal on all ten | equal on all ten | equal on all ten | equal on all ten |
+| Text from the audio with greedy decoding | equal on all ten | equal on all ten | equal on all ten | equal on all ten |
 
 The dumps record every evaluation of the beam search, 464 to 2,234 joint evaluations an utterance and 18,272 for the
 311 s input, and the check replays the search on the dump's encoder output. In half precision the error of the
@@ -1352,7 +1376,11 @@ has, and soxr takes away a slightly different one.
 for TDT, the duration predicted with it, and the spans of the tokens and of the segments in frames and in seconds.
 `fastconformer-times-check` decodes the dump's encoder output and compares the frames, the durations, the tokens'
 spans in frames and in seconds and the segments NeMo's separators give, at the ends of words as NeMo ends them, with
-them: on every dump of the three models, on the CPU with F32 weights and on Metal with F16, all are NeMo's exactly.
+them: on every dump of the three models, on the CPU with F32 weights and on Metal with F16, all are NeMo's exactly. It
+does the same for reazonspeech-nemo-v2's greedy decoding against the times `dump.py --greedy` saves, for which NeMo
+records the frame each token was emitted on: on the CPU with F32 weights and on Metal with F32 and F16, the frames, the
+spans and the segments of all ten are NeMo's exactly from the dump's encoder output, and the frames are NeMo's from
+the audio as well.
 For the Japanese models, whose text has no spaces and so no end of a word before its last token, it also cuts
 segments as the recognizer does with their files' `fastconformer.segment.breaks`, after `。`, `？`, `！`, `?` and `!`
 wherever they stand, and checks that each segment ends there, at a
@@ -1386,6 +1414,15 @@ search 3.3 s, the frontend 0.14 s). The process's peak memory footprint on the C
 holds every buffer, is 1.35 GB for 6.36 s, 1.55 GB for 64.80 s and 2.35 GB for 311.22 s, growing with the length;
 parakeet-tdt_ctc-0.6b-ja's is 1.30, 1.49 and 4.14 GB, growing with its square, and the 311 s input takes it 62 s on
 the CPU where ReazonSpeech takes 26 s.
+
+With `decoding` set to `greedy`, reazonspeech-nemo-v2 computes one graph for each token and a few for the runs of
+blanks, against one for each step of the beam search: 19 against 160 for the 6.36 s utterance, 107 against 638 for
+the 25.50 s one, 233 against 1,620 for the 64.80 s input and 1,008 against 4,864 for the 311.22 s one, 1,658 against
+9,427 for the ten inputs of the checks. A graph runs the prediction for the last token and the joint at 8 frames, or
+up to 64 after blanks, where NeMo's own greedy decoding evaluates the joint at one frame at a time, 4,822 times for the
+311.22 s input. On the same M5 with F16 weights on Metal on 2026-10-07, while other work loaded the machine so that the
+times are rough, `fastconformer-transducer-check` timed the decoding of the 311.22 s input at 1.2 s against 3.1 s and
+of the 25.50 s utterance at 0.09 s against 0.55 s.
 
 ## Qwen3-ASR
 
@@ -1586,9 +1623,15 @@ process's peak memory footprint is 2.03 GB: the memory is that of the longest pa
 
 Every model is one GGUF file, its codec included, which `reference/<model>/convert.py` writes from the checkpoint
 that `reference/<model>/pins.py` pins by revision (docs/adr/0015). The file says the version of its layout in
-`speech.layout`, 1 for every family, and in `speech.requires` the first release whose reader takes it, 0.7.0. A
-reader takes the layout it knows; a newer one is refused with a message that names `speech.requires`, and a file
-without `speech.layout`, converted for a release before 0.7.0, is refused as such. Every key below is required in
+`speech.layout`, 2 for fastconformer and 1 for the other families, and in `speech.requires` the first release whose
+reader takes it, 0.8.0 for fastconformer's layout 2 and 0.7.0 for layout 1. A reader takes the layout it knows and
+brings a file of an earlier layout of its family up to it as it reads it: fastconformer's layout 1 lacks
+`fastconformer.decoder.rnnt.max_symbols`, which an RNN-T file of layout 1 gets as reazonspeech-nemo-v2's 10, the one
+RNN-T checkpoint layout 1's converter took (an RNN-T file of layout 1 with another `general.name` is refused), and the
+model information lists it among the file's metadata, beside the file's own `speech.layout`. The files of layout 1 in
+the Hugging Face repositories are therefore read as they are, and recognize as they did. A newer layout is refused
+with a message that names `speech.requires`, and a file without `speech.layout`, converted for a release before 0.7.0,
+is refused as such. Every key below is required in
 its family's layout unless the table says when it is present, and has exactly the type listed: a key missing or of
 another type is refused with a message that names it, and so is a string that names a kind other than the ones
 listed. The tensors are exactly the ones the keys call for, each of the shape the keys give it and of a type its
@@ -1624,8 +1667,8 @@ family's architecture; only speech.cpp runs these files.
 | `general.file_type` | u32 | the type that holds most of the tensors' bytes, as gguf-py's `LlamaFileType` numbers it: 0 (F32), 1 (F16) or 7 (Q8_0); a file whose tensors say otherwise is refused | the converter's `--type` |
 | `general.quantization_version` | u32 | the version of ggml's quantized blocks (2); present when the file holds a quantized tensor | gguf-py's `GGML_QUANT_VERSION` |
 | `general.languages` | [string] | each language's shortest ISO 639 code, sorted, which requests and the model information give as BCP 47 tags: two letters, or three for a language that has no two-letter code (`yue`, `fil`), where the GGUF specification asks for two letters | Qwen3-TTS: the names of `codec_language_id` through the converter's table of codes, dialects left out; Qwen3-ASR: the tags of transformers' `LANGUAGE_CODE_TO_NAME`; the others: the model card |
-| `speech.layout` | u32 | 1, the version of the family's layout | the converter |
-| `speech.requires` | string | `0.7.0`, the first release whose reader takes this layout | the converter's table of layouts |
+| `speech.layout` | u32 | the version of the family's layout: 2 for fastconformer, 1 for the others | the converter |
+| `speech.requires` | string | the first release whose reader takes this layout: `0.8.0` for fastconformer's layout 2, `0.7.0` for layout 1 | the converter's table of layouts |
 | `speech.task` | string | `synthesis` or `recognition`; must be the family's | the converter |
 | `speech.sample_rate` | u32 | the rate of the audio made or recognized | Qwen3-TTS: `speech_tokenizer/config.json` `output_sample_rate`; Irodori-TTS: the DACVAE's `sample_rate`; FastConformer: the featurizer's `sample_rate`; Qwen3-ASR: qwen-asr's `SAMPLE_RATE`, the feature extractor's rate |
 | `speech.language_use` | string | `steers` or `checked`; must be what the family does | `steers` for qwen3-tts and qwen3-asr, `checked` for the others |
@@ -1826,6 +1869,7 @@ SentencePiece model), NeMo's own constants where it has them, and the model card
 | `fastconformer.decoder.rnnt.beam_size` | u32 | present for `rnnt` | the beam search's `beam_size` |
 | `fastconformer.decoder.rnnt.score_norm` | bool | present for `rnnt` | `score_norm` |
 | `fastconformer.decoder.rnnt.max_target_ratio` | f32 | present for `rnnt` | `alsd_max_target_length` |
+| `fastconformer.decoder.rnnt.max_symbols` | u32 | present for `rnnt`: tokens on one frame at most in the greedy decoding a request may choose (`decoding`); added in layout 2, and given as 10 to a file of layout 1 | the decoding configuration's `greedy.max_symbols`, or `greedy.max_symbols_per_step` where it has none, as NeMo's `RNNTDecoding` reads it |
 | `fastconformer.segment.separators` | [string] | the marks that end a segment where a word ends, as NeMo ends one | the decoding's `segment_seperators`, or NeMo's default `.`, `?`, `!` when the checkpoint sets none (none of the three does) |
 | `fastconformer.segment.breaks` | [string] | the marks that end a segment wherever they stand: `。`, `？`, `！`, `?`, `!` for a model whose languages are written without spaces, which NeMo's word ends never cut, and none otherwise | speech.cpp's own, from the model's languages |
 | `fastconformer.tokenizer.tokens` | [string] | the SentencePiece pieces in id order | the tokenizer's model proto |

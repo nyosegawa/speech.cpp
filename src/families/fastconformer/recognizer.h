@@ -29,18 +29,28 @@ public:
     Recognizer(const Recognizer &) = delete;
     Recognizer & operator=(const Recognizer &) = delete;
 
-    /** The text of mono samples at sample_rate(). */
-    Transcript recognize(const std::vector<float> & samples);
+    /** The names of the model's decodings, the default first (fastconformer::decodings()). */
+    const std::vector<std::string> & decodings() const { return decoding_names_; }
+
+    /** The text of mono samples at sample_rate(), decoded with the decoding of decodings() named `name`. */
+    Transcript recognize(const std::vector<float> & samples, const std::string & name);
+    /** The same with the default decoding. */
+    Transcript recognize(const std::vector<float> & samples) { return recognize(samples, decodings().front()); }
 
     /** The encoder's output for `features` ([frames, mels] row-major) projected for the joint, [T, hidden] row-major. */
     std::vector<float> encode(const std::vector<float> & features, int64_t frames);
 
-    /** The tokens of encode()'s output with the frames they were emitted on, telling `progress` how far it has come. */
-    Decoding decoding(const std::vector<float> & projected, const DecodingProgress & progress = {}) const {
-        return decoder_->decode(projected, backend_, progress);
+    /**
+     * The tokens of encode()'s output with the frames they were emitted on, by the decoding of decodings() named
+     * `name`, telling `progress` how far it has come.
+     */
+    Decoding decoding(const std::vector<float> & projected, const std::string & name, const DecodingProgress & progress = {}) const {
+        return decoder(name).decode(projected, backend_, progress);
     }
+    /** The same with the default decoding. */
+    Decoding decoding(const std::vector<float> & projected) const { return decoding(projected, decodings().front()); }
 
-    /** The token ids of encode()'s output. */
+    /** The token ids of encode()'s output, by the default decoding. */
     std::vector<int32_t> decode(const std::vector<float> & projected) const { return decoding(projected).ids; }
 
     /**
@@ -63,7 +73,8 @@ public:
     const Encoder & encoder() const { return encoder_; }
     const PredictionNetwork & prediction() const { return prediction_; }
     const Joint & joint() const { return joint_; }
-    const Decoder & decoder() const { return *decoder_; }
+    /** The decoding of decodings() named `name`. */
+    const Decoder & decoder(const std::string & name) const;
     const Detokenizer & detokenizer() const { return detokenizer_; }
 
 private:
@@ -73,7 +84,9 @@ private:
     Encoder encoder_;
     PredictionNetwork prediction_;
     Joint joint_;
-    std::unique_ptr<Decoder> decoder_;
+    std::vector<std::string> decoding_names_;
+    /** The decoders of decoding_names_, in their order. */
+    std::vector<std::unique_ptr<Decoder>> decoders_;
     Detokenizer detokenizer_;
     std::vector<std::string> separators_, breaks_;
     ggml_gallocr_t allocr_;

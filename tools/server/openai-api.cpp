@@ -110,13 +110,13 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
         throw ApiError{400, "The body is not multipart/form-data. Send the audio as the form's \"file\", as OpenAI's create transcription takes it.",
                        "", ""};
     }
-    static const char * known[] = {"file", "model", "language", "prompt", "response_format", "timestamp_granularities[]"};
-    constexpr std::ptrdiff_t kGranularities = 5;
+    static const char * known[] = {"file", "model", "language", "prompt", "response_format", "decoding", "timestamp_granularities[]"};
+    constexpr std::ptrdiff_t kGranularities = 6;
     const FormPart * given[kGranularities] = {};
     std::vector<std::string> granularities;
     for (const FormPart & part : parts) {
         const auto k = std::find_if(std::begin(known), std::end(known), [&](const char * name) { return part.name == name; });
-        if (k == std::end(known)) throw unknown_member(part.name, "file, model, language, prompt, response_format and timestamp_granularities[]");
+        if (k == std::end(known)) throw unknown_member(part.name, "file, model, language, prompt, response_format, decoding and timestamp_granularities[]");
         if (k - std::begin(known) == kGranularities) {
             granularities.push_back(part.content);
             continue;
@@ -125,7 +125,7 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
         if (slot) throw ApiError{400, "\"" + part.name + "\" is given twice; give it once.", part.name, "invalid_value"};
         slot = &part;
     }
-    const FormPart * file = given[0], * model = given[1], * language = given[2], * prompt = given[3], * format = given[4];
+    const FormPart * file = given[0], * model = given[1], * language = given[2], * prompt = given[3], * format = given[4], * decoding = given[5];
     if (model && model->content != model_name) throw not_served(model->content, model_name);
     if (!file) throw ApiError{400, "The request has no \"file\"; it is required.", "file", "missing_required_parameter"};
     if (!file->file) throw ApiError{400, "\"file\" is a field; send it as a file, with a filename.", "file", "invalid_type"};
@@ -148,6 +148,7 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
     }
     if (language) r.options.push_back({SPEECH_OPT_LANGUAGE, language->content});
     if (prompt) r.options.push_back({SPEECH_OPT_PROMPT, prompt->content});
+    if (decoding) r.options.push_back({SPEECH_OPT_DECODING, decoding->content});
     // OpenAI's verbose_json requires the language, the duration and the text alone, and its timestamp granularity is
     // segment unless the request names one: a model that gives no times answers it without segments, and refuses a
     // granularity the request names.

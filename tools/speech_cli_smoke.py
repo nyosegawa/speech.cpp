@@ -12,8 +12,8 @@ with. For a recognition model: `speech asr` on WAVE files of the dumps of refere
 reference/qwen3-asr/dump.py against the worker's text of the same samples, as text and as JSON with the stop and the
 languages, the one qwen-asr parsed or none, and where the model takes timestamps as text with --timestamps one line per
 segment and as JSON with them, the segments and tokens the worker's; and for a dump that holds requests with a forced
-language and a prompt, `speech asr --language --prompt` against the worker's text of the same request, and as JSON its
-languages.
+language and a prompt, or with a decoding other than the default, `speech asr --language --prompt` or `speech asr
+--decoding` against the worker's text of the same request, and as JSON its languages.
 
 usage: python3 tools/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav] [-- load options...]
 """
@@ -223,7 +223,8 @@ else:
     requests = [dump_requests(speech, model, d) for d in dumps]
     # The worker's languages of each dump are the ones qwen-asr parsed, and the member is left out where there are none.
     assert [e.get("languages", []) for e in ends] == [r[0][3] for r in requests] and all(e.get("languages") != [] for e in ends), ends
-    # The request of each dump with the most options, its language forced and its prompt, where it has one.
+    # The last request of each dump: its language forced and its prompt, or its decoding other than the default, where it
+    # has one.
     asked = [(f, pcm, r[-1][1], r[-1][3]) for f, pcm, r in zip(files, pcms, requests)]
     asked_ends = [worker_end(f"asked-{i}", pcm, **members) for i, (f, pcm, members, _) in enumerate(asked) if members]
     w.close()
@@ -250,7 +251,7 @@ else:
         assert got == {"file": f, **end_members(e)} and got.get("languages", []) == languages, (got, languages)
     print(f"asr: {len(files)} files, the worker's texts as text and as JSON with the stop and the dumps' languages"
           + (", as segments with --timestamps and as JSON with times" if timed else "")
-          + f"; {len(asked_ends)} with --language and --prompt as the worker's requests with them")
+          + f"; {len(asked_ends)} with the flags of their options, --language and --prompt or --decoding, as the worker's requests with them")
     r = run("asr", model, "--language", "zz", *options, files[0], code=1)
     failure(r, "out_of_range", "language")
     r = run("asr", model, *options, os.path.join(work, "no-such.wav"), code=1)

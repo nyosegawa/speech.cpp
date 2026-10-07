@@ -173,8 +173,11 @@ void ModelFile::open(const Layout & layout) {
                          str("speech.requires") + " and later read; this is " + SPEECH_VERSION);
     }
     if (version_ != layout.version) {
-        throw file_error(path_ + " has layout " + std::to_string(version_) + " of " + architecture_ + ", which no release of speech.cpp writes; " +
-                         remedy_);
+        if (version_ == 0 || !layout.upgrade) {
+            throw file_error(path_ + " has layout " + std::to_string(version_) + " of " + architecture_ + ", which no release of speech.cpp writes; " +
+                             remedy_);
+        }
+        layout.upgrade(*this);
     }
     check_tensors(layout);
 }
@@ -276,6 +279,10 @@ int64_t ModelFile::key_id(const std::string & key, gguf_type type, gguf_type ele
 
 uint32_t ModelFile::u32(const std::string & key) const {
     return gguf_get_val_u32(gguf_.get(), key_id(key, GGUF_TYPE_UINT32));
+}
+
+void ModelFile::upgrade_u32(const std::string & key, uint32_t value) {
+    gguf_set_val_u32(gguf_.get(), key.c_str(), value);
 }
 
 int ModelFile::size(const std::string & key) const {
