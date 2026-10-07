@@ -65,7 +65,7 @@ for bindings that bind their imports up front.
   `AGX_RELAX_CDM_CTXSTORE_TIMEOUT` for the process during that listing, a workaround of its own for long command
   buffers, which the library leaves as ggml sets it.
 
-README.md lists the options each family takes, the JSON form of the information and the names of the error
+docs/c-api.md lists the options each family takes, the JSON form of the information and the names of the error
 categories.
 
 The alternatives were turned down:

@@ -39,7 +39,7 @@ instance that finds no physical device gives the backend no device, so `speech` 
   Linux and `~/.bash_profile` on macOS, whose Terminal starts login shells; a file in fish's `conf.d`; `~/.profile`
   otherwise), not added twice; on Windows the folder at the start of the user's PATH in the registry, written as it is
   stored so that entries such as `%USERPROFILE%\bin` stay unexpanded. `--no-modify-path` (`-NoModifyPath`), as rustup
-  has it, changes nothing and says what to add. README says how to remove everything.
+  has it, changes nothing and says what to add. docs/install.md says how to remove everything.
 
 The alternatives were turned down:
 

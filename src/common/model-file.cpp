@@ -69,7 +69,7 @@ std::string joined(const std::vector<std::string> & items, size_t at_most) {
     return out;
 }
 
-/** A shape as README.md writes it, "[2048, 1024]", without the axes of 1 past the last other one. */
+/** A shape as docs/gguf.md writes it, "[2048, 1024]", without the axes of 1 past the last other one. */
 std::string shape_text(const int64_t * ne) {
     int axes = GGML_MAX_DIMS;
     while (axes > 1 && ne[axes - 1] == 1) axes--;
@@ -78,7 +78,7 @@ std::string shape_text(const int64_t * ne) {
     return out + "]";
 }
 
-/** A ggml type as README.md writes it: F32, F16, Q8_0. */
+/** A ggml type as docs/gguf.md writes it: F32, F16, Q8_0. */
 std::string tensor_type_text(ggml_type type) {
     std::string name = ggml_type_name(type);
     for (char & c : name) c = (char) std::toupper((unsigned char) c);

@@ -5,12 +5,12 @@ Decided 2026-10-07.
 ## Context
 
 Irodori-TTS v4.1 is trained with a caption, a sentence that describes the voice and the way of speaking, which the
-official runtime's request takes as `caption` and README calls VoiceDesign without a reference. The runtime strips it
-with Python's `str.strip()` and nothing else, tokenizes it with the text's tokenizer after `<s>`, runs it through the
-ModernBERT-ja it shares with the text and the caption's own projector and norm, lets the DiT attend to it after the
-speaker, gives the duration predictor the mean of its tokens instead of the null caption, and for RF adds a branch
-without it to the guidance at `cfg_scale_caption` (3). A caption that strips to nothing is masked whole, which computes
-the same as none. The runtime cuts a caption past 512 tokens.
+official runtime's request takes as `caption` and docs/models/irodori-tts.md calls VoiceDesign without a reference. The
+runtime strips it with Python's `str.strip()` and nothing else, tokenizes it with the text's tokenizer after `<s>`, runs
+it through the ModernBERT-ja it shares with the text and the caption's own projector and norm, lets the DiT attend to it
+after the speaker, gives the duration predictor the mean of its tokens instead of the null caption, and for RF adds a
+branch without it to the guidance at `cfg_scale_caption` (3). A caption that strips to nothing is masked whole, which
+computes the same as none. The runtime cuts a caption past 512 tokens.
 
 OpenAI's speech API has a member `instructions` that describes the voice and the way of speaking in words, which
 `speech serve` refused as a member it did not have. Qwen3-TTS 1.7B's instruct is the same kind of input.

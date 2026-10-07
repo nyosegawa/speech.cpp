@@ -66,7 +66,7 @@ what it leaves out throughout its C++.
   device that encoded it. Every conversion of the same codec has the same hash, whatever type it stores, so a voice
   works with v4.1-Small-MF and v4.1-Small in any type, as docs/adr/0002 wants.
 
-README.md lists every key of layout 1, with its type, its meaning and where its value comes from, the tensors each
+docs/gguf.md lists every key of layout 1, with its type, its meaning and where its value comes from, the tensors each
 family's keys call for, and every model's file names.
 
 The alternatives were turned down:

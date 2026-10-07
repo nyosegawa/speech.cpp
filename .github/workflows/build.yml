@@ -6,6 +6,11 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      checks:
+        description: Keep the Windows build's check executables as an artifact, for a check on a Windows machine with a GPU
+        type: boolean
+        default: false
 
 # Each platform's job builds speech, the one executable, and libspeech, and packs them with speech.h into the archive
 # a release publishes, speech-<VERSION>-<platform>.zip, on every run: a pull request shows the archive a tag would
@@ -120,6 +125,14 @@ jobs:
         with:
           name: speech-windows-x64-vulkan
           path: ${{ env.ARCHIVE }}
+      # CI has no GPU, so a change to the computation is checked on a Windows machine with one (skills/windows-check).
+      # The checks link ggml statically and are large, so they are kept only from a run started by hand with checks.
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && inputs.checks
+        with:
+          name: speech-checks-windows-x64-vulkan
+          path: build/Release/*-check.exe
+          retention-days: 7
 
   # Linux x64 twice: with Vulkan, for a GPU of any vendor, and for the CPU alone, which needs no Vulkan loader
   # to start. The binaries are built on the oldest Ubuntu GitHub hosts and run on glibc 2.34 or later

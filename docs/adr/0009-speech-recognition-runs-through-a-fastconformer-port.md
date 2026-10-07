@@ -31,7 +31,7 @@ The alternatives were turned down:
 - Running parakeet through CrispASR or audio.cpp. Each is a runtime of its own with its own copy of ggml, so
   the worker and libspeech would carry two ggml builds and two ways of choosing a device, and their ports are
   not checked stage by stage against NeMo as this repository's are. audio.cpp v0.8.2's Irodori-TTS adds a
-  distorted copy of the voice on Metal, a defect such checks catch (README.md, Irodori-TTS's accuracy).
+  distorted copy of the voice on Metal, a defect such checks catch (docs/development/checks.md, Irodori-TTS).
 - Running the models as ONNX through sherpa-onnx. It brings ONNX Runtime as a second dependency beside ggml,
   runs exported weights rather than NeMo's, and reaches the GPU through ONNX Runtime's providers rather than
   the Metal and Vulkan builds every release already has.

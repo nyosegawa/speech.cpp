@@ -38,6 +38,6 @@ The alternatives were turned down:
 
 ## Consequences
 
-A request gives samples that differ from 0.7.1's by rounding. A machine that makes frames more slowly than the
-measured ones can still run a player dry, which then buffers as before. README.md gives the decode in chunks against
-the whole decode as an SNR, where it said the samples were the same.
+A request gives samples that differ from 0.7.1's by rounding. A machine that makes frames more slowly than the measured
+ones can still run a player dry, which then buffers as before. docs/development/checks.md gives the decode in chunks
+against the whole decode as an SNR, where it said the samples were the same.

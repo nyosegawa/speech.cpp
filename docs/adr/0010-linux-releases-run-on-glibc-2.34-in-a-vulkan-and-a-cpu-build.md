@@ -47,7 +47,7 @@ The alternatives were turned down:
 - Loading ggml's backends at run time (`GGML_BACKEND_DL`), so that one build finds Vulkan when it is there. A
   release would become several files per tool, against the rule that each tool is one file, and every
   platform would link differently.
-- A CUDA build. Vulkan already runs NVIDIA GPUs at the speeds the README lists for an RTX 2080. A CUDA build
+- A CUDA build. Vulkan already runs NVIDIA GPUs at the speeds docs/models/ lists for an RTX 2080. A CUDA build
   would carry cuBLAS, several hundred megabytes, or require the user's CUDA toolkit to match, would tie the
   binary to a range of NVIDIA drivers, and would put the CUDA toolkit and its kernel compilation into CI. It
   stays a build from source (`-DGGML_CUDA=ON`).
@@ -58,4 +58,4 @@ A release has four more archives, `speech-worker-<version>-linux-x64-{vulkan,cpu
 `speech-cpp-tools-<version>-linux-x64-{vulkan,cpu}.zip`. The Vulkan build's files are about 48 MB each with
 their shaders, the CPU build's about 4 MB. A CPU without AVX2 is not supported by any release. When GitHub
 retires `ubuntu-22.04`, the job moves to the next image, and the glibc check shows at once whether the floor
-moves; the floor in the workflow, the README, AGENTS.md and this record then change together.
+moves; the floor in the workflow, the README, docs/install.md, AGENTS.md and this record then change together.

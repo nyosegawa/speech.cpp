@@ -1,0 +1,232 @@
+# Command line
+
+This page lists the subcommands of `speech` and their options. `speech <subcommand> --help` prints the same in short.
+
+| Subcommand | What it does |
+|---|---|
+| [`speech tts`](#speech-tts) | speaks text into a WAVE file or to stdout |
+| [`speech asr`](#speech-asr) | writes the text of WAVE files |
+| [`speech voice`](#speech-voice) | makes an Irodori-TTS voice file from reference recordings |
+| [`speech info`](#speech-info) | prints what a model file says of its model, without loading it |
+| [`speech devices`](#speech-devices) | lists the devices a model can run on |
+| [`speech models`](#speech-models) | lists the models a name fetches, what is fetched, and which model to start with |
+| [`speech pull`](#speech-pull) | fetches models ahead of their use |
+| [`speech rm`](#speech-rm) | removes fetched models, or the files of earlier releases |
+| [`speech serve`](server.md) | serves a model of each task over HTTP with OpenAI's audio API, and a page to try models on |
+| [`speech worker`](worker.md) | serves a model over JSON Lines on stdin and stdout, for programs such as ASIST |
+
+Each subcommand reaches the models through the C API alone
+([ADR 0017](adr/0017-one-speech-executable-serves-the-worker-protocol-2-and-the-http-api.md)).
+
+## Examples
+
+```sh
+# One sentence to a file, with a Qwen3-TTS speaker
+speech tts qwen3-tts-0.6b --voice ono_anna --seed 42 -o out.wav "明日の東京は晴れです。"
+
+# A voice file from a reference recording, then a text file, one sentence per line, into one WAVE file in that voice
+speech voice irodori-tts-mf me.wav me.voice.gguf
+speech tts irodori-tts-mf --add-voice me=me.voice.gguf --voice me -o story.wav < story.txt
+
+# Straight into a player, which starts as the first audio arrives
+echo "こんにちは。" | speech tts irodori-tts-mf --add-voice me=me.voice.gguf --voice me -o - | ffplay -nodisp -autoexit -
+
+# The text of recordings, and their segments with their times as JSON Lines
+speech asr reazonspeech-v2 meeting.wav
+speech asr parakeet-tdt_ctc-0.6b-ja --timestamps --format json one.wav two.wav > texts.jsonl
+
+# The text of a recording in Japanese, told the names it holds
+speech asr qwen3-asr-1.7b --language ja --prompt "Claude Code、渋谷" meeting.wav
+
+# What a model file holds, without loading it
+speech info irodori-tts-mf
+```
+
+## Rules for every subcommand
+
+- **MODEL** is a model file, whose path ends in `.gguf`, or `NAME[:TYPE]` of a model in `speech models`, which is
+  fetched the first time it is used ([models.md](models.md)).
+- **`--device NAME`** is `auto` (the default: the first GPU, or the CPU on a machine without one), `gpu`, `cpu`, or a
+  name that `speech devices` lists. **`--threads N`** is the CPU's threads; by default the machine's performance cores.
+- **Request options.** `speech tts` and `speech asr` take every option of the C API's vocabulary as a flag of its name in
+  kebab-case: `duration_scale` is `--duration-scale` ([c-api.md](c-api.md#options)). The model refuses an option it does
+  not take, as the C API does: Qwen3-TTS answers `--speed 1.5` with `speech: unsupported (speed): ...`.
+  `speech info MODEL` lists the options a model takes, with their defaults and ranges.
+- A value follows its flag or an `=`: `--seed 7` or `--seed=7`. A number is read whole: `--steps 4x` is a usage error.
+- A boolean flag alone means true, and takes `true` or `false` only after an `=`: `--timestamps`, `--do-sample=false`.
+- An argument that begins with `-`, such as a text, follows `--`.
+- stdout carries the output alone. Whatever ggml, a system library or the GPU driver prints to stdout goes to stderr.
+- On Windows the command line is read as UTF-8, and stdin and stdout are binary.
+- `speech --version` prints the release and the C API's version: `speech.cpp 0.7.1, C API 3.1`.
+
+| Exit | Meaning |
+|---|---|
+| 0 | done |
+| 1 | a failure, printed on stderr as `speech: <code> (<option>): <message>`. The code is the library's error category ([c-api.md](c-api.md#errors)) and the option is the input at fault; the parentheses are left out when there is none |
+| 2 | a command line that cannot run, printed with a pointer to `speech <subcommand> --help` |
+| 3 | a request stopped at the most the model makes (`model_limit`): for `speech tts` the longest speech, and the WAVE file is complete; for `speech asr` the most tokens of a text, and every file's text is written |
+
+## speech tts
+
+```
+speech tts MODEL -o FILE|- [options] [TEXT]
+  --add-voice NAME=FILE    add a voice from a voice file or a WAVE file before speaking; repeatable
+  --device NAME --threads N
+  -v                       also report the model, and each request's seed and stop reason
+  --voice NAME --language TAG --seed N ... every request option
+```
+
+- Speaks TEXT, or without it each non-empty line of stdin as one request, into one 16-bit mono WAVE at the model's rate.
+  `-o -` writes it to stdout.
+- `--voice` is required. Qwen3-TTS has named speakers; Irodori-TTS takes voices added with `--add-voice`
+  ([models.md](models.md#voices)).
+- `--seed` applies to every request, so a line gives the audio a worker's request with the same seed gives. Without it,
+  each request draws its own seed, which `-v` reports.
+- A request that stops at `--max-seconds`, or at the longest speech the model makes (655 s for Qwen3-TTS), is reported on
+  stderr whatever `-v` says.
+- The model loads without a warm-up, so a GPU compiles its kernels during the first request.
+- The WAVE is written as the audio is made, so a player that reads stdout starts early. In a regular file, `> out.wav`
+  included, the RIFF and data sizes are set once the audio is complete. In a pipe or a file appended to with `>>` they
+  stay `0xFFFFFFFF`, as ffmpeg writes them to a pipe, and players read to the end of the stream.
+- A run that fails removes the WAVE file it was writing, so a file it leaves is complete.
+- Text on stdin is UTF-8. A byte order mark and CRLF line endings are accepted.
+- stderr reports where the time went: the load, and for each request its seconds of audio, the time to its first audio
+  and to its end, and the real-time factor, with sums when stdin gave several lines.
+
+## speech asr
+
+```
+speech asr MODEL [options] AUDIO.wav...
+  --format text|json       text (the default) or one JSON object per file and line
+  --device NAME --threads N
+  -v                       also report the release, the sample rate and the model's languages
+  --language TAG --timestamps --prompt TEXT --decoding beam|greedy ... every request option
+```
+
+- Recognizes each WAVE file in the order given: 16-, 24- or 32-bit PCM or 32-bit float at any rate, with its channels
+  averaged. The library resamples it to the model's rate. Convert other formats first: `ffmpeg -i in.mp3 out.wav`.
+- `text` writes one line per file. With `--timestamps` it writes one line per segment instead,
+  `FILE<TAB>START<TAB>END<TAB>TEXT`, with the times in seconds and three decimals.
+- `json` writes `{"file":…,"text":…,"stop":…}` for each file, with `"languages"` where the model names the languages it
+  heard (Qwen3-ASR), and `"segments"` and `"tokens"` with `--timestamps`, in the form of the worker's `end`
+  ([worker.md](worker.md#answers)).
+- stderr reports the load and, for each file, its seconds of audio, the time to its text and the real-time factor. It also
+  reports a recognition that stopped at the most tokens the model writes (4096 for Qwen3-ASR); the command then exits
+  with 3 once every file's text is written.
+- A failure names the file. The lines of the files before it are already on stdout.
+
+## speech voice
+
+```
+speech voice MODEL (REFERENCE.wav... | EMBEDDING.speaker.safetensors) VOICE.gguf [options]
+  --lufs LUFS              bring each recording to this loudness instead of the model's (-16)
+  --keep-loudness          keep each recording's loudness, scaling down a peak above 1
+  --device NAME            cpu (the default here), auto, gpu or a name speech devices lists
+  --threads N -v
+```
+
+- Makes a voice file for a model that takes voice files (Irodori-TTS) from one or more recordings at any rate. Each is
+  encoded on its own and the results are joined in order. Only the codec's encoder is read from MODEL.
+- A `.speaker.safetensors` file, a speaker-inversion embedding as the official runtime saves one, makes a voice for MODEL
+  alone. It is the whole voice: a second embedding or a recording beside it is refused.
+- The device is `cpu` by default, the one device whose voice is the official encoder's to 99 dB
+  ([ADR 0002](adr/0002-asist-carries-irodori-tts-voices-as-voice-files.md)).
+- [models/irodori-tts.md](models/irodori-tts.md#voices) says what a voice file holds.
+
+## speech info
+
+```
+speech info MODEL [--json] [--meta]
+```
+
+- Prints the model's information without loading it: its name, organization, model line, size label, finetune, version,
+  license, source and weight type; its architecture and layout; its task and rate; its languages and voices; each option
+  with its type, default, range or choices and whether it steers; the longest text; and the sizes.
+- `--json` prints the model information as JSON instead ([c-api.md](c-api.md#model-information-as-json)), the object the
+  worker's `ready` and the server's `/v1/models` carry.
+- `--meta` adds every metadata entry of the GGUF file: as `key = value` in text, with an array of more than eight items
+  shortened and its length given, and whole as a `meta` object in JSON.
+
+## speech devices
+
+```
+speech devices [--json]
+```
+
+Lists the CPU and the GPUs in ggml's order, with their kind (`cpu`, `gpu` or `igpu`), description and memory. An
+accelerator that ggml runs beside the CPU, such as BLAS, is not listed. `--json` prints one object, for a program that
+chooses a device before it starts a worker:
+
+```json
+{"devices":[{"name":"Vulkan0","description":"NVIDIA GeForce RTX 2080","kind":"gpu","memory_total":8589934592,"memory_free":7516192768}]}
+```
+
+## speech models
+
+```
+speech models [--json]
+```
+
+Lists the catalog: each model's name, the type its name alone means, the file's size, whether it is fetched (`yes`, `no`,
+or how much of a stopped fetch is there), its task and languages; the model to start with for each language; and the
+old files in the model folder.
+
+```
+NAME                      TYPE  SIZE     FETCHED  TASK         LANGUAGES
+qwen3-tts-0.6b            q8_0  1.21 GB  no       synthesis    de en es fr it ja ko pt ru zh
+...
+reazonspeech-v2           f16   1.24 GB  no       recognition  ja
+...
+
+The model to start with for each language:
+  synthesis    qwen3-tts-0.6b            de en es fr it ja ko pt ru zh
+  recognition  qwen3-asr-0.6b            ar cs da de el en es fa fi fil fr hi hu id it ko mk ms nl pl pt ro ru sv th tr vi yue zh
+               reazonspeech-v2           ja
+               parakeet-tdt-0.6b-v3      bg et hr lt lv mt sk sl uk
+
+Old files, which no model of this release names; speech rm --old removes them:
+  1.89 GB  sakasegawa--Irodori-TTS-v4.1-Small-MF-GGUF/99e5d77f6d92a70d4b9bff52829ac118fa1bf7d3/Irodori-TTS-848M-MF-v4.1-F16.gguf
+```
+
+`--json` prints one object for programs: `version`, `directory`, `models` and `old`. Each model has `name`,
+`repository`, `revision`, `task`, `languages`, `voice_files`, `start` (the languages it is the model to start with for),
+`type` (the type its name alone means) and `files`. Each file has `type`, `file`, `size`, `sha256`, `url`, `path` in the
+model folder, `fetched`, and `partial`, the bytes of a stopped fetch. Each old file has `path` and `size`.
+
+## speech pull
+
+```
+speech pull NAME[:TYPE]...
+```
+
+Fetches each model's file unless it is in the model folder, and prints its path on stdout, so that
+`model=$(speech pull qwen3-asr-0.6b)` gives a script the path. On stderr it says what it fetches, from where, how far it
+is and how fast, and that it checked the SHA-256. On a terminal the progress is one line, rewritten as it moves.
+
+```
+fetching qwen3-asr-0.6b, Qwen3-ASR-0.6B-Q8_0.gguf (0.84 GB), from https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF into ...
+resuming at 7 MB of 842 MB
+  87 MB of 842 MB, 10%, 5.2 MB/s
+  ...
+fetched qwen3-asr-0.6b in 134 s and checked its SHA-256
+```
+
+## speech rm
+
+```
+speech rm NAME[:TYPE]... | speech rm --old
+```
+
+Removes each model's file, with what was fetched of it and the folders that this leaves empty. `--old` removes every
+file that no model of this release names. `speech rm` waits for a process that fetches the same file. A model that is not
+in the folder is refused with exit 1, before anything is removed.
+
+## speech serve and speech worker
+
+```
+speech serve [MODEL [MODEL]] [--open] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
+             [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup]
+speech worker MODEL [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup]
+```
+
+[server.md](server.md) and [worker.md](worker.md) describe them.

@@ -41,8 +41,8 @@ OpenAI's API reference (github.com/openai/openai-openapi at commit 31af4fc, 2026
   its 30 names on every dump, and a name the table does not hold has no tag to give.
 - **FastConformer gives none.** A language a request gives it is only checked, and the model did not hear it.
 - **The worker's `end` and `partial` and `speech asr --format json` carry `languages`**, left out where the list is
-  empty, so FastConformer's answers stay as they were. The worker's protocol stays 2: README says an added member does
-  not raise it, since a caller that does not know it ignores it and keeps working.
+  empty, so FastConformer's answers stay as they were. The worker's protocol stays 2: docs/worker.md says an added
+  member does not raise it, since a caller that does not know it ignores it and keeps working.
 - **The server's `verbose_json` carries `language`**: the tag, the form a request's `language` takes, and where the
   parts of long audio gave several, their tags joined with commas in order, as qwen-asr joins their names; left out
   where the list is empty, as the members of OpenAI's segment without a value are. `verbose_json` sets `timestamps` only
