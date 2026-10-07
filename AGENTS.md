@@ -43,9 +43,10 @@ and its check before changing behavior.
   stderr, and every request gets exactly one terminal message. Its `ready` message carries the protocol's version, the
   release and the model's information.
 - `checks/` holds one check per ported stage (`*-check.cpp`) that compares the stage with the reference
-  dumps, and `speech-api-check`, which runs the C API through the shared library with a synthesis model and,
-  with `transcribe`, with a recognition model (`speech-api-recognition.c`), what the two share in
-  `speech-api-common.c`. Checks reach into
+  dumps, and `speech-api-check`, which runs the C API through the shared library with a synthesis model, Irodori-TTS's
+  own rules and voice files in `speech-api-irodori.c`, and, with `transcribe`, with a recognition model
+  (`speech-api-recognition.c`), what they share in `speech-api-common.c` and what differs by the operating system in
+  `speech-api-platform.c`. Checks reach into
   `src/` for the stage they check; they are built but not released.
 - `tools/server/` holds `speech serve`, which serves one model over HTTP with OpenAI's audio API
   (`POST /v1/audio/speech` for a synthesis model, `POST /v1/audio/transcriptions` for a recognition model,
