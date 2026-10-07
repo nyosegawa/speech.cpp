@@ -120,13 +120,15 @@ struct TimedText {
 };
 
 /**
- * What a recognition found: the text, its segments and tokens when the request set timestamps, and why it ended:
- * complete, or at the model's limit of what it writes, with the text written up to it.
+ * What a recognition found: the text, its segments and tokens when the request set timestamps, why it ended: complete,
+ * or at the model's limit of what it writes, with the text written up to it; and the languages the model wrote, as tags
+ * of general.languages in the order of the audio, none for a family that writes none.
  */
 struct Recognized {
     std::string text;
     std::vector<TimedText> segments, tokens;
     speech_stop stop = SPEECH_STOP_COMPLETE;
+    std::vector<std::string> languages;
 };
 
 /**

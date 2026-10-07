@@ -1,10 +1,13 @@
 // Checks Qwen3-ASR's prompt, decoder, decoding and parse against transformers' on each dump of
 // reference/qwen3-asr/dump.py and each of its requests (auto, forced, auto-prompt, forced-prompt), after the parse of
-// the cases of reference/qwen3-asr/parse_cases.py against qwen-asr's, in the order data flows: the prompt's ids; the decoder's input, the token embeddings with the dump's projector output spliced in; the
+// the cases of reference/qwen3-asr/parse_cases.py against qwen-asr's, its language and its text, in the order data
+// flows: the prompt's ids; the decoder's input, the token embeddings with the dump's projector output spliced in; the
 // logits of the prompt's last four rows from the dump's input; the decoder teacher-forced on the dump's ids; the
-// tokenizer's decoding of the dump's ids and the parse of the dump's raw text; the greedy decoding from the dump's
-// projector output with every later stage ours; and the text from the dump's audio with every stage ours, which it
-// also times. The dumps are those of the model, in <reference out dir>/<its general.name>/.
+// tokenizer's decoding of the dump's ids and the parse of the dump's raw text, its language and its text; the greedy
+// decoding from the dump's projector output with every later stage ours; and the language and the text from the dump's
+// audio with every stage ours, which it also times. A language qwen-asr parses is compared by the index of
+// general.languages whose name qwen3-asr.language_names holds, and one it does not hold with none. The dumps are those
+// of the model, in <reference out dir>/<its general.name>/.
 //
 // Where a greedy choice of ours differs from the dump's, the check takes it for the arithmetic's when the dump's margin
 // between the two tokens is within the sum of our errors on their two logits, and for a defect otherwise. The decoder
@@ -45,18 +48,36 @@ JsonValue read_meta(const std::filesystem::path & dir) {
     return parse_json(dump_text(dir / "meta.json"));
 }
 
+/** The index of general.languages that qwen3-asr.language_names names `name`, or none for "" and a name it does not hold. */
+std::optional<size_t> language_named(const ModelFile & m, const std::string & name) {
+    const std::vector<std::string> names = m.str_array("qwen3-asr.language_names");
+    const auto it = std::find(names.begin(), names.end(), name);
+    if (it == names.end()) return std::nullopt;
+    return (size_t) (it - names.begin());
+}
+
 /** The request of a variant's meta.json: its context, and its forced language as an index of the model's languages. */
 RecognitionRequest request_of(const JsonValue & meta, const ModelFile & m) {
     RecognitionRequest r;
     r.context = meta.member("prompt")->text;
     const JsonValue * language = meta.member("language");
     if (language && language->kind == JsonValue::Kind::String) {
-        const std::vector<std::string> names = m.str_array("qwen3-asr.language_names");
-        const auto it = std::find(names.begin(), names.end(), language->text);
-        if (it == names.end()) throw std::runtime_error("the dump forces " + language->text + ", which the model does not name");
-        r.language = (size_t) (it - names.begin());
+        r.language = language_named(m, language->text);
+        if (!r.language) throw std::runtime_error("the dump forces " + language->text + ", which the model does not name");
     }
     return r;
+}
+
+/** A language as an index of the model's languages, or none, written as its tag or "none". */
+std::string tag_of(const std::optional<size_t> & language, const ModelFile & m) {
+    return language ? m.str_array("general.languages").at(*language) : "none";
+}
+
+/** The languages of a recognition as tags joined with commas, "" for none. */
+std::string tags_of(const std::vector<size_t> & languages, const ModelFile & m) {
+    std::string out;
+    for (size_t language : languages) out += (out.empty() ? "" : ",") + tag_of(language, m);
+    return out;
 }
 
 /**
@@ -153,20 +174,34 @@ int main(int argc, char ** argv) {
             const ggml_type type = m.tensor("dec.blk.0.attn_q")->type;
             const double threshold_db = type == GGML_TYPE_Q8_0 ? 15 : type == GGML_TYPE_F32 && ggml_backend_is_cpu(backend) ? 90 : 35;
             std::printf("prefill logits threshold: %.0f dB\n", threshold_db);
-            // The parse of texts that hold what the dumps do not: repetitions, whitespace, and outputs without <asr_text>.
+            // The parse of texts that hold what the dumps do not: repetitions, whitespace, outputs without <asr_text>, and
+            // the languages before it.
             {
                 std::ifstream f(std::filesystem::u8path(args[2]) / "parse-cases.jsonl", std::ios::binary);
                 if (!f) throw std::runtime_error("no parse-cases.jsonl of reference/qwen3-asr/parse_cases.py is in " + args[2]);
-                int cases = 0, same = 0;
+                int cases = 0, same = 0, others = 0;
                 for (std::string line; std::getline(f, line);) {
                     const JsonValue c = parse_json(line);
-                    const std::string got = recognizer.transcript().text(c.member("raw")->text, c.member("forced")->boolean);
-                    const bool equal = got == c.member("text")->text;
+                    const JsonValue * forced = c.member("forced"), * language = c.member("language");
+                    if (!forced || !language) throw std::runtime_error("parse-cases.jsonl holds no languages; write it again with parse_cases.py");
+                    const std::optional<size_t> forced_language =
+                        forced->kind == JsonValue::Kind::String ? language_named(m, forced->text) : std::nullopt;
+                    const Parsed got = recognizer.transcript().parse(c.member("raw")->text, forced_language);
+                    // A name qwen-asr parses that the model's languages do not hold is none for us, which the parse must
+                    // also give as the name it found.
+                    const std::optional<size_t> want = language_named(m, language->text);
+                    const bool other = !language->text.empty() && !want;
+                    const bool equal = got.text == c.member("text")->text && got.language == want && got.other_language.empty() != other;
                     cases++;
                     same += equal;
-                    if (!equal) std::printf("  parse of %s: %s where qwen-asr gives %s\n", to_json(*c.member("raw")).c_str(), got.c_str(), c.member("text")->text.c_str());
+                    others += other;
+                    if (!equal) {
+                        std::printf("  parse of %s: %s, %s where qwen-asr gives %s, %s\n", to_json(*c.member("raw")).c_str(), tag_of(got.language, m).c_str(),
+                                    got.text.c_str(), to_json(*language).c_str(), c.member("text")->text.c_str());
+                    }
                 }
-                std::printf("parse: %d of %d cases qwen-asr's\n", same, cases);
+                std::printf("parse: %d of %d cases qwen-asr's language and text, %d of them a name the model's languages do not hold\n", same,
+                            cases, others);
                 ok = ok && cases > 0 && same == cases;
             }
             // A second of silence first, so that the times below leave out the compilation of a GPU's kernels.
@@ -179,7 +214,13 @@ int main(int argc, char ** argv) {
                             (long long) embeds_dump.shape[0]);
                 for (const char * variant : kVariants) {
                     const std::filesystem::path v = d / variant;
-                    const RecognitionRequest request = request_of(read_meta(v), m);
+                    const JsonValue meta = read_meta(v);
+                    const RecognitionRequest request = request_of(meta, m);
+                    const std::optional<size_t> language = language_named(m, meta.member("parsed_language")->text);
+                    if (!meta.member("parsed_language")->text.empty() && !language) {
+                        throw std::runtime_error(v.u8string() + ": qwen-asr parsed " + meta.member("parsed_language")->text + ", which the model does not name");
+                    }
+                    const std::vector<size_t> languages = language ? std::vector<size_t>{*language} : std::vector<size_t>{};
                     const auto npy = [&](const char * name) { return read_npy((v / (std::string(name) + ".npy")).u8string()); };
                     const Npy prompt_ids = npy("prompt_ids"), embeds = npy("embeds"), prefill_logits = npy("prefill_logits");
                     const Npy ids = npy("ids"), top_ids = npy("step_top_ids"), top_logits = npy("step_top_logits");
@@ -213,16 +254,19 @@ int main(int argc, char ** argv) {
                     forced.print("teacher-forced");
                     ok = ok && forced.unexplained == 0;
 
-                    const std::string decoded = recognizer.tokenizer().decode(ids.i32), parsed = recognizer.transcript().text(raw, request.language.has_value());
+                    const std::string decoded = recognizer.tokenizer().decode(ids.i32);
+                    const Parsed parsed = recognizer.transcript().parse(raw, request.language);
+                    const bool same_parse = parsed.text == text && parsed.language == language && parsed.other_language.empty();
                     std::printf("  %-32s %s\n", "decoding of the dump's ids", decoded == raw ? "the dump's raw text" : "DIFFERS");
-                    std::printf("  %-32s %s\n", "parse of the dump's raw text", parsed == text ? "the dump's text" : "DIFFERS");
-                    ok = ok && decoded == raw && parsed == text;
+                    std::printf("  %-32s %s (%s)\n", "parse of the dump's raw text", same_parse ? "the dump's language and text" : "DIFFERS",
+                                tag_of(parsed.language, m).c_str());
+                    ok = ok && decoded == raw && same_parse;
 
                     // Greedy from the dump's projector output, the prompt and the embeddings ours.
                     Steps greedy;
                     decoder.prefill(ours, n, [](int64_t) { return true; });
                     const std::vector<int32_t> written = follow(decoder, ids, top_ids, top_logits, greedy);
-                    const std::string greedy_text = recognizer.transcript().text(recognizer.tokenizer().decode(written), request.language.has_value());
+                    const std::string greedy_text = recognizer.transcript().parse(recognizer.tokenizer().decode(written), request.language).text;
                     greedy.print("greedy from the projector");
                     std::printf("  %-32s %s\n", "its ids and text", written == ids.i32 ? "the dump's" : greedy_text == text ? "other ids, the dump's text" : "DIFFER");
                     ok = ok && greedy.unexplained == 0 && (greedy.differ > 0 || written == ids.i32);
@@ -238,6 +282,12 @@ int main(int argc, char ** argv) {
                     same_texts += same_text;
                     std::printf("  %-32s %s in %.3f s%s\n", "text from the audio", same_text ? "the dump's" : "DIFFERS", seconds,
                                 found.limited ? ", at the model's limit" : "");
+                    // Where the text differs, the steps below tell the arithmetic from a defect at the first id that differs,
+                    // the language's among them.
+                    const bool same_languages = found.languages == languages;
+                    std::printf("  %-32s %s (%s)\n", "language from the audio", same_languages ? "the dump's" : "DIFFERS",
+                                found.languages.empty() ? "none" : tags_of(found.languages, m).c_str());
+                    ok = ok && (same_languages || !same_text);
                     std::printf("    frontend %.3f s, encoder %.3f s, prefill of %lld rows %.3f s, %zu tokens in %.3f s (%.1f per second)\n",
                                 stats.frontend, stats.encoder, (long long) stats.prompt_rows, stats.prefill, stats.ids.size(), stats.decode,
                                 stats.ids.size() / stats.decode);

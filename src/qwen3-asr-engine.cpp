@@ -23,6 +23,7 @@ public:
         Recognized out;
         out.text = found.text;
         out.stop = found.limited ? SPEECH_STOP_MODEL_LIMIT : SPEECH_STOP_COMPLETE;
+        for (size_t language : found.languages) out.languages.push_back(recognizer_.languages()[language]);
         return out;
     }
 
@@ -49,7 +50,8 @@ private:
 
 /**
  * The table of the options Qwen3-ASR takes. The language steers: a language forced as qwen-asr forces it, by the prefill
- * "language <Name><asr_text>", or auto, with which the model writes the language it hears before the text. The prompt
+ * "language <Name><asr_text>", or auto, with which the model writes the language it hears before the text; the result
+ * gives either as its tag. The prompt
  * is qwen-asr's context, which goes into the system turn of the prompt. The model gives no times, so a request takes
  * timestamps only as false, the neutral value.
  */

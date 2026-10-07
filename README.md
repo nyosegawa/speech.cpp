@@ -409,7 +409,11 @@ speech_model_free(model);
   reaches the most tokens the model writes, Qwen3-ASR's 4096, with the text written up to it), the seed of a synthesis
   (the request's, or one the library drew from 0 to 2^53 - 1, with which the same request repeats its audio on the same
   device), the samples it passed, and the text of a recognition with, when the request set `timestamps`, its segments
-  and tokens with their times in seconds (FastConformer, below).
+  and tokens with their times in seconds (FastConformer, below), and the languages it heard as BCP 47 tags of the
+  model's languages (`speech_result_language_count()`, `speech_result_language()`): the language Qwen3-ASR writes
+  before its text or the one the request forced on it, one for each run of parts of the same language where it
+  recognizes long audio in parts, and none for a model that writes none, such as FastConformer, for audio without
+  speech, for a name that is none of the model's languages and for a cancelled request (Qwen3-ASR, below).
 - **Errors.** A function that can fail returns a `speech_status`, a negative one for an error, whose category says
   what kind of failure it is; `speech_status_name()` gives its name, `speech_last_error()` the message and
   `speech_last_error_option()` the input it concerns (an option's name, `text`, `audio`, `device`, `threads`, `name`,
@@ -445,7 +449,7 @@ speech_model_free(model);
   Information never changes once made and may be read from any thread. Separate models are independent.
 - **Versions.** `speech_version()` gives the release the library was built from (`"0.7.0"`).
   `SPEECH_API_VERSION_MAJOR` and `SPEECH_API_VERSION_MINOR`, and `speech_api_version_major()` and
-  `speech_api_version_minor()` for a caller that loads the library at run time, give the API's version, 3.0: the
+  `speech_api_version_minor()` for a caller that loads the library at run time, give the API's version, 3.1: the
   major rises when a declaration changes in a way an existing caller notices, and the minor when a function, an
   option or an enum value is added. A program built against major version M and minor version m runs against a
   library of the same major version and a minor version of m or more. The shared library's SOVERSION is the major
@@ -1399,12 +1403,13 @@ with its windowed encoder, and qwen-asr 0.0.6's code for what transformers leave
   model loads (docs/adr/0019),
 - greedy decoding until an end token or 4096 new tokens, the limit of the model's `generate()`, at which the result
   says `model_limit`,
-- the output decoded without its special tokens and parsed as qwen-asr's `parse_asr_output()` parses it: the text
-  after `<asr_text>`, "" for the `language None` of audio without speech, and its repetition fix,
+- the output decoded without its special tokens and parsed as qwen-asr's `parse_asr_output()` parses it: its repetition
+  fix, the text after `<asr_text>`, "" for the `language None` of audio without speech, and the language the model
+  wrote before `<asr_text>`, which the result gives as its tag (Use, below),
 - audio over 1200 s cut as qwen-asr cuts it (Long audio, below).
 
 Not implemented: timestamps, which need Qwen3-ForcedAligner-0.6B, a second model (a request takes `timestamps` only as
-false); the language the model writes, which the result does not carry; qwen-asr's streaming.
+false); qwen-asr's streaming.
 
 ### Models
 
@@ -1438,20 +1443,28 @@ The models recognize 16 kHz mono audio, to which the library resamples audio at 
 `de`, `el`, `en`, `es`, `fa`, `fi`, `fil`, `fr`, `hi`, `hu`, `id`, `it`, `ja`, `ko`, `mk`, `ms`, `nl`, `pl`, `pt`,
 `ro`, `ru`, `sv`, `th`, `tr`, `vi`, `yue` and `zh`, and 22 Chinese dialects under `zh` or `auto`. Cantonese and
 Filipino have no two-letter code, and take the three letters of ISO 639 (`yue`, `fil`). A forced language steers the
-model, which then writes the text alone; `auto` lets it write the language it hears first. The `prompt` is what the
-model is told of the audio before it hears it, the names and terms it may hold, which it was trained to use as
-background and not to follow as instructions.
+model, which then writes the text alone; `auto` lets it write the language it hears first. The result gives that
+language (`speech_result_language()`, the worker's and `speech asr --format json`'s `languages`, the server's
+`verbose_json` `language`) as the tag of `general.languages` whose name in `qwen3-asr.language_names` it is (GGUF
+files, below), or the forced language's tag, as qwen-asr gives the forced language. It gives none for audio without
+speech, where the model writes `language None`, or where it writes nothing after a forced language, which qwen-asr
+also takes for no language; and none for a name that is not one of the 30, which a warning in the log reports, where
+qwen-asr passes the name on. On every dump the model wrote one of the 30 names. The `prompt` is what the model is told
+of the audio before it hears it, the names and terms it may hold, which it was trained to use as background and not to
+follow as instructions.
 
 ### Long audio
 
 The model takes at most 1200 s at once. Longer audio is cut as qwen-asr's `transcribe()` cuts it: at 1200 s from the
 last cut, moved to the quietest 0.1 s within 5 s on either side and to its quietest sample, a part shorter than 0.5 s
-padded with zeros, each part recognized alone, and the texts joined without a separator. The memory is that of the
-longest part (Speed, below). A part that reaches the 4096 tokens stops there, and the request says `model_limit` with
-the text of every part. A recording of over a few minutes may well reach them: on the first 1203 s of 1338 s of FLEURS
-ja_jp joined, the 0.6B model repeats three sentences from the first minute on until it reaches 4096 tokens, as the
-official implementation does. A caller that wants the whole text of a long recording cuts it at its pauses into
-pieces of a few minutes.
+padded with zeros, each part recognized alone, the texts joined without a separator, and the languages merged as
+qwen-asr's `merge_languages()` merges their names: in the order of the audio, one for each run of parts of the same
+language, and none for a part without one, so that a recording whose parts the model heard in Japanese and then in
+English gives `ja` and `en`. The memory is that of the longest part (Speed, below). A part that reaches the 4096
+tokens stops there, and the request says `model_limit` with the text of every part. A recording of over a few minutes
+may well reach them: on the first 1203 s of 1338 s of FLEURS ja_jp joined, the 0.6B model repeats three sentences from
+the first minute on until it reaches 4096 tokens, as the official implementation does. A caller that wants the whole
+text of a long recording cuts it at its pauses into pieces of a few minutes.
 
 ### Accuracy
 
@@ -1462,7 +1475,7 @@ parse, and saves every stage; the checks compare each stage, given the dump's ow
 cd reference/qwen3-asr
 uv run python dump.py Qwen3-ASR-0.6B out
 uv run python dump.py Qwen3-ASR-1.7B out
-uv run python parse_cases.py out    # outputs with qwen-asr's parse of each, for qwen3-asr-decoder-check
+uv run python parse_cases.py out    # outputs with qwen-asr's language and text of each, for qwen3-asr-decoder-check
 uv run python split_cases.py out    # synthetic audio with qwen-asr's split of each, for qwen3-asr-split-check
 # texts and ids with the checkpoint's own tokenizer, for tokenizer-check; the folder is the one pins.py downloads to
 uv run python ../qwen3-tts/tokenizer_cases.py <checkpoint dir> out/tokenizer-cases.tsv out/decode-cases.tsv
@@ -1835,7 +1848,7 @@ From the checkpoint's `config.json` (`thinker_config`, its `audio_config` and `t
 
 | Key | Type | Meaning | Source |
 |---|---|---|---|
-| `qwen3-asr.language_names` | [string] | the name the forced language's prefill writes for each language of `general.languages`, aligned with it (`Cantonese` for `yue`) | transformers' `LANGUAGE_CODE_TO_NAME`, the names of qwen-asr's `SUPPORTED_LANGUAGES` |
+| `qwen3-asr.language_names` | [string] | the name the forced language's prefill writes for each language of `general.languages`, aligned with it (`Cantonese` for `yue`), and the one the model writes when the language is left to it, which the result gives as its tag; ASCII, with no capital but the first letter, the form in which the parse compares a name the model writes | transformers' `LANGUAGE_CODE_TO_NAME`, the names of qwen-asr's `SUPPORTED_LANGUAGES` |
 | `qwen3-asr.frontend.n_fft`, `hop_length`, `n_mels` | u32 | | `preprocessor_config.json` `n_fft`, `hop_length`, `feature_size` |
 | `qwen3-asr.frontend.log_floor`, `dynamic_range`, `log_offset`, `log_divisor` | f32 | the log10's guard, the range kept below the utterance's maximum, and the shift and scale after it (1e-10, 8, 4, 4) | the feature extractor's code |
 | `qwen3-asr.audio.min_samples` | u32 | an utterance shorter is padded with zeros to it (8000, 0.5 s) | qwen-asr's `MIN_ASR_INPUT_SECONDS`, the extractor's `min_length` |
@@ -1850,7 +1863,7 @@ From the checkpoint's `config.json` (`thinker_config`, its `audio_config` and `t
 | `qwen3-asr.decoder.rms_norm_eps`, `rope_theta` | f32 | | `text_config` |
 | `qwen3-asr.prompt.before_context`, `before_audio`, `after_audio` | string | the chat template's text before the context, between it and the audio's tokens, and after them | `chat_template.json` filled as qwen-asr fills it, split at the context and the audio token |
 | `qwen3-asr.prompt.audio_token` | string | the added token whose rows the projector's output replaces (`<\|audio_pad\|>`) | the processor's `audio_token` |
-| `qwen3-asr.prompt.language_prefix`, `asr_text` | string | the forced language's prefill around the name (`language `, `<asr_text>`), and where the text begins in the output | qwen-asr's `_LANG_PREFIX` and `_ASR_TEXT_TAG` |
+| `qwen3-asr.prompt.language_prefix`, `asr_text` | string | the forced language's prefill around the name (`language `, `<asr_text>`), and around the name the model writes in its output, after which its text begins; the prefix in ASCII | qwen-asr's `_LANG_PREFIX` and `_ASR_TEXT_TAG` |
 | `qwen3-asr.output.repetition_threshold`, `repetition_max_period` | u32 | the repetition fix of the parse: runs and patterns repeated past the threshold kept once (20, 20) | `detect_and_fix_repetitions()` |
 | `qwen3-asr.generation.eos_ids` | [i32] | the tokens that end the decoding | `generation_config.json` `eos_token_id` |
 | `qwen3-asr.generation.max_new_tokens` | u32 | the most tokens a recognition writes (4096) | the model's `generate()` and qwen-asr's vLLM backend (docs/adr/0018) |
@@ -1869,7 +1882,9 @@ Tensors, with E = `encoder.num_layers` and D = `decoder.num_hidden_layers`:
   `ffn_gate`, `ffn_up` and `ffn_down`; `dec.norm`.
 
 The width no key gives is the convolutions' channels, from `enc.conv.1.weight` (480). The convolutions are 3 × 3 with
-a stride of 2 and a padding of 1, which the official module fixes in its code and the converter checks.
+a stride of 2 and a padding of 1, which the official module fixes in its code and the converter checks. The parse's
+mark of audio without speech, `language none` in any case before `<asr_text>`, is the text of qwen-asr's parse, which
+the converter finds in its code, and no key holds it.
 
 ### Voice files
 
