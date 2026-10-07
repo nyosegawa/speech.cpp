@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -128,10 +129,14 @@ void print_info(const speech_model_info * m, bool meta, FILE * out) {
         row("voice files", speech_model_info_voice_files(m) ? std::string("yes, of the codec ") + speech_model_info_voice_codec(m) : "no");
         row("text", "at most " + std::to_string(speech_model_info_max_text_tokens(m)) + " tokens");
     }
+    size_t width = 16;
+    for (size_t i = 0; i < speech_model_info_option_count(m); i++) {
+        width = std::max(width, std::string(speech_option_name(speech_model_info_option(m, i))).size() + 2);
+    }
     for (size_t i = 0; i < speech_model_info_option_count(m); i++) {
         const speech_option o = speech_model_info_option(m, i);
         const std::string name = speech_option_name(o);
-        row(i == 0 ? "options" : "", name + std::string(name.size() < 16 ? 16 - name.size() : 1, ' ') + option_line(m, o));
+        row(i == 0 ? "options" : "", name + std::string(width - name.size(), ' ') + option_line(m, o));
     }
     row("size", gigabytes(speech_model_info_file_bytes(m)) + " file, " + gigabytes(speech_model_info_weight_bytes(m)) + " of weights");
     if (meta) {

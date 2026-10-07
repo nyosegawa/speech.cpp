@@ -202,8 +202,10 @@ int check_library(void) {
         fprintf(stderr, "FAIL: a status or stop reason the library does not know has a name\n");
         return 1;
     }
-    static const char * options[] = {"voice",       "language",   "seed",   "speed",   "seconds", "duration_scale", "steps",
-                                     "max_seconds", "timestamps", "prompt", "decoding"};
+    static const char * options[] = {"voice", "language", "seed", "speed", "seconds", "duration_scale", "steps", "max_seconds",
+                                     "timestamps", "prompt", "decoding", "do_sample", "top_k", "top_p", "temperature",
+                                     "repetition_penalty", "code_predictor_do_sample", "code_predictor_top_k",
+                                     "code_predictor_top_p", "code_predictor_temperature"};
     if (speech_option_count() != sizeof options / sizeof options[0]) {
         fprintf(stderr, "FAIL: the library knows %zu options\n", speech_option_count());
         return 1;

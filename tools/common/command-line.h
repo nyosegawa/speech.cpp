@@ -12,7 +12,8 @@
 // The one parser of every subcommand's command line. A subcommand declares its flags and how many arguments it
 // takes; one that runs requests also takes every option of the C API's vocabulary as a flag of its name in kebab-case,
 // read by the option's type, so that an option the library adds is a flag without the parser changing. A flag's value
-// follows it or an "=" ("--seed 7", "--seed=7"); "--" ends the flags, so that an argument may begin with "-".
+// follows it or an "=" ("--seed 7", "--seed=7"), but for a boolean option, which is true alone and takes "=true" or
+// "=false" ("--do-sample=false"); "--" ends the flags, so that an argument may begin with "-".
 
 /** A flag of a subcommand other than a request option. */
 struct Flag {

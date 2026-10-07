@@ -1,11 +1,14 @@
 #include <climits>
 #include <cmath>
+#include <cstdlib>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "engine.h"
 #include "error.h"
+#include "json.h"
 #include "qwen3-tts/codec.h"
 #include "qwen3-tts/synthesizer.h"
 
@@ -14,6 +17,75 @@ namespace {
 /** The frames whose audio fits in `seconds`, counted in whole samples so that 0.24 s at 24 kHz is three frames. */
 int frames_within(double seconds, int sample_rate, int samples_per_frame) {
     return (int) ((int64_t) std::floor(seconds * sample_rate) / samples_per_frame);
+}
+
+/**
+ * A float of the model file as the shortest decimal that reads back as it (0.9 for the float nearest 0.9), so that the
+ * information shows the value the checkpoint gives. Converting that decimal back to float gives the same float for every
+ * float from 2^-20 to 2^20, as a run through all of them showed on 2026-10-07, so a request at the default the
+ * information shows samples with the file's own float.
+ */
+double decimal(float v) {
+    return std::strtod(json_number(v).c_str(), nullptr);
+}
+
+/** The options that set one stack's sampling; the code predictor's repetition penalty is none, and stays the file's. */
+struct SamplingOptions {
+    speech_option do_sample, top_k, top_p, temperature;
+    std::optional<speech_option> repetition_penalty;
+};
+
+const SamplingOptions kTalkerOptions = {SPEECH_OPT_DO_SAMPLE, SPEECH_OPT_TOP_K, SPEECH_OPT_TOP_P, SPEECH_OPT_TEMPERATURE,
+                                        SPEECH_OPT_REPETITION_PENALTY};
+const SamplingOptions kCodePredictorOptions = {SPEECH_OPT_CODE_PREDICTOR_DO_SAMPLE, SPEECH_OPT_CODE_PREDICTOR_TOP_K,
+                                               SPEECH_OPT_CODE_PREDICTOR_TOP_P, SPEECH_OPT_CODE_PREDICTOR_TEMPERATURE, std::nullopt};
+
+/**
+ * A temperature or a repetition penalty as the float the sampler divides by, as torch turns a Python float into the
+ * float32 of the logits it divides. One that the float rounds to 0 or to infinity throws.
+ */
+float divisor(const RequestValues & values, speech_option option) {
+    const double v = values.number(option);
+    const float f = (float) v;
+    if (v > 0 && (f == 0 || std::isinf(f))) {
+        throw Error(Fault::OutOfRange, std::string("the option ") + speech_option_name(option) + " is " + json_number(v) +
+                                           ", beyond what the sampler's float holds; give a value nearer 1",
+                    speech_option_name(option));
+    }
+    return f;
+}
+
+/**
+ * One stack's sampling as the request sets it, from the file's where the request sets none. top_k, top_p and the
+ * temperature of a stack that does not draw are refused, as transformers' generate() leaves them unused.
+ */
+SamplingParams sampling(const RequestValues & values, const SamplingOptions & o, SamplingParams p) {
+    p.greedy = !values.boolean(o.do_sample);
+    for (speech_option unused : {o.top_k, o.top_p, o.temperature}) {
+        if (p.greedy && values.given(unused)) {
+            throw Error(Fault::InvalidArgument, std::string("the option ") + speech_option_name(unused) + " applies only when " +
+                                                    speech_option_name(o.do_sample) + " is true; leave it out or set " +
+                                                    speech_option_name(o.do_sample),
+                        speech_option_name(unused));
+        }
+    }
+    p.top_k = (int) values.integer(o.top_k);
+    p.top_p = (float) values.number(o.top_p);
+    p.temperature = divisor(values, o.temperature);
+    if (o.repetition_penalty) p.repetition_penalty = divisor(values, *o.repetition_penalty);
+    return p;
+}
+
+/** The declarations of one stack's options, its defaults the file's. */
+std::vector<OptionSpec> sampling_specs(const SamplingOptions & o, const SamplingParams & file) {
+    std::vector<OptionSpec> specs = {
+        {o.do_sample, false, true, !file.greedy},
+        {o.top_k, false, true, (int64_t) file.top_k, 0, (double) INT_MAX},
+        {o.top_p, false, true, decimal(file.top_p), 0, 1},
+        {o.temperature, false, true, decimal(file.temperature), 0, INFINITY, true},
+    };
+    if (o.repetition_penalty) specs.push_back({*o.repetition_penalty, false, true, decimal(file.repetition_penalty), 0, INFINITY, true});
+    return specs;
 }
 
 class Qwen3TtsEngine : public Engine {
@@ -26,6 +98,8 @@ public:
         r.speaker = values.string(SPEECH_OPT_VOICE);
         r.language = values.string(SPEECH_OPT_LANGUAGE);
         r.seed = (uint64_t) values.integer(SPEECH_OPT_SEED);
+        r.talker = sampling(values, kTalkerOptions, synth_.generation().talker);
+        r.code_predictor = sampling(values, kCodePredictorOptions, synth_.generation().code_predictor);
         const bool capped = values.has(SPEECH_OPT_MAX_SECONDS);
         if (capped) r.max_frames = frames_within(values.number(SPEECH_OPT_MAX_SECONDS), synth_.sample_rate(), synth_.samples_per_frame());
         // Qwen3-TTS passes audio after its first frame and then every four frames, so it stops at the sink.
@@ -65,7 +139,9 @@ struct TokenCounter {
 /**
  * The table of the options Qwen3-TTS takes. The official implementation has no control of the rate or the length, and
  * changing the audio's rate afterwards would change its pitch or add a time stretch's artifacts, so it takes neither:
- * its speech ends where the talker ends it, at the request's max_seconds, or at the model's limit of frames.
+ * its speech ends where the talker ends it, at the request's max_seconds, or at the model's limit of frames. The talker
+ * and the code predictor sample as generate_custom_voice() lets a caller set, with its defaults from the file and the
+ * ranges transformers' processors take.
  */
 FamilyInfo describe_qwen3_tts(const std::shared_ptr<const ModelFile> & file) {
     const ModelFile & m = *file;
@@ -82,6 +158,9 @@ FamilyInfo describe_qwen3_tts(const std::shared_ptr<const ModelFile> & file) {
         {SPEECH_OPT_SEED, false, true, std::nullopt, 0, (double) kMaxSeed},
         {SPEECH_OPT_MAX_SECONDS, false, true, std::nullopt, 0, longest, true},
     };
+    const Generation generation(m);
+    for (const OptionSpec & spec : sampling_specs(kTalkerOptions, generation.talker)) info.options.push_back(spec);
+    for (const OptionSpec & spec : sampling_specs(kCodePredictorOptions, generation.code_predictor)) info.options.push_back(spec);
     const auto counter = std::make_shared<Lazy<TokenCounter>>(file);
     info.count_tokens = [counter](const std::string & text) { return counter->get().count(text); };
     return info;

@@ -7,8 +7,8 @@ reported and repeats it too; cancels while a request waits, while it runs, of an
 a later request then reuses; a second request under an id in flight; each error with its code and option (members the
 message does not have, values of the wrong type, out of range or not taken, a missing text, lines that are not JSON
 objects or have no id or type, the other task's messages); a peek and chunks to a synthesis model; add_voice; for
-Irodori-TTS a fixed length and the progress of a long sampler, and for Qwen3-TTS max_seconds. Writes the first answer
-to a WAV.
+Irodori-TTS a fixed length and the progress of a long sampler, and for Qwen3-TTS max_seconds and the sampling options.
+Writes the first answer to a WAV.
 
 usage: python3 tools/worker_smoke.py <out.wav> <speech> <model.gguf> [worker options...]
        A model that takes voice files needs --add-voice NAME=FILE, whose FILE add_voice adds again under another name.
@@ -148,6 +148,7 @@ if irodori:
     expect_error({"type": "synthesize", "id": "e13", "text": "あ。", "voice": voice, "max_seconds": 1}, "unsupported", "max_seconds")
     expect_error({"type": "synthesize", "id": "e14", "text": "あ。", "voice": voice, "seconds": 2, "duration_scale": 1.5},
                  "invalid_argument", "seconds")
+    expect_error({"type": "synthesize", "id": "e15", "text": "あ。", "voice": voice, "temperature": 0.5}, "unsupported", "temperature")
     pcm, end = speak("s", text="三つ目です。", seconds=1)
     assert end["samples"] <= rate, short(end)
     print(f"s: a length of 1 s gave {end['samples'] / rate:.3f} s")
@@ -167,6 +168,15 @@ else:
     pcm, end = speak("s", text=LONG, max_seconds=0.5)
     assert end["stop"] == "max_seconds" and end["samples"] <= 0.5 * rate, short(end)
     print(f"s: max_seconds 0.5 stopped it at {end['samples'] / rate:.3f} s ({end['stop']})")
+    # Neither stack draws, so the seed changes nothing; a temperature of a stack that does not draw is refused.
+    greedy = dict(text="あ。", do_sample=False, code_predictor_do_sample=False, max_seconds=2)
+    assert speak("g1", seed=1, **greedy)[0] == speak("g2", seed=2, **greedy)[0], "a request that draws nothing changed with the seed"
+    print("g1, g2: do_sample and code_predictor_do_sample false gave the same audio for the seeds 1 and 2")
+    expect_error({"type": "synthesize", "id": "e15", "text": "あ。", "voice": voice, "do_sample": False, "temperature": 0.5},
+                 "invalid_argument", "temperature")
+    expect_error({"type": "synthesize", "id": "e16", "text": "あ。", "voice": voice, "code_predictor_top_k": -1}, "out_of_range",
+                 "code_predictor_top_k")
+    expect_error({"type": "synthesize", "id": "e17", "text": "あ。", "voice": voice, "do_sample": "no"}, "invalid_argument", "do_sample")
 
 # The other task's messages: a chunk opens a recognition request answered unsupported, whose later lines are dropped.
 w.request({"type": "chunk", "id": "r", "seq": 0, "pcm": ""})

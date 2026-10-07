@@ -35,10 +35,25 @@ struct Generation {
     std::vector<bool> banned(int vocab, int32_t end_of_speech, int frames) const;
 };
 
+/** The tokens a draw picks from, by falling logit, and a weight of each in proportion to its probability. */
+struct Candidates {
+    std::vector<int32_t> tokens;
+    std::vector<double> weights;
+};
+
 /**
- * Picks a token the way transformers' generate() does: the repetition penalty on the tokens in
- * `history`, the tokens in `banned` removed, then argmax, or temperature, top-k and top-p before a
- * draw.
+ * The tokens transformers' generate() draws from and their weights: the repetition penalty on the tokens in `history`,
+ * the tokens in `banned` removed, then temperature, top-k and top-p, as its RepetitionPenalty, SuppressTokens,
+ * MinNewTokensLength, Temperature, TopK and TopP processors do in that order. Top-k keeps exactly `top_k` tokens where
+ * transformers keeps every token tied with the k-th. A penalty or a temperature that pushes the largest logit beyond a
+ * float throws an Error of its kind naming "repetition_penalty" or "temperature".
  */
-int32_t sample(std::vector<float> logits, const SamplingParams & p, const std::vector<int32_t> & history,
+Candidates candidates(std::vector<float> logits, const SamplingParams & p, const std::vector<int32_t> & history,
+                      const std::vector<bool> & banned);
+
+/**
+ * Picks a token the way transformers' generate() does: the argmax of the logits with the repetition penalty on the
+ * tokens in `history` and the tokens in `banned` removed, or a draw from candidates().
+ */
+int32_t sample(const std::vector<float> & logits, const SamplingParams & p, const std::vector<int32_t> & history,
                const std::vector<bool> & banned, std::mt19937_64 & rng);

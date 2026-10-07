@@ -237,7 +237,40 @@ typedef enum speech_option {
      * likely token at each step, which takes less time and can write another text. Taken by a model that runs more
      * than one; it has no neutral value. Added in 3.1.
      */
-    SPEECH_OPT_DECODING = 10
+    SPEECH_OPT_DECODING = 10,
+    /**
+     * "do_sample", a boolean: whether a model that predicts tokens one by one draws each from its distribution (true)
+     * or takes the most likely (false), as transformers' generate() names it. A model that has a second stack takes the
+     * same of it under the stack's name (SPEECH_OPT_CODE_PREDICTOR_DO_SAMPLE). Setting top_k, top_p or temperature of a
+     * stack that does not draw is refused when the request runs, since they would change nothing. Added in 3.1.
+     */
+    SPEECH_OPT_DO_SAMPLE = 11,
+    /** "top_k", an integer: the most likely tokens a draw keeps, 0 keeping every token. Added in 3.1. */
+    SPEECH_OPT_TOP_K = 12,
+    /**
+     * "top_p", a number: the smallest set of the most likely tokens whose probability reaches it, which a draw keeps.
+     * Added in 3.1.
+     */
+    SPEECH_OPT_TOP_P = 13,
+    /** "temperature", a number above 0: what the logits are divided by before a draw. Added in 3.1. */
+    SPEECH_OPT_TEMPERATURE = 14,
+    /**
+     * "repetition_penalty", a number above 0: what the logit of a token that the speech has already taken is divided
+     * by where it is positive, and multiplied by where it is negative, before a pick. Added in 3.1.
+     */
+    SPEECH_OPT_REPETITION_PENALTY = 15,
+    /**
+     * "code_predictor_do_sample", a boolean: do_sample of the code predictor, the second stack of a model that makes
+     * each frame of its speech as several codes, which predicts the codes after the frame's first (Qwen3-TTS). Added
+     * in 3.1.
+     */
+    SPEECH_OPT_CODE_PREDICTOR_DO_SAMPLE = 16,
+    /** "code_predictor_top_k", an integer: top_k of the code predictor. Added in 3.1. */
+    SPEECH_OPT_CODE_PREDICTOR_TOP_K = 17,
+    /** "code_predictor_top_p", a number: top_p of the code predictor. Added in 3.1. */
+    SPEECH_OPT_CODE_PREDICTOR_TOP_P = 18,
+    /** "code_predictor_temperature", a number above 0: temperature of the code predictor. Added in 3.1. */
+    SPEECH_OPT_CODE_PREDICTOR_TEMPERATURE = 19
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */

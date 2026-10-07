@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "codec.h"
@@ -21,6 +22,8 @@ struct SynthesisRequest {
     /** The frames to make at most; the model's own limit applies as well. */
     int max_frames = INT_MAX;
     uint64_t seed = 0;
+    /** How the talker and the code predictor sample, where the request sets it rather than the model file. */
+    std::optional<SamplingParams> talker, code_predictor;
 };
 
 /** How a synthesis ended: the frames it made, and whether the talker ended the speech or a limit stopped it. */
@@ -62,6 +65,8 @@ public:
     int sample_rate() const { return codec_.sample_rate(); }
     const ModelFile & model() const { return model_; }
     const PromptIds & ids() const { return ids_; }
+    /** How the model file says the official generate() samples. */
+    const Generation & generation() const { return generation_; }
     /** The frames a request makes at most. */
     int max_frames() const { return generation_.max_frames; }
     /** The samples of one frame at sample_rate(). */

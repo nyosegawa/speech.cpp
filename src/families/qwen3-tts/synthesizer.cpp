@@ -58,6 +58,19 @@ SynthesisOutcome Synthesizer::synthesize(const SynthesisRequest & r, const Audio
     const std::vector<bool> none;
     std::mt19937_64 rng(r.seed);
     const int max_frames = std::min(r.max_frames, generation_.max_frames);
+    const SamplingParams talker_sampling = r.talker.value_or(generation_.talker);
+    const SamplingParams cp_sampling = r.code_predictor.value_or(generation_.code_predictor);
+    // The code predictor's generate() starts each frame from embeddings alone, so the codes its repetition penalty sees
+    // are the frame's that it has made so far.
+    std::vector<int32_t> cp_history;
+    const auto sample_code = [&](const std::vector<float> & logits) {
+        try {
+            return sample(logits, cp_sampling, cp_history, none, rng);
+        } catch (const Error & e) {
+            // The sampler names the talker's options; the code predictor's carry its name before them.
+            throw Error(e.fault(), std::string("in the code predictor, ") + e.what(), "code_predictor_" + e.input());
+        }
+    };
 
     {
         Timer t{&st.talker};
@@ -83,7 +96,7 @@ SynthesisOutcome Synthesizer::synthesize(const SynthesisRequest & r, const Audio
     };
 
     while (frames < max_frames && !stopped) {
-        frame[0] = sample(talker_.logits(), generation_.talker, history, generation_.banned(vocab, ids_.codec_eos, frames), rng);
+        frame[0] = sample(talker_.logits(), talker_sampling, history, generation_.banned(vocab, ids_.codec_eos, frames), rng);
         if (frame[0] == ids_.codec_eos) {
             ended = true;
             break;
@@ -91,9 +104,11 @@ SynthesisOutcome Synthesizer::synthesize(const SynthesisRequest & r, const Audio
         history.push_back(frame[0]);
         {
             Timer t{&st.code_predictor};
-            frame[1] = sample(talker_.cp_begin(frame[0]), generation_.code_predictor, {}, none, rng);
+            cp_history.clear();
+            frame[1] = sample_code(talker_.cp_begin(frame[0]));
             for (int g = 1; g < n_groups - 1; g++) {
-                frame[g + 1] = sample(talker_.cp_next(g, frame[g]), generation_.code_predictor, {}, none, rng);
+                cp_history.push_back(frame[g]);
+                frame[g + 1] = sample_code(talker_.cp_next(g, frame[g]));
             }
         }
         pending.insert(pending.end(), frame.begin(), frame.end());

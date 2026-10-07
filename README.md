@@ -139,12 +139,15 @@ One parser reads every command line. Every subcommand that loads a model takes `
 for the first GPU or the CPU on a machine without one; `gpu`; `cpu`; or a name `speech devices` lists) and `--threads
 N`, the C API's load parameters. `speech tts` and `speech asr` take every request option of the C API's vocabulary
 (Options, below) as a flag of its name in kebab-case, read by the option's type: `--voice`, `--language`, `--seed`,
-`--speed`, `--seconds`, `--duration-scale`, `--steps`, `--max-seconds`, `--timestamps`, which, a boolean, is a flag
-without a value, `--prompt` and `--decoding`. A flag's value follows it or an `=` (`--seed 7`, `--seed=7`), and a
-number is read whole: `--steps 4x` is a usage error. The model refuses an option it does not take, as in the C API:
-Qwen3-TTS answers `--speed 1.5` with `speech: unsupported (speed): ...`. An argument that begins with `-`, such as a
-text, follows `--`. `speech <subcommand> --help` lists a subcommand's flags, and `speech --version` prints the release
-and the C API's version (`speech.cpp 0.7.0, C API 3.1`).
+`--speed`, `--seconds`, `--duration-scale`, `--steps`, `--max-seconds`, `--timestamps`, `--prompt`, `--decoding`,
+`--do-sample`, `--top-k`, `--top-p`, `--temperature`, `--repetition-penalty` and the code predictor's
+`--code-predictor-do-sample`, `--code-predictor-top-k`, `--code-predictor-top-p` and `--code-predictor-temperature`. A
+flag's value follows it or an `=` (`--seed 7`, `--seed=7`), and a number is read whole: `--steps 4x` is a usage error. A
+boolean option is true by its flag alone and takes `true` or `false` only after an `=` (`--timestamps`,
+`--do-sample=false`), so that the argument after it stays an argument. The model refuses an option it does not take, as
+in the C API: Qwen3-TTS answers `--speed 1.5` with `speech: unsupported (speed): ...`. An argument that begins with `-`,
+such as a text, follows `--`. `speech <subcommand> --help` lists a subcommand's flags, and `speech --version` prints the
+release and the C API's version (`speech.cpp 0.7.0, C API 3.1`).
 
 | Exit | Meaning |
 |---|---|
@@ -161,6 +164,8 @@ to stderr. On Windows the command line is read as UTF-8, and stdin and stdout ar
 ```
 speech tts MODEL -o FILE|- [options] [TEXT]
   --voice NAME --language TAG --seed N --speed X --seconds S --duration-scale X --steps N --max-seconds S
+  --do-sample[=false] --top-k N --top-p X --temperature X --repetition-penalty X
+  --code-predictor-do-sample[=false] --code-predictor-top-k N --code-predictor-top-p X --code-predictor-temperature X
   --add-voice NAME=FILE       add a voice from a voice file or a WAVE file before speaking; repeatable
   --device NAME --threads N
   -v                          report the model, and each request's seed and stop reason
@@ -482,6 +487,15 @@ nothing else.
 | `timestamps` | bool | false | not taken | not taken | default false | not taken |
 | `prompt` | string | `""` | not taken | not taken | not taken | default `""`, any text; steers |
 | `decoding` | string | none | not taken | not taken | reazonspeech-nemo-v2: default `beam`, or `greedy`; steers. The parakeet models: not taken | not taken |
+| `do_sample` | bool | none | default `qwen3-tts.generation.talker.do_sample` (true); steers | not taken | not taken | not taken |
+| `top_k` | int | none | 0 (every token) to 2147483647, default `qwen3-tts.generation.talker.top_k` (50) | not taken | not taken | not taken |
+| `top_p` | float | none | 0 to 1, default `qwen3-tts.generation.talker.top_p` (1) | not taken | not taken | not taken |
+| `temperature` | float | none | above 0, default `qwen3-tts.generation.talker.temperature` (0.9) | not taken | not taken | not taken |
+| `repetition_penalty` | float | none | above 0, default `qwen3-tts.generation.talker.repetition_penalty` (1.05) | not taken | not taken | not taken |
+| `code_predictor_do_sample` | bool | none | default `qwen3-tts.generation.code_predictor.do_sample` (true); steers | not taken | not taken | not taken |
+| `code_predictor_top_k` | int | none | 0 (every token) to 2147483647, default `qwen3-tts.generation.code_predictor.top_k` (50) | not taken | not taken | not taken |
+| `code_predictor_top_p` | float | none | 0 to 1, default `qwen3-tts.generation.code_predictor.top_p` (1) | not taken | not taken | not taken |
+| `code_predictor_temperature` | float | none | above 0, default `qwen3-tts.generation.code_predictor.temperature` (0.9) | not taken | not taken | not taken |
 
 A value at an option's neutral value is accepted by every model; any other value of an option a model does not take
 is `unsupported`, and an option marked "none" has no neutral value. A string option's value must be one of its
@@ -494,6 +508,17 @@ hold (Qwen3-ASR, below). `decoding` is how a recognition chooses its tokens: `be
 reazonspeech-nemo-v2's checkpoint configures and NeMo's `transcribe()` runs, or `greedy`, the likeliest token at each
 step as NeMo's greedy decoding takes it, which computes a fifth of the beam search's graphs and can write another text
 (FastConformer, below); its choices are compared with case. A model with one decoding does not take it.
+
+`do_sample`, `top_k`, `top_p`, `temperature` and `repetition_penalty` are the settings of transformers' `generate()`
+under its names, for a model that predicts tokens one by one: whether a token is drawn from the distribution or the
+most likely one taken, the most likely tokens a draw keeps, the smallest set of them whose probability reaches `top_p`,
+what the logits are divided by, and what the logit of a token already taken is divided by where it is positive and
+multiplied by where it is negative. A model with a second stack takes them for it under the stack's name: Qwen3-TTS's
+talker predicts the first code of each frame of its speech, and its code predictor the frame's other 15, which the
+official package sets with `subtalker_dosample`, `subtalker_top_k`, `subtalker_top_p` and `subtalker_temperature`. Its
+repetition penalty is none of the options: the official package sets none, and the file's value, 1, applies. The
+defaults are the official ones, which the model file holds, so a request that sets none of them speaks as it did before
+they were options.
 
 What only the whole request shows is refused when the request runs, before any work, naming the option:
 
@@ -511,6 +536,14 @@ What only the whole request shows is refused when the request runs, before any w
   `audio`. Qwen3-ASR pads audio under 0.5 s with zeros and takes any.
 - Qwen3-ASR, a `prompt` whose tokens, with those of the longest part of the audio (1200 s at most, 13 tokens a second)
   and the 4096 the model may write, are more than its decoder's 65536 positions: `out_of_range`, option `prompt`.
+- Qwen3-TTS, `top_k`, `top_p` or `temperature` set while `do_sample` is false, which transformers leaves unused:
+  `invalid_argument`, naming the option; the same of the code predictor's.
+- Qwen3-TTS, a `temperature` or `repetition_penalty` that the sampler's float rounds to 0 or to infinity (below about
+  1e-45 or above about 3.4e38): `out_of_range`, naming the option.
+
+One more failure shows only while the speech is made: a `temperature` or `repetition_penalty` so far from 1 that it
+pushes a logit beyond the range of a float (1e-40 does) ends the request with `out_of_range`, naming the option, where
+the official package fails on the same values with an error of PyTorch's.
 
 ### Model information as JSON
 
@@ -544,7 +577,16 @@ server's model object as `speech`, so every program that shows a model shows the
     {"name": "voice", "type": "string", "required": true, "steers": true, "choices": ["aiden", "dylan", "eric", "ono_anna", "ryan", "serena", "sohee", "uncle_fu", "vivian"]},
     {"name": "language", "type": "string", "required": false, "steers": true, "default": "auto", "choices": ["de", "en", "es", "fr", "it", "ja", "ko", "pt", "ru", "zh"]},
     {"name": "seed", "type": "int", "required": false, "steers": true, "minimum": 0, "maximum": 9007199254740991},
-    {"name": "max_seconds", "type": "float", "required": false, "steers": true, "exclusive_minimum": 0, "maximum": 655.36}
+    {"name": "max_seconds", "type": "float", "required": false, "steers": true, "exclusive_minimum": 0, "maximum": 655.36},
+    {"name": "do_sample", "type": "bool", "required": false, "steers": true, "default": true},
+    {"name": "top_k", "type": "int", "required": false, "steers": true, "default": 50, "minimum": 0, "maximum": 2147483647},
+    {"name": "top_p", "type": "float", "required": false, "steers": true, "default": 1, "minimum": 0, "maximum": 1},
+    {"name": "temperature", "type": "float", "required": false, "steers": true, "default": 0.9, "exclusive_minimum": 0},
+    {"name": "repetition_penalty", "type": "float", "required": false, "steers": true, "default": 1.05, "exclusive_minimum": 0},
+    {"name": "code_predictor_do_sample", "type": "bool", "required": false, "steers": true, "default": true},
+    {"name": "code_predictor_top_k", "type": "int", "required": false, "steers": true, "default": 50, "minimum": 0, "maximum": 2147483647},
+    {"name": "code_predictor_top_p", "type": "float", "required": false, "steers": true, "default": 1, "minimum": 0, "maximum": 1},
+    {"name": "code_predictor_temperature", "type": "float", "required": false, "steers": true, "default": 0.9, "exclusive_minimum": 0}
   ],
   "file_bytes": 1213534464,
   "weight_bytes": 1208175044,
@@ -814,7 +856,7 @@ A speech request is a JSON object:
 | `model` | the loaded model's `id` from `/v1/models`, or left out. Any other model is a 404 (`model_not_found`) |
 | `response_format` | `wav` (the default) or `pcm`. OpenAI's default is `mp3`, which speech.cpp does not encode; `mp3`, `opus`, `aac` and `flac` are refused |
 | `stream_format` | `audio` (the default) or `sse`, which needs `pcm` |
-| `voice`, `language`, `seed`, `speed`, `seconds`, `duration_scale`, `steps`, `max_seconds`, `timestamps`, `prompt`, `decoding` | every option of the vocabulary by its name (Options, above), of the option's type, which the model checks: `voice` is one of the model's voices, a Qwen3-TTS speaker or a voice of `--add-voice`, and required; `speed` and `voice` are OpenAI's, the others speech.cpp's own. A request without `seed` gets one drawn from 0 to 2^53 - 1 |
+| `voice`, `language`, `seed`, `speed`, `seconds`, `duration_scale`, `steps`, `max_seconds`, `timestamps`, `prompt`, `decoding`, `do_sample`, `top_k`, `top_p`, `temperature`, `repetition_penalty`, `code_predictor_do_sample`, `code_predictor_top_k`, `code_predictor_top_p`, `code_predictor_temperature` | every option of the vocabulary by its name (Options, above), of the option's type, which the model checks: `voice` is one of the model's voices, a Qwen3-TTS speaker or a voice of `--add-voice`, and required; `speed` and `voice` are OpenAI's, the others speech.cpp's own. A request without `seed` gets one drawn from 0 to 2^53 - 1 |
 
 A member speech.cpp does not take, OpenAI's `instructions` among them, is refused rather than ignored; a member set to
 `null` counts as left out.
@@ -976,7 +1018,8 @@ not add artifacts at the frame boundaries. Implemented:
 - the 12Hz codec decoder (RVQ dequantization, sliding-window transformer, ConvNeXt upsampling and the
   SnakeBeta decoder), with each stage's causal state carried from one call to the next,
 - the Qwen2 byte-level BPE tokenizer and the CustomVoice prompt,
-- sampling as in transformers' `generate()` (temperature, top-k, top-p, repetition penalty).
+- sampling as in transformers' `generate()` (temperature, top-k, top-p, repetition penalty), with the official defaults
+  unless a request sets the talker's or the code predictor's own (Options, above).
 
 Voice cloning, VoiceDesign, the codec encoder and the speaker encoder are out of scope. The model has no
 control of its speaking rate or its length, so a request with a speed other than 1 or with a length is
@@ -1028,8 +1071,21 @@ of every stage; the check tools compare against them.
 | Codec decoder, one frame at a time against whole, CPU | 133 dB SNR |
 | Codec decoder on Metal | error at -63 dB of the voice |
 | Talker and code predictor, F32, teacher forcing (`talker-check`) | argmax matches on every frame; greedy decode gives the same 54 frames |
+| Sampling against transformers' logits processors as the official `generate()` builds them (`sampler-check`) | on 13 cases of the 1.7B dump's logits, 55 rows of the talker or 300 of the code predictor each, with the official settings and others: the same tokens kept in every row and their probabilities within 6e-15; the same greedy pick in every row; the settings of both files equal to `generation_config.json`'s |
 | Tokenizer (`tokenizer-check`) | encodes 27 texts, 8 of which NFC changes, and decodes 1191 sequences of ids as the model's `tokenizer.json` does |
 | Talker's prompt in blocks of 512 against one block, F32 (`qwen3-decoder-check`) | the same keys, values and logits on the CPU (5137 rows) and on Metal with flash attention (3665 rows); with the two products forced on Metal, 2.3e-3 at most for a cached row and 1.5e-3 for the logits, with the same argmax (3665 rows) |
+
+`reference/qwen3-tts/sampling_cases.py` runs transformers' own logits processors, as `generate()` builds them for the
+talker and for the code predictor, on the logits of a dump; `sampler-check` reads the model file for the official
+settings and the codes a frame may not take. A draw is not compared, since `torch.multinomial` draws with PyTorch's own
+generator; the sampler draws from the same tokens and probabilities with the request's seed:
+
+```sh
+cd reference/qwen3-tts
+uv run python sampling_cases.py <Qwen3-TTS 1.7B checkpoint dir> out/1.7b-ja-weather out/sampling
+cd ../..
+build/sampler-check <model.gguf> reference/qwen3-tts/out/sampling
+```
 
 The tokenizer follows the pre-tokenizer of the `tokenizer.json` that ships with the model. The official
 package loads it through transformers 4.57.3 with `fix_mistral_regex=True`, which swaps in Mistral's
@@ -1702,13 +1758,13 @@ From the checkpoint's `config.json` (`talker_config`, its `code_predictor_config
 | `qwen3-tts.dialect_language` | string | the language in which, as with `auto`, a voice with a dialect speaks it (`zh`) | the official prompt's `language.lower() in ["chinese", "auto"]` through the table of codes |
 | `qwen3-tts.generation.min_frames` | u32 | frames before the end of speech may be sampled (2) | the official `generate()`'s `min_new_tokens` |
 | `qwen3-tts.generation.max_frames` | u32 | the model's limit in frames (8192) | `generation_config.json` `max_new_tokens` |
-| `qwen3-tts.generation.talker.do_sample` | bool | | `generation_config.json` `do_sample` |
-| `qwen3-tts.generation.talker.temperature`, `top_p`, `repetition_penalty` | f32 | | `generation_config.json` |
-| `qwen3-tts.generation.talker.top_k` | u32 | | `generation_config.json` |
-| `qwen3-tts.generation.code_predictor.do_sample` | bool | | `subtalker_dosample` |
-| `qwen3-tts.generation.code_predictor.temperature`, `top_p` | f32 | | `subtalker_temperature`, `subtalker_top_p` |
-| `qwen3-tts.generation.code_predictor.top_k` | u32 | | `subtalker_top_k` |
-| `qwen3-tts.generation.code_predictor.repetition_penalty` | f32 | | `code_predictor_config.repetition_penalty`, which the code predictor's `generate()` uses since the official code passes none |
+| `qwen3-tts.generation.talker.do_sample` | bool | the default of the option `do_sample` | `generation_config.json` `do_sample` |
+| `qwen3-tts.generation.talker.temperature`, `top_p`, `repetition_penalty` | f32 | the defaults of the options of the same names | `generation_config.json` |
+| `qwen3-tts.generation.talker.top_k` | u32 | the default of the option `top_k` | `generation_config.json` |
+| `qwen3-tts.generation.code_predictor.do_sample` | bool | the default of the option `code_predictor_do_sample` | `subtalker_dosample` |
+| `qwen3-tts.generation.code_predictor.temperature`, `top_p` | f32 | the defaults of `code_predictor_temperature` and `code_predictor_top_p` | `subtalker_temperature`, `subtalker_top_p` |
+| `qwen3-tts.generation.code_predictor.top_k` | u32 | the default of `code_predictor_top_k` | `subtalker_top_k` |
+| `qwen3-tts.generation.code_predictor.repetition_penalty` | f32 | the code predictor's repetition penalty on the codes of the frame it has made, which no option sets | `code_predictor_config.repetition_penalty`, which the code predictor's `generate()` uses since the official code passes none |
 | `qwen3-tts.tokenizer.tokens` | [string] | the BPE vocabulary in id order | `vocab.json` and `tokenizer_config.json` `added_tokens_decoder` |
 | `qwen3-tts.tokenizer.merges` | [string] | merges in rank order | `merges.txt` |
 | `qwen3-tts.codec.num_quantizers` | u32 | must equal `talker.num_code_groups` | `decoder_config.num_quantizers` |
