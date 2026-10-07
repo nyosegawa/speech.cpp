@@ -69,6 +69,10 @@ The alternatives were turned down:
   and Qwen3-ASR's names are not Whisper's for every language (`Filipino`, where Whisper writes `tagalog`).
 - `""` in `verbose_json` for no language, which the schema's required member would have. It names no language, and a
   client cannot tell it from one.
+- `languages` in the `json` answer, as `gpt-transcribe`'s carries it. Given by every model, a FastConformer answer's
+  empty list would say that no language was detected where none was looked for; given only by a model that writes
+  languages, it would need a fact of the model information saying which do. The default answer stays `{"text"}`, and a
+  client that wants the language asks for `verbose_json`, which OpenAI's SDK reads.
 
 ## Consequences
 
