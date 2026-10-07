@@ -26,6 +26,7 @@ struct speech_result {
     uint64_t samples = 0;
     std::string text;
     std::vector<TimedText> segments, tokens;
+    std::vector<std::string> languages;
 };
 
 struct speech_request {
@@ -392,6 +393,7 @@ speech_status speech_transcribe(speech_request * request) {
                 result->segments = std::move(found.segments);
                 result->tokens = std::move(found.tokens);
                 result->stop = found.stop;
+                result->languages = std::move(found.languages);
             }
         });
         if (run.stopped()) result->stop = SPEECH_STOP_CANCELLED;
@@ -435,6 +437,14 @@ size_t speech_result_token_count(const speech_result * result) {
 
 speech_status speech_result_token(const speech_result * result, size_t index, double * start, double * end, const char ** text) {
     return timed_text(result, result ? &result->tokens : nullptr, index, start, end, text, "token");
+}
+
+size_t speech_result_language_count(const speech_result * result) {
+    return result ? result->languages.size() : 0;
+}
+
+const char * speech_result_language(const speech_result * result, size_t index) {
+    return result && index < result->languages.size() ? result->languages[index].c_str() : nullptr;
 }
 
 }  // extern "C"

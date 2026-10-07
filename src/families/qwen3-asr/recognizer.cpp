@@ -6,6 +6,7 @@
 
 #include "error.h"
 #include "layout.h"
+#include "log.h"
 
 namespace qwen3_asr {
 
@@ -55,19 +56,24 @@ Recognition Recognizer::recognize(const std::vector<float> & samples, const Reco
     for (size_t k = 0; k < n_parts; k++) {
         const std::vector<float> part(audio.begin() + (std::ptrdiff_t) bounds[k], audio.begin() + (std::ptrdiff_t) bounds[k + 1]);
         PartReport report;
-        const std::optional<std::string> text = recognize_part(part, prompts[k], request.language.has_value(),
-                                                                [&](double done) { return progress((k + done) / n_parts); }, report);
-        if (!text) return {};
+        const std::optional<Parsed> parsed =
+            recognize_part(part, prompts[k], request.language, [&](double done) { return progress((k + done) / n_parts); }, report);
+        if (!parsed) return {};
         // qwen-asr joins the texts of the parts without a separator.
-        out.text += *text;
+        out.text += parsed->text;
+        if (parsed->language && (out.languages.empty() || out.languages.back() != *parsed->language)) out.languages.push_back(*parsed->language);
+        if (!parsed->other_language.empty()) {
+            log_message(LogLevel::Warn, "Qwen3-ASR wrote the language \"" + parsed->other_language +
+                                            "\", which is none of the languages its file names; the result leaves it out");
+        }
         out.limited = out.limited || report.limited;
         if (parts) parts->push_back(std::move(report));
     }
     return out;
 }
 
-std::optional<std::string> Recognizer::recognize_part(const std::vector<float> & part, const PromptIds & prompt, bool forced,
-                                                      const std::function<bool(double)> & progress, PartReport & report) {
+std::optional<Parsed> Recognizer::recognize_part(const std::vector<float> & part, const PromptIds & prompt, std::optional<size_t> forced,
+                                                 const std::function<bool(double)> & progress, PartReport & report) {
     const int64_t n = (int64_t) prompt.ids.size();
     std::vector<float> embeds;
     {
@@ -101,7 +107,7 @@ std::optional<std::string> Recognizer::recognize_part(const std::vector<float> &
     if (!generation) return std::nullopt;
     report.ids = generation->ids;
     report.limited = generation->limited;
-    return transcript_.text(tokenizer_.decode(generation->ids), forced);
+    return transcript_.parse(tokenizer_.decode(generation->ids), forced);
 }
 
 }  // namespace qwen3_asr

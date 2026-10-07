@@ -40,10 +40,17 @@ std::vector<int32_t> token_ids(const ModelFile & m, const std::string & key, siz
 std::vector<TensorSpec> tensors(const ModelFile & m) {
     check_model_keys(m, "recognition", "steers");
     const std::string p = "qwen3-asr.";
+    // The parse compares the prefix and the names with what the model writes in ASCII, where its case mapping is Python's,
+    // and a name with what normalize_language_name() makes of it: its first letter raised and the others lowered.
+    const auto ascii = [](const std::string & s) { return std::all_of(s.begin(), s.end(), [](char c) { return (unsigned char) c < 0x80; }); };
+    const auto capital = [](char c) { return c >= 'A' && c <= 'Z'; };
+    const auto normalized = [&](const std::string & name) {
+        return !name.empty() && ascii(name) && !(name[0] >= 'a' && name[0] <= 'z') && std::none_of(name.begin() + 1, name.end(), capital);
+    };
     const std::vector<std::string> names = m.str_array(p + "language_names");
-    require(names.size() == m.str_array("general.languages").size() &&
-                std::none_of(names.begin(), names.end(), [](const std::string & name) { return name.empty(); }),
-            m, "qwen3-asr.language_names does not have one name per language of general.languages");
+    require(names.size() == m.str_array("general.languages").size() && std::all_of(names.begin(), names.end(), normalized), m,
+            "qwen3-asr.language_names does not have one name per language of general.languages, in ASCII with only its first "
+            "letter a capital");
 
     const int n_fft = m.size(p + "frontend.n_fft"), mels = m.size(p + "frontend.n_mels");
     m.size(p + "frontend.hop_length");
@@ -75,7 +82,8 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
     const int vocab = m.size(p + "decoder.vocab_size");
     const int positions = m.size(p + "decoder.max_position_embeddings");
 
-    for (const char * key : {"before_context", "before_audio", "after_audio", "language_prefix"}) m.str(p + "prompt." + key);
+    for (const char * key : {"before_context", "before_audio", "after_audio"}) m.str(p + "prompt." + key);
+    require(ascii(m.str(p + "prompt.language_prefix")), m, "qwen3-asr.prompt.language_prefix is not ASCII");
     m.size(p + "output.repetition_threshold");
     m.size(p + "output.repetition_max_period");
 

@@ -58,10 +58,10 @@ extern "C" {
 /**
  * The minor version of this API. It rises when a function, an option or an enum value is added, and returns to 0
  * when the major version rises. A program built against minor version m runs against a library of the same major
- * version and a minor version of m or more. Version 3.0 is first released with speech.cpp 0.7.0, and all that this
- * header declares, the option prompt included, belongs to it.
+ * version and a minor version of m or more. Version 3.0 is first released with speech.cpp 0.7.0, the option prompt
+ * included, and a declaration added since says the version that added it.
  */
-#define SPEECH_API_VERSION_MINOR 0
+#define SPEECH_API_VERSION_MINOR 1
 
 /** The SPEECH_API_VERSION_MAJOR the library was built with, for a caller that loads it at run time. */
 SPEECH_API int speech_api_version_major(void);
@@ -755,6 +755,24 @@ SPEECH_API size_t speech_result_token_count(const speech_result * result);
  */
 SPEECH_API speech_status speech_result_token(const speech_result * result, size_t index, double * start, double * end,
                                              const char ** text);
+
+/**
+ * The number of languages a recognition heard: those the model wrote before its text, or the language a request forced
+ * on a model that the language steers, which the model's prompt writes for it. 0 for a synthesis, a cancelled request,
+ * a model that writes no language (FastConformer, whose parakeet model of many languages tells them apart without
+ * writing any), audio in which the model heard no speech (Qwen3-ASR's language None, or nothing written after a forced
+ * language), and a name the model wrote that is none of its languages, which a warning in the log reports. A
+ * recognition of audio that the model takes in parts (Qwen3-ASR past 1200 s) has the languages of its parts in the order
+ * of the audio, one for each run of parts of the same language, as qwen-asr's merge_languages() merges them; one of a
+ * single part has one at most. Added in 3.1.
+ */
+SPEECH_API size_t speech_result_language_count(const speech_result * result);
+
+/**
+ * The language at `index` as a BCP 47 tag, one of the model's languages as speech_model_info_language() gives them
+ * ("ja", "yue"), or NULL past the last. Added in 3.1.
+ */
+SPEECH_API const char * speech_result_language(const speech_result * result, size_t index);
 
 #ifdef __cplusplus
 }

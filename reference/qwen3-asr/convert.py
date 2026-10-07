@@ -162,10 +162,21 @@ repetition_threshold = inspect.signature(utils.detect_and_fix_repetitions).param
 [repetition_max_period] = [int(n) for n in re.findall(r"def fix_pattern_repeats\(s, thresh, max_len=(\d+)\)", repetitions)]
 assert "text = fix_pattern_repeats(text, threshold)" in repetitions
 # The text of the output is what follows <asr_text>, stripped, whether the model wrote a language or None for audio
-# without speech, and the whole output when the language was forced; the C++ parses it so, and reports no language.
+# without speech, and the whole output when the language was forced; the C++ parses it so.
 for raw, forced, parsed in (("language None<asr_text>", None, ""), ("language None<asr_text> x ", None, "x"),
                             (" language Japanese<asr_text>\u3000x\n", None, "x"), ("x<asr_text>y", "Japanese", "x<asr_text>y")):
     assert utils.parse_asr_output(raw, user_language=forced)[1] == parsed, raw
+# The language of the output is the forced one, or none where the part before <asr_text> holds "language none" in any
+# case, which the C++ holds as the parse's own text, or else the name on its first line that begins with the prefix in
+# any case, as normalize_language_name() writes it; the C++ gives it the tag whose name in qwen3-asr.language_names it
+# is, and qwen3-asr-decoder-check compares it with the parse of parse_cases.py's outputs.
+parse = inspect.getsource(utils.parse_asr_output)
+for code in ('if "language none" in meta_lower:', "for line in meta_part.splitlines():", "if low.startswith(_LANG_PREFIX):",
+             "val = line[len(_LANG_PREFIX):].strip()", "lang = normalize_language_name(val)"):
+    assert code in parse, f"parse_asr_output() no longer holds {code}"
+assert "return s[:1].upper() + s[1:].lower()" in inspect.getsource(utils.normalize_language_name)
+# The C++ compares the prefix and the names in ASCII, where its case mapping is Python's.
+assert utils._LANG_PREFIX.isascii() and utils._LANG_PREFIX == utils._LANG_PREFIX.lower()
 
 # Greedy decoding to MAX_NEW_TOKENS, stopping at any of the generation configuration's end tokens.
 assert not generation["do_sample"] and generation.get("repetition_penalty", 1.0) == 1.0
@@ -179,6 +190,8 @@ eos_ids = list(generation["eos_token_id"])
 # (fil).
 names = processing_qwen3_asr.LANGUAGE_CODE_TO_NAME
 assert sorted(names.values()) == sorted(config["support_languages"]) == sorted(utils.SUPPORTED_LANGUAGES)
+# A name the model writes is parsed as normalize_language_name() writes it, so each name is written so.
+assert all(name.isascii() and utils.normalize_language_name(name) == name for name in names.values())
 tags = sorted(names)
 assert all(re.fullmatch("[a-z]{2,3}", tag) for tag in tags)
 assert sorted(names[tag] for tag in tags if len(tag) == 3) == ["Cantonese", "Filipino"], "a language has a code longer than its shortest"

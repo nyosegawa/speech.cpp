@@ -68,15 +68,19 @@ struct TranscriptionRequest {
     std::string format = "json";
     /** The language, the prompt, and timestamps for verbose_json. */
     std::vector<RequestOption> options;
+    /** Whether the options set timestamps, so that the answer carries the segments. */
+    bool timestamps = false;
 };
 
 /**
  * Reads a create transcription request from the parts of its form: "file", a WAV file, its channels averaged;
  * "model"; "language"; "prompt", the option prompt; "response_format"; and "timestamp_granularities[]", "segment"
- * alone, with verbose_json. A member it does not have is refused, and so is one given twice but
- * timestamp_granularities[]. Anything it cannot read throws an ApiError.
+ * alone, with verbose_json. verbose_json sets the option timestamps for a model that `gives_times`, and for any model
+ * when the request names a granularity, which a model without times then refuses. A member it does not have is
+ * refused, and so is one given twice but timestamp_granularities[]. Anything it cannot read throws an ApiError.
  */
-TranscriptionRequest read_transcription_request(bool multipart, const std::vector<FormPart> & parts, const std::string & model_name);
+TranscriptionRequest read_transcription_request(bool multipart, const std::vector<FormPart> & parts, const std::string & model_name,
+                                                bool gives_times);
 
 /** A speech.audio.delta event with a chunk of 16-bit PCM. */
 std::string sse_delta(const std::string & pcm);
@@ -94,10 +98,12 @@ std::string sse_error(const ApiError & e);
 std::string transcription_json(const std::string & text);
 
 /**
- * A transcription in OpenAI's verbose_json form: the task, the audio's duration in seconds, the text and the segments.
- * The members of OpenAI's segment that the recognizers have no value for (seek, tokens, temperature, avg_logprob,
- * compression_ratio, no_speech_prob) are left out rather than made up.
+ * A transcription in OpenAI's verbose_json form: the task; the language, the tag of the language the model heard, or
+ * the tags joined with commas where it heard several in the parts of long audio, as qwen-asr joins their names; the
+ * audio's duration in seconds; the text; and with `timestamps` the segments. A value the recognizer does not give is
+ * left out rather than made up: the language where the result has none, and the members of OpenAI's segment the
+ * recognizers have no value for (seek, tokens, temperature, avg_logprob, compression_ratio, no_speech_prob).
  */
-std::string transcription_verbose_json(const speech_result * result, double duration);
+std::string transcription_verbose_json(const speech_result * result, double duration, bool timestamps);
 
 }  // namespace openai

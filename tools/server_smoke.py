@@ -10,9 +10,11 @@ input, a format it does not give, a body that is not JSON) and the library's map
 take, out of range or not taken, an empty or too long input, a voice left out), on a wav and on a stream. For a
 recognition model: json and text with X-Speech-Stop for each dump of reference/fastconformer/dump.py or
 reference/qwen3-asr/dump.py, each other request a Qwen3-ASR dump holds with its language and its prompt as form fields,
-verbose_json with its segments and a segment granularity where the model takes timestamps and its refusal where it does
-not, WAV at three times the model's rate, and the errors of a file that is not WAV or cannot be read, a language, a
-prompt, a member and a granularity it does not take, and audio the library cannot take.
+json without any member but the text, verbose_json of each request with the language qwen-asr parsed by its tag or
+without one (FastConformer, audio without speech), and where the model takes timestamps with its segments, the same
+with a segment granularity, and that granularity's refusal where it does not; WAV at three times the model's rate, and
+the errors of a file that is not WAV or cannot be read, a language, a prompt, a member and a granularity it does not
+take, and audio the library cannot take.
 
 The audio goes as 16-bit samples, which move the near-silent input of reference/qwen3-asr/dump.py far enough to change
 the text a forced language makes of it; leave that dump out.
@@ -219,31 +221,41 @@ else:
         samples = read_npy(os.path.join(d, "audio.npy"))
         wav = wav_file(samples, rate)
         requests = dump_requests(speech, model, d)
-        [(_, _, want)] = [r for r in requests if r[0] == "auto"]
+        [(_, _, want, _)] = [r for r in requests if r[0] == "auto"]
         if want and not first:
             first = (wav, want, samples)
         status, headers, body = transcribe([("model", info["name"])], [("file", name + ".wav", wav)])
         assert status == 200 and json.loads(body) == {"text": want} and headers["x-speech-stop"] == "complete", (name, body)
         status, headers, body = transcribe([("response_format", "text")], [("file", name + ".wav", wav)])
         assert status == 200 and headers["content-type"].startswith("text/plain") and body.decode() == want, (name, body)
-        for request, members, want_request in requests:
+        # verbose_json carries the language the model heard, the tags joined with commas, and leaves it out where there is
+        # none; it carries segments where the model gives times, whose granularity is OpenAI's default.
+        for request, members, want_request, want_languages in requests:
             if request != "auto":
                 status, _, body = transcribe(list(members.items()), [("file", name + ".wav", wav)])
                 assert status == 200 and json.loads(body) == {"text": want_request}, (name, request, body)
+            status, _, body = transcribe(list(members.items()) + [("response_format", "verbose_json")], [("file", name + ".wav", wav)])
+            verbose = json.loads(body)
+            want_members = {"task", "duration", "text"} | ({"language"} if want_languages else set())
+            want_members |= {"segments"} if "timestamps" in takes else set()
+            assert status == 200 and set(verbose) == want_members and verbose["task"] == "transcribe", (name, request, body)
+            assert verbose["text"] == want_request and verbose.get("language") == (",".join(want_languages) or None), (name, request, body)
+            assert abs(verbose["duration"] - len(samples) / rate) < 1e-9, verbose["duration"]
         verbose_form = [("response_format", "verbose_json"), ("timestamp_granularities[]", "segment")]
         if "timestamps" not in takes:
             expect_error(transcribe(verbose_form, [("file", name + ".wav", wav)]), 400, "unsupported_parameter", "timestamps",
-                         f"{name}: verbose_json to a model without timestamps")
-            print(f"{name}: json and text give the dump's text and stop, and each of its {len(requests)} requests its text")
+                         f"{name}: a segment granularity to a model without timestamps")
+            print(f"{name}: json and text give the dump's text and stop, and each of its {len(requests)} requests its text, and verbose_json "
+                  f"its text and language ({','.join(requests[0][3]) or 'none'}) without segments")
             continue
         status, _, body = transcribe(verbose_form, [("file", name + ".wav", wav)])
-        verbose = json.loads(body)
-        assert status == 200 and verbose["task"] == "transcribe" and verbose["text"] == want, body
-        assert abs(verbose["duration"] - len(samples) / rate) < 1e-9, verbose["duration"]
-        segments = verbose["segments"]
+        granular = json.loads(body)
+        assert status == 200 and granular == verbose, (body, verbose)
+        segments = granular["segments"]
         assert [s["id"] for s in segments] == list(range(len(segments))) and "".join(s["text"] for s in segments) == want, segments
         assert all(set(s) == {"id", "start", "end", "text"} and 0 <= s["start"] <= s["end"] for s in segments), segments
-        print(f"{name}: json, text and verbose_json give the dump's text and stop, {len(segments)} segments joining into it")
+        print(f"{name}: json, text and verbose_json give the dump's text and stop, verbose_json no language and {len(segments)} segments joining "
+              f"into it, with or without a segment granularity")
     wav, want, samples = first
     status, _, body = transcribe([], [("file", "x.wav", wav_file([x for x in samples for _ in range(3)], rate * 3))])
     assert status == 200, body

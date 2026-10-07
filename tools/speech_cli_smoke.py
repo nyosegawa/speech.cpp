@@ -9,10 +9,11 @@ content and through a pipe into cat, where the header cannot be written again in
 0xFFFFFFFF; that nothing but the WAVE reaches stdout and a failed run leaves no file; for Qwen3-TTS a stop at
 --max-seconds reported on stderr; and with --reference a voice file made by `speech voice` that `speech tts` speaks
 with. For a recognition model: `speech asr` on WAVE files of the dumps of reference/fastconformer/dump.py or
-reference/qwen3-asr/dump.py against the worker's text of the same samples, as text and as JSON with the stop, and where
-the model takes timestamps as text with --timestamps one line per segment and as JSON with them, the segments and tokens
-the worker's; and for a dump that holds requests with a forced language and a prompt, `speech asr --language
---prompt` against the worker's text of the same request.
+reference/qwen3-asr/dump.py against the worker's text of the same samples, as text and as JSON with the stop and the
+languages, the one qwen-asr parsed or none, and where the model takes timestamps as text with --timestamps one line per
+segment and as JSON with them, the segments and tokens the worker's; and for a dump that holds requests with a forced
+language and a prompt, `speech asr --language --prompt` against the worker's text of the same request, and as JSON its
+languages.
 
 usage: python3 tools/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav] [-- load options...]
 """
@@ -219,25 +220,35 @@ else:
         return w.terminal(id, "end")
 
     ends = [worker_end(str(i), pcm, **timed) for i, pcm in enumerate(pcms)]
+    requests = [dump_requests(speech, model, d) for d in dumps]
+    # The worker's languages of each dump are the ones qwen-asr parsed, and the member is left out where there are none.
+    assert [e.get("languages", []) for e in ends] == [r[0][3] for r in requests] and all(e.get("languages") != [] for e in ends), ends
     # The request of each dump with the most options, its language forced and its prompt, where it has one.
-    asked = [(f, pcm, dump_requests(speech, model, d)[-1][1]) for f, pcm, d in zip(files, pcms, dumps)]
-    asked_ends = [worker_end(f"asked-{i}", pcm, **members) for i, (f, pcm, members) in enumerate(asked) if members]
+    asked = [(f, pcm, r[-1][1], r[-1][3]) for f, pcm, r in zip(files, pcms, requests)]
+    asked_ends = [worker_end(f"asked-{i}", pcm, **members) for i, (f, pcm, members, _) in enumerate(asked) if members]
     w.close()
+
+    def end_members(e):
+        """The members of a worker's end that speech asr --format json writes after "file"."""
+        return {k: v for k, v in e.items() if k not in ("type", "id", "_at")}
+
     texts = run("asr", model, *options, *files).stdout.decode().split("\n")
     assert texts == [e["text"] for e in ends] + [""], texts
     plain = [json.loads(line) for line in run("asr", model, "--format", "json", *options, *files).stdout.decode().splitlines()]
-    assert plain == [{"file": f, "text": e["text"], "stop": e["stop"]} for f, e in zip(files, ends)], plain[:2]
+    assert plain == [{"file": f, **{k: v for k, v in end_members(e).items() if k not in ("segments", "tokens")}} for f, e in zip(files, ends)], plain[:2]
     if timed:
         rows = [line.split("\t") for line in run("asr", model, "--timestamps", *options, *files).stdout.decode().splitlines()]
         want_rows = [[f, f"{s['start']:.3f}", f"{s['end']:.3f}", s["text"]] for f, e in zip(files, ends) for s in e["segments"]]
         assert rows == want_rows, (rows[:3], want_rows[:3])
         timed_json = run("asr", model, "--format", "json", "--timestamps", *options, *files).stdout.decode().splitlines()
-        want_json = [{"file": f, "text": e["text"], "stop": e["stop"], "segments": e["segments"], "tokens": e["tokens"]} for f, e in zip(files, ends)]
+        want_json = [{"file": f, **end_members(e)} for f, e in zip(files, ends)]
         assert [json.loads(line) for line in timed_json] == want_json, timed_json[:1]
-    for (f, _, members), e in zip([a for a in asked if a[2]], asked_ends):
+    for (f, _, members, languages), e in zip([a for a in asked if a[2]], asked_ends):
         flags = [x for name, value in members.items() for x in (f"--{name}", value)]
         assert run("asr", model, *flags, *options, f).stdout.decode() == e["text"] + "\n", (f, members)
-    print(f"asr: {len(files)} files, the worker's texts as text and as JSON with the stop"
+        got = json.loads(run("asr", model, "--format", "json", *flags, *options, f).stdout)
+        assert got == {"file": f, **end_members(e)} and got.get("languages", []) == languages, (got, languages)
+    print(f"asr: {len(files)} files, the worker's texts as text and as JSON with the stop and the dumps' languages"
           + (", as segments with --timestamps and as JSON with times" if timed else "")
           + f"; {len(asked_ends)} with --language and --prompt as the worker's requests with them")
     r = run("asr", model, "--language", "zz", *options, files[0], code=1)

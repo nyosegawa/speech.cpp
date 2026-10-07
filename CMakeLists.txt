@@ -232,14 +232,16 @@ foreach(stage frontend encoder transducer times)
 endforeach()
 
 # The checks of Qwen3-ASR's stages.
-foreach(stage frontend encoder split)
+foreach(stage frontend encoder)
     add_executable(qwen3-asr-${stage}-check checks/qwen3-asr-${stage}-check.cpp)
     target_link_libraries(qwen3-asr-${stage}-check PRIVATE qwen3asr)
 endforeach()
-# It reads each request's meta.json with the JSON reader of `speech`.
-add_executable(qwen3-asr-decoder-check checks/qwen3-asr-decoder-check.cpp tools/common/json-reader.cpp)
-target_include_directories(qwen3-asr-decoder-check PRIVATE tools/common)
-target_link_libraries(qwen3-asr-decoder-check PRIVATE qwen3asr)
+# They read each request's meta.json with the JSON reader of `speech`.
+foreach(stage decoder split)
+    add_executable(qwen3-asr-${stage}-check checks/qwen3-asr-${stage}-check.cpp tools/common/json-reader.cpp)
+    target_include_directories(qwen3-asr-${stage}-check PRIVATE tools/common)
+    target_link_libraries(qwen3-asr-${stage}-check PRIVATE qwen3asr)
+endforeach()
 # Times the stages of a recognition on the dumps' audio, against checks/llama-server-timing.py.
 add_executable(qwen3-asr-timing checks/qwen3-asr-timing.cpp tools/common/json-reader.cpp)
 target_include_directories(qwen3-asr-timing PRIVATE tools/common)

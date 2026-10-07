@@ -108,8 +108,9 @@ Command asr_command() {
         "Recognizes each WAVE file (16-, 24- or 32-bit PCM or 32-bit float, any rate, channels averaged) and writes\n"
         "its text to stdout in the order given: with --format text one line per file, or with --timestamps one line\n"
         "per segment, FILE<TAB>START<TAB>END<TAB>TEXT, times in seconds; with --format json one object per file,\n"
-        "{\"file\", \"text\", \"stop\"}, with \"segments\" and \"tokens\" when --timestamps is given. It exits with 3 when a\n"
-        "recognition stopped at the most the model writes, after writing every file's text.";
+        "{\"file\", \"text\", \"stop\"}, with \"languages\", the tags of the languages the model heard, where it names\n"
+        "any, and \"segments\" and \"tokens\" when --timestamps is given. It exits with 3 when a recognition stopped at\n"
+        "the most the model writes, after writing every file's text.";
     c.flags = {
         {"--format", "text|json", false, "text (the default) or one JSON object per file and line"},
         device_flag("auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists"),

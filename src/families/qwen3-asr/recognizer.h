@@ -24,9 +24,14 @@ struct RecognitionRequest {
     std::optional<size_t> language;
 };
 
-/** What a recognition found: its text, and whether the decoding reached the most tokens the model writes. */
+/**
+ * What a recognition found: its text; the languages of its parts, as indices of general.languages, merged as qwen-asr's
+ * merge_languages() merges them: in the order of the audio, one for each run of parts of the same language, without the
+ * parts of none; and whether the decoding reached the most tokens the model writes.
+ */
 struct Recognition {
     std::string text;
+    std::vector<size_t> languages;
     bool limited = false;
 };
 
@@ -66,7 +71,8 @@ public:
      * an equal share, of which the encoder's windows, the prefill's blocks and the tokens written take a third each;
      * false stops the work, and what it returns is then not a recognition. A request whose prompt, beside a part's
      * audio and the most tokens the model writes, does not fit the decoder's positions is refused before any work, out
-     * of range naming the option prompt. `parts`, when given, gets the report of each part.
+     * of range naming the option prompt. A part whose language is a name the file does not hold has none, which a
+     * warning in the log reports. `parts`, when given, gets the report of each part.
      */
     Recognition recognize(const std::vector<float> & samples, const RecognitionRequest & request, const std::function<bool(double)> & progress,
                           std::vector<PartReport> * parts = nullptr);
@@ -86,11 +92,11 @@ public:
 
 private:
     /**
-     * Recognizes one part of normalized audio with its prompt, `progress` hearing the part's share from 0 to 1, and
-     * returns its text, or none when `progress` stopped it.
+     * Recognizes one part of normalized audio with its prompt and the language it forces, `progress` hearing the part's
+     * share from 0 to 1, and returns the parse of its output, or none when `progress` stopped it.
      */
-    std::optional<std::string> recognize_part(const std::vector<float> & part, const PromptIds & prompt, bool forced,
-                                              const std::function<bool(double)> & progress, PartReport & report);
+    std::optional<Parsed> recognize_part(const std::vector<float> & part, const PromptIds & prompt, std::optional<size_t> forced,
+                                         const std::function<bool(double)> & progress, PartReport & report);
 
     ModelFile model_;
     Frontend frontend_;
