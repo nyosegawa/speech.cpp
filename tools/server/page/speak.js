@@ -115,7 +115,9 @@ export class SpeakPanel {
     $('speech-play').classList.toggle('playing', player.playing);
   }
 
+  /** Speaks the text, one synthesis at a time, however it is asked for: the button, or Ctrl+Enter while it is hidden. */
   async #speak() {
+    if (this.#controller) return;
     const text = $('speak-text');
     this.#clearErrors();
     if (!text.value.trim()) {

@@ -76,7 +76,9 @@ export class TranscribePanel {
     $('transcribe-status').textContent = text;
   }
 
+  /** Transcribes the audio given, one transcription at a time. */
   async #transcribe() {
+    if (this.#controller) return;
     const error = $('transcribe-error');
     error.hidden = true;
     this.#options.clearErrors();
