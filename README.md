@@ -8,7 +8,7 @@ checked against the official implementation.
 
 | Organization | Model line | Models | Family | Task | Converted weights |
 |---|---|---|---|---|---|
-| Qwen | Qwen3-TTS-12Hz | 0.6B and 1.7B CustomVoice | `qwen3-tts` | speech synthesis with the named speakers, streamed frame by frame | [sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF), [sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF) |
+| Qwen | Qwen3-TTS-12Hz | 0.6B and 1.7B CustomVoice | `qwen3-tts` | speech synthesis with the named speakers, streamed as it is made | [sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF), [sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF) |
 | Aratako | Irodori-TTS | v4.1-Small-MF and v4.1-Small | `irodori-tts` | Japanese speech synthesis in the voice of a reference recording, a sentence at a time, streamed as the codec decodes it | [sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF), [sakasegawa/Irodori-TTS-v4.1-Small-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) |
 | nvidia | parakeet-tdt_ctc | 0.6b-ja | `fastconformer` | Japanese speech recognition with its TDT decoder, a recording at a time | [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) |
 | nvidia | parakeet-tdt | 0.6b-v3 | `fastconformer` | speech recognition of 25 European languages, which the model tells apart itself, with its TDT decoder | [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) |
@@ -762,10 +762,10 @@ When stdin closes, the worker answers the requests it has, answers each request 
 a region or script of one (`ja`, `ja-JP`, `zh-Hant`), or `auto`, which leaves the choice to the model; any other
 language is `out_of_range`.
 
-- **Qwen3-TTS** passes audio frame by frame (`incremental` true, 24 kHz). Its voices are the model's speakers, and it
-  speaks `de`, `en`, `es`, `fr`, `it`, `ja`, `ko`, `pt`, `ru` and `zh`; the language steers it, going into its prompt.
-  Two speakers speak a Chinese dialect, `dylan` (Beijing) and `eric` (Sichuan), when the language is `zh` or left to
-  the model, as in the official implementation.
+- **Qwen3-TTS** passes audio as it makes it, in chunks of 1, 1, 2 and then 4 frames of 0.08 s (`incremental` true,
+  24 kHz). Its voices are the model's speakers, and it speaks `de`, `en`, `es`, `fr`, `it`, `ja`, `ko`, `pt`, `ru` and
+  `zh`; the language steers it, going into its prompt. Two speakers speak a Chinese dialect, `dylan` (Beijing) and
+  `eric` (Sichuan), when the language is `zh` or left to the model, as in the official implementation.
 - **Irodori-TTS** makes a sentence at once and passes it as the codec decodes it (`incremental` false, 48 kHz), so a
   request should be one sentence; a text longer than the model's 256 tokens is refused. Its voices are those of
   `--add-voice` and `add_voice`. It speaks `ja`, and the language is only checked.
@@ -1020,8 +1020,12 @@ compares the two.
 
 ## Qwen3-TTS
 
-It decodes audio frame by frame with the same samples as decoding the whole utterance, so streaming does
-not add artifacts at the frame boundaries. Implemented:
+It passes its audio in chunks of 1, 1, 2 and then 4 frames of 0.08 s as the talker makes them: the first frame alone,
+so that audio starts once one frame is made, and small chunks next, so that a player that starts on the first chunk
+stays fed while the speech gets ahead of it (docs/adr/0024). The codec carries each stage's causal state from one chunk
+to the next, so streaming adds no artifacts at the chunk boundaries: the samples differ from those of decoding the whole
+utterance at once by rounding alone, 132 dB SNR in F32 on the CPU and 64 dB with the F16 codec weights of a Q8_0 file
+on Metal, and the same request with the same seed gives the same samples. Implemented:
 
 - the talker (a Qwen3 decoder) that predicts the first codebook of each frame,
 - the code predictor that predicts the other 15 codebooks,
@@ -1092,7 +1096,8 @@ build/codec-check <model.gguf> reference/qwen3-tts/out/1.7b-ja-weather cpu
 | Check | Result |
 |---|---|
 | Codec decoder, whole utterance, CPU, F32 (`codec-check`) | 114 dB SNR against the official decoder |
-| Codec decoder, one frame at a time against whole, CPU | 133 dB SNR |
+| Codec decoder in a synthesis's chunks of 1, 1, 2 and 4 frames, and one frame at a time, against whole, F32 | 132.5 and 132.7 dB SNR on the CPU; 62.9 and 62.8 dB on Metal, where the whole decode is 62.8 dB from the official one |
+| The same with the F16 codec weights of a Q8_0 file | 59.8 and 60.1 dB on the CPU, where the whole decode is 55.8 dB from the official one; 64.3 dB on Metal |
 | Codec decoder on Metal | error at -63 dB of the voice |
 | Talker and code predictor, F32, teacher forcing (`talker-check`), CPU and Metal | argmax matches on every frame; greedy decode gives the same 54 frames |
 | The same with the instruction 怒った口調で話してください。 (`talker-check`, out/1.7b-ja-weather-instruct), CPU and Metal | the official processor's 13 tokens; the prompt's 44 rows within 1.2e-6 (CPU) and 7.8e-5 (Metal); argmax matches but at one of 855 rows of the code predictor, where the reference's two best codes are 6.7e-4 apart, and greedy decode follows the reference's 57 frames to that row |

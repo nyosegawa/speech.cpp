@@ -8,6 +8,10 @@
 #include "error.h"
 #include "layout.h"
 
+int chunk_frames(int sent) {
+    return sent < 2 ? 1 : sent == 2 ? 2 : 4;
+}
+
 int text_token_limit(const ModelFile & m) {
     return (int) m.u32("qwen3-tts.talker.max_position_embeddings") - (int) m.u32("qwen3-tts.generation.max_frames") - kPromptRows;
 }
@@ -33,8 +37,7 @@ struct Timer {
 
 }  // namespace
 
-SynthesisOutcome Synthesizer::synthesize(const SynthesisRequest & r, const AudioSink & sink, int frames_per_piece,
-                                         SynthesisStats * stats) {
+SynthesisOutcome Synthesizer::synthesize(const SynthesisRequest & r, const AudioSink & sink, SynthesisStats * stats) {
     SynthesisStats local;
     SynthesisStats & st = stats ? *stats : local;
     Prompt prompt;
@@ -91,7 +94,7 @@ SynthesisOutcome Synthesizer::synthesize(const SynthesisRequest & r, const Audio
     codec_.reset();
     std::vector<int32_t> history, frame(n_groups), pending;
     std::vector<float> audio;
-    int frames = 0, pending_frames = 0;
+    int frames = 0, pending_frames = 0, chunks = 0;
     bool stopped = false, ended = false;
 
     auto flush = [&]() {
@@ -103,6 +106,7 @@ SynthesisOutcome Synthesizer::synthesize(const SynthesisRequest & r, const Audio
         }
         pending.clear();
         pending_frames = 0;
+        chunks++;
         if (!sink(audio.data(), audio.size())) stopped = true;
     };
 
@@ -125,7 +129,7 @@ SynthesisOutcome Synthesizer::synthesize(const SynthesisRequest & r, const Audio
         pending.insert(pending.end(), frame.begin(), frame.end());
         pending_frames++;
         frames++;
-        if (frames == 1 || pending_frames >= frames_per_piece) flush();
+        if (pending_frames == chunk_frames(chunks)) flush();
         if (stopped) break;
         Timer t{&st.talker};
         talker_.step(frame.data(), prompt.frame_extra);

@@ -103,7 +103,7 @@ public:
         r.code_predictor = sampling(values, kCodePredictorOptions, synth_.generation().code_predictor);
         const bool capped = values.has(SPEECH_OPT_MAX_SECONDS);
         if (capped) r.max_frames = frames_within(values.number(SPEECH_OPT_MAX_SECONDS), synth_.sample_rate(), synth_.samples_per_frame());
-        // Qwen3-TTS passes audio after its first frame and then every four frames, so it stops at the sink.
+        // Qwen3-TTS passes its audio in chunks of a few frames as it makes them (chunk_frames()), so it stops at the sink.
         const SynthesisOutcome outcome = synth_.synthesize(r, [&](const float * samples, size_t n) { return run.audio(samples, n); });
         if (outcome.ended) return SPEECH_STOP_COMPLETE;
         return capped && outcome.frames == r.max_frames ? SPEECH_STOP_MAX_SECONDS : SPEECH_STOP_MODEL_LIMIT;
