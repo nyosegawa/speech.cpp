@@ -73,7 +73,8 @@ bool neutral(speech_option option, const OptionValue & value) {
         case SPEECH_OPT_DURATION_SCALE: return std::get<double>(value) == 1;
         case SPEECH_OPT_LANGUAGE: return language_is_auto(std::get<std::string>(value));
         case SPEECH_OPT_TIMESTAMPS: return !std::get<bool>(value);
-        case SPEECH_OPT_PROMPT: return std::get<std::string>(value).empty();
+        case SPEECH_OPT_PROMPT:
+        case SPEECH_OPT_INSTRUCTIONS: return std::get<std::string>(value).empty();
         default: return false;
     }
 }
@@ -174,14 +175,14 @@ RequestValues run_values(const speech_request & request) {
     for (const OptionSpec & spec : file.described.options) {
         const auto set = request.values.find(spec.option);
         if (set != request.values.end()) {
-            values.set(spec.option, set->second);
+            values.set(spec.option, set->second, true);
         } else if (spec.required) {
             throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, file.identity.name + " needs the option " + speech_option_name(spec.option) + "; set it",
                            speech_option_name(spec.option));
         } else if (spec.default_value) {
-            values.set(spec.option, *spec.default_value);
+            values.set(spec.option, *spec.default_value, false);
         } else if (spec.option == SPEECH_OPT_SEED) {
-            values.set(spec.option, draw_seed());
+            values.set(spec.option, draw_seed(), false);
         }
     }
     return values;

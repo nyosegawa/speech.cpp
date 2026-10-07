@@ -187,8 +187,14 @@ target_link_libraries(unicode-check PRIVATE speechcommon)
 add_executable(codec-check checks/codec-check.cpp)
 target_link_libraries(codec-check PRIVATE qwen3tts)
 
-add_executable(talker-check checks/talker-check.cpp)
+add_executable(talker-check checks/talker-check.cpp tools/common/json-reader.cpp)
+target_include_directories(talker-check PRIVATE tools/common)
 target_link_libraries(talker-check PRIVATE qwen3tts)
+
+# The sampler against transformers' logits processors, on the cases of reference/qwen3-tts/sampling_cases.py.
+add_executable(sampler-check checks/sampler-check.cpp tools/common/json-reader.cpp)
+target_include_directories(sampler-check PRIVATE tools/common)
+target_link_libraries(sampler-check PRIVATE qwen3tts)
 
 # The tokenizer of a Qwen3-TTS or a Qwen3-ASR file, each its family's.
 add_executable(tokenizer-check checks/tokenizer-check.cpp)

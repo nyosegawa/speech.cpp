@@ -62,8 +62,20 @@ int32_t PromptIds::language_id(const std::string & tag, size_t voice) const {
     return language < 0 ? -1 : language_ids[language];
 }
 
+bool takes_instructions(const ModelFile & m) {
+    return m.str("general.size_label") != "0.6B";
+}
+
+std::vector<int32_t> instruction_ids(const Qwen2Tokenizer & tokenizer, const PromptIds & ids, const std::string & instruction) {
+    std::vector<int32_t> out = {ids.im_start};
+    const std::vector<int32_t> turn = tokenizer.encode("user\n" + instruction);
+    out.insert(out.end(), turn.begin(), turn.end());
+    out.insert(out.end(), {ids.im_end, ids.newline});
+    return out;
+}
+
 Prompt build_prompt(Talker & talker, const PromptIds & ids, const std::vector<int32_t> & text_ids,
-                    const std::string & voice, const std::string & language) {
+                    const std::string & voice, const std::string & language, const std::vector<int32_t> & instruction) {
     const size_t n_text_ids = text_ids.size();
     // The template's 3 leading tokens are the role, and its 5 trailing ones close it and open the answer.
     if (n_text_ids < 9) throw Error(Fault::InvalidArgument, "the text is empty; give a text to speak", "text");
@@ -100,6 +112,10 @@ Prompt build_prompt(Talker & talker, const PromptIds & ids, const std::vector<in
         for (int i = 0; i < h; i++) p.embeds.push_back(a[i] + (b ? b[i] : 0.0f));
         p.n++;
     };
+    if (!instruction.empty()) {
+        const std::vector<float> ie = talker.text_embeddings(instruction);
+        for (size_t r = 0; r < instruction.size(); r++) row(&ie[r * h], nullptr);
+    }
     for (int r = 0; r < 3; r++) row(&te[r * h], nullptr);
     // tts_pad over the think tags, language and speaker, then tts_bos over codec_pad.
     for (size_t c = 0; c + 1 < n_codec; c++) row(c + 2 < n_codec ? pad : bos, &ce[c * h]);

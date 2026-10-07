@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -87,8 +88,14 @@ private:
  */
 class RequestValues {
 public:
-    void set(speech_option option, OptionValue value) { values_[option] = std::move(value); }
+    /** Sets an option's value, `given` where the request set it rather than the table's default or a drawn seed. */
+    void set(speech_option option, OptionValue value, bool given) {
+        values_[option] = std::move(value);
+        if (given) given_.insert(option);
+    }
     bool has(speech_option option) const { return values_.count(option) > 0; }
+    /** Whether the request set the option, for a rule that refuses a value the rest of the request leaves unused. */
+    bool given(speech_option option) const { return given_.count(option) > 0; }
     const std::string & string(speech_option option) const { return std::get<std::string>(at(option)); }
     int64_t integer(speech_option option) const { return std::get<int64_t>(at(option)); }
     double number(speech_option option) const { return std::get<double>(at(option)); }
@@ -102,6 +109,7 @@ private:
     }
 
     std::map<speech_option, OptionValue> values_;
+    std::set<speech_option> given_;
 };
 
 /** What a request that runs passes to its caller and asks of it. */

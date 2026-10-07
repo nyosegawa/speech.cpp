@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "qwen2-tokenizer.h"
 #include "talker.h"
 
 /**
@@ -49,9 +50,26 @@ struct Prompt {
 };
 
 /**
+ * Whether the model follows an instruction of how to speak. The official generate_custom_voice() drops the instruction
+ * of a model whose config.json gives tts_model_size "0b6", which reference/qwen3-tts/convert.py writes, and nothing else
+ * in layout 1, as general.size_label "0.6B".
+ */
+bool takes_instructions(const ModelFile & m);
+
+/**
+ * The tokens of `<|im_start|>user\n{instruction}<|im_end|>\n`, the turn in which the official generate_custom_voice()
+ * tells a model that takes_instructions() how to speak, as its processor gives them: the special tokens split the
+ * text, and the tokenizer reads the text between them as one. A text that is not UTF-8 throws an Error that names no
+ * input.
+ */
+std::vector<int32_t> instruction_ids(const Qwen2Tokenizer & tokenizer, const PromptIds & ids, const std::string & instruction);
+
+/**
  * Builds the CustomVoice prompt of the official generate() in its non-streaming mode, which puts the
  * whole text in the prefill. `text_ids` are the tokens of `<|im_start|>assistant\n{text}<|im_end|>\n
- * <|im_start|>assistant\n`, and `language` is a BCP 47 tag of one of the model's languages or "auto".
+ * <|im_start|>assistant\n`, `language` is a BCP 47 tag of one of the model's languages or "auto", and
+ * `instruction` the tokens of instruction_ids(), or none: generate() puts their text embeddings before the prompt's
+ * rows, with no codec embedding added to them.
  */
 Prompt build_prompt(Talker & talker, const PromptIds & ids, const std::vector<int32_t> & text_ids,
-                    const std::string & voice, const std::string & language);
+                    const std::string & voice, const std::string & language, const std::vector<int32_t> & instruction);

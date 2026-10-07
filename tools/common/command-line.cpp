@@ -102,8 +102,11 @@ CommandLine parse_command_line(const Command & command, const std::vector<std::s
         if (!flag && !request_option) {
             throw UsageError("speech " + command.name + " has no flag " + name);
         }
-        const bool takes_value = flag ? !flag->value.empty() : speech_option_type(option) != SPEECH_TYPE_BOOL;
-        std::string value;
+        // A boolean option is true alone and takes true or false only after "=", so that the argument after it stays
+        // an argument.
+        const bool boolean = request_option && speech_option_type(option) == SPEECH_TYPE_BOOL;
+        const bool takes_value = flag ? !flag->value.empty() : !boolean;
+        std::string value = boolean ? attached.value_or("true") : "";
         if (takes_value) {
             if (attached) {
                 value = *attached;
@@ -112,7 +115,7 @@ CommandLine parse_command_line(const Command & command, const std::vector<std::s
             } else {
                 throw UsageError(name + " needs a value");
             }
-        } else if (attached) {
+        } else if (attached && !boolean) {
             throw UsageError(name + " takes no value; give it alone");
         }
         if (request_option) {
@@ -120,7 +123,7 @@ CommandLine parse_command_line(const Command & command, const std::vector<std::s
                 if (o.option == option) throw UsageError(name + " is given twice; give it once");
             }
             try {
-                line.options.push_back({option, takes_value ? option_from_text(option, value) : OptionValue(true)});
+                line.options.push_back({option, option_from_text(option, value)});
             } catch (const std::invalid_argument & e) {
                 throw UsageError(e.what());
             }
@@ -155,8 +158,7 @@ std::string command_help(const Command & command) {
         out += "\nRequest options, each the C API's option of the same name; the model refuses one it does not take,\n"
                "and `speech info MODEL` lists those it takes with their defaults and ranges:\n";
         for (speech_option o : vocabulary()) {
-            const std::string metavar = option_metavar(o);
-            out += "  " + option_flag(o) + (metavar.empty() ? "" : " " + metavar) + "\n";
+            out += "  " + option_flag(o) + (speech_option_type(o) == SPEECH_TYPE_BOOL ? "[=false]" : " " + std::string(option_metavar(o))) + "\n";
         }
     }
     return out;

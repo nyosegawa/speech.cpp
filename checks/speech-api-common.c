@@ -202,8 +202,10 @@ int check_library(void) {
         fprintf(stderr, "FAIL: a status or stop reason the library does not know has a name\n");
         return 1;
     }
-    static const char * options[] = {"voice",       "language",   "seed",   "speed",   "seconds", "duration_scale", "steps",
-                                     "max_seconds", "timestamps", "prompt", "decoding"};
+    static const char * options[] = {"voice", "language", "seed", "speed", "seconds", "duration_scale", "steps", "max_seconds",
+                                     "timestamps", "prompt", "decoding", "do_sample", "top_k", "top_p", "temperature",
+                                     "repetition_penalty", "code_predictor_do_sample", "code_predictor_top_k",
+                                     "code_predictor_top_p", "code_predictor_temperature", "instructions"};
     if (speech_option_count() != sizeof options / sizeof options[0]) {
         fprintf(stderr, "FAIL: the library knows %zu options\n", speech_option_count());
         return 1;
@@ -361,7 +363,8 @@ static speech_status set_neutral(speech_request * r, speech_option option, int *
         case SPEECH_OPT_DURATION_SCALE: return speech_request_set_float(r, option, 1.0);
         case SPEECH_OPT_LANGUAGE: return speech_request_set_string(r, option, "auto");
         case SPEECH_OPT_TIMESTAMPS: return speech_request_set_bool(r, option, 0);
-        case SPEECH_OPT_PROMPT: return speech_request_set_string(r, option, "");
+        case SPEECH_OPT_PROMPT:
+        case SPEECH_OPT_INSTRUCTIONS: return speech_request_set_string(r, option, "");
         default: *has = 0; return SPEECH_OK;
     }
 }

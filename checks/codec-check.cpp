@@ -1,5 +1,8 @@
-// Decodes the codes of a reference dump and compares the samples with the official decoder's, then
-// decodes them again in pieces and compares those with the whole decode.
+// Decodes the codes of a reference dump and compares the samples with the official decoder's, then decodes them again
+// in the chunks a synthesis passes (chunk_frames()) and one frame at a time and compares those with the whole decode.
+// The codec carries its state from one call to the next, so another grouping changes the samples by rounding alone, and
+// the check fails when they part from the whole decode by more than the whole decode parts from the official one, with
+// 3 dB for the spread of rounding: F16 weights part both by about 60 dB, and F32 on the CPU the grouping by 132 dB.
 //
 // usage: codec-check <model.gguf> <reference dir> [gpu|cpu] [out.wav]
 
@@ -12,6 +15,7 @@
 #include "npy.h"
 #include "qwen3-tts/codec.h"
 #include "qwen3-tts/layout.h"
+#include "qwen3-tts/synthesizer.h"
 #include "wav.h"
 
 namespace {
@@ -67,18 +71,21 @@ int main(int argc, char ** argv) {
                 (long long) wav.size(), whole_s, dw.max_abs, dw.snr_db);
 
     int status = 0;
-    for (int piece : {1, 3}) {
+    for (const bool chunks : {true, false}) {
         std::vector<float> pieces;
         codec.reset();
         t0 = std::chrono::steady_clock::now();
-        for (int f = 0; f < n_frames; f += piece) {
-            codec.decode(codes.i32.data() + (size_t) f * codec.num_quantizers(), std::min(piece, n_frames - f), pieces);
+        for (int f = 0, sent = 0; f < n_frames; sent++) {
+            const int n = std::min(chunks ? chunk_frames(sent) : 1, n_frames - f);
+            codec.decode(codes.i32.data() + (size_t) f * codec.num_quantizers(), n, pieces);
+            f += n;
         }
         const double pieces_s = seconds_since(t0);
         const Diff dp = compare(pieces, whole);
-        std::printf("in pieces of %d frame(s): %.3f s (%.1f ms per frame), max |diff| vs whole %.2e, SNR %.1f dB\n",
-                    piece, pieces_s, 1000 * pieces_s / n_frames * piece / piece, dp.max_abs, dp.snr_db);
-        if (pieces.size() != whole.size() || dp.snr_db < 60) status = 1;
+        std::printf("%s: %.3f s (%.1f ms per frame), max |diff| vs whole %.2e, SNR %.1f dB\n",
+                    chunks ? "in a synthesis's chunks of 1, 1, 2 and 4 frames" : "one frame at a time", pieces_s, 1000 * pieces_s / n_frames,
+                    dp.max_abs, dp.snr_db);
+        if (pieces.size() != whole.size() || dp.snr_db < dw.snr_db - 3) status = 1;
     }
     if (whole.size() != (size_t) wav.size() || dw.snr_db < 40) status = 1;
     if (args.size() > 4) write_wav(args[4], whole, codec.sample_rate());

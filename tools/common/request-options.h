@@ -38,8 +38,8 @@ const char * option_metavar(speech_option option);
 
 /**
  * The value of an option read from the text a command line gives it, whole: an integer of decimal digits with an
- * optional minus sign, or a finite decimal number. Anything else throws std::invalid_argument naming what the option
- * takes. A boolean takes no text, and its flag alone sets it.
+ * optional minus sign, a finite decimal number, or "true" or "false". Anything else throws std::invalid_argument naming
+ * what the option takes.
  */
 OptionValue option_from_text(speech_option option, const std::string & text);
 

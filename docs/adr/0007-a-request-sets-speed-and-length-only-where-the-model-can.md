@@ -1,6 +1,6 @@
 # A request sets speed and length only where the model can
 
-Superseded in part by docs/adr/0014, docs/adr/0016 and docs/adr/0017: speed and length are options of a request object that each model declares, the scaled length is no longer kept within the bounds, Qwen3-TTS takes `max_seconds`, and the worker names the scale `duration_scale` as the C API does.
+Superseded in part by docs/adr/0014, docs/adr/0016, docs/adr/0017 and docs/adr/0023: speed and length are options of a request object that each model declares, the scaled length is no longer kept within the bounds, Qwen3-TTS takes `max_seconds`, the worker names the scale `duration_scale` as the C API does, and Qwen3-TTS 1.7B takes its instruction.
 
 Decided 2026-10-05.
 

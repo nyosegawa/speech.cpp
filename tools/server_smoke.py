@@ -7,7 +7,8 @@ X-Speech-Stop, a pcm stream and an SSE stream of the same seed giving the same s
 speech.audio.done with the seed, the samples and the stop reason, a drawn seed that repeats the audio, and each error
 with its status, type, param and code: the server's own (a member it does not have, a value of the wrong type, no
 input, a format it does not give, a body that is not JSON) and the library's mapped by category (a value it does not
-take, out of range or not taken, an empty or too long input, a voice left out), on a wav and on a stream. For a
+take, out of range or not taken, an empty or too long input, a voice left out), on a wav and on a stream, Qwen3-TTS's
+sampling options, and OpenAI's instructions followed by a model that takes them and refused by one that does not. For a
 recognition model: json and text with X-Speech-Stop for each dump of reference/fastconformer/dump.py or
 reference/qwen3-asr/dump.py, each other request a Qwen3-ASR dump holds with its language and its prompt as form fields
 and each decoding other than the default that a FastConformer dump holds as the form field decoding, json without any
@@ -159,13 +160,31 @@ if info["task"] == "synthesis":
         print("max_seconds 0.5: X-Speech-Stop max_seconds")
         expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": voice, "speed": 1.5}), 400, "unsupported_parameter", "speed",
                      "speed on Qwen3-TTS")
+        greedy = {"input": "あ。", "voice": voice, "do_sample": False, "code_predictor_do_sample": False, "max_seconds": 2}
+        assert wav_data(post_json("/v1/audio/speech", greedy | {"seed": 1})[2]) == wav_data(post_json("/v1/audio/speech", greedy | {"seed": 2})[2])
+        print("do_sample and code_predictor_do_sample false: the same audio for the seeds 1 and 2")
+        expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": voice, "do_sample": False, "temperature": 0.5}), 400,
+                     "invalid_value", "temperature", "a temperature that does not draw")
+        expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": voice, "top_p": 2}), 400, "unsupported_value", "top_p", "top_p 2")
     else:
         expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": voice, "speed": 5}), 400, "unsupported_value", "speed",
                      "speed 5")
         expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": voice, "seconds": 2, "duration_scale": 2}), 400, "invalid_value",
                      "seconds", "seconds with a duration scale")
-    expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": voice, "instructions": "x"}), 400, "unknown_parameter",
-                 "instructions", "an unknown member")
+        expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": voice, "temperature": 0.5}), 400, "unsupported_parameter",
+                     "temperature", "temperature on Irodori-TTS")
+    # OpenAI's instructions is the option of the same name: a model that takes one speaks the same seed otherwise with
+    # it, and one that takes none refuses it unless it is empty.
+    told = {"input": "あ。", "voice": voice, "seed": 3}
+    plain = wav_data(post_json("/v1/audio/speech", told | {"instructions": ""})[2])
+    if any(o["name"] == "instructions" for o in info["options"]):
+        assert wav_data(post_json("/v1/audio/speech", told | {"instructions": "怒った口調で話してください。"})[2]) != plain
+        print("instructions: other audio for the same seed")
+    else:
+        expect_error(post_json("/v1/audio/speech", told | {"instructions": "怒った口調で"}), 400, "unsupported_parameter", "instructions",
+                     "instructions on a model that takes none")
+    expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": voice, "bogus": "x"}), 400, "unknown_parameter", "bogus",
+                 "an unknown member")
     expect_error(post_json("/v1/audio/speech", {"input": 5, "voice": voice}), 400, "invalid_type", "input", "input of another type")
     expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": voice, "steps": 1.5}), 400, "invalid_type", "steps",
                  "steps with a fraction")

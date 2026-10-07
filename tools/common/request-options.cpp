@@ -107,9 +107,11 @@ OptionValue option_from_text(speech_option option, const std::string & text) {
             if (!whole_number(text, v)) throw std::invalid_argument(option_flag(option) + " " + takes(type) + ", not \"" + text + "\"");
             return v;
         }
-        case SPEECH_TYPE_BOOL: break;
+        case SPEECH_TYPE_BOOL:
+            if (text == "true" || text == "false") return text == "true";
+            break;
     }
-    throw std::invalid_argument(option_flag(option) + " takes no value; give the flag alone to set it");
+    throw std::invalid_argument(option_flag(option) + " is true alone and takes true or false after =, not \"" + text + "\"");
 }
 
 OptionValue option_from_json(speech_option option, const JsonValue & value) {
