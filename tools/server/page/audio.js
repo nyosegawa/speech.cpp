@@ -32,18 +32,24 @@ export class Recorder {
   #context = null;
   #chunks = [];
 
+  /** Starts recording; a failure lets go of what it took, so that the microphone is not left on without a recorder. */
   async start() {
     this.#stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     });
-    this.#context = new AudioContext();
-    await this.#context.audioWorklet.addModule('/page/recorder-worklet.js');
-    const node = new AudioWorkletNode(this.#context, 'recorder');
-    this.#chunks = [];
-    node.port.onmessage = (event) => this.#chunks.push(event.data);
-    this.#context.createMediaStreamSource(this.#stream).connect(node);
-    // A node with no path to the destination is not run by every browser; the recorder's output is silence.
-    node.connect(this.#context.destination);
+    try {
+      this.#context = new AudioContext();
+      await this.#context.audioWorklet.addModule('/page/recorder-worklet.js');
+      const node = new AudioWorkletNode(this.#context, 'recorder');
+      this.#chunks = [];
+      node.port.onmessage = (event) => this.#chunks.push(event.data);
+      this.#context.createMediaStreamSource(this.#stream).connect(node);
+      // A node with no path to the destination is not run by every browser; the recorder's output is silence.
+      node.connect(this.#context.destination);
+    } catch (e) {
+      await this.#release();
+      throw e;
+    }
   }
 
   /** The seconds recorded so far. */
@@ -53,17 +59,22 @@ export class Recorder {
 
   /** Stops, and returns the recording as a WAVE file at the microphone's rate. */
   async stop() {
-    this.#stream?.getTracks().forEach((track) => track.stop());
     const rate = this.#context.sampleRate;
-    await this.#context.close();
     const samples = new Float32Array(this.#chunks.reduce((n, c) => n + c.length, 0));
     let at = 0;
     for (const chunk of this.#chunks) {
       samples.set(chunk, at);
       at += chunk.length;
     }
-    this.#stream = this.#context = null;
     this.#chunks = [];
+    await this.#release();
     return wavFile(samples, rate);
+  }
+
+  /** Turns the microphone off and closes the audio context, whichever of them was taken. */
+  async #release() {
+    this.#stream?.getTracks().forEach((track) => track.stop());
+    await this.#context?.close();
+    this.#stream = this.#context = null;
   }
 }
