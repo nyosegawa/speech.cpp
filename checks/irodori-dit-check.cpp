@@ -1,38 +1,27 @@
 // Checks the DiT and the sampler of Irodori-TTS against the official implementation on the dumps of
-// reference/irodori-tts/dump.py made with the same model (MF or RF): the timestep condition and every block
-// of the first step, then every step's velocity (after guidance for RF) from the dump's own latent before
-// it, then the whole sampler from the dump's noise.
+// reference/irodori-tts/dump.py made with the same model (MF or RF), each with the guidance and schedule of its
+// request: the schedule, the timestep condition and every block of the first step, the speaker noise of a request
+// that asks for it, then every step's velocity (after the guidance and the rescaling for RF) from the dump's own
+// latent before it, then the whole sampler from the dump's noise.
 //
 // usage: irodori-dit-check <model.gguf> <reference out dir> [gpu|cpu|device name]
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
-#include <fstream>
 #include <string>
 
 #include "args.h"
 #include "backend.h"
 #include "compare.h"
+#include "irodori-dumps.h"
 #include "irodori-tts/layout.h"
 #include "irodori-tts/sampler.h"
 #include "npy.h"
 
 using namespace irodori;
-
-namespace {
-
-/** The dump's model repository, from its meta.json. */
-std::string meta_model(const std::filesystem::path & dir) {
-    std::ifstream f(dir / "meta.json");
-    const std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    const size_t at = json.find("\"repository\"", json.find("\"model\""));
-    const size_t a = json.find('"', json.find(':', at) + 1), b = json.find('"', a + 1);
-    return json.substr(a + 1, b - a - 1);
-}
-
-}  // namespace
 
 int main(int argc, char ** argv) {
     const std::vector<std::string> args = utf8_args(argc, argv);
@@ -46,43 +35,67 @@ int main(int argc, char ** argv) {
         const ModelFile model(args[1], backend, model_layout);
         const Dit dit(model);
         Sampler sampler(dit, model, backend);
-        const std::string repository = model.str("general.source.repo_url");
         ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
 
-        std::vector<std::filesystem::path> dumps;
-        for (const auto & e : std::filesystem::directory_iterator(std::filesystem::u8path(args[2]))) {
-            if (std::filesystem::exists(e.path() / "dit_velocity.npy") &&
-                repository == "https://huggingface.co/" + meta_model(e.path())) {
-                dumps.push_back(e.path());
-            }
-        }
-        std::sort(dumps.begin(), dumps.end());
+        const std::vector<IrodoriDump> dumps = irodori_dumps(args[2], model.str("general.source.repo_url"), "dit_velocity.npy");
         bool ok = !dumps.empty();
-        for (const auto & d : dumps) {
-            auto npy = [&](const char * f) { return read_npy((d / f).u8string()); };
-            const Npy text = npy("text_state.npy"), speaker = npy("speaker_state.npy"), noise = npy("noise.npy");
+        for (const IrodoriDump & d : dumps) {
+            auto npy = [&](const char * f) { return read_npy(d.file(f).u8string()); };
+            const Npy text = npy("text_state.npy"), noise = npy("noise.npy");
             const Npy times = npy("dit_t.npy"), velocity = npy("dit_velocity.npy"), xs = npy("dit_x.npy");
             const Npy cond = npy("dit_cond.npy"), blocks = npy("dit_step0_blocks.npy");
-            const Conditions c{text.f32, (int) text.shape[0], speaker.f32, (int) speaker.shape[0]};
+            // A request without a reference attends to no speaker.
+            const Npy speaker = d.reference() ? npy("speaker_state.npy") : Npy{};
+            if (d.caption() && !model.boolean("irodori-tts.caption_condition")) {
+                std::printf("%s: skipped, the file lacks the caption's encoder that instructions need\n", d.dir().filename().u8string().c_str());
+                continue;
+            }
+            // A request without a caption attends to none.
+            const Npy caption = d.caption() ? npy("caption_state.npy") : Npy{};
+            Conditions c{text.f32, (int) text.shape[0], speaker.f32, d.reference() ? (int) speaker.shape[0] : 0, {},
+                         caption.f32, d.caption() ? (int) caption.shape[0] : 0};
             const int frames = (int) noise.shape[0], steps = (int) times.shape[0];
             const size_t n = (size_t) frames * dit.latent_dim();
-            std::printf("%s (%d frames, %d steps)\n", d.filename().u8string().c_str(), frames, steps);
+            std::printf("%s (%d frames, %d steps)\n", d.dir().filename().u8string().c_str(), frames, steps);
+            const Guidance guidance =
+                sampler.check(dit.meanflow() ? sampler.guidance() : d.guidance(sampler.guidance()), steps, d.reference(), d.caption());
+            // The dump's times and the 0 the last step ends at.
+            std::vector<float> dumped = times.f32;
+            dumped.push_back(0.0f);
 
-            const std::vector<float> schedule = sampler.schedule(steps);
+            const std::vector<float> schedule = sampler.schedule(steps, guidance.sway);
             double schedule_error = 0;
             for (int i = 0; i < steps; i++) schedule_error = std::max(schedule_error, (double) std::fabs(schedule[i] - times.f32[i]));
             std::printf("  schedule: largest difference %.1e\n", schedule_error);
+            // torch's float32 cosine and the C library's differ by a rounding at most, which moves a time by its last bit.
+            ok = ok && schedule_error < 1e-6;
 
-            const int branches = dit.meanflow() ? 1 : 3;
+            if (d.has("speaker_uncond.npy")) {
+                const Npy uncond = npy("speaker_uncond.npy");
+                const std::vector<float> made = speaker_noise(npy("speaker_noise.npy").f32, speaker.f32);
+                const Diff dn = compare(made, uncond.f32);
+                print_diff("  speaker noise", dn);
+                // The standard deviation in double precision rounds as torch's; one rounding of the float32 product apart.
+                ok = ok && dn.snr_db > 120;
+                c.speaker_noise = uncond.f32;
+            }
+
+            std::vector<float> x0 = noise.f32;
+            if (guidance.truncation) {
+                for (float & v : x0) v = v * *guidance.truncation;
+            }
             const float t0 = times.f32[0], t1 = schedule[1];
             Graph g;
             std::vector<ggml_tensor *> hidden;
             ggml_tensor * cond_out = nullptr;
-            g.output(dit.build(g, noise.f32, frames, t0, t0 - t1, c, branches, &hidden, &cond_out));
+            g.output(dit.build(g, x0, frames, t0, t0 - t1, c, sampler.branches(0, t0, guidance), sampler.speaker_scale(guidance, dumped, 0), &hidden,
+                               &cond_out));
             g.output(cond_out);
             for (ggml_tensor * h : hidden) g.output(h);
             g.compute(backend, allocr);
             print_diff("  timestep condition, step 0", compare(Graph::read(cond_out).data(), cond.f32.data(), (size_t) cond.shape[1]));
+            // The runtime's first call of a step is the branch with every condition alone for the joint and the
+            // alternating guidance, and the whole batch otherwise, which is the first branches of the port's.
             Diff worst_block;
             const size_t block_size = blocks.f32.size() / hidden.size();
             for (size_t l = 0; l < hidden.size(); l++) {
@@ -94,8 +107,8 @@ int main(int argc, char ** argv) {
             Diff worst_step;
             int worst_index = 0;
             for (int i = 0; i < steps; i++) {
-                const std::vector<float> x(i == 0 ? noise.f32 : std::vector<float>(xs.f32.begin() + (i - 1) * n, xs.f32.begin() + i * n));
-                const std::vector<float> v = sampler.velocity(c, x, frames, times.f32[i], i + 1 < steps ? times.f32[i + 1] : 0.0f);
+                const std::vector<float> x(i == 0 ? x0 : std::vector<float>(xs.f32.begin() + (i - 1) * n, xs.f32.begin() + i * n));
+                const std::vector<float> v = sampler.velocity(c, x, frames, dumped, i, guidance);
                 const Diff dv = compare(v.data(), &velocity.f32[i * n], n);
                 if (dv.snr_db < worst_step.snr_db) {
                     worst_step = dv;
@@ -105,16 +118,30 @@ int main(int argc, char ** argv) {
             print_diff("  worst step, step " + std::to_string(worst_index), worst_step);
 
             const auto start = std::chrono::steady_clock::now();
-            const std::vector<float> final_x = sampler.sample(c, noise.f32, frames, steps);
+            const std::vector<float> final_x = sampler.sample(c, noise.f32, frames, steps, guidance);
             const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
             const Diff df = compare(final_x.data(), &xs.f32[(steps - 1) * n], n);
             print_diff("  sampled latent", df);
             std::printf("  sampling took %.3f s\n", seconds);
             // Measured on an Apple M5 for the MF dumps: 86 to 122 dB on the CPU in F32 and 33 to 61 dB on Metal,
             // whose matrix kernel rounds its inputs to half precision, which four large steps amplify; 21 to
-            // 41 dB with Q8_0 weights. RF reaches 109 dB on the CPU and 50 dB on Metal. A wrong operation
-            // gives a few dB.
+            // 41 dB with Q8_0 weights. RF's dumps lie 89 to 123 dB from the official on the CPU and 36 to 67 dB
+            // on Metal (2026-10-07), the least with the strongest guidance (rf-weather-cfg). The speaker's keys
+            // scaled in every layer make the attention sensitive to the keys' rounding: rf-hai-speaker-kv-min1's
+            // worst step lies 31 dB from the official on Metal, and as far on the CPU with the keys alone rounded
+            // to half precision. A wrong operation gives a few dB.
             ok = ok && df.snr_db > 15;
+            if (!dit.meanflow() && d.sets_guidance()) {
+                // The request's guidance must move the latent further from the default's than the port is from the
+                // runtime, or a port that ignored it would pass.
+                Conditions plain = c;
+                plain.speaker_noise.clear();
+                const std::vector<float> default_x =
+                    sampler.sample(plain, noise.f32, frames, steps, sampler.check(sampler.guidance(), steps, d.reference(), d.caption()));
+                const Diff dd = compare(default_x.data(), &xs.f32[(steps - 1) * n], n);
+                print_diff("  the same with the default guidance", dd);
+                ok = ok && dd.snr_db + 6 < df.snr_db;
+            }
         }
         ggml_gallocr_free(allocr);
         ggml_backend_free(backend);

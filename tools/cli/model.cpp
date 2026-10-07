@@ -3,7 +3,15 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
+#include <memory>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -28,13 +36,111 @@ std::string gigabytes(uint64_t bytes) {
     return s;
 }
 
+/** The file name the official runtime gives a speaker-inversion embedding, and the only one it reads one from. */
+constexpr const char * kEmbeddingSuffix = ".speaker.safetensors";
+
+bool is_embedding(const std::string & path) {
+    const std::string suffix = kEmbeddingSuffix;
+    return path.size() > suffix.size() && path.compare(path.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+/** A speaker-inversion embedding: `tokens` vectors of `dim` values, row by row. */
+struct Embedding {
+    std::vector<float> values;
+    size_t tokens = 0, dim = 0;
+};
+
+/**
+ * The embedding of a .speaker.safetensors file as the official runtime saves and reads it (speaker_inversion.py): the
+ * tensor "speaker_embedding", float32 [tokens, dim] or [1, tokens, dim], after the safetensors header, a little-endian
+ * u64 length and that much JSON. Every number of the header is checked against the payload, the bytes after the
+ * header, before a value is read: the offsets in order and within it, and the shape's bytes, counted without
+ * overflow, the offsets' span.
+ */
+Embedding read_embedding(const std::string & path) {
+    std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
+    if (!f) throw Failure("io", "embedding", "cannot open " + path + "; check the path and that the file can be read");
+    const std::string bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    auto refuse = [&](const std::string & what) {
+        return Failure("invalid_argument", "embedding", path + " is not a speaker-inversion embedding as the official runtime saves one: " + what);
+    };
+    uint64_t header = 0;
+    if (bytes.size() < 8) throw refuse("it is shorter than a safetensors header");
+    for (int i = 7; i >= 0; i--) header = header << 8 | (unsigned char) bytes[i];
+    if (header > bytes.size() - 8) throw refuse("its header runs past the file");
+    const uint64_t payload = bytes.size() - 8 - header;
+    JsonValue json;
+    try {
+        json = parse_json(bytes.substr(8, header));
+    } catch (const std::invalid_argument & e) {
+        throw refuse(std::string("its header is not JSON (") + e.what() + ")");
+    }
+    const JsonValue * tensor = json.member("speaker_embedding");
+    if (!tensor) throw refuse("it holds no tensor speaker_embedding");
+    const JsonValue * dtype = tensor->member("dtype"), * shape = tensor->member("shape"), * offsets = tensor->member("data_offsets");
+    if (!dtype || dtype->text != "F32") throw refuse("speaker_embedding is not float32; save it as float32");
+    if (!shape || !offsets || offsets->items.size() != 2) throw refuse("speaker_embedding has no shape or no offsets");
+    // A count of the header: an integer of 0 or more that a u64 holds.
+    auto count = [&](const JsonValue & v, const char * what) {
+        if (!v.is_integer() || v.text.empty() || v.text[0] == '-') throw refuse(std::string("speaker_embedding's ") + what + " is not a count");
+        try {
+            return (uint64_t) std::stoull(v.text);
+        } catch (const std::out_of_range &) {
+            throw refuse(std::string("speaker_embedding's ") + what + " is past what 64 bits hold");
+        }
+    };
+    std::vector<uint64_t> axes;
+    for (const JsonValue & a : shape->items) axes.push_back(count(a, "shape"));
+    if (axes.size() == 3 && axes[0] == 1) axes.erase(axes.begin());
+    if (axes.size() != 2 || axes[0] == 0 || axes[1] == 0) throw refuse("speaker_embedding is not [tokens, dim] or [1, tokens, dim]");
+    const uint64_t begin = count(offsets->items[0], "offset"), end = count(offsets->items[1], "offset");
+    if (begin > end || end > payload) throw refuse("speaker_embedding's data_offsets do not lie in order within the file's data");
+    if (axes[1] > (end - begin) / sizeof(float) / axes[0] || axes[0] * axes[1] * sizeof(float) != end - begin) {
+        throw refuse("speaker_embedding's data does not fit its shape");
+    }
+    Embedding e;
+    e.tokens = (size_t) axes[0];
+    e.dim = (size_t) axes[1];
+    e.values.resize(e.tokens * e.dim);
+    std::memcpy(e.values.data(), bytes.data() + 8 + header + begin, end - begin);
+    return e;
+}
+
 int run_voice(const CommandLine & line, FILE *) {
     const Loading loading = line.loading(false, std::string("cpu"));
     const LoadParams params = load_params(loading);
+    const std::optional<std::string> lufs = line.value("--lufs");
+    if (lufs && line.has("--keep-loudness")) throw UsageError("give --lufs or --keep-loudness, not both");
+    speech_voice_params * raw = nullptr;
+    check(speech_voice_params_new(&raw));
+    const std::unique_ptr<speech_voice_params, decltype(&speech_voice_params_free)> voice(raw, speech_voice_params_free);
+    // A voice is several recordings or one embedding; the library refuses an embedding beside recordings.
+    std::optional<std::string> embedding;
+    for (size_t i = 1; i + 1 < line.args.size(); i++) {
+        if (!is_embedding(line.args[i])) {
+            check(speech_voice_params_add_reference(raw, line.args[i].c_str()));
+        } else if (embedding) {
+            throw UsageError("give one embedding, not " + *embedding + " and " + line.args[i]);
+        } else {
+            embedding = line.args[i];
+        }
+    }
+    if (embedding) {
+        const Embedding e = read_embedding(*embedding);
+        check(speech_voice_params_set_embedding(raw, e.values.data(), e.tokens, e.dim));
+    }
+    if (lufs) {
+        char * end = nullptr;
+        const double value = std::strtod(lufs->c_str(), &end);
+        if (lufs->empty() || *end != '\0' || !std::isfinite(value)) throw UsageError("--lufs takes a number, not \"" + *lufs + "\"");
+        check(speech_voice_params_set_loudness(raw, value));
+    }
+    if (line.has("--keep-loudness")) check(speech_voice_params_keep_loudness(raw));
+    const std::string & out = line.args.back();
     const auto t0 = std::chrono::steady_clock::now();
-    check(speech_voice_make(line.args[0].c_str(), line.args[1].c_str(), line.args[2].c_str(), params.get()));
+    check(speech_voice_make_from(line.args[0].c_str(), raw, out.c_str(), params.get()));
     const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    std::fprintf(stderr, "wrote %s in %.2f s\n", line.args[2].c_str(), took);
+    std::fprintf(stderr, "wrote %s in %.2f s\n", out.c_str(), took);
     if (line.has("-v")) std::fprintf(stderr, "speech.cpp %s, device %s\n", speech_version(), loading.device->c_str());
     return 0;
 }
@@ -198,19 +304,24 @@ int run_devices(const CommandLine & line, FILE * out) {
 Command voice_command() {
     Command c;
     c.name = "voice";
-    c.usage = "voice MODEL REFERENCE.wav VOICE.gguf [options]";
-    c.summary = "make a voice file from a reference recording";
+    c.usage = "voice MODEL (REFERENCE.wav... | EMBEDDING.speaker.safetensors) VOICE.gguf [options]";
+    c.summary = "make a voice file from reference recordings or a speaker-inversion embedding";
     c.description =
-        "Makes a voice file from a reference recording in a WAVE file at any rate, reading only the codec's encoder from\n"
-        "MODEL, for a model whose information says it takes voice files (Irodori-TTS). On the CPU, the default here, the\n"
-        "voice's latent is the official encoder's to 99 dB SNR; a GPU computes it in less precision.";
+        "Makes a voice file from one or more reference recordings in WAVE files at any rate, each encoded on its own and\n"
+        "joined in order, reading only the codec's encoder from MODEL, for a model whose information says it takes voice\n"
+        "files (Irodori-TTS). Each recording is brought to the model's loudness first, or to --lufs, or kept as it is with\n"
+        "--keep-loudness. On the CPU, the default here, the voice's latent is the official encoder's to 99 dB SNR; a GPU\n"
+        "computes it in less precision. A speaker-inversion embedding in a .speaker.safetensors file, as the official\n"
+        "runtime saves one, makes a voice of its own for MODEL, which no other model takes.";
     c.flags = {
+        {"--lufs", "LUFS", false, "the loudness each recording is brought to, instead of the model's (-16)"},
+        {"--keep-loudness", "", false, "keep each recording's loudness, scaling down a peak above 1"},
         device_flag("cpu (the default here), auto, gpu or a name `speech devices` lists"),
         threads_flag(),
         verbose_flag("also report the release and the device"),
     };
     c.min_args = 3;
-    c.max_args = 3;
+    c.max_args = SIZE_MAX;
     c.run = run_voice;
     return c;
 }

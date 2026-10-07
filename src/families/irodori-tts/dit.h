@@ -7,12 +7,40 @@
 
 namespace irodori {
 
-/** What the DiT attends to besides the latent: the text and speaker conditions, channel-first. */
+/**
+ * What the DiT attends to besides the latent: the text, speaker and caption conditions, channel-first, and the noise
+ * that takes the speaker condition's place in a branch of RF's guidance, of the speaker condition's shape, when the
+ * request asks for it. A request without a reference has no speaker tokens and one without a caption no caption tokens,
+ * and the DiT then attends to none of them, as the runtime's masks of no_ref and of an empty caption make it.
+ */
 struct Conditions {
     std::vector<float> text;
     int text_tokens = 0;
     std::vector<float> speaker;
     int speaker_tokens = 0;
+    std::vector<float> speaker_noise;
+    std::vector<float> caption;
+    int caption_tokens = 0;
+};
+
+/**
+ * What one latent of the DiT's batch attends to besides itself. RF's guidance runs the latent again without the text,
+ * without the speaker, with noise in the speaker's place, or without the caption. `scaled` says whether a request's
+ * scale of the speaker's keys and values reaches the branch, which the runtime leaves off the joint guidance's branch
+ * without every condition.
+ */
+struct Branch {
+    enum class Speaker { Kept, Left, Noise };
+    bool text = true;
+    Speaker speaker = Speaker::Kept;
+    bool scaled = true;
+    bool caption = true;
+};
+
+/** The factor of the speaker's keys and values in the first `layers` blocks, as the runtime's speaker_kv_scale applies it. */
+struct SpeakerScale {
+    float factor = 1;
+    int layers = 0;
 };
 
 /**
@@ -28,13 +56,14 @@ public:
     int latent_dim() const { return latent_dim_; }
 
     /**
-     * The velocity [latent_dim, frames, branches] of the latent x (row-major [frames, latent_dim]) at time
-     * t, with `delta` the step's interval for a MeanFlow model. With 3 branches the batch holds the latent
-     * with every condition, without the text, and without the speaker, as RF's guidance needs. `blocks`,
-     * when given, receives each block's output and `cond` the timestep condition.
+     * The velocity [latent_dim, frames, branches] of the latent x (row-major [frames, latent_dim]) at time t, with
+     * `delta` the step's interval for a MeanFlow model, for each of `branches`, which form the batch, with the speaker's
+     * keys and values scaled by `scale` in the branches it reaches. `blocks`, when given, receives each block's output
+     * and `cond` the timestep condition.
      */
     ggml_tensor * build(Graph & g, const std::vector<float> & x, int frames, float t, float delta, const Conditions & c,
-                        int branches, std::vector<ggml_tensor *> * blocks = nullptr, ggml_tensor ** cond = nullptr) const;
+                        const std::vector<Branch> & branches, const SpeakerScale & scale = {}, std::vector<ggml_tensor *> * blocks = nullptr,
+                        ggml_tensor ** cond = nullptr) const;
 
 private:
     const ModelFile & m_;

@@ -104,6 +104,7 @@ void check(const speech_request & request, speech_option option, speech_type typ
     const OptionSpec * spec = file.spec(option);
     if (!spec) {
         if (neutral(option, value)) return;
+        if (const Lack * lack = file.lack(option)) throw ApiError(SPEECH_ERROR_UNSUPPORTED, lack->message, name);
         throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.identity.name + " does not take the option " + name +
                                                      (option == SPEECH_OPT_SPEED || option == SPEECH_OPT_DURATION_SCALE ? " but at 1" : "") +
                                                      "; leave it out",
@@ -124,6 +125,7 @@ void check(const speech_request & request, speech_option option, speech_type typ
     if (option == SPEECH_OPT_VOICE) {
         const std::string & voice = std::get<std::string>(value);
         if (!request.model->has_voice(voice)) {
+            if (const Lack * lack = file.lack(option, voice)) throw ApiError(SPEECH_ERROR_OUT_OF_RANGE, lack->message, name);
             std::vector<std::string> names;
             for (const VoiceInfo & v : file.described.voices) names.push_back(v.name);
             for (const VoiceInfo & v : request.model->added()) names.push_back(v.name);
@@ -196,6 +198,13 @@ public:
 
     bool audio(const float * samples, size_t n) override {
         if (stopped()) return false;
+        // Every family's audio passes here, so no synthesis returns audio that is not finite as speech.
+        for (size_t i = 0; i < n; i++) {
+            if (!std::isfinite(samples[i])) {
+                throw Error(Fault::OutOfRange, "the speech came out as numbers that are not finite, which the model's float32 cannot hold: the "
+                                               "request's scales or settings are larger than the model computes with; give smaller ones");
+            }
+        }
         passed_ = true;
         samples_ += n;
         if (on_audio_(samples, n, user_data_) != 0) stop_ = true;

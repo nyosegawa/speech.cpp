@@ -18,6 +18,51 @@ constexpr int kCodecResidualUnits = 3;
 /** Called with each piece of audio as it is decoded; returning false stops the decoding. */
 using AudioSink = std::function<bool(const float * samples, size_t n)>;
 
+/** What the decoder knows when it sizes a window: what it has passed on, and how fast it decodes. */
+struct DecodeProgress {
+    /** Frames passed on so far, 0 for the first window. */
+    int64_t frames_done = 0;
+    /** Frames still to decode and pass on. */
+    int64_t frames_left = 0;
+    /** Seconds of audio passed on so far. */
+    double audio_sent = 0;
+    /** Seconds since the first window's audio was passed on. */
+    double since_first = 0;
+    /** The running estimate of the decoder's seconds per frame it decodes, a window's margins included. */
+    double seconds_per_frame = 0;
+};
+
+/** The frames of the next window, the first included, which must be at least 1 and at most the frames left. */
+using WindowChoice = std::function<int(const DecodeProgress & progress)>;
+
+/** The running estimate of the seconds per decoded frame after a window measured at `measured`; the first is its own. */
+inline double next_estimate(double previous, double measured) {
+    return previous > 0 ? 0.5 * (previous + measured) : measured;
+}
+
+/**
+ * How a streaming decoder sizes its windows: `first` frames first, then from `floor` to `ceiling` frames, so that the
+ * next one arrives while the listener still has `margin` seconds of audio, a frame being `frame_seconds` of audio and
+ * each window decoding `context` frames on either side of its own.
+ */
+struct WindowRule {
+    int first = 0, floor = 0, ceiling = 0, context = 0;
+    double frame_seconds = 0, margin = 0;
+};
+
+/**
+ * The frames of the next window under `rule`. The first window is `first` frames, or the frames left when fewer. After
+ * it, the frames left when they are no more than the floor; otherwise the
+ * largest size from the floor to the ceiling whose decoding, estimated at `seconds_per_frame` for its frames and its
+ * margins, ends before the listener's audio falls below the margin, the listener having the audio sent less the time
+ * since the first window was sent, as if playback began with the first window. When not even the floor ends in time,
+ * the floor where its decoding still takes less than the audio it gives, which gains on the listener, and the ceiling
+ * where decoding is slower than real time, since smaller windows would only decode more margins and fall further
+ * behind; the player has to buffer then. It reads no clock, and the result is never past the ceiling or the frames
+ * left.
+ */
+int next_window(const WindowRule & rule, const DecodeProgress & progress);
+
 /**
  * Semantic-DACVAE-Japanese-32dim, the codec of Irodori-TTS: 48 kHz audio and a 32-dimensional latent at
  * 25 frames a second. Every convolution is non-causal with symmetric padding.
@@ -55,11 +100,11 @@ public:
     ggml_tensor * build_decoder(Graph & g, const std::vector<float> & latent, std::vector<ggml_tensor *> * stages = nullptr) const;
 
     /**
-     * Decodes the first `samples` samples of a latent, row-major [frames, latent_dim], `first_window`
-     * frames first and then `window` at a time, each with enough frames around it that its samples are
+     * Decodes the first `samples` samples of a latent, row-major [frames, latent_dim], in windows of the sizes `choose`
+     * gives as it measures the decoding, the first included, each with enough frames around it that its samples are
      * those of decoding the whole latent at once, and passes each window's samples to `sink`.
      */
-    void decode(const std::vector<float> & latent, int64_t samples, int first_window, int window, const AudioSink & sink);
+    void decode(const std::vector<float> & latent, int64_t samples, const WindowChoice & choose, const AudioSink & sink);
 
     /** The frames on each side of a window that the encoder's receptive field reaches. */
     static constexpr int kEncoderMargin = 8;

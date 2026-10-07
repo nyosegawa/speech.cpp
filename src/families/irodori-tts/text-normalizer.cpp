@@ -28,6 +28,14 @@ void replace_all(std::vector<uint32_t> & text, const std::vector<uint32_t> & fro
 
 std::vector<uint32_t> u32(const char * utf8) { return decode_utf8(utf8).value(); }
 
+/** The UTF-8 of `text` without what Python's str.strip() removes at either end. */
+std::string strip(const std::vector<uint32_t> & text) {
+    size_t begin = 0, end = text.size();
+    while (begin < end && python_space(text[begin])) begin++;
+    while (end > begin && python_space(text[end - 1])) end--;
+    return encode_utf8(std::vector<uint32_t>(text.begin() + begin, text.begin() + end));
+}
+
 /** strip_outer_brackets(): removes a pair of brackets as long as it encloses the whole text. */
 void strip_outer_brackets(std::vector<uint32_t> & text) {
     static const std::vector<std::pair<uint32_t, uint32_t>> pairs = {
@@ -98,10 +106,13 @@ std::string normalize_text(const std::string & raw) {
     replace_all(text, u32("..."), {0x2026});
     replace_all(text, u32(".."), {0x2026});
 
-    size_t begin = 0, end = text.size();
-    while (begin < end && python_space(text[begin])) begin++;
-    while (end > begin && python_space(text[end - 1])) end--;
-    return encode_utf8(std::vector<uint32_t>(text.begin() + begin, text.begin() + end));
+    return strip(text);
+}
+
+std::string strip_caption(const std::string & caption) {
+    std::optional<std::vector<uint32_t>> decoded = decode_utf8(caption);
+    if (!decoded) throw Error(Fault::InvalidArgument, "the instructions are not valid UTF-8", "instructions");
+    return strip(*decoded);
 }
 
 }  // namespace irodori

@@ -17,4 +17,10 @@ double integrated_loudness(const std::vector<float> & samples, int sample_rate);
  */
 std::vector<float> normalize_loudness(const std::vector<float> & samples, int sample_rate, double target_lufs);
 
+/**
+ * What the official runtime does to a reference it does not normalize (ensure_max): a scale down when a sample
+ * exceeds 1, which leaves audio within it as it is.
+ */
+std::vector<float> bound_peak(std::vector<float> samples);
+
 }  // namespace irodori

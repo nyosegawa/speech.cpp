@@ -79,15 +79,17 @@ double integrated_loudness(const std::vector<float> & samples, int sample_rate) 
 std::vector<float> normalize_loudness(const std::vector<float> & samples, int sample_rate, double target_lufs) {
     const float gain = (float) std::exp((target_lufs - integrated_loudness(samples, sample_rate)) * std::log(10.0) / 20.0);
     std::vector<float> out(samples.size());
+    for (size_t i = 0; i < out.size(); i++) out[i] = samples[i] * gain;
+    return bound_peak(std::move(out));
+}
+
+std::vector<float> bound_peak(std::vector<float> samples) {
     float peak = 0;
-    for (size_t i = 0; i < out.size(); i++) {
-        out[i] = samples[i] * gain;
-        peak = std::max(peak, std::fabs(out[i]));
-    }
+    for (float v : samples) peak = std::max(peak, std::fabs(v));
     if (peak > 1.0f) {
-        for (float & v : out) v *= 1.0f / peak;
+        for (float & v : samples) v *= 1.0f / peak;
     }
-    return out;
+    return samples;
 }
 
 }  // namespace irodori

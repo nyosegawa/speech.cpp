@@ -85,7 +85,11 @@ typedef enum speech_status {
     SPEECH_ERROR_INVALID_ARGUMENT = -1,
     /** The model cannot do what was asked: an option it does not take, given a value other than the neutral one. */
     SPEECH_ERROR_UNSUPPORTED = -2,
-    /** The model takes the option, but not this value: outside its range, not one of its choices, or too long. */
+    /**
+     * The model takes the option, but not this value: outside its range, not one of its choices, or too long; or a
+     * synthesis whose values, each within its range, are together more than the model computes, whose speech came out
+     * not finite (speech_synthesize()), naming no option.
+     */
     SPEECH_ERROR_OUT_OF_RANGE = -3,
     /**
      * A model or voice file that cannot be used: not GGUF, an architecture no family has, a layout this release does
@@ -118,8 +122,9 @@ SPEECH_API const char * speech_last_error(void);
 /**
  * The input the last failed call on the calling thread concerns: an option's name as speech_option_name() gives it,
  * "text" or "audio" for a request's input, "device", "threads" or "warmup" for a load parameter, "name" or "path"
- * for a voice being added, or "model_path", "reference_path" or "voice_path" for a voice file being made. NULL when
- * the failure concerns no single input. It stays valid until the next call into the library on the same thread.
+ * for a voice being added, or "model_path", "reference_path", "references", "loudness", "embedding" or "voice_path" for
+ * a voice file being made ("references", "loudness" and "embedding" added in 3.1). NULL when the failure concerns no
+ * single input. It stays valid until the next call into the library on the same thread.
  */
 SPEECH_API const char * speech_last_error_option(void);
 
@@ -273,10 +278,93 @@ typedef enum speech_option {
     SPEECH_OPT_CODE_PREDICTOR_TEMPERATURE = 19,
     /**
      * "instructions", a string: how to speak the text, described in words ("怒った口調で", "Speak slowly and softly."), as
-     * OpenAI's speech API names it, for a model trained to follow such a description; "" (the neutral value) gives none.
-     * One too long for the model beside the text is refused when the request runs, naming the option. Added in 3.1.
+     * OpenAI's speech API names it, for a model trained to follow such a description, which may describe the voice too
+     * (Irodori-TTS's caption); "" (the neutral value) gives none. One too long for the model is refused when the request
+     * runs, naming the option. Added in 3.1.
      */
-    SPEECH_OPT_INSTRUCTIONS = 20
+    SPEECH_OPT_INSTRUCTIONS = 20,
+    /**
+     * "cfg_scale_text", a number of 0 or more: how strongly a guided sampler follows the text, against a branch of the
+     * batch that runs without it; 0 runs no such branch. Added in 3.1.
+     */
+    SPEECH_OPT_CFG_SCALE_TEXT = 21,
+    /**
+     * "cfg_scale_speaker", a number of 0 or more: how strongly a guided sampler follows the voice, as cfg_scale_text.
+     * Added in 3.1.
+     */
+    SPEECH_OPT_CFG_SCALE_SPEAKER = 22,
+    /**
+     * "cfg_guidance_mode", a string: how a guided sampler forms the branches it guides against. "independent", a
+     * branch without each condition that guides; "joint", one branch without every condition, which takes the scales
+     * that guide equal; "alternating", one branch, without each condition that guides in turn from step to step. Added
+     * in 3.1.
+     */
+    SPEECH_OPT_CFG_GUIDANCE_MODE = 23,
+    /**
+     * "cfg_min_t", a number from 0 to 1, and "cfg_max_t": the guidance runs at the sampler's steps whose time, which
+     * falls from 1 at the noise to 0 at the speech, lies from cfg_min_t to cfg_max_t. Added in 3.1.
+     */
+    SPEECH_OPT_CFG_MIN_T = 24,
+    /** "cfg_max_t", a number from 0 to 1: the latest time of the guidance, as cfg_min_t says. Added in 3.1. */
+    SPEECH_OPT_CFG_MAX_T = 25,
+    /** "truncation_factor", a number above 0: the factor of the sampler's starting noise. Added in 3.1. */
+    SPEECH_OPT_TRUNCATION_FACTOR = 26,
+    /**
+     * "rescale_k", a number above 0, and "rescale_sigma": the temporal score rescaling of each step's velocity (Xu et
+     * al., 2025), which a request sets with both or neither. Added in 3.1.
+     */
+    SPEECH_OPT_RESCALE_K = 27,
+    /** "rescale_sigma", a number above 0: the other setting of the rescaling, as rescale_k says. Added in 3.1. */
+    SPEECH_OPT_RESCALE_SIGMA = 28,
+    /**
+     * "speaker_uncond_mode", a string: what the branch without the voice attends to in its place. "mask", nothing;
+     * "noise", noise of the voice condition's spread. Added in 3.1.
+     */
+    SPEECH_OPT_SPEAKER_UNCOND_MODE = 29,
+    /**
+     * "sway_coeff", a number: the coefficient of Sway Sampling (F5-TTS), which moves the sampler's steps toward the
+     * noise when below 0 and toward the speech when above; 0 spaces them evenly. A coefficient that leaves two steps
+     * at the same time with the request's steps is refused when the request runs. Added in 3.1.
+     */
+    SPEECH_OPT_SWAY_COEFF = 30,
+    /**
+     * "keep_tail", a boolean: whether the speech keeps all of its length, rather than ending where the model's output
+     * turns flat and quiet. Added in 3.1.
+     */
+    SPEECH_OPT_KEEP_TAIL = 31,
+    /**
+     * "tail_window_size", an integer: the frames over which the model's output must be flat for the speech to end.
+     * Added in 3.1.
+     */
+    SPEECH_OPT_TAIL_WINDOW_SIZE = 32,
+    /** "tail_std_threshold", a number: the standard deviation below which the window counts as flat. Added in 3.1. */
+    SPEECH_OPT_TAIL_STD_THRESHOLD = 33,
+    /**
+     * "tail_mean_threshold", a number: how near to 0 the window's mean must lie for it to count as quiet. Added in
+     * 3.1.
+     */
+    SPEECH_OPT_TAIL_MEAN_THRESHOLD = 34,
+    /**
+     * "speaker_kv_scale", a number above 0: the factor of the keys and values a guided sampler's model attends to of the
+     * voice, which above 1 makes the speech follow the voice more closely, in the first speaker_kv_max_layers layers and
+     * at every step that starts at a time of speaker_kv_min_t or more; 1 leaves them as they are. Added in 3.1.
+     */
+    SPEECH_OPT_SPEAKER_KV_SCALE = 35,
+    /**
+     * "speaker_kv_min_t", a number from 0 to 1: the time below which speaker_kv_scale stops, as speaker_kv_scale says;
+     * one above the first step's time keeps it to the end. Added in 3.1.
+     */
+    SPEECH_OPT_SPEAKER_KV_MIN_T = 36,
+    /**
+     * "speaker_kv_max_layers", an integer of 1 or more: the layers, from the first, that speaker_kv_scale reaches.
+     * Added in 3.1.
+     */
+    SPEECH_OPT_SPEAKER_KV_MAX_LAYERS = 37,
+    /**
+     * "cfg_scale_instructions", a number of 0 or more: how strongly a guided sampler follows the instructions, as
+     * cfg_scale_text. Added in 3.1.
+     */
+    SPEECH_OPT_CFG_SCALE_INSTRUCTIONS = 38
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */
@@ -556,8 +644,9 @@ SPEECH_API speech_status speech_model_info_option_range(const speech_model_info 
 
 /**
  * The number of values a string option takes: the voices for "voice", the languages for "language", which also
- * takes "auto" and a region or script of each, and the decodings for "decoding", the default among them. 0 for
- * "prompt" and "instructions", which take any text, and for an option of another type.
+ * takes "auto" and a region or script of each, the decodings for "decoding", the default among them, and the modes for
+ * "cfg_guidance_mode" and "speaker_uncond_mode". 0 for "prompt" and "instructions", which take any text, and for an
+ * option of another type.
  */
 SPEECH_API size_t speech_model_info_option_choice_count(const speech_model_info * info, speech_option option);
 
@@ -624,8 +713,12 @@ SPEECH_API speech_status speech_model_get_info(const speech_model * model, speec
 
 /*
  * Voices made from reference recordings, for a model whose information says it takes voice files. A voice file holds
- * the codec's latent of a reference recording, the recording's length and rate, the kind of device that encoded it
- * and the hash of the codec it was encoded with, and it works with every model whose codec has that hash.
+ * the codec's latent of one or more reference recordings joined, each recording's length and rate, the loudness they
+ * were brought to, the kind of device that encoded them and the hash of the codec they were encoded with, and it works
+ * with every model whose codec has that hash; or a speaker-inversion embedding and the model it was made for. Every
+ * voice file this release makes, of one reference at the model's loudness too, is of the voice file's layout 2, added
+ * in 3.1, which releases before 0.8.0 refuse; a voice file of layout 1, which releases from 0.7.0 made, is read as
+ * before.
  */
 
 /**
@@ -646,6 +739,56 @@ SPEECH_API speech_status speech_voice_add(speech_model * model, const char * nam
  */
 SPEECH_API speech_status speech_voice_make(const char * model_path, const char * reference_path,
                                            const char * voice_path, const speech_load_params * params);
+
+/*
+ * Voice parameters: what speech_voice_make_from() makes a voice file of, several reference recordings and the loudness
+ * each is brought to, as the official runtime's ref_wavs and ref_normalize_db, or a speaker-inversion embedding, as its
+ * ref_embed. Added in 3.1.
+ */
+typedef struct speech_voice_params speech_voice_params;
+
+/** Parameters without a reference, at the model's loudness. Added in 3.1. */
+SPEECH_API speech_status speech_voice_params_new(speech_voice_params ** params);
+
+/** Frees parameters. NULL is ignored. Added in 3.1. */
+SPEECH_API void speech_voice_params_free(speech_voice_params * params);
+
+/**
+ * Adds a reference recording in the WAVE file at `path`, which is encoded on its own and joined after the references
+ * added before. The references together may be at most as long as the model's file allows; a failure names
+ * "references". Added in 3.1.
+ */
+SPEECH_API speech_status speech_voice_params_add_reference(speech_voice_params * params, const char * path);
+
+/**
+ * Brings each reference to `lufs`, a finite loudness in LUFS, before it is encoded, instead of the model's
+ * (irodori-tts.reference.lufs, -16 LUFS), which speech_voice_make() and speech_voice_add() take. Added in 3.1.
+ */
+SPEECH_API speech_status speech_voice_params_set_loudness(speech_voice_params * params, double lufs);
+
+/**
+ * Keeps each reference's loudness as recorded, scaling down one whose peak exceeds 1, instead of bringing it to a
+ * loudness. Added in 3.1.
+ */
+SPEECH_API speech_status speech_voice_params_keep_loudness(speech_voice_params * params);
+
+/**
+ * Makes the voice of a speaker-inversion embedding instead of references, as the official runtime's ref_embed:
+ * `tokens` vectors of `dim` finite values, row by row, which the model attends to in place of the speaker condition it
+ * makes of a reference, and whose first vector the duration predictor takes as the speaker's. `dim` must be the model's
+ * irodori-tts.speaker.dim. The values are copied. An embedding is learned against one model, which the voice file names
+ * and no other model takes; it has no references and no loudness. Added in 3.1.
+ */
+SPEECH_API speech_status speech_voice_params_set_embedding(speech_voice_params * params, const float * values, size_t tokens,
+                                                           size_t dim);
+
+/**
+ * Makes a voice file at `voice_path` of `voice`, its references, at least one, or its embedding, for the model file at
+ * `model_path`, as speech_voice_make() makes one of a single reference at the model's loudness, which this gives for one
+ * reference and no loudness of its own. Added in 3.1.
+ */
+SPEECH_API speech_status speech_voice_make_from(const char * model_path, const speech_voice_params * voice, const char * voice_path,
+                                                const speech_load_params * params);
 
 /*
  * Requests. A request is made for one model and checks every value as it is set against what that model declares:
@@ -713,16 +856,19 @@ SPEECH_API void speech_request_cancel(speech_request * request);
 
 /**
  * Receives the audio of a synthesis as it is made: `n_samples` mono samples, at least one, at the model's sample
- * rate, nominally within [-1, 1] and not clamped, valid only during the call. Returning nonzero stops the request. It
- * runs on the thread that called speech_synthesize() and must not call into the library with the same model.
+ * rate, nominally within [-1, 1] and not clamped, each a finite number, valid only during the call. Returning nonzero
+ * stops the request. It runs on the thread that called speech_synthesize() and must not call into the library with the
+ * same model.
  */
 typedef int (*speech_audio_callback)(const float * samples, size_t n_samples, void * user_data);
 
 /**
  * Speaks a request, passing its audio to `on_audio` with `user_data`. It returns SPEECH_OK once the speech has ended
  * or has been stopped by a limit, with the reason in the result; SPEECH_CANCELLED once it was cancelled; or an error,
- * after which no more audio comes. The request is checked as a whole before any work starts. A recognition model is
- * SPEECH_ERROR_UNSUPPORTED.
+ * after which no more audio comes. The request is checked as a whole before any work starts. Speech that comes out not
+ * finite, as from a guidance scale that a float32 holds but whose products it does not, is never passed on: the request
+ * fails with SPEECH_ERROR_OUT_OF_RANGE naming no option, since each value was within its range and none is known to be
+ * at fault, and the caller makes a new request with smaller values. A recognition model is SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_synthesize(speech_request * request, speech_audio_callback on_audio, void * user_data);
 

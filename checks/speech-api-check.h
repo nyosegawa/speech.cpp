@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 
 #include "speech.h"
@@ -79,3 +80,41 @@ int progress_rises(const Progress * p, double last, const char * what);
 
 /** The checks of a recognition model: `argv` is <model.gguf> <dump folder>... [--device NAME]. Returns the exit status. */
 int check_recognition(int argc, char ** argv);
+
+/** The sentence a synthesis model speaks in most checks. */
+#define SENTENCE "明日の東京は晴れで、最高気温は二十四度の予報です。"
+
+/** The audio of one request, grown as it arrives. */
+typedef struct {
+    float * samples;
+    size_t n, capacity;
+} Audio;
+
+/** An audio callback that appends to the Audio at `user_data`. */
+int collect(const float * samples, size_t n, void * user_data);
+
+/** A request of `text` in `voice` (NULL for none) with `seed` (negative for none); a failure ends the process. */
+speech_request * new_request(speech_model * model, const char * text, const char * voice, int64_t seed);
+
+/** Runs `r`, collecting its audio, and returns its status; the request is freed. */
+speech_status speak(speech_request * r, Audio * audio, speech_stop * stop, int64_t * seed);
+
+/**
+ * Runs `request`, which it frees, while another thread cancels it once it has reported progress or passed audio;
+ * whether it stopped as cancelled with at most one call of a callback after the cancel.
+ */
+int cancelled_from_another_thread(speech_request * request, const char * what);
+
+/**
+ * Irodori-TTS's rules of a request, its options of the official runtime's request, the voice none and instructions,
+ * spoken in `voice`. Returns nonzero on a failure.
+ */
+int check_irodori(speech_model * model, const speech_model_info * info, const char * voice);
+
+/**
+ * Irodori-TTS's voice files of several references, of another loudness and of an embedding, made for the model file
+ * at `model_path` beside `made`, which speech_voice_make() made of `reference`: one reference at the model's loudness
+ * gives its bytes, the others other files, and what cannot be made is refused naming its input. The embedding's is
+ * "<made>.embedding.gguf". Returns nonzero on a failure.
+ */
+int check_voice_params(const char * model_path, const char * reference, const char * made, const speech_load_params * params);

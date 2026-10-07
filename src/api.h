@@ -10,21 +10,20 @@
 #include "engine.h"
 #include "speech.h"
 
-// What the three files of the C API share: the table of families, the objects behind the opaque handles, and the way
-// a failure becomes a status.
+// What the files of the C API share: the table of families, the objects behind the opaque handles, and the way a
+// failure becomes a status.
 
 /**
  * A family behind the C API, one line of the table in speech.cpp: its task, the layout its reader takes, which names
  * the general.architecture of its files, its table of options and what else the information shows (describe), its
- * engine (load), and, for a family that takes voice files, how it makes one from a reference recording.
+ * engine (load), and, for a family that takes voice files, how it makes one of a VoiceRecipe.
  */
 struct Family {
     speech_task task;
     const Layout & layout;
     FamilyInfo (*describe)(const std::shared_ptr<const ModelFile> & file);
     std::unique_ptr<Engine> (*load)(const std::string & path, ggml_backend_t backend);
-    void (*make_voice)(const std::string & model_path, const std::string & reference_path, const std::string & voice_path,
-                       ggml_backend_t backend);
+    void (*make_voice)(const std::string & model_path, const VoiceRecipe & recipe, const std::string & voice_path, ggml_backend_t backend);
 };
 
 /** The family of the model file at `path`, by its general.architecture; an architecture no family has throws. */
@@ -46,6 +45,8 @@ struct FileInfo {
 
     /** The family's declaration of `option`, or null when the model does not take it. */
     const OptionSpec * spec(speech_option option) const;
+    /** What the file lacks for `option`, or for the voice `voice` of SPEECH_OPT_VOICE, or null. */
+    const Lack * lack(speech_option option, const std::string & voice = "") const;
     /** The key and the JSON value of a metadata entry, which live as long as this. */
     const char * meta_key(size_t index) const;
     const char * meta_value(size_t index) const;
@@ -57,6 +58,13 @@ private:
 
 /** Reads the information of the model file at `path` from its metadata. */
 std::shared_ptr<const FileInfo> read_file_info(const std::string & path);
+
+struct speech_load_params {
+    std::string device = "auto";
+    /** 0 for the library's default. */
+    int threads = 0;
+    bool warmup = false;
+};
 
 struct speech_model_info {
     std::shared_ptr<const FileInfo> file;

@@ -48,8 +48,8 @@ struct SpeechRequest {
 
 /**
  * Reads a create speech request: "model", "input", "response_format", "stream_format" and every option of the
- * vocabulary by its name. A member it does not have is refused rather than ignored, OpenAI's "instructions" among
- * them, and a member set to null counts as left out. The model's name, which "model" may give, is the one /v1/models
+ * vocabulary by its name, OpenAI's "instructions" among them. A member it does not have is refused rather than ignored,
+ * and a member set to null counts as left out. The model's name, which "model" may give, is the one /v1/models
  * lists. Anything it cannot read throws an ApiError; the values of the options are checked by the library's setters.
  */
 SpeechRequest read_speech_request(const std::string & body, const std::string & model_name);

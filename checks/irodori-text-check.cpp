@@ -1,7 +1,9 @@
 // Checks the text stage of Irodori-TTS against the official implementation: the normalization and the
 // tokenizer on the cases of reference/irodori-tts/text_cases.py, then the text encoder, layer by layer, on
 // the tokens of every dump that has them (dump.py's, and text_cases.py's texts longer than the local
-// window). The text encoder is given the dump's tokens, so its error is its own.
+// window). The text encoder is given the dump's tokens, so its error is its own. With a file that holds the
+// caption's encoder, the same for captions: their strip and tokens on the cases of
+// reference/irodori-tts/caption_cases.py, and the caption condition on the tokens of every dump that has one.
 //
 // usage: irodori-text-check <model.gguf> <reference out dir> [gpu|cpu|device name]
 
@@ -30,8 +32,11 @@ std::string from_hex(const std::string & hex) {
     return s;
 }
 
-/** The text cases that fail the normalization or the tokenizer, of all the cases in `path`. */
-int check_cases(const Tokenizer & tokenizer, const std::string & path, int & total) {
+/**
+ * The cases that fail `normalize` or the tokenizer, of all the cases in `path`: a text, what `normalize` makes of it and
+ * its tokens, which a text that normalizes to nothing has none of.
+ */
+int check_cases(const Tokenizer & tokenizer, const std::string & path, std::string (*normalize)(const std::string &), int & total) {
     std::ifstream f(std::filesystem::u8path(path));
     if (!f) throw std::runtime_error("cannot open " + path);
     std::string line;
@@ -47,7 +52,7 @@ int check_cases(const Tokenizer & tokenizer, const std::string & path, int & tot
             i = j + 1;
         }
         total++;
-        const std::string got_text = normalize_text(text);
+        const std::string got_text = normalize(text);
         const std::vector<int32_t> got = got_text.empty() ? std::vector<int32_t>{} : tokenizer.encode(got_text);
         if (got_text != want_text || got != want) {
             failed++;
@@ -79,9 +84,18 @@ int main(int argc, char ** argv) {
         const std::filesystem::path dir = std::filesystem::u8path(args[2]);
 
         int total = 0;
-        const int failed = check_cases(tokenizer, (dir / "text" / "text-cases.tsv").u8string(), total);
+        const int failed = check_cases(tokenizer, (dir / "text" / "text-cases.tsv").u8string(), normalize_text, total);
         std::printf("normalization and tokenizer: %d of %d cases match\n", total - failed, total);
         bool ok = failed == 0;
+        const bool caption = model.boolean("irodori-tts.caption_condition");
+        if (caption) {
+            int captions = 0;
+            const int caption_failed = check_cases(tokenizer, (dir / "caption" / "caption-cases.tsv").u8string(), strip_caption, captions);
+            std::printf("caption strip and tokenizer: %d of %d cases match\n", captions - caption_failed, captions);
+            ok = ok && caption_failed == 0;
+        } else {
+            std::printf("captions: skipped, the file lacks the caption's encoder\n");
+        }
 
         ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
         std::vector<std::filesystem::path> dumps;
@@ -96,7 +110,7 @@ int main(int argc, char ** argv) {
             const Npy state = read_npy((d / "text_state.npy").u8string());
             Graph g;
             std::vector<ggml_tensor *> hidden;
-            ggml_tensor * out = encoder.build(g, ids.i32, &hidden);
+            ggml_tensor * out = encoder.build(g, ids.i32, Condition::Text, &hidden);
             g.output(out);
             for (ggml_tensor * h : hidden) g.output(h);
             g.compute(backend, allocr);
@@ -114,6 +128,23 @@ int main(int argc, char ** argv) {
             std::printf("%s (%zu tokens)\n", d.filename().u8string().c_str(), n);
             print_diff("  worst ModernBERT layer " + std::to_string(worst_index), worst_layer);
             print_diff("  text condition", ds);
+            worst = std::min(worst, ds.snr_db);
+        }
+        std::vector<std::filesystem::path> captions;
+        for (const auto & e : std::filesystem::recursive_directory_iterator(dir)) {
+            if (caption && e.is_regular_file() && e.path().filename() == "caption_state.npy") captions.push_back(e.path().parent_path());
+        }
+        std::sort(captions.begin(), captions.end());
+        for (const auto & d : captions) {
+            const Npy ids = read_npy((d / "caption_ids.npy").u8string());
+            const Npy state = read_npy((d / "caption_state.npy").u8string());
+            Graph g;
+            ggml_tensor * out = encoder.build(g, ids.i32, Condition::Caption);
+            g.output(out);
+            g.compute(backend, allocr);
+            const Diff ds = compare(Graph::read(out), state.f32);
+            std::printf("%s (%zu caption tokens)\n", d.filename().u8string().c_str(), ids.i32.size());
+            print_diff("  caption condition", ds);
             worst = std::min(worst, ds.snr_db);
         }
         ggml_gallocr_free(allocr);

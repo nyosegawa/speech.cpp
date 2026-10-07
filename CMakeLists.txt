@@ -123,7 +123,7 @@ target_link_libraries(qwen3asr PUBLIC speechcommon)
 # The C API, include/speech.h, twice: static for the executables, so that each stays one file, and shared as
 # libspeech for bindings and other programs. On Windows the two would both write speech.lib, the static one as
 # the library and the shared one as its import library, hence speech-static.
-set(SPEECH_SOURCES src/speech.cpp src/info.cpp src/request.cpp src/qwen3-tts-engine.cpp src/irodori-tts-engine.cpp
+set(SPEECH_SOURCES src/speech.cpp src/info.cpp src/request.cpp src/voice.cpp src/qwen3-tts-engine.cpp src/irodori-tts-engine.cpp
     src/fastconformer-engine.cpp src/qwen3-asr-engine.cpp)
 
 add_library(speech-static STATIC ${SPEECH_SOURCES})
@@ -207,21 +207,28 @@ target_link_libraries(qwen3-decoder-check PRIVATE qwen3tts)
 add_executable(irodori-text-check checks/irodori-text-check.cpp)
 target_link_libraries(irodori-text-check PRIVATE irodoritts)
 
-add_executable(irodori-codec-check checks/irodori-codec-check.cpp)
+add_executable(irodori-window-check checks/irodori-window-check.cpp)
+target_link_libraries(irodori-window-check PRIVATE irodoritts)
+
+add_executable(irodori-codec-check checks/irodori-codec-check.cpp tools/common/json-reader.cpp)
+target_include_directories(irodori-codec-check PRIVATE tools/common)
 target_link_libraries(irodori-codec-check PRIVATE irodoritts)
 
-add_executable(irodori-condition-check checks/irodori-condition-check.cpp)
+# These read the dump's meta.json with the JSON reader of `speech`.
+add_executable(irodori-condition-check checks/irodori-condition-check.cpp tools/common/json-reader.cpp)
+target_include_directories(irodori-condition-check PRIVATE tools/common)
 target_link_libraries(irodori-condition-check PRIVATE irodoritts)
 
-add_executable(irodori-dit-check checks/irodori-dit-check.cpp)
+add_executable(irodori-dit-check checks/irodori-dit-check.cpp tools/common/json-reader.cpp)
+target_include_directories(irodori-dit-check PRIVATE tools/common)
 target_link_libraries(irodori-dit-check PRIVATE irodoritts)
 
-# It reads the dump's meta.json with the JSON reader of `speech`.
 add_executable(irodori-synthesis-check checks/irodori-synthesis-check.cpp tools/common/json-reader.cpp)
 target_include_directories(irodori-synthesis-check PRIVATE tools/common)
 target_link_libraries(irodori-synthesis-check PRIVATE irodoritts)
 
-add_executable(speech-api-check checks/speech-api-check.c checks/speech-api-recognition.c checks/speech-api-common.c)
+add_executable(speech-api-check checks/speech-api-check.c checks/speech-api-irodori.c checks/speech-api-recognition.c checks/speech-api-common.c
+               checks/speech-api-platform.c)
 target_link_libraries(speech-api-check PRIVATE speech)
 # The check compares the version the library reports with the one it was built against.
 target_compile_definitions(speech-api-check PRIVATE SPEECH_EXPECTED_VERSION="${PROJECT_VERSION}")
@@ -230,6 +237,10 @@ if (WIN32)
 else()
     find_package(Threads REQUIRED)
     target_link_libraries(speech-api-check PRIVATE Threads::Threads)
+endif()
+# C's math functions, sinf among them, are a library of their own on Linux, which glibc does not link by itself.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(speech-api-check PRIVATE m)
 endif()
 
 # The checks of FastConformer's stages.

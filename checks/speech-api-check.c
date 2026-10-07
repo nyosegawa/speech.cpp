@@ -3,13 +3,14 @@
  * speech.h is checked to be plain C.
  *
  * In every mode: the versions, the names of the statuses, the stop reasons and the options, the devices, and the load
- * parameters and loads it refuses. With a synthesis model: optionally makes an Irodori-TTS voice file, loads the model
- * without a warm-up, compares the information read without loading with the loaded model's, adds the voices, refuses
- * each option's values with the category and the option's name and accepts the neutral ones, speaks one sentence into
- * a WAVE file, repeats a drawn seed's audio, gives the same audio with every option set at its default as with none,
- * checks the family's rules of the whole request (Qwen3-TTS's max_seconds, longest text, sampling and instructions,
- * Irodori-TTS's lengths, steps and progress), cancels a request from another thread and one before it runs, and runs
- * requests from two threads at once.
+ * parameters and loads it refuses. With a synthesis model: optionally makes an Irodori-TTS voice file, and voice files
+ * of several references, of another loudness and of an embedding, loads the model without a warm-up, compares the
+ * information read without loading with the loaded model's, adds the voices, refuses each option's values with the
+ * category and the option's name and accepts the neutral ones, speaks one sentence into a WAVE file, repeats a drawn
+ * seed's audio, gives the same audio with every option set at its default as with none, checks the family's rules of
+ * the whole request (Qwen3-TTS's max_seconds, longest text, sampling and instructions, Irodori-TTS's lengths, steps,
+ * progress, cut at the tail, guidance, voice none and instructions), cancels a request from another thread and one
+ * before it runs, and runs requests from two threads at once. Irodori-TTS's own checks are in speech-api-irodori.c.
  *
  * With a recognition model (transcribe), speech-api-recognition.c, which takes F32 or F16 weights only.
  *
@@ -34,28 +35,6 @@
 #endif
 
 #define MAX_VOICES 16
-#define SENTENCE "明日の東京は晴れで、最高気温は二十四度の予報です。"
-
-/** The audio of one request, grown as it arrives. */
-typedef struct {
-    float * samples;
-    size_t n, capacity;
-} Audio;
-
-static int collect(const float * samples, size_t n, void * user_data) {
-    Audio * a = (Audio *) user_data;
-    if (a->n + n > a->capacity) {
-        a->capacity = (a->n + n) * 2;
-        a->samples = (float *) realloc(a->samples, a->capacity * sizeof(float));
-        if (!a->samples) {
-            fprintf(stderr, "out of memory\n");
-            exit(1);
-        }
-    }
-    memcpy(a->samples + a->n, samples, n * sizeof(float));
-    a->n += n;
-    return 0;
-}
 
 #ifdef _WIN32
 /** argv as UTF-8; the C runtime gives it in the ANSI code page, which cannot hold Japanese on most systems. */
@@ -117,35 +96,12 @@ static void on_log(speech_log_level level, const char * text, void * user_data) 
     if (level >= SPEECH_LOG_WARN) fputs(text, stderr);
 }
 
-/** A request of `text` in `voice` (NULL for none) with `seed` (negative for none). */
-static speech_request * new_request(speech_model * model, const char * text, const char * voice, int64_t seed) {
-    speech_request * r = NULL;
-    if (speech_request_new(model, &r) != SPEECH_OK || (text && speech_request_set_text(r, text) != SPEECH_OK) ||
-        (voice && speech_request_set_string(r, SPEECH_OPT_VOICE, voice) != SPEECH_OK) ||
-        (seed >= 0 && speech_request_set_int(r, SPEECH_OPT_SEED, seed) != SPEECH_OK)) {
-        fail("a request");
-        exit(1);
-    }
-    return r;
-}
-
-/** Runs `r`, collecting its audio, and returns its status; the request is freed. */
-static speech_status speak(speech_request * r, Audio * audio, speech_stop * stop, int64_t * seed) {
-    const speech_status s = speech_synthesize(r, collect, audio);
-    const speech_result * result = speech_request_result(r);
-    if (stop) *stop = result ? speech_result_stop(result) : SPEECH_STOP_COMPLETE;
-    if (seed) *seed = result ? speech_result_seed(result) : -1;
-    if (result && speech_result_samples(result) != audio->n) {
-        fprintf(stderr, "FAIL: a result counts %llu samples where the callback had %zu\n", (unsigned long long) speech_result_samples(result),
-                audio->n);
-        exit(1);
-    }
-    speech_request_free(r);
-    return s;
-}
-
-/** Adds the voices of the command line, and checks the voices a model refuses. */
+/** Adds the voices of the command line after the model's own, and checks the voices a model refuses. */
 static int check_voices(speech_model * model, const char * model_path, char ** names, char ** paths, size_t n_voices, int irodori) {
+    speech_model_info * info = NULL;
+    if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
+    const size_t own = speech_model_info_voice_count(info);
+    speech_model_info_free(info);
     for (size_t i = 0; i < n_voices; i++) {
         const double start = now_seconds();
         if (speech_voice_add(model, names[i], paths[i]) != SPEECH_OK) return fail("speech_voice_add");
@@ -161,10 +117,13 @@ static int check_voices(speech_model * model, const char * model_path, char ** n
     ok &= expect(speech_voice_add(model, names[0], paths[0]), SPEECH_ERROR_INVALID_ARGUMENT, "name", "a voice under a name the model has");
     ok &= expect(speech_voice_add(model, "", paths[0]), SPEECH_ERROR_INVALID_ARGUMENT, "name", "a voice without a name");
     ok &= expect(speech_voice_add(model, "missing", "no-such-folder/voice.gguf"), SPEECH_ERROR_IO, "path", "a voice file that is not there");
-    speech_model_info * info = NULL;
+    // The voice none speaks without a reference in a file that holds the null speaker, and its name stays its own in
+    // one that does not.
+    ok &= expect(speech_voice_add(model, "none", paths[0]), SPEECH_ERROR_INVALID_ARGUMENT, "name", "a voice added under the name none");
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
-    ok &= speech_model_info_voice_count(info) == n_voices && !strcmp(speech_model_info_voice_name(info, n_voices - 1), names[n_voices - 1]) &&
-          !strcmp(speech_model_info_voice_language(info, 0), "");
+    ok &= speech_model_info_voice_count(info) == own + n_voices &&
+          !strcmp(speech_model_info_voice_name(info, own + n_voices - 1), names[n_voices - 1]) &&
+          !strcmp(speech_model_info_voice_language(info, own), "");
     if (!ok) fprintf(stderr, "FAIL: the information does not list the voices added\n");
     speech_model_info_free(info);
     return ok ? 0 : 1;
@@ -297,63 +256,6 @@ static int check_qwen3_tts_instructions(speech_model * model, const speech_model
     return ok ? 0 : 1;
 }
 
-/** Irodori-TTS: the length's rules, the steps, the progress of the sampler, and a text past the longest. */
-static int check_irodori_tts(speech_model * model, const speech_model_info * info, const char * voice) {
-    const int rate = speech_model_info_sample_rate(info);
-    Audio audio = {NULL, 0, 0};
-    speech_request * r = new_request(model, "三つ目です。", voice, 5);
-    speech_request_set_float(r, SPEECH_OPT_SECONDS, 1);
-    if (speak(r, &audio, NULL, NULL) != SPEECH_OK) return fail("a request of 1 s");
-    printf("seconds 1 gave %.3f s of audio\n", (double) audio.n / rate);
-    int ok = audio.n > 0 && audio.n <= (size_t) rate;
-
-    r = new_request(model, SENTENCE, voice, 5);
-    speech_request_set_float(r, SPEECH_OPT_SECONDS, 2);
-    speech_request_set_float(r, SPEECH_OPT_DURATION_SCALE, 1.2);
-    audio.n = 0;
-    ok &= expect(speech_synthesize(r, collect, &audio), SPEECH_ERROR_INVALID_ARGUMENT, "seconds", "seconds with a duration scale") &&
-          speech_request_set_float(r, SPEECH_OPT_DURATION_SCALE, 1) == SPEECH_OK &&
-          expect(speak(r, &audio, NULL, NULL), SPEECH_OK, NULL, "the same request run again with a scale of 1") && audio.n > 0;
-    r = new_request(model, SENTENCE, voice, 5);
-    speech_request_set_float(r, SPEECH_OPT_SECONDS, 30);
-    speech_request_set_float(r, SPEECH_OPT_SPEED, 0.5);
-    ok &= expect(speak(r, &audio, NULL, NULL), SPEECH_ERROR_OUT_OF_RANGE, "seconds", "30 s at a speed of 0.5");
-    r = new_request(model, SENTENCE, voice, 5);
-    speech_request_set_float(r, SPEECH_OPT_DURATION_SCALE, 50);
-    ok &= expect(speak(r, &audio, NULL, NULL), SPEECH_ERROR_OUT_OF_RANGE, "duration_scale", "a predicted length scaled by 50");
-    r = new_request(model, "はい。", voice, 5);
-    speech_request_set_float(r, SPEECH_OPT_SPEED, 4);
-    ok &= expect(speak(r, &audio, NULL, NULL), SPEECH_ERROR_OUT_OF_RANGE, "speed", "a short predicted length at a speed of 4");
-
-    Progress progress;
-    memset(&progress, 0, sizeof progress);
-    r = new_request(model, SENTENCE, voice, 5);
-    speech_request_set_int(r, SPEECH_OPT_STEPS, 2);
-    speech_request_set_progress(r, record_progress, &progress);
-    audio.n = 0;
-    ok &= expect(speak(r, &audio, NULL, NULL), SPEECH_OK, NULL, "two steps") && progress.n == 3 && progress_rises(&progress, 1, "two steps");
-    memset(&progress, 0, sizeof progress);
-    progress.stop_at = 0.5;
-    r = new_request(model, SENTENCE, voice, 5);
-    speech_request_set_progress(r, record_progress, &progress);
-    audio.n = 0;
-    speech_stop stop;
-    ok &= expect(speak(r, &audio, &stop, NULL), SPEECH_CANCELLED, NULL, "a progress callback that stops at 0.5") && audio.n == 0 &&
-          stop == SPEECH_STOP_CANCELLED;
-    free(audio.samples);
-
-    size_t tokens = 0;
-    char text[8192] = "";
-    for (int i = 0; i < 120; i++) strcat(text, "あいうえお、");
-    if (speech_model_info_text_tokens(info, text, &tokens) != SPEECH_OK) return fail("speech_model_info_text_tokens");
-    printf("a text of %zu tokens, the model takes %zu\n", tokens, speech_model_info_max_text_tokens(info));
-    Audio none = {NULL, 0, 0};
-    ok &= tokens > speech_model_info_max_text_tokens(info) &&
-          expect(speak(new_request(model, text, voice, 6), &none, NULL, NULL), SPEECH_ERROR_OUT_OF_RANGE, "text", "a text past the longest");
-    if (!ok) fprintf(stderr, "FAIL: Irodori-TTS's rules of a request are not followed\n");
-    return ok ? 0 : 1;
-}
-
 /**
  * A request that sets every option the model declares with a default, at that default, gives the audio of one that
  * sets none, for the same seed: the defaults the information shows are the ones a request runs with.
@@ -399,43 +301,6 @@ static int check_defaults(speech_model * model, const speech_model_info * info, 
     return same ? 0 : 1;
 }
 
-/** A request that another thread cancels once it has reported progress or passed audio. */
-typedef struct {
-    speech_request * request;
-    Monitor monitor;
-    int started, cancelled, after_cancel;
-} Cancelling;
-
-static void started(Cancelling * c) {
-    monitor_lock(&c->monitor);
-    c->started = 1;
-    if (c->cancelled) c->after_cancel++;
-    monitor_signal(&c->monitor);
-    monitor_unlock(&c->monitor);
-}
-
-static int on_cancelling_audio(const float * samples, size_t n, void * user_data) {
-    (void) samples;
-    (void) n;
-    started((Cancelling *) user_data);
-    return 0;
-}
-
-static int on_cancelling_progress(double done, void * user_data) {
-    (void) done;
-    started((Cancelling *) user_data);
-    return 0;
-}
-
-static void canceller(void * arg) {
-    Cancelling * c = (Cancelling *) arg;
-    monitor_lock(&c->monitor);
-    while (!c->started) monitor_wait(&c->monitor);
-    speech_request_cancel(c->request);
-    c->cancelled = 1;
-    monitor_unlock(&c->monitor);
-}
-
 /** A request run on a thread of its own, for two at once. */
 typedef struct {
     speech_request * request;
@@ -450,22 +315,8 @@ static void run_concurrent(void * arg) {
 
 /** Cancels a request from another thread and one before it runs, and runs two at once. */
 static int check_threads(speech_model * model, const char * voice) {
-    Cancelling c;
-    memset(&c, 0, sizeof c);
-    monitor_init(&c.monitor);
-    c.request = new_request(model, "これは途中で止める長めの文です。止まったら、残りの音声は届きません。", voice, 8);
-    speech_request_set_progress(c.request, on_cancelling_progress, &c);
-    Thread thread;
-    thread_start(&thread, canceller, &c);
-    const speech_status status = speech_synthesize(c.request, on_cancelling_audio, &c);
-    thread_join(&thread);
-    const speech_result * result = speech_request_result(c.request);
-    int ok = expect(status, SPEECH_CANCELLED, NULL, "a request cancelled from another thread") && result &&
-             speech_result_stop(result) == SPEECH_STOP_CANCELLED && c.after_cancel <= 1;
-    printf("cancelled from another thread: %llu samples, %d call(s) of a callback after the cancel\n",
-           result ? (unsigned long long) speech_result_samples(result) : 0ULL, c.after_cancel);
-    speech_request_free(c.request);
-    monitor_free(&c.monitor);
+    int ok = cancelled_from_another_thread(new_request(model, "これは途中で止める長めの文です。止まったら、残りの音声は届きません。", voice, 8),
+                                           "a request cancelled from another thread");
 
     speech_request * early = new_request(model, SENTENCE, voice, 9);
     speech_request_cancel(early);
@@ -508,7 +359,8 @@ static int check_model(speech_model * model, const char * model_path, const char
     speech_model_info_free(info);
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
     const int rate = speech_model_info_sample_rate(info);
-    const char * voice = made ? "made" : speech_model_info_voice_name(info, 0);
+    // Irodori-TTS speaks in the first voice added, since its own voice none has no reference.
+    const char * voice = made ? "made" : irodori ? names[0] : speech_model_info_voice_name(info, 0);
 
     size_t tokens = 0;
     if (speech_model_info_text_tokens(info, SENTENCE, &tokens) != SPEECH_OK) return fail("speech_model_info_text_tokens");
@@ -534,6 +386,14 @@ static int check_model(speech_model * model, const char * model_path, const char
         return 1;
     }
     printf("the drawn seed %lld gives the same %zu samples again\n", (long long) seed, again.n);
+    if (made) {
+        Audio embedded = {NULL, 0, 0};
+        if (speak(new_request(model, SENTENCE, "embedded", 7), &embedded, NULL, NULL) != SPEECH_OK || embedded.n == 0) {
+            return fail("a request in the voice of an embedding");
+        }
+        printf("the voice of an embedding spoke %.2f s\n", (double) embedded.n / rate);
+        free(embedded.samples);
+    }
 
     r = new_request(model, "どの値も中立です。", voice, 12);
     int ok = expect(speech_request_set_float(r, SPEECH_OPT_SPEED, 1), SPEECH_OK, NULL, "speed 1") &&
@@ -560,7 +420,7 @@ static int check_model(speech_model * model, const char * model_path, const char
     free(again.samples);
 
     if (check_defaults(model, info, voice) != 0) return 1;
-    if (irodori ? check_irodori_tts(model, info, voice) != 0
+    if (irodori ? check_irodori(model, info, voice) != 0
                 : check_qwen3_tts(model, info, voice) != 0 || check_qwen3_tts_sampling(model, voice) != 0 ||
                       check_qwen3_tts_instructions(model, info, voice) != 0) {
         return 1;
@@ -617,8 +477,13 @@ int main(int argc, char ** argv) {
         const double start = now_seconds();
         if (speech_voice_make(model_path, reference, made, params) != SPEECH_OK) return fail("speech_voice_make");
         printf("made the voice file %s in %.3f s\n", made, now_seconds() - start);
+        if (check_voice_params(model_path, reference, made, params) != 0) return 1;
         names[n_voices] = (char *) "made";
         paths[n_voices++] = (char *) made;
+        static char embedded[4096];
+        snprintf(embedded, sizeof embedded, "%s.embedding.gguf", made);
+        names[n_voices] = (char *) "embedded";
+        paths[n_voices++] = embedded;
     }
 
     speech_model * model = NULL;

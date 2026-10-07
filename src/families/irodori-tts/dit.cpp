@@ -1,5 +1,6 @@
 #include "dit.h"
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 
@@ -8,7 +9,7 @@
 namespace irodori {
 
 /*
- * The latent attends to itself, then to the text and the speaker, in one softmax over the concatenated
+ * The latent attends to itself, then to the text, the speaker and the caption, in one softmax over the concatenated
  * keys. Each head's query and key get their own RMSNorm; RoPE (neighbouring pairs, as the official complex
  * multiplication) turns only the first half of the heads of the latent's own queries and keys, since the
  * official model splits the head axis rather than the channels. The conditions' keys and values carry no
@@ -40,11 +41,17 @@ std::vector<float> timestep_embedding(float t, int dim) {
 }
 
 ggml_tensor * Dit::build(Graph & g, const std::vector<float> & x_in, int frames, float t, float delta, const Conditions & c,
-                         int branches, std::vector<ggml_tensor *> * blocks, ggml_tensor ** cond_out) const {
+                         const std::vector<Branch> & branch_list, const SpeakerScale & scale, std::vector<ggml_tensor *> * blocks,
+                         ggml_tensor ** cond_out) const {
     ggml_context * ctx = g.ctx();
     const Layers l{ctx, m_, eps_};
     const int head_dim = dim_ / heads_, half = heads_ / 2;
-    const int64_t s = frames, n_kv = frames + c.text_tokens + c.speaker_tokens;
+    const int64_t s = frames, n_kv = frames + c.text_tokens + c.speaker_tokens + c.caption_tokens, branches = (int64_t) branch_list.size();
+    bool noise = false, masked = false;
+    for (const Branch & b : branch_list) {
+        noise = noise || b.speaker == Branch::Speaker::Noise;
+        masked = masked || !b.text || b.speaker == Branch::Speaker::Left || !b.caption;
+    }
 
     auto mlp3 = [&](const std::string & prefix, ggml_tensor * x) {
         x = ggml_silu(ctx, mul_mat(ctx, m_.tensor(prefix + ".0"), x));
@@ -62,18 +69,26 @@ ggml_tensor * Dit::build(Graph & g, const std::vector<float> & x_in, int frames,
     ggml_tensor * x = l.linear(g.input(x_rep, latent_dim_, s, branches), "dit.in_proj");
 
     ggml_tensor * text = g.input(c.text, c.text.size() / c.text_tokens, c.text_tokens);
-    ggml_tensor * speaker = g.input(c.speaker, c.speaker.size() / c.speaker_tokens, c.speaker_tokens);
+    const bool has_speaker = c.speaker_tokens > 0;
+    ggml_tensor * speaker = has_speaker ? g.input(c.speaker, c.speaker.size() / c.speaker_tokens, c.speaker_tokens) : nullptr;
+    ggml_tensor * speaker_noise = noise ? g.input(c.speaker_noise, c.speaker.size() / c.speaker_tokens, c.speaker_tokens) : nullptr;
+    ggml_tensor * caption = c.caption_tokens > 0 ? g.input(c.caption, c.caption.size() / c.caption_tokens, c.caption_tokens) : nullptr;
     std::vector<int32_t> positions(s);
     for (int64_t i = 0; i < s; i++) positions[i] = (int32_t) i;
     ggml_tensor * pos = g.input(positions, s);
-    // Branch 1 leaves out the text's keys and branch 2 the speaker's.
+    // A branch leaves a condition out by masking its keys; noise in the speaker's place is attended to whole.
     ggml_tensor * mask = nullptr;
-    if (branches > 1) {
+    if (masked) {
         std::vector<float> m((size_t) n_kv * s * branches, 0.0f);
-        for (int b = 1; b < branches; b++) {
-            const int64_t from = b == 1 ? s : s + c.text_tokens, to = b == 1 ? s + c.text_tokens : n_kv;
-            for (int64_t q = 0; q < s; q++)
-                for (int64_t k = from; k < to; k++) m[((size_t) b * s + q) * n_kv + k] = -INFINITY;
+        for (int64_t b = 0; b < branches; b++) {
+            auto leave_out = [&](int64_t from, int64_t to) {
+                for (int64_t q = 0; q < s; q++)
+                    for (int64_t k = from; k < to; k++) m[((size_t) b * s + q) * n_kv + k] = -INFINITY;
+            };
+            const int64_t speaker_from = s + c.text_tokens, caption_from = speaker_from + c.speaker_tokens;
+            if (!branch_list[b].text) leave_out(s, speaker_from);
+            if (branch_list[b].speaker == Branch::Speaker::Left) leave_out(speaker_from, caption_from);
+            if (!branch_list[b].caption) leave_out(caption_from, n_kv);
         }
         mask = g.input(m, n_kv, s, 1, branches);
     }
@@ -112,12 +127,38 @@ ggml_tensor * Dit::build(Graph & g, const std::vector<float> & x_in, int frames,
         auto repeat = [&](ggml_tensor * t4) {
             return branches == 1 ? t4 : ggml_repeat(ctx, t4, ggml_new_tensor_4d(ctx, GGML_TYPE_F32, t4->ne[0], t4->ne[1], t4->ne[2], branches));
         };
-        ggml_tensor * k_text = repeat(norm(heads("attn_k_text", text, c.text_tokens, 1), "k_norm"));
-        ggml_tensor * v_text = repeat(heads("attn_v_text", text, c.text_tokens, 1));
-        ggml_tensor * k_speaker = repeat(norm(heads("attn_k_speaker", speaker, c.speaker_tokens, 1), "k_norm"));
-        ggml_tensor * v_speaker = repeat(heads("attn_v_speaker", speaker, c.speaker_tokens, 1));
-        ggml_tensor * k = ggml_concat(ctx, ggml_concat(ctx, k_self, k_text, 2), k_speaker, 2);
-        ggml_tensor * v = ggml_concat(ctx, ggml_concat(ctx, v_self, v_text, 2), v_speaker, 2);
+        ggml_tensor * k = ggml_concat(ctx, k_self, repeat(norm(heads("attn_k_text", text, c.text_tokens, 1), "k_norm")), 2);
+        ggml_tensor * v = ggml_concat(ctx, v_self, repeat(heads("attn_v_text", text, c.text_tokens, 1)), 2);
+        if (has_speaker) {
+            // Each branch attends to the speaker's keys and values or to those of the noise in its place, scaled where
+            // the request's scale reaches it; a batch whose branches all attend to the same ones repeats them.
+            const bool scaling = i < scale.layers && scale.factor != 1;
+            auto per_branch = [&](ggml_tensor * kept, ggml_tensor * noised) {
+                ggml_tensor * variant[2][2] = {{kept, nullptr}, {noised, nullptr}};
+                std::vector<ggml_tensor *> parts;
+                for (const Branch & br : branch_list) {
+                    const int n = br.speaker == Branch::Speaker::Noise, scaled = scaling && br.scaled;
+                    if (!variant[n][scaled]) variant[n][scaled] = ggml_scale(ctx, variant[n][0], scale.factor);
+                    parts.push_back(variant[n][scaled]);
+                }
+                if (std::all_of(parts.begin(), parts.end(), [&](ggml_tensor * p) { return p == parts[0]; })) return repeat(parts[0]);
+                ggml_tensor * out = parts[0];
+                for (size_t b = 1; b < parts.size(); b++) out = ggml_concat(ctx, out, parts[b], 3);
+                return out;
+            };
+            k = ggml_concat(ctx, k,
+                            per_branch(norm(heads("attn_k_speaker", speaker, c.speaker_tokens, 1), "k_norm"),
+                                       noise ? norm(heads("attn_k_speaker", speaker_noise, c.speaker_tokens, 1), "k_norm") : nullptr),
+                            2);
+            v = ggml_concat(ctx, v,
+                            per_branch(heads("attn_v_speaker", speaker, c.speaker_tokens, 1),
+                                       noise ? heads("attn_v_speaker", speaker_noise, c.speaker_tokens, 1) : nullptr),
+                            2);
+        }
+        if (caption) {
+            k = ggml_concat(ctx, k, repeat(norm(heads("attn_k_caption", caption, c.caption_tokens, 1), "k_norm")), 2);
+            v = ggml_concat(ctx, v, repeat(heads("attn_v_caption", caption, c.caption_tokens, 1)), 2);
+        }
         ggml_tensor * y = l.attention(q, k, v, mask);
         y = ggml_mul(ctx, y, ggml_sigmoid(ctx, mul_mat(ctx, m_.tensor(b + "attn_gate"), h)));
         x = ggml_add(ctx, x, ggml_mul(ctx, mul_mat(ctx, m_.tensor(b + "attn_o"), y), gate));

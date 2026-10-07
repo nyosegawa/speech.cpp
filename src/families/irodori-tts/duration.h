@@ -30,17 +30,20 @@ struct Length {
 };
 
 /**
- * The duration predictor of v4.1: a stack of SwiGLU blocks over the text condition's tokens, each
- * modulated by the speaker's summary and, without a caption, by the learned null caption. Each token
- * contributes softplus(output) frames.
+ * The duration predictor of v4.1: a stack of SwiGLU blocks over the text condition's tokens, each modulated by the
+ * speaker's summary and by the mean of the caption condition's tokens or, without a caption, the learned null caption.
+ * Each token contributes softplus(output) frames.
  */
 class DurationPredictor {
 public:
     /** The predictor of the model file `m`, which outlives it, with the bounds of the length and the speed it gives. */
     explicit DurationPredictor(const ModelFile & m);
 
-    /** The predicted frames summed over the tokens, [1], for a text condition [text_dim, n] and a speaker summary [speaker_dim]. */
-    ggml_tensor * build(Graph & g, ggml_tensor * text_state, ggml_tensor * speaker_summary) const;
+    /**
+     * The predicted frames summed over the tokens, [1], for a text condition [text_dim, n], a speaker summary
+     * [speaker_dim] and a caption condition [caption_dim, tokens], or the null caption where it is null.
+     */
+    ggml_tensor * build(Graph & g, ggml_tensor * text_state, ggml_tensor * speaker_summary, ggml_tensor * caption_state = nullptr) const;
 
     /**
      * Throws, naming the option at fault, unless the options are ones the runtime takes: a speed within the model's

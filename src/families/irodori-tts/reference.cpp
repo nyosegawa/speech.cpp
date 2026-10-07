@@ -1,5 +1,6 @@
 #include "reference.h"
 
+#include <cmath>
 #include <stdexcept>
 
 #include "error.h"
@@ -27,7 +28,24 @@ EncodedReference encode_reference(Codec & codec, const std::string & wav_path, c
         throw Error(Fault::OutOfRange, wav_path + " is " + std::to_string(seconds) + " s long; a reference voice is at most " +
                                            std::to_string(rules.max_seconds) + " s");
     }
-    return {codec.encode(normalize_loudness(resample(std::move(mono)), codec.sample_rate(), rules.lufs)), seconds, wav.sample_rate};
+    std::vector<float> audio = resample(std::move(mono));
+    audio = rules.lufs ? normalize_loudness(audio, codec.sample_rate(), *rules.lufs) : bound_peak(std::move(audio));
+    return {codec.encode(audio), seconds, wav.sample_rate};
+}
+
+std::vector<float> join_references(const std::vector<EncodedReference> & references, const Codec & codec, const ReferenceRules & rules,
+                                   const char * input) {
+    std::vector<float> latent;
+    for (const EncodedReference & r : references) latent.insert(latent.end(), r.latent.begin(), r.latent.end());
+    // The runtime cuts the joined latent at the frames that hold max_ref_seconds.
+    const int64_t most = (int64_t) std::ceil(rules.max_seconds * codec.sample_rate() / codec.hop());
+    const int64_t frames = (int64_t) latent.size() / codec.latent_dim();
+    if (frames > most) {
+        throw Error(Fault::OutOfRange, "the references are " + std::to_string(frames) + " frames of the codec together and a voice takes at most " +
+                                           std::to_string(most) + ", " + std::to_string(rules.max_seconds) + " s; give shorter references",
+                    input);
+    }
+    return latent;
 }
 
 }  // namespace irodori

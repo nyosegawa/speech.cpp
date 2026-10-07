@@ -1,6 +1,7 @@
 /*
- * What both halves of speech-api-check share: messages, time, threads, the checks of the library before a model is
- * loaded, the information read without loading against a loaded model's, and the refusal of every option's values.
+ * What the parts of speech-api-check share: messages, the checks of the library before a model is loaded, the
+ * information read without loading against a loaded model's, the refusal of every option's values, and the requests
+ * of a synthesis, their audio and their cancellation from another thread.
  */
 
 #include <math.h>
@@ -9,27 +10,6 @@
 #include <string.h>
 
 #include "speech-api-check.h"
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#else
-#include <pthread.h>
-#include <time.h>
-#endif
-
-#ifdef _WIN32
-FILE * open_utf8(const char * path, const char * mode) {
-    wchar_t wide[4096], wide_mode[8];
-    if (!MultiByteToWideChar(CP_UTF8, 0, path, -1, wide, 4096) || !MultiByteToWideChar(CP_UTF8, 0, mode, -1, wide_mode, 8)) return NULL;
-    return _wfopen(wide, wide_mode);
-}
-#else
-FILE * open_utf8(const char * path, const char * mode) {
-    return fopen(path, mode);
-}
-#endif
 
 int fail(const char * what) {
     const char * option = speech_last_error_option();
@@ -48,126 +28,6 @@ int expect(speech_status got, speech_status want, const char * option, const cha
     }
     if (got < 0) printf("%s: %s (%s): %s\n", what, got_name, named ? named : "no option", speech_last_error());
     return 1;
-}
-
-double now_seconds(void) {
-#ifdef _WIN32
-    LARGE_INTEGER count, frequency;
-    QueryPerformanceCounter(&count);
-    QueryPerformanceFrequency(&frequency);
-    return (double) count.QuadPart / (double) frequency.QuadPart;
-#else
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return (double) t.tv_sec + (double) t.tv_nsec * 1e-9;
-#endif
-}
-
-void sleep_seconds(double seconds) {
-#ifdef _WIN32
-    Sleep((DWORD) (seconds * 1000));
-#else
-    struct timespec t;
-    t.tv_sec = (time_t) seconds;
-    t.tv_nsec = (long) ((seconds - (double) t.tv_sec) * 1e9);
-    nanosleep(&t, NULL);
-#endif
-}
-
-typedef struct {
-    void (*body)(void * arg);
-    void * arg;
-} ThreadStart;
-
-#ifdef _WIN32
-static DWORD WINAPI thread_main(LPVOID user_data) {
-#else
-static void * thread_main(void * user_data) {
-#endif
-    ThreadStart * s = (ThreadStart *) user_data;
-    s->body(s->arg);
-    free(s);
-    return 0;
-}
-
-void thread_start(Thread * thread, void (*body)(void * arg), void * arg) {
-    ThreadStart * s = (ThreadStart *) malloc(sizeof(ThreadStart));
-    s->body = body;
-    s->arg = arg;
-#ifdef _WIN32
-    thread->handle = CreateThread(NULL, 0, thread_main, s, 0, NULL);
-#else
-    pthread_t * t = (pthread_t *) malloc(sizeof(pthread_t));
-    pthread_create(t, NULL, thread_main, s);
-    thread->handle = t;
-#endif
-}
-
-void thread_join(Thread * thread) {
-#ifdef _WIN32
-    WaitForSingleObject((HANDLE) thread->handle, INFINITE);
-    CloseHandle((HANDLE) thread->handle);
-#else
-    pthread_join(*(pthread_t *) thread->handle, NULL);
-    free(thread->handle);
-#endif
-}
-
-void monitor_init(Monitor * m) {
-#ifdef _WIN32
-    m->lock = malloc(sizeof(CRITICAL_SECTION));
-    m->changed = malloc(sizeof(CONDITION_VARIABLE));
-    InitializeCriticalSection((CRITICAL_SECTION *) m->lock);
-    InitializeConditionVariable((CONDITION_VARIABLE *) m->changed);
-#else
-    m->lock = malloc(sizeof(pthread_mutex_t));
-    m->changed = malloc(sizeof(pthread_cond_t));
-    pthread_mutex_init((pthread_mutex_t *) m->lock, NULL);
-    pthread_cond_init((pthread_cond_t *) m->changed, NULL);
-#endif
-}
-
-void monitor_free(Monitor * m) {
-#ifdef _WIN32
-    DeleteCriticalSection((CRITICAL_SECTION *) m->lock);
-#else
-    pthread_mutex_destroy((pthread_mutex_t *) m->lock);
-    pthread_cond_destroy((pthread_cond_t *) m->changed);
-#endif
-    free(m->lock);
-    free(m->changed);
-}
-
-void monitor_lock(Monitor * m) {
-#ifdef _WIN32
-    EnterCriticalSection((CRITICAL_SECTION *) m->lock);
-#else
-    pthread_mutex_lock((pthread_mutex_t *) m->lock);
-#endif
-}
-
-void monitor_unlock(Monitor * m) {
-#ifdef _WIN32
-    LeaveCriticalSection((CRITICAL_SECTION *) m->lock);
-#else
-    pthread_mutex_unlock((pthread_mutex_t *) m->lock);
-#endif
-}
-
-void monitor_wait(Monitor * m) {
-#ifdef _WIN32
-    SleepConditionVariableCS((CONDITION_VARIABLE *) m->changed, (CRITICAL_SECTION *) m->lock, INFINITE);
-#else
-    pthread_cond_wait((pthread_cond_t *) m->changed, (pthread_mutex_t *) m->lock);
-#endif
-}
-
-void monitor_signal(Monitor * m) {
-#ifdef _WIN32
-    WakeAllConditionVariable((CONDITION_VARIABLE *) m->changed);
-#else
-    pthread_cond_broadcast((pthread_cond_t *) m->changed);
-#endif
 }
 
 /** The versions, the names of the statuses, the stop reasons and the options, and the devices. */
@@ -205,7 +65,11 @@ int check_library(void) {
     static const char * options[] = {"voice", "language", "seed", "speed", "seconds", "duration_scale", "steps", "max_seconds",
                                      "timestamps", "prompt", "decoding", "do_sample", "top_k", "top_p", "temperature",
                                      "repetition_penalty", "code_predictor_do_sample", "code_predictor_top_k",
-                                     "code_predictor_top_p", "code_predictor_temperature", "instructions"};
+                                     "code_predictor_top_p", "code_predictor_temperature", "instructions", "cfg_scale_text",
+                                     "cfg_scale_speaker", "cfg_guidance_mode", "cfg_min_t", "cfg_max_t", "truncation_factor",
+                                     "rescale_k", "rescale_sigma", "speaker_uncond_mode", "sway_coeff", "keep_tail",
+                                     "tail_window_size", "tail_std_threshold", "tail_mean_threshold", "speaker_kv_scale",
+                                     "speaker_kv_min_t", "speaker_kv_max_layers", "cfg_scale_instructions"};
     if (speech_option_count() != sizeof options / sizeof options[0]) {
         fprintf(stderr, "FAIL: the library knows %zu options\n", speech_option_count());
         return 1;
@@ -464,7 +328,8 @@ int check_option_refusals(speech_model * model) {
             int exclusive = 0;
             if (speech_model_info_option_range(info, o, &minimum, &maximum, &exclusive) != SPEECH_OK) return fail("speech_model_info_option_range");
             if (isfinite(minimum)) {
-                const double below = exclusive ? minimum : minimum - 1;
+                // A number below a minimum as large as a float's, -3.4e38, which 1 less does not change in a double.
+                const double below = exclusive ? minimum : type == SPEECH_TYPE_INT ? minimum - 1 : minimum - fabs(minimum) - 1;
                 snprintf(what, sizeof what, "%s below its range", name);
                 ok &= expect(type == SPEECH_TYPE_INT ? speech_request_set_int(r, o, (int64_t) below) : speech_request_set_float(r, o, below),
                              SPEECH_ERROR_OUT_OF_RANGE, name, what);
@@ -550,4 +415,107 @@ int progress_rises(const Progress * p, double last, const char * what) {
     }
     printf("%s: progress in %d reports from %g to %g\n", what, p->n, p->first, p->last);
     return 1;
+}
+
+int collect(const float * samples, size_t n, void * user_data) {
+    Audio * a = (Audio *) user_data;
+    if (a->n + n > a->capacity) {
+        a->capacity = (a->n + n) * 2;
+        a->samples = (float *) realloc(a->samples, a->capacity * sizeof(float));
+        if (!a->samples) {
+            fprintf(stderr, "out of memory\n");
+            exit(1);
+        }
+    }
+    memcpy(a->samples + a->n, samples, n * sizeof(float));
+    a->n += n;
+    return 0;
+}
+
+/** A request of `text` in `voice` (NULL for none) with `seed` (negative for none). */
+speech_request * new_request(speech_model * model, const char * text, const char * voice, int64_t seed) {
+    speech_request * r = NULL;
+    if (speech_request_new(model, &r) != SPEECH_OK || (text && speech_request_set_text(r, text) != SPEECH_OK) ||
+        (voice && speech_request_set_string(r, SPEECH_OPT_VOICE, voice) != SPEECH_OK) ||
+        (seed >= 0 && speech_request_set_int(r, SPEECH_OPT_SEED, seed) != SPEECH_OK)) {
+        fail("a request");
+        exit(1);
+    }
+    return r;
+}
+
+/** Runs `r`, collecting its audio, and returns its status; the request is freed. */
+speech_status speak(speech_request * r, Audio * audio, speech_stop * stop, int64_t * seed) {
+    const speech_status s = speech_synthesize(r, collect, audio);
+    const speech_result * result = speech_request_result(r);
+    if (stop) *stop = result ? speech_result_stop(result) : SPEECH_STOP_COMPLETE;
+    if (seed) *seed = result ? speech_result_seed(result) : -1;
+    if (result && speech_result_samples(result) != audio->n) {
+        fprintf(stderr, "FAIL: a result counts %llu samples where the callback had %zu\n", (unsigned long long) speech_result_samples(result),
+                audio->n);
+        exit(1);
+    }
+    speech_request_free(r);
+    return s;
+}
+
+/** A request that another thread cancels once it has reported progress or passed audio. */
+typedef struct {
+    speech_request * request;
+    Monitor monitor;
+    int started, cancelled, after_cancel;
+} Cancelling;
+
+static void started(Cancelling * c) {
+    monitor_lock(&c->monitor);
+    c->started = 1;
+    if (c->cancelled) c->after_cancel++;
+    monitor_signal(&c->monitor);
+    monitor_unlock(&c->monitor);
+}
+
+static int on_cancelling_audio(const float * samples, size_t n, void * user_data) {
+    (void) samples;
+    (void) n;
+    started((Cancelling *) user_data);
+    return 0;
+}
+
+static int on_cancelling_progress(double done, void * user_data) {
+    (void) done;
+    started((Cancelling *) user_data);
+    return 0;
+}
+
+static void canceller(void * arg) {
+    Cancelling * c = (Cancelling *) arg;
+    monitor_lock(&c->monitor);
+    while (!c->started) monitor_wait(&c->monitor);
+    speech_request_cancel(c->request);
+    c->cancelled = 1;
+    monitor_unlock(&c->monitor);
+}
+
+/**
+ * Runs `request`, which it frees, while another thread cancels it once it has reported progress or passed audio;
+ * whether it stopped as cancelled with at most one call of a callback after the cancel.
+ */
+int cancelled_from_another_thread(speech_request * request, const char * what) {
+    Cancelling c;
+    memset(&c, 0, sizeof c);
+    monitor_init(&c.monitor);
+    c.request = request;
+    speech_request_set_progress(request, on_cancelling_progress, &c);
+    Thread thread;
+    thread_start(&thread, canceller, &c);
+    const speech_status status = speech_synthesize(request, on_cancelling_audio, &c);
+    thread_join(&thread);
+    const speech_result * result = speech_request_result(request);
+    const int ok = expect(status, SPEECH_CANCELLED, NULL, what) && result && speech_result_stop(result) == SPEECH_STOP_CANCELLED &&
+                   c.after_cancel <= 1;
+    printf("%s: %llu samples, %d call(s) of a callback after the cancel\n", what, result ? (unsigned long long) speech_result_samples(result) : 0ULL,
+           c.after_cancel);
+    speech_request_free(request);
+    monitor_free(&c.monitor);
+    return ok;
 }

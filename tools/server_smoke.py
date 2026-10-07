@@ -130,7 +130,8 @@ if info["task"] == "synthesis":
     form = b'--x\r\nContent-Disposition: form-data; name="language"\r\n\r\nja\r\n--x--\r\n'
     expect_error(call("POST", "/v1/audio/transcriptions", form, {"Content-Type": "multipart/form-data; boundary=x"}), 404, None, None,
                  "POST /v1/audio/transcriptions to a synthesis model")
-    voice = info["voices"][0]["name"]
+    # An added voice where there is one: the voice an Irodori-TTS file has of its own, none, speaks without a reference.
+    voice = added[0] if added else info["voices"][0]["name"]
     TEXT = "明日の東京は晴れで、最高気温は二十四度の予報です。"
     asked = {"model": info["name"], "input": TEXT, "voice": voice, "seed": 11}
     status, headers, body = post_json("/v1/audio/speech", asked)

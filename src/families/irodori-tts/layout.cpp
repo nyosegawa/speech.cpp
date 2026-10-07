@@ -63,6 +63,22 @@ void add_residual_units(std::vector<TensorSpec> & t, const std::string & prefix,
                   {"conv2.weight", {c, c, 1}, kF32}, {"conv2.bias", {c}, kF32}});
 }
 
+/**
+ * A condition made of ModernBERT's `hidden` channels by a PretrainedConditionProjector, "<prefix>proj.*", whose residual
+ * MLP is `width` wide, to `out` channels, and its norm, "<prefix>norm".
+ */
+void add_projector(std::vector<TensorSpec> & t, const std::string & prefix, int64_t hidden, int64_t width, int64_t out) {
+    add_block(t, prefix,
+              {{"proj.weight", {hidden, out}, kMatrix},
+               {"proj.bias", {out}, kF32},
+               {"proj.res_norm", {hidden}, kF32},
+               {"proj.res_up.weight", {hidden, width}, kMatrix},
+               {"proj.res_up.bias", {width}, kF32},
+               {"proj.res_down.weight", {width, out}, kMatrix},
+               {"proj.res_down.bias", {out}, kF32},
+               {"norm", {out}, kF32}});
+}
+
 /** Reads every key of the model layout, checks the ones that must agree, and names the tensors they call for. */
 std::vector<TensorSpec> model_tensors(const ModelFile & m) {
     check_model_keys(m, "synthesis", "checked");
@@ -84,9 +100,14 @@ std::vector<TensorSpec> model_tensors(const ModelFile & m) {
     const int dit_dim = m.size(p + "dit.dim"), dit_heads = m.size(p + "dit.num_heads");
     require_heads(m, p + "dit.dim", dit_dim, p + "dit.num_heads", dit_heads);
     const int timestep = m.size(p + "dit.timestep_dim"), dit_layers = m.count(p + "dit.num_layers");
+    const bool null_speaker = m.boolean(p + "duration.null_speaker");
+    const int caption_dim = m.size(p + "caption.dim");
+    const bool caption = m.boolean(p + "caption_condition");
+    if (caption) m.size(p + "caption.max_tokens");
     m.size(p + "sampler.default_steps");
     if (!meanflow) {
-        for (const char * key : {"cfg_text", "cfg_speaker", "cfg_min_t", "cfg_max_t"}) m.f32(p + "sampler." + key);
+        for (const char * key : {"cfg_text", "cfg_speaker", "cfg_min_t", "cfg_max_t", "speaker_kv_min_t"}) m.f32(p + "sampler." + key);
+        if (caption) m.f32(p + "sampler.cfg_caption");
     }
     const float min_seconds = m.f32(p + "length.min_seconds"), max_seconds = m.f32(p + "length.max_seconds");
     const float min_speed = m.f32(p + "length.min_speed"), max_speed = m.f32(p + "length.max_speed");
@@ -108,7 +129,7 @@ std::vector<TensorSpec> model_tensors(const ModelFile & m) {
     const std::vector<int32_t> decoder_rates = strides(m, p + "codec.decoder_rates", hop);
     require(m.str(p + "codec.sha256").size() == 64, m, "irodori-tts.codec.sha256 is not a SHA-256 in hexadecimal");
 
-    // The widths of the feed-forward layers of ModernBERT, its projector, the speaker encoder and the DiT, of the
+    // The widths of the feed-forward layers of ModernBERT, its projectors, the speaker encoder and the DiT, of the
     // duration predictor, of the rank of the DiT's AdaLN, and of the codec's first convolution, its latent and its
     // decoder have no key: each is the width of one tensor, which the others are checked against.
     const int64_t text_ffn = m.width("text.blk.0.ffn_act", 1), projector = m.width("text.proj.res_up.weight", 1);
@@ -128,18 +149,10 @@ std::vector<TensorSpec> model_tensors(const ModelFile & m) {
         decoder_channels.push_back(decoder_channels.back() / 2);
     }
 
-    const int64_t th = text_hidden, td = text_dim, sd = speaker_dim, xd = dit_dim, ld = latent;
+    const int64_t th = text_hidden, td = text_dim, cd = caption_dim, sd = speaker_dim, xd = dit_dim, ld = latent;
     std::vector<TensorSpec> t = {{"text.embd", {th, (int64_t) pieces}, kMatrix},
                                  {"text.embd_norm", {th}, kF32},
                                  {"text.final_norm", {th}, kF32},
-                                 {"text.proj.weight", {th, td}, kMatrix},
-                                 {"text.proj.bias", {td}, kF32},
-                                 {"text.proj.res_norm", {th}, kF32},
-                                 {"text.proj.res_up.weight", {th, projector}, kMatrix},
-                                 {"text.proj.res_up.bias", {projector}, kF32},
-                                 {"text.proj.res_down.weight", {projector, td}, kMatrix},
-                                 {"text.proj.res_down.bias", {td}, kF32},
-                                 {"text.norm", {td}, kF32},
                                  {"speaker.in_proj.weight", {ld * patch, sd}, kMatrix},
                                  {"speaker.in_proj.bias", {sd}, kF32},
                                  {"speaker.norm", {sd}, kF32},
@@ -148,12 +161,14 @@ std::vector<TensorSpec> model_tensors(const ModelFile & m) {
                                  {"duration.out_norm", {duration}, kF32},
                                  {"duration.out_proj.weight", {duration, 1}, kF32},
                                  {"duration.out_proj.bias", {1}, kF32},
-                                 {"duration.null_caption", {td}, kF32},
+                                 {"duration.null_caption", {cd}, kF32},
                                  {"dit.in_proj.weight", {ld, xd}, kF32},
                                  {"dit.in_proj.bias", {xd}, kF32},
                                  {"dit.out_norm", {xd}, kF32},
                                  {"dit.out_proj.weight", {xd, ld}, kMatrix},
                                  {"dit.out_proj.bias", {ld}, kF32}};
+    add_projector(t, "text.", th, projector, td);
+    if (caption) add_projector(t, "caption.", th, m.width("caption.proj.res_up.weight", 1), cd);
     add_numbered(t, "text.blk.", text_layers,
                  {{"attn_q", {th, th}, kMatrix},         {"attn_k", {th, th}, kMatrix},           {"attn_v", {th, th}, kMatrix},
                   {"attn_out", {th, th}, kMatrix},       {"ffn_norm", {th}, kF32},                {"ffn_act", {th, text_ffn}, kMatrix},
@@ -174,12 +189,13 @@ std::vector<TensorSpec> model_tensors(const ModelFile & m) {
                   {"ffn_gate", {sd, speaker_ffn}, kMatrix},
                   {"ffn_up", {sd, speaker_ffn}, kMatrix},
                   {"ffn_down", {speaker_ffn, sd}, kMatrix}});
+    if (null_speaker) t.push_back({"duration.null_speaker", {sd}, kF32});
     // A duration block's feed-forward layer is as wide as the block.
     add_numbered(t, "duration.blk.", duration_layers,
                  {{"norm", {duration}, kF32},
                   {"mod.weight", {sd, 3 * duration}, kMatrix},
                   {"mod.bias", {3 * duration}, kF32},
-                  {"caption_mod.weight", {td, 3 * duration}, kMatrix},
+                  {"caption_mod.weight", {cd, 3 * duration}, kMatrix},
                   {"caption_mod.bias", {3 * duration}, kF32},
                   {"ffn_gate", {duration, duration}, kMatrix},
                   {"ffn_up", {duration, duration}, kMatrix},
@@ -205,6 +221,7 @@ std::vector<TensorSpec> model_tensors(const ModelFile & m) {
                   {"ffn_gate", {xd, dit_ffn}, kMatrix},
                   {"ffn_up", {xd, dit_ffn}, kMatrix},
                   {"ffn_down", {dit_ffn, xd}, kMatrix}});
+    if (caption) add_numbered(t, "dit.blk.", dit_layers, {{"attn_k_caption", {cd, xd}, kMatrix}, {"attn_v_caption", {cd, xd}, kMatrix}});
     for (const char * ada : {"attn_ada.", "ffn_ada."}) {
         for (const char * part : {"shift.", "scale.", "gate."}) {
             const std::string name = std::string(ada) + part;
@@ -256,27 +273,70 @@ std::vector<TensorSpec> model_tensors(const ModelFile & m) {
     return t;
 }
 
+/**
+ * Layout 1 of a model file, which releases from 0.7.0 read, holds neither the null speaker nor the caption's encoder and has no time at
+ * which a request's scaling of the speaker ends. A file of it speaks with a reference and no caption, its duration
+ * predictor's caption is as wide as the text condition, as layout 1 checked it, and its RF model ends the scaling at the
+ * runtime's 0.9 that layout 2 writes, since every layout 1 file was converted from the runtime at 89f9d8f.
+ */
+void upgrade(ModelFile & m) {
+    m.upgrade_bool("irodori-tts.duration.null_speaker", false);
+    m.upgrade_bool("irodori-tts.caption_condition", false);
+    m.upgrade_u32("irodori-tts.caption.dim", m.u32("irodori-tts.text.dim"));
+    if (m.str("irodori-tts.flow") == "rf_velocity") m.upgrade_f32("irodori-tts.sampler.speaker_kv_min_t", 0.9f);
+}
+
+/**
+ * Layout 1 of a voice file, which releases from 0.7.0 wrote, holds one reference brought to the model's loudness, which
+ * every model file of layout 1 gives as the runtime's -16 LUFS.
+ */
+void voice_upgrade(ModelFile & m) {
+    const std::string p = "irodori-tts-voice.";
+    m.upgrade_str(p + "source", "references");
+    m.upgrade_f32_array(p + "references.seconds", {m.f32(p + "reference_seconds")});
+    m.upgrade_i32_array(p + "references.sample_rates", {(int32_t) m.u32(p + "reference_sample_rate")});
+    m.upgrade_bool(p + "normalized", true);
+    m.upgrade_f32(p + "lufs", -16.0f);
+}
+
 }  // namespace
 
-const Layout model_layout = {"irodori-tts", 1,
+const Layout model_layout = {"irodori-tts", 2,
                              "convert it again with reference/irodori-tts/convert.py, or download it again from its Hugging Face "
                              "repository",
-                             model_tensors};
+                             model_tensors, upgrade};
 
 Layout voice_layout(const ModelFile & model) {
-    return {kVoiceArchitecture, kVoiceLayout, "make it again from its WAVE file with speech voice MODEL REFERENCE.wav VOICE.gguf", [&model](const ModelFile & m) {
+    return {kVoiceArchitecture, kVoiceLayout, "make it again from its WAVE files with speech voice MODEL REFERENCE.wav... VOICE.gguf",
+            [&model](const ModelFile & m) {
                 const std::string p = "irodori-tts-voice.";
+                if (m.one_of(p + "source", {"references", "embedding"}) == "embedding") {
+                    // An embedding is learned against one model's DiT and duration predictor, which no other model shares.
+                    const std::string made = m.str(p + "model"), own = model.str("general.source.url");
+                    if (made != own) {
+                        throw Error(Fault::InvalidArgument, m.path() + " was made of an embedding for the model " + made + ", and " +
+                                                                model.str("general.name") + " is " + own +
+                                                                "; make the voice again from an embedding learned against this model");
+                    }
+                    return std::vector<TensorSpec>{{"speaker", {model.size("irodori-tts.speaker.dim"), m.width("speaker", 1)}, kF32}};
+                }
                 const std::string codec = m.str(p + "codec_sha256"), own = model.str("irodori-tts.codec.sha256");
                 require(codec.size() == 64, m, "irodori-tts-voice.codec_sha256 is not a SHA-256 in hexadecimal");
                 if (codec != own) {
                     throw Error(Fault::InvalidArgument, m.path() + " was made with the codec of SHA-256 " + codec + ", and " + model.str("general.name") +
-                                                            " has the codec " + own + "; make the voice again from its WAVE file with this model");
+                                                            " has the codec " + own + "; make the voice again from its WAVE files with this model");
                 }
-                require(m.f32(p + "reference_seconds") > 0 && m.u32(p + "reference_sample_rate") > 0, m,
-                        "the voice file gives its recording no length or no rate");
+                const std::vector<float> seconds = m.f32_array(p + "references.seconds");
+                const std::vector<int32_t> rates = m.i32_array(p + "references.sample_rates");
+                require(!seconds.empty() && seconds.size() == rates.size(), m, "the voice file does not give each of its recordings a length and a rate");
+                for (size_t i = 0; i < seconds.size(); i++) {
+                    require(seconds[i] > 0 && rates[i] > 0, m, "the voice file gives a recording no length or no rate");
+                }
+                if (m.boolean(p + "normalized")) m.f32(p + "lufs");
                 m.one_of(p + "device_kind", {"cpu", "gpu", "igpu"});
                 return std::vector<TensorSpec>{{"latent", {model.size("irodori-tts.latent_dim"), m.width("latent", 1)}, kF32}};
-            }};
+            },
+            voice_upgrade};
 }
 
 }  // namespace irodori

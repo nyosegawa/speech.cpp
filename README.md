@@ -141,13 +141,14 @@ N`, the C API's load parameters. `speech tts` and `speech asr` take every reques
 (Options, below) as a flag of its name in kebab-case, read by the option's type: `--voice`, `--language`, `--seed`,
 `--speed`, `--seconds`, `--duration-scale`, `--steps`, `--max-seconds`, `--timestamps`, `--prompt`, `--decoding`,
 `--do-sample`, `--top-k`, `--top-p`, `--temperature`, `--repetition-penalty`, the code predictor's
-`--code-predictor-do-sample`, `--code-predictor-top-k`, `--code-predictor-top-p` and `--code-predictor-temperature`, and
-`--instructions`. A flag's value follows it or an `=` (`--seed 7`, `--seed=7`), and a number is read whole: `--steps 4x`
-is a usage error. A boolean option is true by its flag alone and takes `true` or `false` only after an `=`
-(`--timestamps`, `--do-sample=false`), so that the argument after it stays an argument. The model refuses an option it
-does not take, as in the C API: Qwen3-TTS answers `--speed 1.5` with `speech: unsupported (speed): ...`. An argument
-that begins with `-`, such as a text, follows `--`. `speech <subcommand> --help` lists a subcommand's flags, and `speech
---version` prints the release and the C API's version (`speech.cpp 0.7.0, C API 3.1`).
+`--code-predictor-do-sample`, `--code-predictor-top-k`, `--code-predictor-top-p` and `--code-predictor-temperature`,
+`--instructions`, and Irodori-TTS's options from `--cfg-scale-text` to `--cfg-scale-instructions`. A flag's value follows
+it or an `=` (`--seed 7`, `--seed=7`), and a number is read whole: `--steps 4x` is a usage error. A boolean option is
+true by its flag alone and takes `true` or `false` only after an `=` (`--timestamps`, `--do-sample=false`,
+`--keep-tail`), so that the argument after it stays an argument. The model refuses an option it does not take, as in
+the C API: Qwen3-TTS answers `--speed 1.5` with `speech: unsupported (speed): ...`. An argument that begins with `-`,
+such as a text, follows `--`. `speech <subcommand> --help` lists a subcommand's flags, and `speech --version` prints
+the release and the C API's version (`speech.cpp 0.7.0, C API 3.1`).
 
 | Exit | Meaning |
 |---|---|
@@ -167,6 +168,7 @@ speech tts MODEL -o FILE|- [options] [TEXT]
   --do-sample[=false] --top-k N --top-p X --temperature X --repetition-penalty X
   --code-predictor-do-sample[=false] --code-predictor-top-k N --code-predictor-top-p X --code-predictor-temperature X
   --instructions TEXT
+  --cfg-scale-text X ... --keep-tail ...    and every other option of the vocabulary (Options, below)
   --add-voice NAME=FILE       add a voice from a voice file or a WAVE file before speaking; repeatable
   --device NAME --threads N
   -v                          report the model, and each request's seed and stop reason
@@ -214,12 +216,16 @@ are already on stdout.
 ### `speech voice`
 
 ```
-speech voice MODEL REFERENCE.wav VOICE.gguf [--device NAME] [--threads N] [-v]
+speech voice MODEL (REFERENCE.wav... | EMBEDDING.speaker.safetensors) VOICE.gguf [--lufs LUFS | --keep-loudness]
+             [--device NAME] [--threads N] [-v]
 ```
 
-Makes a voice file from a reference recording at any rate, reading only the codec's encoder from MODEL (Irodori-TTS
-voices, below). `--device` defaults to `cpu` here, the one device whose latent is the official encoder's to 99 dB
-(docs/adr/0002).
+Makes a voice file from one or more reference recordings at any rate, each encoded on its own and joined in order,
+reading only the codec's encoder from MODEL (Irodori-TTS voices, below). Each recording is brought to the model's
+loudness, or to `--lufs`, or kept as it is with `--keep-loudness`. A `.speaker.safetensors` file, a speaker-inversion
+embedding as the official runtime saves one, makes a voice for MODEL alone; it is the whole voice, and a second
+embedding or a recording beside it is refused. `--device` defaults to `cpu` here, the one device whose latent is the
+official encoder's to 99 dB (docs/adr/0002).
 
 ### `speech info`
 
@@ -397,10 +403,15 @@ speech_model_free(model);
   threads in effect and the voices added since. `speech_model_info_text_tokens()` counts a text's tokens as a
   synthesis counts them against the longest text, so that a caller can split a long text before it sends it, and
   `speech_model_info_json()` writes the whole as one JSON object (Model information as JSON, below).
-- **Voices.** Irodori-TTS has no voices of its own: `speech_voice_add()` adds one to a loaded model from a voice
-  file or a reference WAVE file at any rate, under a name compared with case, and `speech_voice_make()` writes a voice
-  file from a reference, reading only the codec's encoder from the model file (Irodori-TTS voices, below). A model
-  that takes no voice files answers both with `SPEECH_ERROR_UNSUPPORTED`.
+- **Voices.** Irodori-TTS's one voice of its own is `none`, which speaks without a reference, in a file that holds the
+  null speaker: `speech_voice_add()` adds one to a loaded model from a voice file or a reference WAVE file at any
+  rate, under a name compared with case that is not the model's own or `none`, and `speech_voice_make()` writes a voice
+  file from a reference, reading only the codec's encoder from the model file (Irodori-TTS voices, below).
+  `speech_voice_make_from()` writes one of the parameters `speech_voice_params_new()` makes: several references
+  (`speech_voice_params_add_reference()`), each encoded on its own and joined, and another loudness
+  (`speech_voice_params_set_loudness()`) or the recordings' own (`speech_voice_params_keep_loudness()`), or a
+  speaker-inversion embedding instead (`speech_voice_params_set_embedding()`). A model that takes no voice files answers
+  all three with `SPEECH_ERROR_UNSUPPORTED`.
 - **Requests.** A request is made for one model with `speech_request_new()`. It takes a text
   (`speech_request_set_text()`) or audio (`speech_request_set_audio()`, mono at any rate, resampled to the model's;
   Audio at another rate, above), and options through the setter of each option's type. Each value is checked against
@@ -477,7 +488,7 @@ nothing else.
 
 | Option | Type | Neutral | Qwen3-TTS | Irodori-TTS | FastConformer | Qwen3-ASR |
 |---|---|---|---|---|---|---|
-| `voice` | string | none | required; one of the speakers (`speech.voices`); steers | required; one of the voices added since loading; steers | not taken | not taken |
+| `voice` | string | none | required; one of the speakers (`speech.voices`); steers | required; `none`, which speaks without a reference, where the file holds the null speaker (`irodori-tts.duration.null_speaker`), or one of the voices added since loading; steers | not taken | not taken |
 | `language` | string | `auto` | default `auto`; one of `general.languages`; steers | default `auto`; one of `general.languages` (`ja`); checked | default `auto`; one of `general.languages`; checked | default `auto`; one of `general.languages`; steers |
 | `seed` | int | none | 0 to 2^53 - 1; drawn when not set | 0 to 2^53 - 1; drawn when not set | not taken | not taken |
 | `speed` | float | 1 | not taken | 0.25 to 4 (`irodori-tts.length.min_speed`, `max_speed`), default 1 | not taken | not taken |
@@ -497,13 +508,43 @@ nothing else.
 | `code_predictor_top_k` | int | none | 0 (every token) to 2147483647, default `qwen3-tts.generation.code_predictor.top_k` (50) | not taken | not taken | not taken |
 | `code_predictor_top_p` | float | none | 0 to 1, default `qwen3-tts.generation.code_predictor.top_p` (1) | not taken | not taken | not taken |
 | `code_predictor_temperature` | float | none | above 0, default `qwen3-tts.generation.code_predictor.temperature` (0.9) | not taken | not taken | not taken |
-| `instructions` | string | `""` | 1.7B: default `""`, any text; steers. 0.6B: not taken | not taken | not taken | not taken |
+| `instructions` | string | `""` | 1.7B: default `""`, any text; steers. 0.6B: not taken | default `""`, any text of at most `irodori-tts.caption.max_tokens` (512) tokens, where the file holds the caption's encoder (`irodori-tts.caption_condition`); steers | not taken | not taken |
+
+The options from `cfg_scale_text` to `speaker_kv_max_layers` and `cfg_scale_instructions` are Irodori-TTS's, fields
+of the official runtime's request that a request sets as the runtime takes them (Irodori-TTS, Guidance, schedule and
+the tail, below). The other families do not take them, and none has a neutral value. An RF file (v4.1-Small) takes
+the guidance and the schedule, which a MeanFlow file (v4.1-Small-MF) does not take, since MeanFlow folded the guidance
+into its training and the runtime ignores them for it:
+
+| Option | Type | RF (v4.1-Small) | MeanFlow (v4.1-Small-MF) |
+|---|---|---|---|
+| `cfg_scale_text` | float | 0 or more, default `irodori-tts.sampler.cfg_text` (3) | not taken |
+| `cfg_scale_speaker` | float | 0 or more, default `irodori-tts.sampler.cfg_speaker` (5) | not taken |
+| `cfg_guidance_mode` | string | `independent` (the default), `joint` or `alternating` | not taken |
+| `cfg_min_t`, `cfg_max_t` | float | 0 to 1, defaults `irodori-tts.sampler.cfg_min_t` and `cfg_max_t` (0.5 and 1) | not taken |
+| `truncation_factor` | float | above 0, no default | not taken |
+| `rescale_k`, `rescale_sigma` | float | above 0, no default | not taken |
+| `speaker_uncond_mode` | string | `mask` (the default) or `noise` | not taken |
+| `sway_coeff` | float | default 0 | not taken |
+| `keep_tail` | bool | default false | default false |
+| `tail_window_size` | int | 1 to the frames of the longest speech (750), default `irodori-tts.tail.window` (20) | the same |
+| `tail_std_threshold`, `tail_mean_threshold` | float | above 0, defaults `irodori-tts.tail.std_threshold` and `mean_threshold` (0.05 and 0.1) | the same |
+| `speaker_kv_scale` | float | above 0, default 1 | not taken |
+| `speaker_kv_min_t` | float | 0 to 1, default `irodori-tts.sampler.speaker_kv_min_t` (0.9) | not taken |
+| `speaker_kv_max_layers` | int | 1 to `irodori-tts.dit.num_layers` (12), default 12 | not taken |
+| `cfg_scale_instructions` | float | 0 or more, default `irodori-tts.sampler.cfg_caption` (3), where the file holds the caption's encoder | not taken |
+
+Irodori-TTS computes with these numbers as float32, as the runtime's tensors take them, so their ranges stop at the
+largest float (3.4e38, and -3.4e38 for `sway_coeff`), and an option above 0 starts at the smallest normal float
+(1.2e-38), which Metal does not flush to 0: a value past them, which would turn into infinity or 0, is `out_of_range`,
+and the model information shows these bounds.
 
 A value at an option's neutral value is accepted by every model; any other value of an option a model does not take
 is `unsupported`, and an option marked "none" has no neutral value. A string option's value must be one of its
-choices (`voice` compared with case; `language` also takes `auto` and a region or script of a choice, compared
-without case); a number outside the range is `out_of_range`. "Checked" means the language is compared with the
-model's languages and then not used: Irodori-TTS and the Japanese recognizers have one language, and
+choices (`voice`, `cfg_guidance_mode` and `speaker_uncond_mode` compared with case; `language` also takes `auto` and a
+region or script of a choice, compared without case); a number outside the range is `out_of_range`. "Checked" means
+the language is compared with the model's languages and then not used: Irodori-TTS and the Japanese recognizers have
+one language, and
 parakeet-tdt-0.6b-v3 finds the language of the audio itself. Qwen3-ASR is told a language that steers it, or finds it
 itself with `auto`. `prompt` is what a recognition is told of the audio before it hears it, the names and terms it may
 hold (Qwen3-ASR, below). `decoding` is how a recognition chooses its tokens: `beam`, the beam search that
@@ -535,6 +576,23 @@ What only the whole request shows is refused when the request runs, before any w
 - Irodori-TTS, when `duration_scale` or `speed` is not 1, the predicted length times `duration_scale / speed` outside
   0.5 to 30 s: `out_of_range`, option `duration_scale`, or `speed` when the scale is 1. At 1 and 1 the predicted
   length is kept within the bounds, as the official runtime keeps it.
+- Irodori-TTS, one of `rescale_k` and `rescale_sigma` without the other: `invalid_argument`, option the one left out.
+- Irodori-TTS, `cfg_min_t` above `cfg_max_t`: `invalid_argument`, option `cfg_min_t`.
+- Irodori-TTS, the `joint` guidance with scales above 0 that are not equal, of `cfg_scale_text`,
+  `cfg_scale_speaker` and, with instructions, `cfg_scale_instructions`: `invalid_argument`, option `cfg_guidance_mode`.
+- Irodori-TTS, a `sway_coeff` that leaves two of the request's steps at the same time: `out_of_range`, option
+  `sway_coeff`.
+- Irodori-TTS, a value other than the default that another value of the request leaves without effect:
+  `invalid_argument`, naming it. These are `cfg_guidance_mode`, `cfg_min_t`, `cfg_max_t` and `speaker_uncond_mode`
+  with both scales at 0, which run no guidance; `speaker_uncond_mode` `noise` with `cfg_scale_speaker` at 0 and
+  another guidance than `joint`, which runs no branch without the speaker; `tail_window_size`,
+  `tail_std_threshold` and `tail_mean_threshold` with `keep_tail`; `speaker_kv_min_t` and `speaker_kv_max_layers`
+  with `speaker_kv_scale` at 1, which scales nothing; and, with the voice `none`, which has no speaker condition,
+  `cfg_scale_speaker` other than its default and 0, `speaker_uncond_mode` `noise` and `speaker_kv_scale` other than
+  1; and `cfg_scale_instructions` other than its default and 0 without instructions. The runtime ignores each, mostly
+  without a word.
+- Irodori-TTS, instructions of more tokens than `irodori-tts.caption.max_tokens` (512), `<s>` included:
+  `out_of_range`, option `instructions`. The runtime cuts them.
 - A text longer than `speech_model_info_max_text_tokens()`: `out_of_range`, option `text`. Irodori-TTS counts the
   tokens of the normalized text and takes at most `irodori-tts.text.max_tokens` (256). Qwen3-TTS takes what leaves its
   talker room for the longest speech: `qwen3-tts.talker.max_position_embeddings` - `qwen3-tts.generation.max_frames` -
@@ -551,9 +609,12 @@ What only the whole request shows is refused when the request runs, before any w
 - Qwen3-TTS, a `temperature` or `repetition_penalty` that the sampler's float rounds to 0 or to infinity (below about
   1e-45 or above about 3.4e38): `out_of_range`, naming the option.
 
-One more failure shows only while the speech is made: a `temperature` or `repetition_penalty` so far from 1 that it
+Two more failures show only while the speech is made. A `temperature` or `repetition_penalty` so far from 1 that it
 pushes a logit beyond the range of a float (1e-40 does) ends the request with `out_of_range`, naming the option, where
-the official package fails on the same values with an error of PyTorch's.
+the official package fails on the same values with an error of PyTorch's. And speech that comes out not finite, as from
+Irodori-TTS's `cfg_scale_text` at its largest, 3.4e38, which a float32 holds but whose guidance it does not, is never
+passed on: the request ends with `out_of_range` naming no option, since each value was within its range and none is
+known to be at fault, and a new request with smaller scales or settings speaks (docs/adr/0032).
 
 ### Model information as JSON
 
@@ -767,8 +828,8 @@ language is `out_of_range`.
   `zh`; the language steers it, going into its prompt. Two speakers speak a Chinese dialect, `dylan` (Beijing) and
   `eric` (Sichuan), when the language is `zh` or left to the model, as in the official implementation.
 - **Irodori-TTS** makes a sentence at once and passes it as the codec decodes it (`incremental` false, 48 kHz), so a
-  request should be one sentence; a text longer than the model's 256 tokens is refused. Its voices are those of
-  `--add-voice` and `add_voice`. It speaks `ja`, and the language is only checked.
+  request should be one sentence; a text longer than the model's 256 tokens is refused. Its voices are `none` in a
+  layout 2 file and those of `--add-voice` and `add_voice`. It speaks `ja`, and the language is only checked.
 - **FastConformer** recognizes a request's audio at once. The parakeet models' encoders attend over the whole of it, so
   a request to them should be one utterance: on an Apple M5, the 25.5 s FLEURS utterance takes 0.22 s on Metal, and
   its memory grows with the square of the length. reazonspeech-nemo-v2 attends locally and takes a recording of
@@ -798,19 +859,43 @@ out {"type":"end","id":"r","text":"群島や湖では必ずしもヨットは必
 
 ### Irodori-TTS voices
 
-Irodori-TTS has no voices of its own; it speaks in the voice of a reference. A voice is either:
+Irodori-TTS speaks in the voice of a reference, or, as the voice `none` of a layout 2 file, without one: the model
+chooses the voice, as the official runtime's `no_ref` does, and the length is predicted with the duration predictor's
+null speaker. `none` is listed first among the model information's voices, before those added; a layout 1 file has no
+such voice and refuses it, naming the null speaker it lacks. A voice added is either:
 
 - a reference WAVE file: at most 120 s, 16-, 24- or 32-bit PCM or 32-bit float at any rate, the channels
   averaged and resampled to 48 kHz. `speech_voice_add()`, and so `--add-voice` and the worker's `add_voice`,
   normalizes its loudness and encodes it with the codec, as the official runtime does for every request.
-- a voice file, which `speech voice` or `speech_voice_make()` writes from a reference WAVE file, reading only the
-  codec's encoder from the model file: the reference's codec latent in a GGUF file of its own (Voice files, below) that
-  carries the hash of the codec's tensors. It works with every model file of the same codec, v4.1-Small-MF and
-  v4.1-Small in any type, and a model of another codec refuses it. Voice files made before 0.7.0 have no layout and are
-  refused; make them again from their WAVE files.
+- a voice file, which `speech voice`, `speech_voice_make()` or `speech_voice_make_from()` writes from reference WAVE
+  files, reading only the codec's encoder from the model file: the references' codec latent in a GGUF file of its own
+  (Voice files, below) that carries the hash of the codec's tensors. It works with every model file of the same codec,
+  v4.1-Small-MF and v4.1-Small in any type, and a model of another codec refuses it. Voice files made before 0.7.0 have
+  no layout and are refused; make them again from their WAVE files.
+
+A voice file may be made of several references, as the official runtime's `ref_wavs`: each is encoded on its own and
+the latents are joined in the order given, up to 120 s together (3000 frames, `irodori-tts.reference.max_seconds`),
+past which the runtime cuts and speech.cpp refuses. Each reference is brought to the model's loudness,
+`irodori-tts.reference.lufs` (-16 LUFS), or to another (`--lufs`, `speech_voice_params_set_loudness()`), or kept as
+recorded with a peak above 1 scaled down to 1 (`--keep-loudness`, `speech_voice_params_keep_loudness()`), the runtime's
+`ref_normalize_db` of `None`. `--add-voice` and the worker's `add_voice` take one file, a voice file or one WAVE file at
+the model's loudness; a voice of several references or another loudness is made into a voice file first.
+
+A voice file may instead hold a speaker-inversion embedding, the runtime's `ref_embed`: vectors that the official
+training learns against one model to stand for a speaker, which the DiT attends to in place of the speaker condition a
+reference gives and whose first vector the duration predictor takes as the speaker's. `speech voice` reads the
+`.speaker.safetensors` file the runtime saves (the tensor `speaker_embedding`, float32 [tokens, 768]), and
+`speech_voice_params_set_embedding()` takes the vectors. The file names the model it was made for by its
+`general.source.url`, since the embedding fits that model's DiT and no other: a voice of an embedding made for
+v4.1-Small is refused by v4.1-Small-MF, in any type of either file.
+
+```sh
+speech voice Irodori-TTS-859M-v4.1-F16.gguf my-speaker.speaker.safetensors my-speaker.voice.gguf
+```
 
 ```sh
 speech voice Irodori-TTS-848M-MF-v4.1-F16.gguf bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf
+speech voice Irodori-TTS-848M-MF-v4.1-F16.gguf take-1.wav take-2.wav take-3.wav --lufs -23 three-takes.voice.gguf
 ```
 
 For the 10.7 s reference bright-young-woman-10s.wav, the voice file is 35 KB against the WAVE file's 1 MB,
@@ -866,7 +951,7 @@ A speech request is a JSON object:
 | `model` | the loaded model's `id` from `/v1/models`, or left out. Any other model is a 404 (`model_not_found`) |
 | `response_format` | `wav` (the default) or `pcm`. OpenAI's default is `mp3`, which speech.cpp does not encode; `mp3`, `opus`, `aac` and `flac` are refused |
 | `stream_format` | `audio` (the default) or `sse`, which needs `pcm` |
-| `voice`, `language`, `seed`, `speed`, `seconds`, `duration_scale`, `steps`, `max_seconds`, `timestamps`, `prompt`, `decoding`, `do_sample`, `top_k`, `top_p`, `temperature`, `repetition_penalty`, `code_predictor_do_sample`, `code_predictor_top_k`, `code_predictor_top_p`, `code_predictor_temperature`, `instructions` | every option of the vocabulary by its name (Options, above), of the option's type, which the model checks: `voice` is one of the model's voices, a Qwen3-TTS speaker or a voice of `--add-voice`, and required; `speed`, `voice` and `instructions` are OpenAI's, the others speech.cpp's own. A request without `seed` gets one drawn from 0 to 2^53 - 1 |
+| `voice`, `language`, `seed`, `speed`, `seconds`, `duration_scale`, `steps`, `max_seconds`, `timestamps`, `prompt`, `decoding`, `do_sample`, `top_k`, `top_p`, `temperature`, `repetition_penalty`, `code_predictor_do_sample`, `code_predictor_top_k`, `code_predictor_top_p`, `code_predictor_temperature`, `instructions`, `cfg_scale_text` and the rest of Irodori-TTS's options | every option of the vocabulary by its name (Options, above), of the option's type, which the model checks: `voice` is one of the model's voices, a Qwen3-TTS speaker or a voice of `--add-voice`, and required; `speed`, `voice` and `instructions` are OpenAI's, the others speech.cpp's own. A request without `seed` gets one drawn from 0 to 2^53 - 1 |
 
 A member speech.cpp does not take is refused rather than ignored, and so is OpenAI's `instructions` other than `""` for a
 model that takes no instruction, such as Qwen3-TTS 0.6B; a member set to `null` counts as left out.
@@ -1155,13 +1240,19 @@ runtime's guidance, text 3.0 and speaker 5.0 while t ≥ 0.5):
   which keeps the 56 emoji the model reads as directions (🤭 a giggle, 😮‍💨 a sigh, 👂 a whisper and the
   rest of the runtime's `ALLOWED_ANNOTATION_EMOJIS`),
 - the SentencePiece Unigram tokenizer with byte fallback, and ModernBERT-ja with its projector,
-- the reference's loudness normalization and the codec encoder, in windows of 100 frames,
+- the reference's loudness normalization, to the runtime's -16 LUFS, another or none, the codec encoder, in windows of
+  100 frames, and voices of several references joined,
 - the speaker encoder, the duration predictor with the runtime's `seconds` and `duration_scale`, the DiT and
-  both samplers,
-- the tail cut where the latent goes flat, and the codec decoder, a first window of 12 frames (0.48 s) and
-  then 48 at a time, each window giving the samples of decoding the whole latent at once.
+  both samplers, RF's with the runtime's guidance modes and scales, Sway Sampling, the truncation of the noise, the
+  temporal score rescaling and the scaling of the speaker's keys and values,
+- speaking without a reference, the runtime's `no_ref`, as the voice `none` of a layout 2 file,
+- captions (VoiceDesign), the runtime's `caption`, as the request's `instructions`, with the caption's guidance of RF,
+- speaker-inversion embeddings, the runtime's `ref_embed`, as voice files made of them,
+- the tail cut where the latent goes flat, with the runtime's settings, and the codec decoder, a first window of 12
+  frames (0.48 s) and then windows of 24 to 48 sized as the decoder measures its speed (Streaming, below), each window
+  giving the samples of decoding the whole latent at once.
 
-Not implemented: captions (VoiceDesign), speaker-inversion embeddings and SilentCipher's watermark. The noise comes
+Not implemented: LoRA adapters and SilentCipher's watermark. The noise comes
 from speech.cpp's own generator, so a seed gives other audio than the same seed in the official runtime. A reference
 at another rate than 48 kHz is resampled with the library's filter, not with the runtime's torchaudio defaults (Audio
 at another rate, above).
@@ -1172,17 +1263,20 @@ A synthesis needs one file per model, the codec inside it:
 [sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF)
 holds `Irodori-TTS-848M-MF-v4.1-F16.gguf` and
 [sakasegawa/Irodori-TTS-v4.1-Small-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF)
-`Irodori-TTS-841M-v4.1-F16.gguf`, and their cards list the SHA-256. The model and the separate codec of earlier
-releases, which this one refuses, remain in the repositories' history. To convert them yourself from the official
-checkpoints and codec, which `reference/irodori-tts/pins.py` pins by revision:
+`Irodori-TTS-841M-v4.1-F16.gguf`, and their cards list the SHA-256. These are layout 1 files, which this release
+reads as files without the null speaker and the caption's encoder: they speak with a reference voice and take no
+caption, and a request for either is refused naming what the file lacks (docs/adr/0026). The model and the separate
+codec of earlier releases, which this one refuses, remain in the repositories' history. The converter writes layout 2,
+whose files hold both and are named by their larger size, from the official checkpoints and codec, which
+`reference/irodori-tts/pins.py` pins by revision:
 
 ```sh
 cd reference/irodori-tts
-uv run python convert.py mf ../../models --type f16       # Irodori-TTS-848M-MF-v4.1-F16.gguf, 1.9 GB
-uv run python convert.py rf ../../models --type f16       # Irodori-TTS-841M-v4.1-F16.gguf, 1.9 GB
+uv run python convert.py mf ../../models --type f16       # Irodori-TTS-866M-MF-v4.1-F16.gguf, 1.9 GB
+uv run python convert.py rf ../../models --type f16       # Irodori-TTS-859M-v4.1-F16.gguf, 1.9 GB
 ```
 
-`--type` also takes `f32` (3.4 GB) and `q8_0` (1.2 GB). The codec stays float32 in every type, as the released
+`--type` also takes `f32` (3.5 GB) and `q8_0` (1.2 GB). The codec stays float32 in every type, as the released
 files have it. Qwen3-ASR 1.7B transcribed the 20 sentences of the speed table below with 2.99% CER in F32 and in
 F16, and 3.81% in Q8_0, which garbled one phrase.
 
@@ -1215,6 +1309,99 @@ caller asked for a length the model does not make (docs/adr/0014).
 The audio may end before the length where the latent goes flat, as in the runtime. The frames are the
 official runtime's for every combination the dumps cover (`irodori-condition-check`, `irodori-synthesis-check`).
 
+### Guidance, schedule and the tail
+
+A request may set the rest of what the official runtime's request (`SamplingRequest`) takes without other weights,
+under the C API's names (Options, above), and a request that sets none of them speaks as before, sample for sample:
+
+- **Guidance, RF.** v4.1-Small runs its DiT on a batch, the latent with every condition and the latent with one left
+  out, and moves along the first plus each scale times its difference from the others, while the step's time lies
+  from `cfg_min_t` to `cfg_max_t`. `cfg_scale_text`, `cfg_scale_speaker` and, with instructions,
+  `cfg_scale_instructions` are the scales, and 0 leaves that branch out. `cfg_guidance_mode` `joint` leaves out every
+  condition in one branch at one scale, and `alternating` leaves out one condition a step, in turn by the step's
+  number, unguided steps counted. `speaker_uncond_mode`
+  `noise` gives the branch without the speaker noise of the speaker condition's spread in its place, drawn from the
+  request's seed after the latent's noise.
+- **Schedule and noise, RF.** `sway_coeff` bends the linear schedule as Sway Sampling (F5-TTS) does, which the runtime
+  runs with `t_schedule_mode` `sway`: below 0 it gathers the steps near the noise, above 0 near the speech, and at 0,
+  the default, the schedule is the linear one; the runtime's own coefficient for `sway` is -1. `truncation_factor`
+  multiplies the starting noise, and `rescale_k` and `rescale_sigma` rescale each step's velocity (temporal score
+  rescaling, Xu et al., 2025).
+- **The speaker's weight, RF.** `speaker_kv_scale` multiplies the keys and values the DiT attends to of the voice in
+  its first `speaker_kv_max_layers` layers, every branch's but the joint guidance's branch without every condition,
+  as the runtime scales them, so that above 1 the speech follows the voice more closely. The runtime scales them once
+  and restores them after the step from which the time falls below `speaker_kv_min_t` (0.9, from the file; a layout 1
+  file reads as having the runtime's 0.9), comparing in float32: the scaling covers every step that starts at or
+  above it, and every step when it lies above the first step's time.
+- **The tail, both models.** The speech ends at the first frame from which `tail_window_size` frames of the latent
+  have a standard deviation under `tail_std_threshold` and a mean within `tail_mean_threshold` of 0; `keep_tail`
+  keeps the whole length.
+
+v4.1-Small-MF takes none of RF's options: MeanFlow folded the guidance into its training, and the runtime ignores
+the guidance, the schedule, the noise's settings and the speaker's scaling for it.
+
+### Instructions
+
+`instructions`, the runtime's caption, describes in words the voice and the way of speaking, as OpenAI's speech API's
+member of the same name does: 「落ち着いた女性の声で、近い距離感でやわらかく自然に読み上げてください。」. With a
+reference the speech keeps the reference's voice and follows the description where it can; with the voice `none` the
+description alone chooses the voice, the runtime's VoiceDesign:
+
+```sh
+build/speech tts Irodori-TTS-866M-MF-v4.1-F16.gguf --voice none --instructions "低く落ち着いた男性の声で、ゆっくりと読み上げてください。" \
+    -o out.wav "明日の東京は晴れです。"
+```
+
+The caption is not normalized as the text is: it loses what Python's `str.strip()` removes at either end, U+3000
+among it, and is tokenized after `<s>` by the text's tokenizer. One that strips to nothing is no caption, and the
+request speaks as one without, sample for sample. It is at most `irodori-tts.caption.max_tokens` (512) tokens, `<s>`
+included; the runtime cuts a longer one, which speech.cpp refuses. ModernBERT-ja, shared with the text, and the
+caption's own projector and norm make its condition, which the DiT attends to after the speaker and the duration
+predictor takes as the mean of its tokens in place of the null caption. With RF, the guidance also runs a branch
+without the caption at `cfg_scale_instructions`. A request without instructions computes none of this: the caption's
+weights stay in memory and the graph is the one a file without them builds.
+
+A layout 1 file holds no caption's encoder; it takes `""` and refuses other instructions, naming what it lacks
+(docs/adr/0026). Where the runtime ignores a setting that another one
+leaves without effect, or clamps a value, speech.cpp refuses it (Options, above).
+
+The runtime's request takes more, which speech.cpp does not offer:
+
+- `num_candidates` and `decode_mode`: several takes from one batch, where a request gives one stream of audio. A
+  caller makes a request per take with seeds of its own; each is a take of the same distribution, though not the
+  runtime's candidate, whose noise comes from the runtime's generator, as every seed's does.
+- `context_kv_cache`: whether the keys and values of the conditions are computed once for every step, which does not
+  change the audio.
+- `cfg_scale`: the runtime's deprecated single scale, which the two scales at one value give.
+- `min_seconds`, `max_seconds`, `max_ref_seconds`, `max_text_len` and `max_caption_len`: the model's bounds, which
+  its file gives and past which speech.cpp refuses where the runtime clamps or cuts.
+- `ref_embed` as a request's: a voice file holds an embedding (Irodori-TTS voices, above).
+- `ref_latent` and `ref_latents`: latents saved with `torch.save()`, which is Python's pickle; a voice file holds a
+  reference's latent.
+- `ref_ensure_max`: on, as the runtime's default; it bounds the peak of a reference that is not normalized.
+
+### Streaming
+
+The sampler makes a sentence's whole latent before any audio, and the codec decodes it in windows, passing each
+window's samples on as it is decoded: the first window of 12 frames (0.48 s), as early as before, and then windows of
+24 to 48 frames. Each later window is the largest that the decoder expects to finish while the listener still has
+0.1 s of the audio sent, the listener taken to play from the first window on, and its time is the decoder's time per
+frame as measured on the windows before, each window decoding 10 frames on either side of its own. Where not even 24
+frames finish in time and decoding is slower than real time, the window is 48 frames, the most audio for the frames
+decoded, and the player has to buffer. 48 frames, the window of 0.7.1, is never exceeded, so a cancel and the silence
+between a worker's chunks wait no longer than they did. `irodori-window-check` checks the rule on simulated machines.
+
+Through 0.7.1's worker on speech-bench's 20 sentences, an Apple M5 sent the 48-frame second window 0.288 s after the
+first, 0.19 s before the first window's audio ran out, and an RTX 2080 0.32 s after; a machine half as fast as the M5
+would have run dry there, and now sends 24 frames second. 24 frames decode 44 with their margins, 29% more decoding per
+second of audio than 48 frames (68), where 12 frames would decode 32, 88% more.
+
+The window sizes follow the clock, and the audio does not: the decoder is convolutions without a cache, and the 10
+frames on either side cover its receptive field of 7.7, so decoding in windows of any sizes gives the samples of
+decoding the whole latent at once, bit for bit (`irodori-codec-check` decodes seven patterns of sizes against one
+decode on the CPU and Metal), and a seed repeats its samples. Qwen3-TTS's codec, which keeps a cache, gives other
+samples in other chunkings and keeps its fixed schedule.
+
 ### Accuracy
 
 `reference/irodori-tts/dump.py` runs the official implementation on the CPU in float32 with fixed noise and
@@ -1230,7 +1417,7 @@ saves every stage; the check tools compare each stage, given the dump's own inpu
 | DiT steps, MF and RF (`irodori-dit-check`) | 95 dB or more | 46 dB or more | 63 dB or more (MF) |
 | Sampled latent, MF / RF 40 steps | 86 to 122 dB / 109 to 111 dB | 36 to 67 dB / 59 to 67 dB | 66 dB (MF, 27 frames) |
 | Decoded audio (`irodori-codec-check`) | 119 dB | 68 dB | 68 dB |
-| Decoding in windows against at once | equal | equal | 89 dB (encoder), equal (decoder) |
+| Decoding in windows against at once, seven patterns of window sizes for the decoder | equal | equal | 89 dB (encoder), equal (decoder, 0.7.1's windows) |
 | Whole synthesis from the dump's noise (`irodori-synthesis-check`) | 75 to 110 dB, the same length | 22 to 61 dB, the same length | 58 dB (MF, 27 frames), the same length |
 
 The Metal and Vulkan columns were measured on an Apple M5 and an RTX 2080 with driver 591.86.
@@ -1267,6 +1454,16 @@ audio.cpp v0.8.2 took 1.22 s (M5) and 0.80 s (RTX 2080) to the median first audi
 steps, answering with the whole sentence. Memory is the worker's peak memory footprint on the M5 and the
 rise of the GPU's memory on the RTX 2080, with the F32 codec. The first audio comes after the text, the
 whole sampler and the codec's first window, so it grows with the sentence.
+
+The table's requests have no instructions, and a layout 2 file runs them as a layout 1 file does. Instructions add the
+caption's pass through ModernBERT-ja beside the text's and its keys to every block of the DiT, and with RF a branch to
+the batch of each guided step. `checks/irodori-caption-timing.py` times the same sentences without instructions and
+with a caption through the worker:
+
+```sh
+python3 checks/irodori-caption-timing.py build/speech Irodori-TTS-866M-MF-v4.1-F16.gguf prompts/speak-ja-JP.json \
+    bright=bright-young-woman-10s.voice.gguf [--steps 16] [--caption TEXT]...
+```
 
 ## FastConformer
 
@@ -1712,15 +1909,16 @@ process's peak memory footprint is 2.03 GB: the memory is that of the longest pa
 
 Every model is one GGUF file, its codec included, which `reference/<model>/convert.py` writes from the checkpoint
 that `reference/<model>/pins.py` pins by revision (docs/adr/0015). The file says the version of its layout in
-`speech.layout`, 2 for fastconformer and 1 for the other families, and in `speech.requires` the first release whose
-reader takes it, 0.8.0 for fastconformer's layout 2 and 0.7.0 for layout 1. A reader takes the layout it knows and
+`speech.layout`, 2 for fastconformer and irodori-tts and 1 for the other families, and in `speech.requires` the first
+release whose reader takes it, 0.8.0 for layout 2 and 0.7.0 for layout 1. A reader takes the layout it knows and
 brings a file of an earlier layout of its family up to it as it reads it: fastconformer's layout 1 lacks
 `fastconformer.decoder.rnnt.max_symbols`, which an RNN-T file of layout 1 gets as reazonspeech-nemo-v2's 10, the one
-RNN-T checkpoint layout 1's converter took (an RNN-T file of layout 1 with another `general.name` is refused), and the
-model information lists it among the file's metadata, beside the file's own `speech.layout`. The files of layout 1 in
-the Hugging Face repositories are therefore read as they are, and recognize as they did. A newer layout is refused
-with a message that names `speech.requires`, and a file without `speech.layout`, converted for a release before 0.7.0,
-is refused as such. Every key below is required in
+RNN-T checkpoint layout 1's converter took (an RNN-T file of layout 1 with another `general.name` is refused), and
+irodori-tts's layout 1 gets the keys that say it holds neither the null speaker nor the caption's encoder (irodori-tts,
+below). The model information lists such a key among the file's metadata, beside the file's own `speech.layout`. The
+files of layout 1 in the Hugging Face repositories are therefore read as they are, and recognize and speak as they did.
+A newer layout is refused with a message that names `speech.requires`, and a file without `speech.layout`, converted
+for a release before 0.7.0, is refused as such. Every key below is required in
 its family's layout unless the table says when it is present, and has exactly the type listed: a key missing or of
 another type is refused with a message that names it, and so is a string that names a kind other than the ones
 listed. The tensors are exactly the ones the keys call for, each of the shape the keys give it and of a type its
@@ -1747,7 +1945,7 @@ family's architecture; only speech.cpp runs these files.
 | `general.name` | string | the model's name | the pinned repository's name (`Qwen3-TTS-12Hz-0.6B-CustomVoice`, `Irodori-TTS-v4.1-Small-MF`, `parakeet-tdt-0.6b-v3`, `Qwen3-ASR-1.7B`) |
 | `general.organization` | string | the organization that publishes the model | the pinned repository's namespace (`Qwen`, `Aratako`, `nvidia`, `reazon-research`) |
 | `general.basename` | string | the model line, which the file's name begins with | the repository's name through the converter's table of names (`Qwen3-TTS-12Hz`, `Irodori-TTS`, `parakeet-tdt_ctc`, `parakeet-tdt`, `reazonspeech-nemo`, `Qwen3-ASR`) |
-| `general.size_label` | string | the number of parameters with its scale, B or M | the repository's name (`0.6B`, `1.7B`), or, where it gives none, the parameters of the file's tensors as gguf-py's `size_label()` rounds them (`848M`, `841M`, `619M`) |
+| `general.size_label` | string | the number of parameters with its scale, B or M | the repository's name (`0.6B`, `1.7B`), or, where it gives none, the parameters of the file's tensors as gguf-py's `size_label()` rounds them (`866M`, `859M`, `619M`; Irodori-TTS's layout 1 files `848M` and `841M`) |
 | `general.finetune` | string | what the model was trained toward beyond its line; present where its name gives it | the repository's name (`CustomVoice`, `MF`, `ja`) |
 | `general.version` | string | present where the model's name gives one | the repository's name (`v4.1`, `v3`, `v2`) |
 | `general.license` | string | SPDX expression | the model card |
@@ -1756,8 +1954,8 @@ family's architecture; only speech.cpp runs these files.
 | `general.file_type` | u32 | the type that holds most of the tensors' bytes, as gguf-py's `LlamaFileType` numbers it: 0 (F32), 1 (F16) or 7 (Q8_0); a file whose tensors say otherwise is refused | the converter's `--type` |
 | `general.quantization_version` | u32 | the version of ggml's quantized blocks (2); present when the file holds a quantized tensor | gguf-py's `GGML_QUANT_VERSION` |
 | `general.languages` | [string] | each language's shortest ISO 639 code, sorted, which requests and the model information give as BCP 47 tags: two letters, or three for a language that has no two-letter code (`yue`, `fil`), where the GGUF specification asks for two letters | Qwen3-TTS: the names of `codec_language_id` through the converter's table of codes, dialects left out; Qwen3-ASR: the tags of transformers' `LANGUAGE_CODE_TO_NAME`; the others: the model card |
-| `speech.layout` | u32 | the version of the family's layout: 2 for fastconformer, 1 for the others | the converter |
-| `speech.requires` | string | the first release whose reader takes this layout: `0.8.0` for fastconformer's layout 2, `0.7.0` for layout 1 | the converter's table of layouts |
+| `speech.layout` | u32 | the version of the family's layout: 2 for fastconformer and irodori-tts, 1 for the others | the converter |
+| `speech.requires` | string | the first release whose reader takes this layout: `0.8.0` for layout 2, `0.7.0` for layout 1 | the converter's table of layouts |
 | `speech.task` | string | `synthesis` or `recognition`; must be the family's | the converter |
 | `speech.sample_rate` | u32 | the rate of the audio made or recognized | Qwen3-TTS: `speech_tokenizer/config.json` `output_sample_rate`; Irodori-TTS: the DACVAE's `sample_rate`; FastConformer: the featurizer's `sample_rate`; Qwen3-ASR: qwen-asr's `SAMPLE_RATE`, the feature extractor's rate |
 | `speech.language_use` | string | `steers` or `checked`; must be what the family does | `steers` for qwen3-tts and qwen3-asr, `checked` for the others |
@@ -1866,11 +2064,17 @@ Irodori-TTS-Server@61012c760f22f7b4a6c21c5c5f8f9e148120b6f9 for the speed.
 | `irodori-tts.text.max_tokens` | u32 | the longest text (256) | `config_json` `max_text_len` |
 | `irodori-tts.speaker.dim`, `num_layers`, `num_heads`, `patch_size` | u32 | | `config_json` `speaker_dim`, `speaker_layers`, `speaker_heads`, `speaker_patch_size` |
 | `irodori-tts.duration.num_layers` | u32 | | `duration_layers` |
+| `irodori-tts.duration.null_speaker` | bool | whether the file holds the duration predictor's null speaker, which the voice `none` speaks with without a reference | true when the checkpoint holds `duration_predictor.null_speaker` |
+| `irodori-tts.caption.dim` | u32 | the caption condition's channels, which the duration predictor's caption takes | `config_json` `caption_dim`, or `text_dim` where it is absent, as `ModelConfig.caption_dim_resolved` gives it |
+| `irodori-tts.caption_condition` | bool | whether the file holds the caption's encoder: its projector and norm and the DiT's caption keys and values | `config_json` `use_caption_condition`; the converter checks that the caption shares the text's tokenizer, `<s>` and ModernBERT, and that the duration predictor takes it with `adarn_zero` and `masked_mean` |
+| `irodori-tts.caption.max_tokens` | u32 | the longest caption (512), `<s>` included; present when `caption_condition` is true | `config_json` `max_caption_len` |
 | `irodori-tts.dit.dim`, `num_layers`, `num_heads`, `timestep_dim` | u32 | | `model_dim`, `num_layers`, `num_heads`, `timestep_embed_dim` |
 | `irodori-tts.sampler.default_steps` | u32 | the default of the sampler's steps (4 or 40) | the runtime's `num_steps` default, 4 for MeanFlow and 40 otherwise |
 | `irodori-tts.sampler.cfg_text` | f32 | present when `flow` is `rf_velocity` (3.0) | `SamplingRequest.cfg_scale_text` |
 | `irodori-tts.sampler.cfg_speaker` | f32 | the same (5.0) | `SamplingRequest.cfg_scale_speaker` |
 | `irodori-tts.sampler.cfg_min_t`, `cfg_max_t` | f32 | the same (0.5 and 1.0) | `SamplingRequest.cfg_min_t`, `cfg_max_t` |
+| `irodori-tts.sampler.cfg_caption` | f32 | present when `flow` is `rf_velocity` and `caption_condition` is true (3.0) | `SamplingRequest.cfg_scale_caption` |
+| `irodori-tts.sampler.speaker_kv_min_t` | f32 | present when `flow` is `rf_velocity`: the time below which a request's `speaker_kv_scale` stops (0.9) | the runtime's `synthesize()`, which takes 0.9 when a request names none; the converter checks its source says so |
 | `irodori-tts.length.min_seconds`, `max_seconds` | f32 | the shortest and the longest speech (0.5 and 30) | `SamplingRequest.min_seconds`, `max_seconds` |
 | `irodori-tts.length.min_speed`, `max_speed` | f32 | the speed's bounds (0.25 and 4) | Irodori-TTS-Server's speed bounds, OpenAI's |
 | `irodori-tts.reference.max_seconds` | f32 | the longest reference recording (120) | `config_json` `ref_max_seconds` |
@@ -1899,16 +2103,19 @@ F the lengths of `codec.encoder_rates` and `codec.decoder_rates`:
   `ffn_act`, `ffn_gate`, `ffn_down`, and `attn_norm` for every layer but the first, which ModernBERT does not
   normalize; `text.final_norm`, `text.proj.{weight,bias}`, `text.proj.res_norm`, `text.proj.res_up.{weight,bias}`,
   `text.proj.res_down.{weight,bias}`, `text.norm`;
+- when `caption_condition` is true, the caption's projector of ModernBERT's output and its norm, as the text's:
+  `caption.proj.{weight,bias}`, `caption.proj.res_norm`, `caption.proj.res_up.{weight,bias}`,
+  `caption.proj.res_down.{weight,bias}`, `caption.norm`;
 - `speaker.in_proj.{weight,bias}`, `speaker.blk.{0..S-1}.` with `attn_norm`, `attn_q`, `attn_k`, `attn_v`, `attn_o`,
   `attn_gate`, `q_norm`, `k_norm`, `ffn_norm`, `ffn_gate`, `ffn_up`, `ffn_down`; `speaker.norm`;
 - `duration.in_proj.{weight,bias}`, `duration.blk.{0..D-1}.` with `norm`, `mod.{weight,bias}`,
   `caption_mod.{weight,bias}`, `ffn_gate`, `ffn_up`, `ffn_down`; `duration.out_norm`, `duration.out_proj.{weight,bias}`,
-  `duration.null_caption`;
+  `duration.null_caption`, and `duration.null_speaker` when `duration.null_speaker` is true;
 - `dit.cond.{0,1,2}`, and `dit.delta_cond.{0,1,2}` when `flow` is `meanflow`; `dit.in_proj.{weight,bias}`,
   `dit.blk.{0..N-1}.` with `attn_q`, `attn_k`, `attn_v`, `attn_o`, `attn_gate`, `attn_k_text`, `attn_v_text`,
-  `attn_k_speaker`, `attn_v_speaker`, `q_norm`, `k_norm`, `ffn_gate`, `ffn_up`, `ffn_down`, and for `attn_ada` and
-  `ffn_ada` each of `shift`, `scale`, `gate` with `down`, `up.weight`, `up.bias`; `dit.out_norm`,
-  `dit.out_proj.{weight,bias}`;
+  `attn_k_speaker`, `attn_v_speaker`, `attn_k_caption` and `attn_v_caption` when `caption_condition` is true,
+  `q_norm`, `k_norm`, `ffn_gate`, `ffn_up`, `ffn_down`, and for `attn_ada` and `ffn_ada` each of `shift`, `scale`,
+  `gate` with `down`, `up.weight`, `up.bias`; `dit.out_norm`, `dit.out_proj.{weight,bias}`;
 - `codec.enc.conv_in.{weight,bias}`, `codec.enc.blk.{0..E-1}.` with `res.{0,1,2}.` (`snake1.{alpha,inv_alpha}`,
   `conv1.{weight,bias}`, `snake2.{alpha,inv_alpha}`, `conv2.{weight,bias}`), `snake.{alpha,inv_alpha}`,
   `down.first`, `down.second`, `down.bias`; `codec.enc.snake.{alpha,inv_alpha}`, `codec.enc.conv_out.{weight,bias}`,
@@ -1917,15 +2124,22 @@ F the lengths of `codec.encoder_rates` and `codec.decoder_rates`:
   `snake.{alpha,inv_alpha}`, `up.{weight,bias}` and `res.{0,1,2}.` as in the encoder;
   `codec.dec.out_snake.{alpha,inv_alpha}`, `codec.dec.conv_out.{weight,bias}`.
 
-The widths that no key gives are the feed-forward widths of ModernBERT (from `text.blk.0.ffn_act`), of its projector
-(`text.proj.res_up.weight`), of the speaker encoder (`speaker.blk.0.ffn_gate`) and of the DiT (`dit.blk.0.ffn_gate`),
+The widths that no key gives are the feed-forward widths of ModernBERT (from `text.blk.0.ffn_act`), of its projectors
+(`text.proj.res_up.weight`, `caption.proj.res_up.weight`), of the speaker encoder (`speaker.blk.0.ffn_gate`) and of the DiT (`dit.blk.0.ffn_gate`),
 the duration predictor's width (`duration.in_proj.weight`), the rank of the DiT's AdaLN
 (`dit.blk.0.attn_ada.shift.down`), and the codec's first, latent and decoder widths (`codec.enc.conv_in.weight`,
 `codec.enc.conv_out.weight`, `codec.dec.conv_in.weight`). The codec's strides are even, and each of
 `codec.encoder_rates` and `codec.decoder_rates` multiplies to `codec.hop_length`.
 
-Constants that stay in the C++, since they are not the model's: the decoder's windows of 12 and 48 frames, which are
-how speech.cpp streams a latent the official runtime decodes whole; the encoder's and decoder's margins of 8 and 10
+A file of layout 1, which releases from 0.7.0 wrote, is read as one of layout 2 with `duration.null_speaker` and
+`caption_condition` false, `caption.dim` equal to `text.dim`, the width layout 1 gave the duration predictor's caption,
+and, for RF, `sampler.speaker_kv_min_t` 0.9, the runtime's at the commit every layout 1 file was converted from. Its
+tensors are then the ones layout 1 held. The model information shows its own layout, and its metadata, in the
+information and in `speech info --meta`, lists the keys the upgrade sets.
+
+Constants that stay in the C++, since they are not the model's: the decoder's first window of 12 frames and the bounds
+of the later ones, 24 and 48 frames with 0.1 s in hand, which are how speech.cpp streams a latent the official runtime
+decodes whole; the encoder's and decoder's margins of 8 and 10
 frames, which follow from the codec's architecture; SentencePiece's penalty for an unknown piece; and the widths
 DACVAE fixes in its code rather than in its configuration, 7 for the first and the last convolution and a residual
 unit's first, 3 for the encoder's last, and 1 for a residual unit's second and the decoder's input projection.
@@ -2042,20 +2256,28 @@ the converter finds in its code, and no key holds it.
 
 ### Voice files
 
-A voice file of Irodori-TTS is a GGUF file of its own, layout 1:
+A voice file of Irodori-TTS is a GGUF file of its own. Every voice file this release makes, of one reference at the
+model's loudness too, is of layout 2:
 
 | Key | Type | Meaning |
 |---|---|---|
 | `general.architecture` | string | `irodori-tts-voice` |
-| `speech.layout` | u32 | 1 |
-| `speech.requires` | string | `0.7.0` |
-| `irodori-tts-voice.codec_sha256` | string | the `irodori-tts.codec.sha256` of the model that encoded it; a model with another hash refuses it |
-| `irodori-tts-voice.reference_seconds` | f32 | the reference recording's length |
-| `irodori-tts-voice.reference_sample_rate` | u32 | the reference recording's rate, before it was resampled |
+| `speech.layout` | u32 | 2 |
+| `speech.requires` | string | `0.8.0` |
+| `irodori-tts-voice.source` | string | `references` or `embedding`: what the voice is made of |
+| `irodori-tts-voice.codec_sha256` | string | the `irodori-tts.codec.sha256` of the model that encoded it; a model with another hash refuses it. Present for `references`, as the keys below to `device_kind` |
+| `irodori-tts-voice.references.seconds` | [f32] | each reference recording's length, in the order they are joined |
+| `irodori-tts-voice.references.sample_rates` | [i32] | each recording's rate, before it was resampled, aligned |
+| `irodori-tts-voice.normalized` | bool | whether each recording was brought to a loudness before it was encoded |
+| `irodori-tts-voice.lufs` | f32 | that loudness in LUFS; present when `normalized` is true |
 | `irodori-tts-voice.device_kind` | string | `cpu`, `gpu` or `igpu`: the kind of device that encoded it |
+| `irodori-tts-voice.model` | string | the `general.source.url` of the model the embedding was made for; present for `embedding`. Another model refuses it |
 
-and one tensor, `latent`, F32 with ne = [`latent_dim`, frames], `latent_dim` being the model's. A voice file of another
-codec is refused as the caller's mistake before its latent is checked. Voice files made before 0.7.0 have no
+and one tensor: for `references`, `latent`, F32 with ne = [`latent_dim`, frames], the recordings' latents joined,
+`latent_dim` being the model's; for `embedding`, `speaker`, F32 with ne = [`speaker.dim`, tokens]. A voice file of
+another codec or another model is refused as the caller's mistake before its tensor is checked. A voice file
+of layout 1, which releases from 0.7.0 wrote with one reference brought to the model's -16 LUFS, is read as one of
+layout 2 that says so, and releases before 0.8.0 refuse layout 2 naming 0.8.0. Voice files made before 0.7.0 have no
 `speech.layout` and are refused; they are made again from their WAVE files.
 
 ## License

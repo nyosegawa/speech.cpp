@@ -44,8 +44,9 @@ struct Layout {
     std::function<std::vector<TensorSpec>(const ModelFile & file)> tensors;
     /**
      * Brings the metadata of a file of an earlier layout, whose version ModelFile::layout_version() gives, up to this
-     * layout before anything else reads it, setting what the earlier layout lacks with ModelFile::upgrade_u32(). Empty
-     * for a family whose layout has had one version, whose reader refuses every other.
+     * layout before anything else reads it, setting what the earlier layout lacks with ModelFile's upgrade setters
+     * (upgrade_u32() and the others). Empty for a family whose layout has had one version, whose reader refuses every
+     * other.
      */
     std::function<void(ModelFile & file)> upgrade = {};
 };
@@ -106,14 +107,20 @@ public:
     /** A string that names a kind; a value other than `values` throws. */
     std::string one_of(const std::string & key, std::initializer_list<const char *> values) const;
     std::vector<int32_t> i32_array(const std::string & key) const;
+    std::vector<float> f32_array(const std::string & key) const;
     std::vector<double> f64_array(const std::string & key) const;
     std::vector<std::string> str_array(const std::string & key) const;
 
     /**
-     * Sets a u32 key of the metadata as it is read, not in the file, for a layout's upgrade of a file of an earlier
-     * layout; the model information then lists it among the file's entries.
+     * Sets a key of the metadata, of the type each setter names, as it is read, not in the file, for a layout's upgrade
+     * of a file of an earlier layout; the model information then lists it among the file's entries.
      */
     void upgrade_u32(const std::string & key, uint32_t value);
+    void upgrade_f32(const std::string & key, float value);
+    void upgrade_bool(const std::string & key, bool value);
+    void upgrade_str(const std::string & key, const std::string & value);
+    void upgrade_i32_array(const std::string & key, const std::vector<int32_t> & values);
+    void upgrade_f32_array(const std::string & key, const std::vector<float> & values);
 
     const std::string & path() const { return path_; }
     /** The layout's remedy, for a message about the file that a family's reader throws. */

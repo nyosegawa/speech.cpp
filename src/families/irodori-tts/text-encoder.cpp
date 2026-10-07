@@ -25,7 +25,7 @@ TextEncoder::TextEncoder(const ModelFile & m) : m_(m) {
     global_ = m.i32_array("irodori-tts.text.layer_global");
 }
 
-ggml_tensor * TextEncoder::build(Graph & g, const std::vector<int32_t> & ids, std::vector<ggml_tensor *> * layers) const {
+ggml_tensor * TextEncoder::build(Graph & g, const std::vector<int32_t> & ids, Condition condition, std::vector<ggml_tensor *> * layers) const {
     ggml_context * ctx = g.ctx();
     const int64_t n = (int64_t) ids.size();
     const int head_dim = hidden_ / heads_;
@@ -73,11 +73,12 @@ ggml_tensor * TextEncoder::build(Graph & g, const std::vector<int32_t> & ids, st
     auto linear = [&](ggml_tensor * in, const std::string & name) {
         return ggml_add(ctx, mul_mat(ctx, m_.tensor(name + ".weight"), in), m_.tensor(name + ".bias"));
     };
-    ggml_tensor * p = linear(x, "text.proj");
-    ggml_tensor * r = ggml_mul(ctx, ggml_rms_norm(ctx, x, norm_eps_), m_.tensor("text.proj.res_norm"));
-    r = ggml_silu(ctx, linear(r, "text.proj.res_up"));
-    p = ggml_add(ctx, p, linear(r, "text.proj.res_down"));
-    return ggml_mul(ctx, ggml_rms_norm(ctx, p, norm_eps_), m_.tensor("text.norm"));
+    const std::string c = condition == Condition::Text ? "text." : "caption.";
+    ggml_tensor * p = linear(x, c + "proj");
+    ggml_tensor * r = ggml_mul(ctx, ggml_rms_norm(ctx, x, norm_eps_), m_.tensor(c + "proj.res_norm"));
+    r = ggml_silu(ctx, linear(r, c + "proj.res_up"));
+    p = ggml_add(ctx, p, linear(r, c + "proj.res_down"));
+    return ggml_mul(ctx, ggml_rms_norm(ctx, p, norm_eps_), m_.tensor(c + "norm"));
 }
 
 }  // namespace irodori

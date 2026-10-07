@@ -14,13 +14,13 @@
 #include "error.h"
 #include "fastconformer/layout.h"
 #include "irodori-tts/layout.h"
-#include "irodori-tts/voice-file.h"
 #include "log.h"
 #include "qwen3-asr/layout.h"
 #include "qwen3-tts/layout.h"
 
 // The C API's versions, statuses and errors, log, devices, load parameters, the table of families, and the models
-// with their voices. The model information is in info.cpp and the requests in request.cpp.
+// with their voices. The model information is in info.cpp, the requests in request.cpp and the making of voice files
+// in voice.cpp.
 
 namespace {
 
@@ -31,7 +31,7 @@ namespace {
  */
 const Family families[] = {
     {SPEECH_TASK_SYNTHESIS, qwen3_tts_layout, describe_qwen3_tts, load_qwen3_tts, nullptr},
-    {SPEECH_TASK_SYNTHESIS, irodori::model_layout, describe_irodori_tts, load_irodori_tts, irodori::make_voice_file},
+    {SPEECH_TASK_SYNTHESIS, irodori::model_layout, describe_irodori_tts, load_irodori_tts, make_irodori_tts_voice},
     {SPEECH_TASK_RECOGNITION, fastconformer::layout, describe_fastconformer, load_fastconformer, nullptr},
     {SPEECH_TASK_RECOGNITION, qwen3_asr::layout, describe_qwen3_asr, load_qwen3_asr, nullptr},
 };
@@ -73,6 +73,24 @@ const OptionName vocabulary[] = {
     {"code_predictor_top_p", SPEECH_TYPE_FLOAT},
     {"code_predictor_temperature", SPEECH_TYPE_FLOAT},
     {"instructions", SPEECH_TYPE_STRING},
+    {"cfg_scale_text", SPEECH_TYPE_FLOAT},
+    {"cfg_scale_speaker", SPEECH_TYPE_FLOAT},
+    {"cfg_guidance_mode", SPEECH_TYPE_STRING},
+    {"cfg_min_t", SPEECH_TYPE_FLOAT},
+    {"cfg_max_t", SPEECH_TYPE_FLOAT},
+    {"truncation_factor", SPEECH_TYPE_FLOAT},
+    {"rescale_k", SPEECH_TYPE_FLOAT},
+    {"rescale_sigma", SPEECH_TYPE_FLOAT},
+    {"speaker_uncond_mode", SPEECH_TYPE_STRING},
+    {"sway_coeff", SPEECH_TYPE_FLOAT},
+    {"keep_tail", SPEECH_TYPE_BOOL},
+    {"tail_window_size", SPEECH_TYPE_INT},
+    {"tail_std_threshold", SPEECH_TYPE_FLOAT},
+    {"tail_mean_threshold", SPEECH_TYPE_FLOAT},
+    {"speaker_kv_scale", SPEECH_TYPE_FLOAT},
+    {"speaker_kv_min_t", SPEECH_TYPE_FLOAT},
+    {"speaker_kv_max_layers", SPEECH_TYPE_INT},
+    {"cfg_scale_instructions", SPEECH_TYPE_FLOAT},
 };
 constexpr size_t kOptions = sizeof vocabulary / sizeof vocabulary[0];
 
@@ -91,13 +109,6 @@ ggml_backend_dev_t device_at(size_t index) {
 }
 
 }  // namespace
-
-struct speech_load_params {
-    std::string device = "auto";
-    /** 0 for the library's default. */
-    int threads = 0;
-    bool warmup = false;
-};
 
 speech_stop Engine::speak(const std::string &, const RequestValues &, Run &) {
     throw std::logic_error("the family's engine does not speak, though the table of families says it does");
@@ -154,6 +165,13 @@ const Family & family_of(const std::string & path) {
 const OptionSpec * FileInfo::spec(speech_option option) const {
     for (const OptionSpec & s : described.options) {
         if (s.option == option) return &s;
+    }
+    return nullptr;
+}
+
+const Lack * FileInfo::lack(speech_option option, const std::string & voice) const {
+    for (const Lack & l : described.lacks) {
+        if (l.option == option && l.voice == voice) return &l;
     }
     return nullptr;
 }
@@ -409,29 +427,13 @@ speech_status speech_voice_add(speech_model * model, const char * name, const ch
             throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, std::string(name) + " is already a voice of " + file.identity.name + "; give the voice another name",
                            "name");
         }
+        if (file.lack(SPEECH_OPT_VOICE, name)) {
+            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, std::string(name) + " is the name of a voice that other files of " + file.family->layout.architecture +
+                                                              " have; give the voice another name",
+                           "name");
+        }
         naming("path", [&] { model->engine->add_voice(name, path); });
         model->add({name, "", "", ""});
-        return SPEECH_OK;
-    });
-}
-
-speech_status speech_voice_make(const char * model_path, const char * reference_path, const char * voice_path,
-                                const speech_load_params * params) {
-    return guarded([&] {
-        require(model_path, "model_path", "model_path");
-        require(reference_path, "reference_path", "reference_path");
-        require(voice_path, "voice_path", "voice_path");
-        const speech_load_params defaults;
-        const speech_load_params & p = params ? *params : defaults;
-        const Family & family = naming("model_path", [&]() -> const Family & { return family_of(model_path); });
-        if (!family.make_voice) {
-            throw ApiError(SPEECH_ERROR_UNSUPPORTED, std::string(model_path) + " is a model of " + family.layout.architecture +
-                                                         ", which takes no voices made from recordings",
-                           "model_path");
-        }
-        std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> backend(
-            start_device(find_device(p.device), p.threads > 0 ? p.threads : default_threads()), ggml_backend_free);
-        family.make_voice(model_path, reference_path, voice_path, backend.get());
         return SPEECH_OK;
     });
 }

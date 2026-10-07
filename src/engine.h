@@ -41,9 +41,33 @@ struct OptionSpec {
     std::vector<std::string> choices = {};
 };
 
+/**
+ * What a voice file is made of: reference recordings, joined in the order given, and the loudness each is brought to
+ * before it is encoded, the model's unless `lufs` gives another, or the recording's own without `normalize`; or,
+ * instead of recordings, a speaker-inversion embedding of `embedding_tokens` vectors, row by row.
+ */
+struct VoiceRecipe {
+    std::vector<std::string> references;
+    bool normalize = true;
+    std::optional<double> lufs;
+    std::vector<float> embedding;
+    size_t embedding_tokens = 0;
+};
+
 /** A voice as the model information shows it; what the model file does not say is empty. */
 struct VoiceInfo {
     std::string name, language, gender, description;
+};
+
+/**
+ * What a model file lacks that its family takes with files that have it: an option, or one voice, with the message a
+ * request for it is refused with, which names what the file lacks and how to get a file that has it.
+ */
+struct Lack {
+    speech_option option;
+    /** The voice the file lacks, for SPEECH_OPT_VOICE; empty for an option the file does not take. */
+    std::string voice;
+    std::string message;
 };
 
 /**
@@ -58,6 +82,8 @@ struct FamilyInfo {
     std::string voice_codec;
     size_t max_text_tokens = 0;
     std::vector<OptionSpec> options;
+    /** What the file lacks of what the family takes, which a request is refused with by its own message. */
+    std::vector<Lack> lacks;
     /** The tokens of a text as a synthesis counts them against max_text_tokens; empty for a recognition model. */
     std::function<size_t(const std::string & text)> count_tokens;
 };
@@ -175,6 +201,7 @@ std::unique_ptr<Engine> load_qwen3_tts(const std::string & path, ggml_backend_t 
 
 FamilyInfo describe_irodori_tts(const std::shared_ptr<const ModelFile> & file);
 std::unique_ptr<Engine> load_irodori_tts(const std::string & path, ggml_backend_t backend);
+void make_irodori_tts_voice(const std::string & model_path, const VoiceRecipe & recipe, const std::string & voice_path, ggml_backend_t backend);
 
 FamilyInfo describe_fastconformer(const std::shared_ptr<const ModelFile> & file);
 std::unique_ptr<Engine> load_fastconformer(const std::string & path, ggml_backend_t backend);

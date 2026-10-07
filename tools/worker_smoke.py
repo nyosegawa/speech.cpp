@@ -29,7 +29,9 @@ info = ready["model"]
 assert ready["protocol"] == 2 and isinstance(ready["version"], str) and info["task"] == "synthesis", short(ready)
 w.check_model_information([name for name, _ in added])
 rate = info["sample_rate"]
-voice = info["voices"][0]["name"]
+# An added voice where there is one: the voice an Irodori-TTS file has of its own, none, speaks without a reference.
+voice = added[0][0] if added else info["voices"][0]["name"]
+own = [v["name"] for v in info["voices"]][: len(info["voices"]) - len(added)]
 irodori = info["architecture"] == "irodori-tts"
 print(f"ready in {time.perf_counter() - w.started:.2f} s: {info['name']} on {info['device']}, protocol 2, speech.cpp {ready['version']}, "
       f"{len(info['voices'])} voices, model information equal to speech info --json")
@@ -161,6 +163,28 @@ if irodori:
     gaps = [b["_at"] - a["_at"] for a, b in zip(progress, progress[1:])]
     assert done == sorted(done) and 0 <= done[0] and done[-1] <= 1 and all(g > 0.9 for g in gaps), (done, gaps)
     print(f"p: 160 steps, {len(progress)} progress messages ({', '.join(f'{d:.2f}' for d in done)}) at least a second apart")
+    # The official runtime's settings that the file declares, each taken once and refused where it has no effect.
+    takes = {o["name"] for o in info["options"]}
+    speak("k", text="はい。", keep_tail=True, seconds=2)
+    expect_error({"type": "synthesize", "id": "e15", "text": "あ。", "voice": voice, "keep_tail": True, "tail_window_size": 5},
+                 "invalid_argument", "tail_window_size")
+    if "cfg_scale_text" in takes:
+        speak("g", text="はい。", steps=4, cfg_guidance_mode="joint", cfg_scale_text=4, cfg_scale_speaker=4, speaker_kv_scale=1.5)
+        expect_error({"type": "synthesize", "id": "e16", "text": "あ。", "voice": voice, "cfg_guidance_mode": "joint", "cfg_scale_text": 3,
+                      "cfg_scale_speaker": 5}, "invalid_argument", "cfg_guidance_mode")
+        # The largest scale the range takes, whose guidance overflows the float32, gives speech that is not finite, refused
+        # naming no option.
+        largest = next(o["maximum"] for o in info["options"] if o["name"] == "cfg_scale_text")
+        expect_error({"type": "synthesize", "id": "e19", "text": "あ。", "voice": voice, "steps": 4, "cfg_scale_text": largest}, "out_of_range",
+                     None)
+    if "none" in [v["name"] for v in info["voices"]]:
+        w.request({"type": "synthesize", "id": "none", "text": "はい。", "voice": "none"})
+        w.terminal("none", "end")
+    if "instructions" in takes:
+        expect_error({"type": "synthesize", "id": "e17", "text": "あ。", "voice": voice, "instructions": "声、" * 600}, "out_of_range",
+                     "instructions")
+    print("k, g and none: the runtime's settings the file declares were taken, and settings without effect and a caption past the "
+          "file's longest refused")
 else:
     expect_error({"type": "synthesize", "id": "e12", "text": "あ。", "voice": voice, "speed": 1.5}, "unsupported", "speed")
     expect_error({"type": "synthesize", "id": "e13", "text": "あ。", "voice": voice, "seconds": 2}, "unsupported", "seconds")
@@ -210,7 +234,7 @@ if info["voice_files"]:
     w.request({"type": "add_voice", "id": "v", "name": "added", "path": path})
     w.terminal("v", "end")
     w.request({"type": "info", "id": "v-info"})
-    assert [v["name"] for v in w.terminal("v-info", "end")["model"]["voices"]] == [n for n, _ in added] + ["added"]
+    assert [v["name"] for v in w.terminal("v-info", "end")["model"]["voices"]] == own + [n for n, _ in added] + ["added"]
     voice = "added"
     speak("v-speak", text="あ。")
     expect_error({"type": "add_voice", "id": "v2", "name": "added", "path": path}, "invalid_argument", "name")
