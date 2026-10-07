@@ -534,6 +534,11 @@ into its training and the runtime ignores them for it:
 | `speaker_kv_max_layers` | int | 1 to `irodori-tts.dit.num_layers` (12), default 12 | not taken |
 | `cfg_scale_instructions` | float | 0 or more, default `irodori-tts.sampler.cfg_caption` (3), where the file holds the caption's encoder | not taken |
 
+Irodori-TTS computes with these numbers as float32, as the runtime's tensors take them, so their ranges stop at the
+largest float (3.4e38, and -3.4e38 for `sway_coeff`), and an option above 0 starts at the smallest normal float
+(1.2e-38), which Metal does not flush to 0: a value past them, which would turn into infinity or 0, is `out_of_range`,
+and the model information shows these bounds.
+
 A value at an option's neutral value is accepted by every model; any other value of an option a model does not take
 is `unsupported`, and an option marked "none" has no neutral value. A string option's value must be one of its
 choices (`voice`, `cfg_guidance_mode` and `speaker_uncond_mode` compared with case; `language` also takes `auto` and a

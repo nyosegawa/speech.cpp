@@ -75,14 +75,43 @@ static int same_audio(const Audio * a, const Audio * b) {
 
 /**
  * Irodori-TTS's options of the official runtime's request: the cut at the tail and, for an RF model, the guidance and
- * the schedule. A request that sets each of them speaks, and what only the whole request shows is refused naming the
- * option.
+ * the schedule. A value its float32 cannot hold is refused when it is set, a request that sets each of them speaks, and
+ * what only the whole request shows is refused naming the option.
  */
 static int check_irodori_options(speech_model * model, const speech_model_info * info, const char * voice) {
     const int rate = speech_model_info_sample_rate(info);
     const int rf = speech_model_info_takes(info, SPEECH_OPT_CFG_SCALE_TEXT);
     Audio set = {NULL, 0, 0}, cut = {NULL, 0, 0}, kept = {NULL, 0, 0};
     int ok = 1;
+
+    // The family computes with these as float32: a value that would turn into infinity, or into 0 where the option is
+    // above 0, is out_of_range, where it once ran into audio of infinities.
+    const struct {
+        speech_option option;
+        int above_zero;
+    } narrowed[] = {
+        {SPEECH_OPT_CFG_SCALE_TEXT, 0},      {SPEECH_OPT_CFG_SCALE_SPEAKER, 0}, {SPEECH_OPT_CFG_MIN_T, 0},
+        {SPEECH_OPT_CFG_MAX_T, 0},           {SPEECH_OPT_TRUNCATION_FACTOR, 1}, {SPEECH_OPT_RESCALE_K, 1},
+        {SPEECH_OPT_RESCALE_SIGMA, 1},       {SPEECH_OPT_SWAY_COEFF, 0},        {SPEECH_OPT_TAIL_STD_THRESHOLD, 1},
+        {SPEECH_OPT_TAIL_MEAN_THRESHOLD, 1}, {SPEECH_OPT_SPEAKER_KV_SCALE, 1},  {SPEECH_OPT_SPEAKER_KV_MIN_T, 0},
+        {SPEECH_OPT_CFG_SCALE_INSTRUCTIONS, 0},
+    };
+    speech_request * held = new_request(model, NULL, voice, -1);
+    for (size_t i = 0; i < sizeof narrowed / sizeof narrowed[0]; i++) {
+        const speech_option o = narrowed[i].option;
+        if (!speech_model_info_takes(info, o)) continue;
+        const char * name = speech_option_name(o);
+        char what[128];
+        snprintf(what, sizeof what, "%s at 1e300", name);
+        ok &= expect(speech_request_set_float(held, o, 1e300), SPEECH_ERROR_OUT_OF_RANGE, name, what);
+        snprintf(what, sizeof what, "%s at -1e300", name);
+        ok &= expect(speech_request_set_float(held, o, -1e300), SPEECH_ERROR_OUT_OF_RANGE, name, what);
+        if (narrowed[i].above_zero) {
+            snprintf(what, sizeof what, "%s at 1e-300", name);
+            ok &= expect(speech_request_set_float(held, o, 1e-300), SPEECH_ERROR_OUT_OF_RANGE, name, what);
+        }
+    }
+    speech_request_free(held);
 
     // The latent of v4.1 never turns as flat as the default thresholds ask, even in the silence after "はい。" in 3 s,
     // which keep_tail therefore leaves as it is; thresholds of 0.6 and 0.2 cut it in that silence, and the cut audio

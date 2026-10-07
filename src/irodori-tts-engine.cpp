@@ -1,8 +1,10 @@
+#include <algorithm>
 #include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <string>
 #include <vector>
@@ -109,6 +111,23 @@ double shortest(float v) {
     }
 }
 
+/**
+ * The declaration of an option the family computes with as a float32, as the runtime's tensors take it: its range held
+ * to the floats, from the smallest normal float where the option is above 0, since Metal's fast math may flush a
+ * subnormal one to 0, to the largest, so that a value that would turn into 0 or infinity is out_of_range when the
+ * request sets it rather than run.
+ */
+OptionSpec float32(OptionSpec s) {
+    constexpr double largest = std::numeric_limits<float>::max(), smallest = std::numeric_limits<float>::min();
+    s.minimum = std::max(s.minimum, -largest);
+    s.maximum = std::min(s.maximum, largest);
+    if (s.minimum == 0 && s.minimum_exclusive) {
+        s.minimum = smallest;
+        s.minimum_exclusive = false;
+    }
+    return s;
+}
+
 /** The tokens of a text as the synthesis counts them: those of its normalized form, <s> included. */
 struct TokenCounter {
     explicit TokenCounter(const ModelFile & m) : tokenizer(m) {}
@@ -161,17 +180,17 @@ FamilyInfo describe_irodori_tts(const std::shared_ptr<const ModelFile> & file) {
     if (rf) {
         const std::vector<std::string> modes(std::begin(irodori::kGuidanceModes), std::end(irodori::kGuidanceModes));
         info.options.insert(info.options.end(), {
-            {SPEECH_OPT_CFG_SCALE_TEXT, false, true, (double) m.f32(s + "cfg_text"), 0, INFINITY},
-            {SPEECH_OPT_CFG_SCALE_SPEAKER, false, true, (double) m.f32(s + "cfg_speaker"), 0, INFINITY},
+            float32({SPEECH_OPT_CFG_SCALE_TEXT, false, true, (double) m.f32(s + "cfg_text"), 0, INFINITY}),
+            float32({SPEECH_OPT_CFG_SCALE_SPEAKER, false, true, (double) m.f32(s + "cfg_speaker"), 0, INFINITY}),
             {SPEECH_OPT_CFG_GUIDANCE_MODE, false, true, modes[0], -INFINITY, INFINITY, false, modes},
-            {SPEECH_OPT_CFG_MIN_T, false, true, (double) m.f32(s + "cfg_min_t"), 0, 1},
-            {SPEECH_OPT_CFG_MAX_T, false, true, (double) m.f32(s + "cfg_max_t"), 0, 1},
-            {SPEECH_OPT_TRUNCATION_FACTOR, false, true, std::nullopt, 0, INFINITY, true},
-            {SPEECH_OPT_RESCALE_K, false, true, std::nullopt, 0, INFINITY, true},
-            {SPEECH_OPT_RESCALE_SIGMA, false, true, std::nullopt, 0, INFINITY, true},
+            float32({SPEECH_OPT_CFG_MIN_T, false, true, (double) m.f32(s + "cfg_min_t"), 0, 1}),
+            float32({SPEECH_OPT_CFG_MAX_T, false, true, (double) m.f32(s + "cfg_max_t"), 0, 1}),
+            float32({SPEECH_OPT_TRUNCATION_FACTOR, false, true, std::nullopt, 0, INFINITY, true}),
+            float32({SPEECH_OPT_RESCALE_K, false, true, std::nullopt, 0, INFINITY, true}),
+            float32({SPEECH_OPT_RESCALE_SIGMA, false, true, std::nullopt, 0, INFINITY, true}),
             {SPEECH_OPT_SPEAKER_UNCOND_MODE, false, true, std::string(irodori::kSpeakerMasked), -INFINITY, INFINITY, false,
              {irodori::kSpeakerMasked, irodori::kSpeakerNoise}},
-            {SPEECH_OPT_SWAY_COEFF, false, true, 0.0},
+            float32({SPEECH_OPT_SWAY_COEFF, false, true, 0.0}),
         });
     }
     // A window as long as the longest speech reaches every frame of any speech.
@@ -179,18 +198,18 @@ FamilyInfo describe_irodori_tts(const std::shared_ptr<const ModelFile> & file) {
     info.options.insert(info.options.end(), {
         {SPEECH_OPT_KEEP_TAIL, false, true, false},
         {SPEECH_OPT_TAIL_WINDOW_SIZE, false, true, (int64_t) m.u32("irodori-tts.tail.window"), 1, (double) longest},
-        {SPEECH_OPT_TAIL_STD_THRESHOLD, false, true, shortest(m.f32("irodori-tts.tail.std_threshold")), 0, INFINITY, true},
-        {SPEECH_OPT_TAIL_MEAN_THRESHOLD, false, true, shortest(m.f32("irodori-tts.tail.mean_threshold")), 0, INFINITY, true},
+        float32({SPEECH_OPT_TAIL_STD_THRESHOLD, false, true, shortest(m.f32("irodori-tts.tail.std_threshold")), 0, INFINITY, true}),
+        float32({SPEECH_OPT_TAIL_MEAN_THRESHOLD, false, true, shortest(m.f32("irodori-tts.tail.mean_threshold")), 0, INFINITY, true}),
     });
     if (rf) {
         const int64_t layers = m.u32("irodori-tts.dit.num_layers");
         info.options.insert(info.options.end(), {
-            {SPEECH_OPT_SPEAKER_KV_SCALE, false, true, 1.0, 0, INFINITY, true},
-            {SPEECH_OPT_SPEAKER_KV_MIN_T, false, true, shortest(m.f32(s + "speaker_kv_min_t")), 0, 1},
+            float32({SPEECH_OPT_SPEAKER_KV_SCALE, false, true, 1.0, 0, INFINITY, true}),
+            float32({SPEECH_OPT_SPEAKER_KV_MIN_T, false, true, shortest(m.f32(s + "speaker_kv_min_t")), 0, 1}),
             {SPEECH_OPT_SPEAKER_KV_MAX_LAYERS, false, true, layers, 1, (double) layers},
         });
     }
-    if (rf && caption) info.options.push_back({SPEECH_OPT_CFG_SCALE_INSTRUCTIONS, false, true, (double) m.f32(s + "cfg_caption"), 0, INFINITY});
+    if (rf && caption) info.options.push_back(float32({SPEECH_OPT_CFG_SCALE_INSTRUCTIONS, false, true, (double) m.f32(s + "cfg_caption"), 0, INFINITY}));
     const auto counter = std::make_shared<Lazy<TokenCounter>>(file);
     info.count_tokens = [counter](const std::string & text) { return counter->get().count(text); };
     return info;

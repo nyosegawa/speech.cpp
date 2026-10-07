@@ -36,6 +36,10 @@ sets none of the new fields gives the same audio as before.
 - **Defaults come from the file**, where the checkpoint's own (`irodori-tts.sampler.*`, `irodori-tts.tail.*`); the
   guidance mode and the speaker mode default to the runtime's default path, which the port already ran. A default the
   file holds in float32 shows as its shortest decimal (0.05), and the request rounds it back.
+- **The ranges stop at what a float32 holds**, since the family computes with these numbers as float32: at the
+  largest float, and, for an option above 0, at the smallest normal float. A value past them, which would turn into
+  infinity or 0, is out_of_range when the request sets it, as any value outside a range, and the model information
+  shows the bounds.
 - **What the runtime would ignore or cannot run is refused before any work**, naming the option: one of the rescaling's
   two settings alone, `cfg_min_t` above `cfg_max_t`, the joint guidance with two scales that differ, a schedule that
   stops, and a value other than the default that another value leaves without effect (the guidance's mode, range and
@@ -53,6 +57,8 @@ sets none of the new fields gives the same audio as before.
 
 The alternatives were turned down:
 
+- A check of each float32 option when the request runs, as Qwen3-TTS checks its divisors. The declared range would stay
+  wider than what the model takes, and each option would need a check of its own.
 - `t_schedule_mode` as an option of its own beside `sway_coeff`. Linear and Sway at 0 are the same schedule, and a
   coefficient without the mode, or the mode with 0, would be one more combination to refuse.
 - `trim_tail`, true by default. The command line could not turn it off.

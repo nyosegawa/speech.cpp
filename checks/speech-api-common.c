@@ -328,7 +328,8 @@ int check_option_refusals(speech_model * model) {
             int exclusive = 0;
             if (speech_model_info_option_range(info, o, &minimum, &maximum, &exclusive) != SPEECH_OK) return fail("speech_model_info_option_range");
             if (isfinite(minimum)) {
-                const double below = exclusive ? minimum : minimum - 1;
+                // A number below a minimum as large as a float's, -3.4e38, which 1 less does not change in a double.
+                const double below = exclusive ? minimum : type == SPEECH_TYPE_INT ? minimum - 1 : minimum - fabs(minimum) - 1;
                 snprintf(what, sizeof what, "%s below its range", name);
                 ok &= expect(type == SPEECH_TYPE_INT ? speech_request_set_int(r, o, (int64_t) below) : speech_request_set_float(r, o, below),
                              SPEECH_ERROR_OUT_OF_RANGE, name, what);
