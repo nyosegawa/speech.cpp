@@ -238,6 +238,10 @@ else()
     find_package(Threads REQUIRED)
     target_link_libraries(speech-api-check PRIVATE Threads::Threads)
 endif()
+# C's math functions, sinf among them, are a library of their own on Linux, which glibc does not link by itself.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(speech-api-check PRIVATE m)
+endif()
 
 # The checks of FastConformer's stages.
 foreach(stage frontend encoder transducer times)
