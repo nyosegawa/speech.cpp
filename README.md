@@ -198,11 +198,12 @@ Recognizes each WAVE file in the order given: 16-, 24- or 32-bit PCM or 32-bit f
 averaged, which the library resamples to the model's rate (16 kHz for FastConformer and Qwen3-ASR; Audio at another
 rate, below). Audio in another format is converted first (`ffmpeg -i in.mp3 out.wav`). `text` writes one line per
 file; with `--timestamps` it writes one line per segment instead, `FILE<TAB>START<TAB>END<TAB>TEXT`, the times in
-seconds with three decimals. `json` writes `{"file":…,"text":…,"stop":…}` for each file, with `"segments"` and
-`"tokens"` when `--timestamps` is given, in the form of the worker's `end`. It reports on stderr the load and, for each
-file, its seconds of audio, the time to its text and the real-time factor, and a recognition that stopped at the most
-tokens the model writes (Qwen3-ASR's 4096), after which it exits with 3 once every file's text is written. A failure
-names the file, and the lines of the files before it are already on stdout.
+seconds with three decimals. `json` writes `{"file":…,"text":…,"stop":…}` for each file, with `"languages"` where the
+model names the languages it heard (Qwen3-ASR) and `"segments"` and `"tokens"` when `--timestamps` is given, in the
+form of the worker's `end`. It reports on stderr the load and, for each file, its seconds of audio, the time to its text
+and the real-time factor, and a recognition that stopped at the most tokens the model writes (Qwen3-ASR's 4096), after
+which it exits with 3 once every file's text is written. A failure names the file, and the lines of the files before it
+are already on stdout.
 
 ### `speech voice`
 
@@ -664,6 +665,7 @@ out {"type":"partial","id":"r","text":"...","stop":"complete","segments":[...],"
 out {"type":"partial","id":"x","error":{"code":"invalid_argument","option":"id","message":"..."}}
 out {"type":"end","id":"a","seed":1234,"samples":96000,"stop":"complete"}
 out {"type":"end","id":"r","text":"...","stop":"complete","segments":[{"start":0.0,"end":2.48,"text":"..."}],"tokens":[{"start":0.0,"end":0.16,"text":"..."}]}
+out {"type":"end","id":"q","text":"...","stop":"complete","languages":["ja"]}
 out {"type":"end","id":"v"}
 out {"type":"end","id":"i","model":{...model information...}}
 out {"type":"end","id":"c","tokens":14}
@@ -672,12 +674,14 @@ out {"type":"cancelled","id":"a"}
 ```
 
 - Every request gets exactly one terminal message, `end`, `error` or `cancelled`, and nothing for its id after it.
-  `partial` is never terminal: it has `text` and `stop`, with `segments` and `tokens` when the peek set `timestamps`,
-  or an `error`, which ends the peek and not its request.
+  `partial` is never terminal: it has the members of a recognition's `end`, `text` and `stop`, with `languages` and
+  with `segments` and `tokens` as `end` has them, or an `error`, which ends the peek and not its request.
 - `end` of a synthesis has `seed` (the request's or the one the library drew), `samples` (the number sent in its
   chunks) and `stop` (`complete`, `max_seconds` or `model_limit`). `end` of a recognition has `text` and `stop`
-  (`complete`, or `model_limit` when it reached the most tokens the model writes, its text written up to there), and
-  `segments` and `tokens` when the request set `timestamps`, in the form the C API gives them (FastConformer, below).
+  (`complete`, or `model_limit` when it reached the most tokens the model writes, its text written up to there);
+  `languages`, the BCP 47 tags of the languages the model heard in the order of the audio, where the result has any
+  (Qwen3-ASR, below), and left out where it has none; and `segments` and `tokens` when the request set `timestamps`,
+  in the form the C API gives them (FastConformer, below).
   `end` of `info` has `model`; `end` of `add_voice` has nothing more. `end` of `count_tokens` has `tokens`, the number
   of the model's tokens the text takes as a synthesis counts it against `max_text_tokens`
   (`speech_model_info_text_tokens()`), so that a caller can split a long text before it sends it.
@@ -717,8 +721,8 @@ language is `out_of_range`.
 - **Qwen3-ASR** recognizes a request's audio at once, up to 1200 s, and longer audio in parts of up to 1200 s, each
   alone (Qwen3-ASR, below). Its encoder attends within windows of 8 s, so its time grows with the length of the audio
   and with the text it writes. A forced `language` steers it, and a `prompt` tells it the names and terms the audio may
-  hold. A cancel takes effect between two of the encoder's graphs of up to four windows, two blocks of 512 rows of the
-  decoder's prefill or two tokens.
+  hold; its `end` gives in `languages` the language it heard, or the forced one. A cancel takes effect between two of
+  the encoder's graphs of up to four windows, two blocks of 512 rows of the decoder's prefill or two tokens.
 
 A session with Irodori-TTS and one with a recognizer, the second peeking at its request while it collects chunks:
 

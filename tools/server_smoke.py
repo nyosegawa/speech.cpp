@@ -219,14 +219,14 @@ else:
         samples = read_npy(os.path.join(d, "audio.npy"))
         wav = wav_file(samples, rate)
         requests = dump_requests(speech, model, d)
-        [(_, _, want)] = [r for r in requests if r[0] == "auto"]
+        [(_, _, want, _)] = [r for r in requests if r[0] == "auto"]
         if want and not first:
             first = (wav, want, samples)
         status, headers, body = transcribe([("model", info["name"])], [("file", name + ".wav", wav)])
         assert status == 200 and json.loads(body) == {"text": want} and headers["x-speech-stop"] == "complete", (name, body)
         status, headers, body = transcribe([("response_format", "text")], [("file", name + ".wav", wav)])
         assert status == 200 and headers["content-type"].startswith("text/plain") and body.decode() == want, (name, body)
-        for request, members, want_request in requests:
+        for request, members, want_request, _ in requests:
             if request != "auto":
                 status, _, body = transcribe(list(members.items()), [("file", name + ".wav", wav)])
                 assert status == 200 and json.loads(body) == {"text": want_request}, (name, request, body)

@@ -61,7 +61,8 @@ bool timestamps_in_effect(const speech_model_info * info, const std::vector<Requ
 
 /**
  * The members of a recognition's result in the form of the worker's messages, each after a comma: "text", "stop" (why
- * the recognition ended, "complete" or "model_limit"), and with `timestamps` "segments" and "tokens", each a list of
- * {"start", "end", "text"} with the times in seconds.
+ * the recognition ended, "complete" or "model_limit"), "languages", the tags of the languages the model heard, where the
+ * result has any, and with `timestamps` "segments" and "tokens", each a list of {"start", "end", "text"} with the times
+ * in seconds.
  */
 std::string recognition_members(const speech_result * result, bool timestamps);

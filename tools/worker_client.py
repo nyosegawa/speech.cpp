@@ -165,17 +165,18 @@ def check_model_information(speech, model, loaded, added_voices=()):
 
 
 def dump_requests(speech, model, dump):
-    """The requests of a dump of a recognition model's reference, each as (name, members, text): for one of
-    reference/fastconformer/dump.py, the request without options and the dump's text; for one of
-    reference/qwen3-asr/dump.py, which keeps each request in a folder of its own, auto, forced, auto-prompt and
-    forced-prompt, the forced language given by the tag of general.languages whose name qwen3-asr.language_names gives
-    (read with speech info --json --meta), and the prompt by its text."""
+    """The requests of a dump of a recognition model's reference, each as (name, members, text, languages): for one of
+    reference/fastconformer/dump.py, the request without options, the dump's text and no language, since FastConformer
+    writes none; for one of reference/qwen3-asr/dump.py, which keeps each request in a folder of its own, auto, forced,
+    auto-prompt and forced-prompt, the forced language given by the tag of general.languages whose name
+    qwen3-asr.language_names gives (read with speech info --json --meta), the prompt by its text, and the language
+    qwen-asr parsed by its tag, or none."""
     def text(folder):
         with open(os.path.join(folder, "text.txt"), encoding="utf-8") as f:
             return f.read()
 
     if not os.path.isfile(os.path.join(dump, "auto", "meta.json")):
-        return [("auto", {}, text(dump))]
+        return [("auto", {}, text(dump), [])]
     r = subprocess.run([speech, "info", model, "--json", "--meta"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     meta = json.loads(r.stdout)["meta"]
     tags = dict(zip(meta["qwen3-asr.language_names"], meta["general.languages"]))
@@ -189,7 +190,7 @@ def dump_requests(speech, model, dump):
             members["language"] = tags[asked["language"]]
         if asked["prompt"]:
             members["prompt"] = asked["prompt"]
-        requests.append((name, members, text(folder)))
+        requests.append((name, members, text(folder), [tags[asked["parsed_language"]]] if asked["parsed_language"] else []))
     return requests
 
 
