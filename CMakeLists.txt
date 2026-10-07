@@ -123,7 +123,7 @@ target_link_libraries(qwen3asr PUBLIC speechcommon)
 # The C API, include/speech.h, twice: static for the executables, so that each stays one file, and shared as
 # libspeech for bindings and other programs. On Windows the two would both write speech.lib, the static one as
 # the library and the shared one as its import library, hence speech-static.
-set(SPEECH_SOURCES src/speech.cpp src/info.cpp src/request.cpp src/qwen3-tts-engine.cpp src/irodori-tts-engine.cpp
+set(SPEECH_SOURCES src/speech.cpp src/info.cpp src/request.cpp src/voice.cpp src/qwen3-tts-engine.cpp src/irodori-tts-engine.cpp
     src/fastconformer-engine.cpp src/qwen3-asr-engine.cpp)
 
 add_library(speech-static STATIC ${SPEECH_SOURCES})

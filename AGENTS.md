@@ -18,13 +18,13 @@ and its check before changing behavior.
   crossing it. The API has two versions: a change an existing caller notices raises `SPEECH_API_VERSION_MAJOR`,
   which is the shared library's SOVERSION, and an added function, option or enum value raises
   `SPEECH_API_VERSION_MINOR`.
-- `src/speech.cpp`, `src/info.cpp` and `src/request.cpp` implement the C API over `src/engine.h`, the interface of
-  one family behind it, with one engine per family (`src/<family>-engine.cpp`). An engine declares in one table the
-  request options its family takes, with their defaults and ranges read from the model file, and turns a request
-  checked against that table into the family's; the setters, the model information and its JSON read the table and
-  nothing else. One table in `src/speech.cpp` lists the families: their task (synthesis or recognition), the layout
-  their reader takes, which names the `general.architecture` of their files, their engine and, for a family that
-  takes voice files, how it makes one. `speech_model_load()` and `speech_model_info_open()` choose the family from
+- `src/speech.cpp`, `src/info.cpp`, `src/request.cpp` and `src/voice.cpp` implement the C API over `src/engine.h`,
+  the interface of one family behind it, with one engine per family (`src/<family>-engine.cpp`). An engine declares
+  in one table the request options its family takes, with their defaults and ranges read from the model file, and
+  turns a request checked against that table into the family's; the setters, the model information and its JSON read
+  the table and nothing else. One table in `src/speech.cpp` lists the families: their task (synthesis or
+  recognition), the layout their reader takes, which names the `general.architecture` of their files, their engine
+  and, for a family that takes voice files, how it makes one. `speech_model_load()` and `speech_model_info_open()` choose the family from
   the table, and adding a family is adding its line.
 - `src/families/<family>/` holds the code of one architecture, whichever weights it is given: `qwen3-tts/`
   runs Qwen3-TTS 0.6B and 1.7B. A family reads its model's one GGUF file, its codec included, and turns text into
