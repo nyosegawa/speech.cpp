@@ -223,8 +223,9 @@ speech voice MODEL (REFERENCE.wav... | EMBEDDING.speaker.safetensors) VOICE.gguf
 Makes a voice file from one or more reference recordings at any rate, each encoded on its own and joined in order,
 reading only the codec's encoder from MODEL (Irodori-TTS voices, below). Each recording is brought to the model's
 loudness, or to `--lufs`, or kept as it is with `--keep-loudness`. A `.speaker.safetensors` file, a speaker-inversion
-embedding as the official runtime saves one, makes a voice for MODEL alone. `--device` defaults to `cpu` here, the one device whose latent is the official encoder's to 99 dB
-(docs/adr/0002).
+embedding as the official runtime saves one, makes a voice for MODEL alone; it is the whole voice, and a second
+embedding or a recording beside it is refused. `--device` defaults to `cpu` here, the one device whose latent is the
+official encoder's to 99 dB (docs/adr/0002).
 
 ### `speech info`
 

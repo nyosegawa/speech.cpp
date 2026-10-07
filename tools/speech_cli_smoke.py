@@ -235,8 +235,23 @@ if info["task"] == "synthesis":
         run("voice", model, embedding, made)
         run("tts", model, "-o", path, "--add-voice", f"made={made}", "--voice", "made", *options, lines[0])
         os.remove(path)
-        os.remove(made)
         print("speech voice made a voice file of a speaker-inversion embedding, which speech tts speaks with")
+        # A voice is one embedding: a second is a usage error, and an embedding beside a recording the library's refusal.
+        run("voice", model, embedding, embedding, made, code=2)
+        if reference:
+            failure(run("voice", model, embedding, reference, made, code=1), "invalid_argument", "embedding")
+        # Headers whose numbers would read outside the file or overflow the shape's size: offsets that wrap around
+        # (Codex's case, which read 3072 bytes before the data), a negative offset, and a shape whose bytes pass 2^64.
+        forged = os.path.join(work, "speech-cli-smoke.forged.speaker.safetensors")
+        for shape, offsets, data in [([1, 768], [18446744073709548548, 4], b"\0" * 4), ([1, 768], [-3068, 4], b"\0" * 4),
+                                     ([4611686018427387904, 4], [0, 0], b"")]:
+            header = json.dumps({"speaker_embedding": {"dtype": "F32", "shape": shape, "data_offsets": offsets}}).encode()
+            with open(forged, "wb") as f:
+                f.write(struct.pack("<Q", len(header)) + header + data)
+            failure(run("voice", model, forged, made, code=1), "invalid_argument", "embedding")
+        os.remove(forged)
+        os.remove(made)
+        print("speech voice refused two embeddings (exit 2), an embedding with a recording and three forged headers (exit 1)")
 else:
     def read_npy(path):
         with open(path, "rb") as f:

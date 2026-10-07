@@ -11,6 +11,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -52,7 +53,9 @@ struct Embedding {
 /**
  * The embedding of a .speaker.safetensors file as the official runtime saves and reads it (speaker_inversion.py): the
  * tensor "speaker_embedding", float32 [tokens, dim] or [1, tokens, dim], after the safetensors header, a little-endian
- * u64 length and that much JSON.
+ * u64 length and that much JSON. Every number of the header is checked against the payload, the bytes after the
+ * header, before a value is read: the offsets in order and within it, and the shape's bytes, counted without
+ * overflow, the offsets' span.
  */
 Embedding read_embedding(const std::string & path) {
     std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
@@ -65,6 +68,7 @@ Embedding read_embedding(const std::string & path) {
     if (bytes.size() < 8) throw refuse("it is shorter than a safetensors header");
     for (int i = 7; i >= 0; i--) header = header << 8 | (unsigned char) bytes[i];
     if (header > bytes.size() - 8) throw refuse("its header runs past the file");
+    const uint64_t payload = bytes.size() - 8 - header;
     JsonValue json;
     try {
         json = parse_json(bytes.substr(8, header));
@@ -76,15 +80,27 @@ Embedding read_embedding(const std::string & path) {
     const JsonValue * dtype = tensor->member("dtype"), * shape = tensor->member("shape"), * offsets = tensor->member("data_offsets");
     if (!dtype || dtype->text != "F32") throw refuse("speaker_embedding is not float32; save it as float32");
     if (!shape || !offsets || offsets->items.size() != 2) throw refuse("speaker_embedding has no shape or no offsets");
-    std::vector<size_t> axes;
-    for (const JsonValue & a : shape->items) axes.push_back((size_t) std::stoull(a.text));
+    // A count of the header: an integer of 0 or more that a u64 holds.
+    auto count = [&](const JsonValue & v, const char * what) {
+        if (!v.is_integer() || v.text.empty() || v.text[0] == '-') throw refuse(std::string("speaker_embedding's ") + what + " is not a count");
+        try {
+            return (uint64_t) std::stoull(v.text);
+        } catch (const std::out_of_range &) {
+            throw refuse(std::string("speaker_embedding's ") + what + " is past what 64 bits hold");
+        }
+    };
+    std::vector<uint64_t> axes;
+    for (const JsonValue & a : shape->items) axes.push_back(count(a, "shape"));
     if (axes.size() == 3 && axes[0] == 1) axes.erase(axes.begin());
     if (axes.size() != 2 || axes[0] == 0 || axes[1] == 0) throw refuse("speaker_embedding is not [tokens, dim] or [1, tokens, dim]");
-    const size_t begin = (size_t) std::stoull(offsets->items[0].text), end = (size_t) std::stoull(offsets->items[1].text);
-    if (end - begin != axes[0] * axes[1] * sizeof(float) || 8 + header + end > bytes.size()) throw refuse("speaker_embedding's data does not fit its shape");
+    const uint64_t begin = count(offsets->items[0], "offset"), end = count(offsets->items[1], "offset");
+    if (begin > end || end > payload) throw refuse("speaker_embedding's data_offsets do not lie in order within the file's data");
+    if (axes[1] > (end - begin) / sizeof(float) / axes[0] || axes[0] * axes[1] * sizeof(float) != end - begin) {
+        throw refuse("speaker_embedding's data does not fit its shape");
+    }
     Embedding e;
-    e.tokens = axes[0];
-    e.dim = axes[1];
+    e.tokens = (size_t) axes[0];
+    e.dim = (size_t) axes[1];
     e.values.resize(e.tokens * e.dim);
     std::memcpy(e.values.data(), bytes.data() + 8 + header + begin, end - begin);
     return e;
@@ -98,12 +114,19 @@ int run_voice(const CommandLine & line, FILE *) {
     speech_voice_params * raw = nullptr;
     check(speech_voice_params_new(&raw));
     const std::unique_ptr<speech_voice_params, decltype(&speech_voice_params_free)> voice(raw, speech_voice_params_free);
+    // A voice is several recordings or one embedding; the library refuses an embedding beside recordings.
+    std::optional<std::string> embedding;
     for (size_t i = 1; i + 1 < line.args.size(); i++) {
         if (!is_embedding(line.args[i])) {
             check(speech_voice_params_add_reference(raw, line.args[i].c_str()));
-            continue;
+        } else if (embedding) {
+            throw UsageError("give one embedding, not " + *embedding + " and " + line.args[i]);
+        } else {
+            embedding = line.args[i];
         }
-        const Embedding e = read_embedding(line.args[i]);
+    }
+    if (embedding) {
+        const Embedding e = read_embedding(*embedding);
         check(speech_voice_params_set_embedding(raw, e.values.data(), e.tokens, e.dim));
     }
     if (lufs) {
