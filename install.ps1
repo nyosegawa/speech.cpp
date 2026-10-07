@@ -86,7 +86,10 @@ param(
                 Stop-Install "the SHA-256 of $archive is $actual, not $expected as the release's SHA256SUMS says; nothing was installed"
             }
             $unpacked = Join-Path $work 'unpacked'
-            Expand-Archive -LiteralPath (Join-Path $work $archive) -DestinationPath $unpacked
+            # Expand-Archive draws a progress bar per file in Windows PowerShell 5.1, which slows it many times over, and as a
+            # function of a script module it does not see this scope's $ProgressPreference; .NET's ZipFile draws none.
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [IO.Compression.ZipFile]::ExtractToDirectory((Join-Path $work $archive), $unpacked)
             $started = (& (Join-Path $unpacked 'speech.exe') --version) -join ''
             if ($LASTEXITCODE -ne 0 -or $started -notlike "speech.cpp $Version,*") {
                 Stop-Install "the unpacked speech.exe says `"$started`" (exit code $LASTEXITCODE), not speech.cpp $Version"
