@@ -1,6 +1,8 @@
 # Releasing
 
-This page says how a release is numbered and what the release workflow, `.github/workflows/build.yml`, does.
+This page says how a release is numbered and what the release workflow, `.github/workflows/build.yml`, does. The
+steps of a release, from the model files to checking what was published, are the `release` skill's
+([skills/release](../../skills/release/SKILL.md)).
 
 ## The number
 

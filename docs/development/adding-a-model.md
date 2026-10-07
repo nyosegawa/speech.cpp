@@ -1,6 +1,7 @@
 # Adding a model
 
-This page points to the decisions and the folders that a new model or family touches.
+This page points to the decisions and the folders that a new model or family touches. The steps, from the official
+implementation to the files on Hugging Face, are the `add-model` skill's ([skills/add-model](../../skills/add-model/SKILL.md)).
 
 ## Decisions to read first
 

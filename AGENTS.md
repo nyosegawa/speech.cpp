@@ -41,10 +41,10 @@ keeps the decisions. Read the relevant implementation and its check before chang
   C API. `tools/models/` names models: the catalog of the release (`catalog.json`, which `update_catalog.py` writes
   from Hugging Face and the build compiles in), the cache folder, and the fetching of a named model with the system's
   curl, which `models`, `pull` and `rm` and every subcommand that takes a model share; the library never reaches the
-  network (docs/adr/0033 to 0036). The worker's protocol 2 is JSON Lines, one JSON object per line on stdin and stdout, and is the contract of
-  every program that starts it, ASIST among them: stdout carries the protocol and nothing else, every log goes to
-  stderr, and every request gets exactly one terminal message. Its `ready` message carries the protocol's version, the
-  release and the model's information.
+  network (docs/adr/0033 to 0036). The worker's protocol 2 is JSON Lines, one JSON object per line on stdin and
+  stdout, and is the contract of every program that starts it, ASIST among them: stdout carries the protocol and
+  nothing else, every log goes to stderr, and every request gets exactly one terminal message. Its `ready` message
+  carries the protocol's version, the release and the model's information.
 - `checks/` holds one check per ported stage (`*-check.cpp`) that compares the stage with the reference
   dumps, and `speech-api-check`, which runs the C API through the shared library with a synthesis model, Irodori-TTS's
   own rules and voice files in `speech-api-irodori.c`, and, with `transcribe`, with a recognition model
@@ -200,3 +200,15 @@ settled a choice or turned an approach down for good; if so, the record goes int
   HTTP server, the GGUF layout, the models), the same pull request updates the pages that describe it: README.md where
   it shows the change, and the page of `docs/` that covers it. No test checks the documentation against the code; the
   pull request keeps it current.
+
+## Skills
+
+Skills live in `skills/`; `.claude/skills` and `.agents/skills` link to it. Whenever a task matches one, use it; each
+holds steps these rules do not repeat.
+
+- `add-model`: porting a model or a family, updating one, or exposing an official option of one.
+- `docs`: a change that alters what a user does or sees, or writing a page of README.md or `docs/`.
+- `pull-request`: starting a change, committing, opening a pull request, its review and CI, merging, cleaning up, and
+  taking back a subagent's branch.
+- `release`: model files and cards on Hugging Face, the catalog, raising `VERSION`, the tag and checking the release.
+- `windows-check`: checking a change on a Windows machine with a Vulkan GPU.
