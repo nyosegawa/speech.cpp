@@ -2253,7 +2253,8 @@ the converter finds in its code, and no key holds it.
 
 ### Voice files
 
-A voice file of Irodori-TTS is a GGUF file of its own, layout 1:
+A voice file of Irodori-TTS is a GGUF file of its own. Every voice file this release makes, of one reference at the
+model's loudness too, is of layout 2:
 
 | Key | Type | Meaning |
 |---|---|---|

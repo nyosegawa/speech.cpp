@@ -711,9 +711,10 @@ SPEECH_API speech_status speech_model_get_info(const speech_model * model, speec
  * Voices made from reference recordings, for a model whose information says it takes voice files. A voice file holds
  * the codec's latent of one or more reference recordings joined, each recording's length and rate, the loudness they
  * were brought to, the kind of device that encoded them and the hash of the codec they were encoded with, and it works
- * with every model whose codec has that hash; or a speaker-inversion embedding and the model it was made for. A voice
- * file of several recordings, of a loudness other than the model's or of an embedding is of the voice file's layout 2,
- * added in 3.1, which earlier releases refuse.
+ * with every model whose codec has that hash; or a speaker-inversion embedding and the model it was made for. Every
+ * voice file this release makes, of one reference at the model's loudness too, is of the voice file's layout 2, added
+ * in 3.1, which releases before 0.8.0 refuse; a voice file of layout 1, which releases from 0.7.0 made, is read as
+ * before.
  */
 
 /**
