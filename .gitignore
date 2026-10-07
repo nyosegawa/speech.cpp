@@ -1,5 +1,5 @@
 build/
-models/
+/models/
 reference/*/out/
 .venv/
 __pycache__/

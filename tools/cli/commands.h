@@ -9,5 +9,8 @@ Command asr_command();
 Command voice_command();
 Command info_command();
 Command devices_command();
+Command models_command();
+Command pull_command();
+Command rm_command();
 Command serve_command();
 Command worker_command();

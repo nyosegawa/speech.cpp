@@ -24,6 +24,7 @@
 #endif
 
 #include "commands.h"
+#include "fetch.h"
 #include "ggml.h"
 
 // speech tts: speaks the text, or each non-empty line of stdin as a request of its own, into one 16-bit mono WAVE at
@@ -197,7 +198,7 @@ int run_tts(const CommandLine & line, FILE * out) {
     const bool from_stdin = line.args.size() == 1;
 
     const auto t0 = Clock::now();
-    const Model model = load_model(line.args[0], line.loading(false));
+    const Model model = load_model(model_file(line.args[0]), line.loading(false));
     const ModelInfo info = model_info(model.get());
     const speech_model_info * m = info.get();
     std::fprintf(stderr, "load %.2f s: %s on %s\n", seconds_since(t0), speech_model_info_name(m), speech_model_info_device(m));
@@ -275,6 +276,7 @@ Command tts_command() {
         verbose_flag("also report the model, and each request's seed and stop reason"),
     };
     c.request_options = true;
+    c.model = ModelKind::Synthesis;
     c.min_args = 1;
     c.max_args = 2;
     c.run = run_tts;

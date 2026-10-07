@@ -9,6 +9,7 @@
 
 #include "base64.h"
 #include "commands.h"
+#include "fetch.h"
 #include "inbox.h"
 #include "json.h"
 
@@ -169,7 +170,7 @@ int run_worker(const CommandLine & line, FILE * out) {
     // so the protocol and the inbox it uses are never freed.
     Protocol & protocol = *new Protocol(out);
     current = &protocol;
-    const Model model = load_model(line.args[0], line.loading(true));
+    const Model model = load_model(model_file(line.args[0]), line.loading(true));
     const ModelInfo info = model_info(model.get());
     const speech_model_info * m = info.get();
     protocol.line("{\"type\":\"ready\",\"protocol\":2,\"version\":" + json_string(speech_version()) + ",\"model\":" + speech_model_info_json(m) + "}");
@@ -217,6 +218,7 @@ Command worker_command() {
         threads_flag(),
         no_warmup_flag(),
     };
+    c.model = ModelKind::Any;
     c.min_args = 1;
     c.max_args = 1;
     c.run = run_worker;

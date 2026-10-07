@@ -20,6 +20,138 @@ is its `general.architecture`, which the model information calls `architecture`:
 several model lines can share, as `fastconformer` runs both parakeet lines and ReazonSpeech. Each family's section below
 says what it implements.
 
+## Models by name
+
+Every subcommand that takes a model (`tts`, `asr`, `voice`, `info`, `serve`, `worker`) takes a model file's path,
+which ends in `.gguf`, or `NAME[:TYPE]`: the name of a model of the catalog this release carries, or the Hugging Face
+repository of its converted files, and the file's weight type, `q8_0`, `f16` or `f32`, where the repository holds
+it. A name without a type means the file the table of Files on Hugging Face, below, recommends. The release fetches
+its file from Hugging Face the first time a command names it, and loads it from the model folder after that:
+
+```sh
+speech asr qwen3-asr-0.6b meeting.wav                       # Qwen3-ASR-0.6B-Q8_0.gguf
+speech asr sakasegawa/Qwen3-ASR-0.6B-GGUF meeting.wav       # the same file, named by its repository
+speech asr qwen3-asr-0.6b:q8_0 meeting.wav                  # the same file, its type given
+speech serve reazonspeech-v2                                # fetched before the server starts
+```
+
+The catalog, `tools/models/catalog.json`, is built into `speech` and pins each model's repository at a revision, and
+each file with its size and SHA-256: a release fetches the files it was checked with, and a file replaced on Hugging
+Face reaches users with the next release (docs/adr/0033). `tools/models/update_catalog.py` writes the pins again from
+Hugging Face's API. A name or a type the catalog does not hold is refused with exit 2, listing what it holds.
+
+A fetch runs the system's curl (`System32\curl.exe` on Windows), so the system's proxies, `https_proxy` among them,
+and certificates apply, and writes the file's bytes to `<file>.part` beside where the file goes, checking its size
+and SHA-256 as they come; the file is renamed into place once both are the catalog's (docs/adr/0035). A fetch that
+stops, interrupted or cut off, keeps the part, and the same command resumes it. A part whose bytes cannot be the
+file's is removed with an `io` failure that says so, and the same command fetches the file again. Two processes that
+fetch the same file take turns on `<file>.lock`, the second waiting and then loading the file the first fetched.
+Progress goes to stderr, so a worker's stdout carries the protocol alone. Only the command line and the server fetch:
+the library and the C API load files and never reach the network.
+
+The model folder is `~/Library/Caches/speech.cpp/models` on macOS, `$XDG_CACHE_HOME/speech.cpp/models` or
+`~/.cache/speech.cpp/models` on Linux, and `%LOCALAPPDATA%\speech.cpp\models` on Windows; `SPEECH_MODEL_DIR`, an
+absolute path, replaces it. A file goes to `<owner>--<name>/<revision>/<file>` in it, so that releases that pin
+different revisions never share a path. Nothing is removed automatically (docs/adr/0034): `speech models` lists the
+files no model of this release names as old, and `speech rm --old` removes them.
+
+No model is chosen for a command that names none, since the right one depends on the language (docs/adr/0036). The
+command stops with exit 2 and says what to type:
+
+```
+$ speech asr a.wav
+speech: the model is missing: speech asr MODEL [options] AUDIO.wav...
+MODEL is a model file (.gguf) or the name of one in `speech models`, which is fetched the first time it is used.
+No model is chosen for you; the one to start with depends on the language:
+  qwen3-asr-0.6b        ar cs da de el en es fa fi fil fr hi hu id it ko mk ms nl pl pt ro ru sv th tr vi yue zh
+  reazonspeech-v2       ja
+  parakeet-tdt-0.6b-v3  bg et hr lt lv mt sk sl uk
+For example: speech asr qwen3-asr-0.6b [options] AUDIO.wav...
+Run speech asr --help for its usage and options.
+```
+
+### `speech models`
+
+```
+speech models [--json]
+```
+
+Lists the catalog: each model's name, the type its name alone means, the file's size, whether it is fetched (`yes`,
+`no`, or how much of a stopped fetch is there), its task and languages; for each language the model to start with; and
+the old files in the model folder:
+
+```
+The models of speech.cpp 0.8.0, fetched into /Users/you/Library/Caches/speech.cpp/models
+
+NAME                      TYPE  SIZE     FETCHED  TASK         LANGUAGES
+qwen3-tts-0.6b            q8_0  1.21 GB  no       synthesis    de en es fr it ja ko pt ru zh
+...
+qwen3-asr-0.6b            q8_0  0.84 GB  yes      recognition  ar cs da de el en es fa fi fil fr hi hu id it ja ko mk ms nl pl pt ro ru sv th tr vi yue zh
+reazonspeech-v2           f16   1.24 GB  no       recognition  ja
+...
+
+The model to start with for each language:
+  synthesis    qwen3-tts-0.6b            de en es fr it ja ko pt ru zh
+  recognition  qwen3-asr-0.6b            ar cs da de el en es fa fi fil fr hi hu id it ko mk ms nl pl pt ro ru sv th tr vi yue zh
+               reazonspeech-v2           ja
+               parakeet-tdt-0.6b-v3      bg et hr lt lv mt sk sl uk
+
+A subcommand given a NAME[:TYPE] fetches its file the first time; speech pull fetches it ahead, and speech rm removes it.
+
+Old files, which no model of this release names; speech rm --old removes them:
+  1.89 GB  sakasegawa--Irodori-TTS-v4.1-Small-MF-GGUF/99e5d77f6d92a70d4b9bff52829ac118fa1bf7d3/Irodori-TTS-848M-MF-v4.1-F16.gguf
+```
+
+The model to start with is the one for which a first try needs nothing else: Qwen3-TTS 0.6B speaks its ten languages
+with its own named speakers, where Irodori-TTS needs a voice file made from a recording; ReazonSpeech writes Japanese
+with punctuation and takes recordings of many minutes whole; Qwen3-ASR 0.6B recognizes 29 other languages, and
+parakeet-tdt-0.6b-v3 the nine European languages Qwen3-ASR does not.
+
+`--json` prints one object for programs, with every pin of the catalog, each file's URL and path in the model folder,
+and whether it is fetched (`partial` gives the bytes of a stopped fetch); a model's `start` lists the languages it is
+the model to start with, and `type` the type its name alone means:
+
+```json
+{"version":"0.8.0","directory":"/Users/you/Library/Caches/speech.cpp/models","models":[{"name":"qwen3-asr-0.6b",
+"repository":"sakasegawa/Qwen3-ASR-0.6B-GGUF","revision":"450483d7e7ffc6ddb47048094247db782f7dda04","task":"recognition",
+"languages":["ar","cs",...,"zh"],"voice_files":false,"start":["ar","cs",...,"zh"],"type":"q8_0","files":[{"type":"q8_0",
+"file":"Qwen3-ASR-0.6B-Q8_0.gguf","size":841502336,"sha256":"416e10c15b4a3d9002bd337d18fc450233fdf68502b6e10d1379d2789838afd0",
+"url":"https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF/resolve/450483d7e7ffc6ddb47048094247db782f7dda04/Qwen3-ASR-0.6B-Q8_0.gguf",
+"path":"/Users/you/Library/Caches/speech.cpp/models/sakasegawa--Qwen3-ASR-0.6B-GGUF/450483d7e7ffc6ddb47048094247db782f7dda04/Qwen3-ASR-0.6B-Q8_0.gguf",
+"fetched":true,"partial":0}]},...],"old":[{"path":"...","size":1885438016}]}
+```
+
+### `speech pull`
+
+```
+speech pull NAME[:TYPE]...
+```
+
+Fetches each model's file unless it is in the model folder, and prints its path on stdout, so that
+`model=$(speech pull qwen3-asr-0.6b)` gives a script the path. On stderr it says what it fetches, from where, how far
+it is and how fast, and that it checked the SHA-256:
+
+```
+fetching qwen3-asr-0.6b, Qwen3-ASR-0.6B-Q8_0.gguf (0.84 GB), from https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF into /Users/you/Library/Caches/speech.cpp/models/sakasegawa--Qwen3-ASR-0.6B-GGUF/450483d7e7ffc6ddb47048094247db782f7dda04
+resuming at 7 MB of 842 MB
+  87 MB of 842 MB, 10%, 5.2 MB/s
+  ...
+  842 MB of 842 MB, 100%, 6.2 MB/s
+fetched qwen3-asr-0.6b in 134 s and checked its SHA-256
+```
+
+On a terminal the progress is one line, rewritten as it moves.
+
+### `speech rm`
+
+```
+speech rm NAME[:TYPE]... | speech rm --old
+```
+
+Removes each model's file and what was fetched of it, and the folders that leaves empty, or with `--old` every old
+file. It waits for a process that fetches the same file. A model that is not in the folder is refused with exit 1,
+before anything is removed.
+
 ## Binaries
 
 [Releases](https://github.com/nyosegawa/speech.cpp/releases) carry one archive per platform,
@@ -104,6 +236,9 @@ the C API alone (docs/adr/0017):
 | `speech voice` | makes an Irodori-TTS voice file from a reference recording |
 | `speech info` | prints what a model file says of its model, without loading it |
 | `speech devices` | lists the devices a model can run on |
+| `speech models` | lists the models a name fetches, what is fetched, and which model to start with (Models by name, above) |
+| `speech pull` | fetches models ahead of their use |
+| `speech rm` | removes fetched models, or the files of earlier releases |
 | `speech serve` | serves a model over HTTP with OpenAI's audio API (The HTTP server, below) |
 | `speech worker` | serves a model over JSON Lines on stdin and stdout (The worker protocol 2, below) |
 
@@ -133,7 +268,8 @@ speech asr Qwen3-ASR-1.7B-Q8_0.gguf --language ja --prompt "Claude Code、渋谷
 speech info Irodori-TTS-848M-MF-v4.1-F16.gguf
 ```
 
-A model is one GGUF file, its codec included (GGUF files, below).
+A model is one GGUF file, its codec included (GGUF files, below). Wherever a subcommand takes MODEL, a name such as
+`qwen3-asr-0.6b` names one that is fetched the first time (Models by name, above).
 
 One parser reads every command line. Every subcommand that loads a model takes `--device NAME` (`auto`, the default,
 for the first GPU or the CPU on a machine without one; `gpu`; `cpu`; or a name `speech devices` lists) and `--threads
@@ -263,8 +399,9 @@ before it starts a worker:
   architecture of model, whichever weights it is given, and `src/common/` holds what the families share.
 - `tools/` holds `speech`, the one executable on the library: its subcommands for the command line (`tools/cli/`), the
   worker (`tools/worker/`) and the HTTP server (`tools/server/`), and what they share (`tools/common/`): the parser of
-  the command line, the JSON reader and the request options. Beside them, `worker_smoke.py`,
-  `worker_recognition_smoke.py`, `server_smoke.py` and `speech_cli_smoke.py` drive each entry point as a caller does.
+  the command line, the JSON reader and the request options; and the catalog of models by name and their fetching
+  (`tools/models/`). Beside them, `worker_smoke.py`, `worker_recognition_smoke.py`, `server_smoke.py`,
+  `speech_cli_smoke.py` and `models_smoke.py` drive each entry point as a caller does.
 - `vendor/cpp-httplib/` holds cpp-httplib's header and license, which `speech serve` uses.
 - `checks/` holds a check per ported stage that compares it with the official implementation, and
   `speech-api-check`, which runs the C API through the shared library with a synthesis model and, with
@@ -1078,20 +1215,28 @@ A converted file is named under GGUF's naming convention (ggml's `docs/gguf.md`)
 below): `<basename>-<size label>-<finetune>-<version>-<type>.gguf` without the parts the model has none of, as gguf-py's
 `naming_convention()` writes it. Where the model's name gives no size, the size label is the parameters of the file's
 tensors, counted and rounded as gguf-py counts them. Each Hugging Face repository of converted weights, one per upstream
-repository and named after it with `-GGUF`, holds the file of the type released, its codec inside it; the converter
-writes the other types as well:
+repository and named after it with `-GGUF`, holds the file of the type released, its codec inside it, which a model's
+name fetches (Models by name, above); the converter writes the other types as well:
 
-| Upstream repository | Converted repository | Released file | Other types the converter writes |
-|---|---|---|---|
-| [Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice) | [sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF) | `Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf` | `Qwen3-TTS-12Hz-0.6B-CustomVoice-F16.gguf`, `Qwen3-TTS-12Hz-0.6B-CustomVoice-F32.gguf` |
-| [Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice) | [sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF) | `Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf` | `Qwen3-TTS-12Hz-1.7B-CustomVoice-F16.gguf`, `Qwen3-TTS-12Hz-1.7B-CustomVoice-F32.gguf` |
-| [Aratako/Irodori-TTS-v4.1-Small-MF](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small-MF) | [sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF) | `Irodori-TTS-848M-MF-v4.1-F16.gguf` | `Irodori-TTS-848M-MF-v4.1-Q8_0.gguf`, `Irodori-TTS-848M-MF-v4.1-F32.gguf` |
-| [Aratako/Irodori-TTS-v4.1-Small](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small) | [sakasegawa/Irodori-TTS-v4.1-Small-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) | `Irodori-TTS-841M-v4.1-F16.gguf` | `Irodori-TTS-841M-v4.1-Q8_0.gguf`, `Irodori-TTS-841M-v4.1-F32.gguf` |
-| [nvidia/parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) | [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | `parakeet-tdt_ctc-0.6B-ja-F16.gguf` | `parakeet-tdt_ctc-0.6B-ja-F32.gguf` |
-| [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) | `parakeet-tdt-0.6B-v3-F16.gguf` | `parakeet-tdt-0.6B-v3-F32.gguf` |
-| [reazon-research/reazonspeech-nemo-v2](https://huggingface.co/reazon-research/reazonspeech-nemo-v2) | [sakasegawa/reazonspeech-nemo-v2-GGUF](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) | `reazonspeech-nemo-619M-v2-F16.gguf` | `reazonspeech-nemo-619M-v2-F32.gguf` |
-| [Qwen/Qwen3-ASR-0.6B](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) | [sakasegawa/Qwen3-ASR-0.6B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF) | `Qwen3-ASR-0.6B-Q8_0.gguf` | `Qwen3-ASR-0.6B-F16.gguf`, `Qwen3-ASR-0.6B-F32.gguf` |
-| [Qwen/Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) | [sakasegawa/Qwen3-ASR-1.7B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF) | `Qwen3-ASR-1.7B-Q8_0.gguf` | `Qwen3-ASR-1.7B-F16.gguf`, `Qwen3-ASR-1.7B-F32.gguf` |
+| Name | Upstream repository | Converted repository | File the name alone fetches | Other types the converter writes |
+|---|---|---|---|---|
+| `qwen3-tts-0.6b` | [Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice) | [sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF) | `Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf` | `Qwen3-TTS-12Hz-0.6B-CustomVoice-F16.gguf`, `Qwen3-TTS-12Hz-0.6B-CustomVoice-F32.gguf` |
+| `qwen3-tts-1.7b` | [Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice) | [sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF) | `Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf` | `Qwen3-TTS-12Hz-1.7B-CustomVoice-F16.gguf`, `Qwen3-TTS-12Hz-1.7B-CustomVoice-F32.gguf` |
+| `irodori-tts-mf` | [Aratako/Irodori-TTS-v4.1-Small-MF](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small-MF) | [sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF) | `Irodori-TTS-848M-MF-v4.1-F16.gguf` | `Irodori-TTS-848M-MF-v4.1-Q8_0.gguf`, `Irodori-TTS-848M-MF-v4.1-F32.gguf` |
+| `irodori-tts` | [Aratako/Irodori-TTS-v4.1-Small](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small) | [sakasegawa/Irodori-TTS-v4.1-Small-GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) | `Irodori-TTS-841M-v4.1-F16.gguf` | `Irodori-TTS-841M-v4.1-Q8_0.gguf`, `Irodori-TTS-841M-v4.1-F32.gguf` |
+| `parakeet-tdt_ctc-0.6b-ja` | [nvidia/parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) | [sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | `parakeet-tdt_ctc-0.6B-ja-F16.gguf` | `parakeet-tdt_ctc-0.6B-ja-F32.gguf` |
+| `parakeet-tdt-0.6b-v3` | [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | [sakasegawa/parakeet-tdt-0.6b-v3-GGUF](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) | `parakeet-tdt-0.6B-v3-F16.gguf` | `parakeet-tdt-0.6B-v3-F32.gguf` |
+| `reazonspeech-v2` | [reazon-research/reazonspeech-nemo-v2](https://huggingface.co/reazon-research/reazonspeech-nemo-v2) | [sakasegawa/reazonspeech-nemo-v2-GGUF](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) | `reazonspeech-nemo-619M-v2-F16.gguf` | `reazonspeech-nemo-619M-v2-F32.gguf` |
+| `qwen3-asr-0.6b` | [Qwen/Qwen3-ASR-0.6B](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) | [sakasegawa/Qwen3-ASR-0.6B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF) | `Qwen3-ASR-0.6B-Q8_0.gguf` | `Qwen3-ASR-0.6B-F16.gguf`, `Qwen3-ASR-0.6B-F32.gguf` |
+| `qwen3-asr-1.7b` | [Qwen/Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) | [sakasegawa/Qwen3-ASR-1.7B-GGUF](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF) | `Qwen3-ASR-1.7B-Q8_0.gguf` | `Qwen3-ASR-1.7B-F16.gguf`, `Qwen3-ASR-1.7B-F32.gguf` |
+
+A name is the upstream model's own name in lower case, without what tells no two models of the catalog apart
+(docs/adr/0033): every Qwen3-TTS here has the 12Hz codec and is CustomVoice, so `qwen3-tts-0.6b` and `qwen3-tts-1.7b`
+keep the size alone; one version and one size of Irodori-TTS are ported, so `irodori-tts-mf` and `irodori-tts` keep
+MF, the MeanFlow model, which tells the two apart; `qwen3-asr-0.6b` and `qwen3-asr-1.7b` are Qwen's names in lower
+case; `reazonspeech-v2` leaves out NeMo, the toolkit; and NVIDIA's names stay whole, `parakeet-tdt_ctc-0.6b-ja` and
+`parakeet-tdt-0.6b-v3`, since they already tell its models apart by their decoder, language and version. A name, once
+released, keeps naming its model; a later version of a model line gets a name of its own.
 
 Irodori-TTS's names give Small, a word, where the convention's size label is a number, so their size label is counted:
 848M for v4.1-Small-MF, whose DiT has MeanFlow's 7.2M parameters more, and 841M for v4.1-Small, each with its codec.

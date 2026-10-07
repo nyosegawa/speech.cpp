@@ -132,7 +132,10 @@ CommandLine parse_command_line(const Command & command, const std::vector<std::s
         if (!flag->repeatable && line.has(name)) throw UsageError(name + " is given twice; give it once");
         line.given_.push_back({name, value});
     }
-    if (line.args.size() < command.min_args) throw UsageError("an argument is missing: speech " + command.usage);
+    if (line.args.size() < command.min_args) {
+        if (command.model && (line.args.empty() || !names_a_model(line.args[0]))) throw UsageError(no_model_message(command.usage, *command.model));
+        throw UsageError("an argument is missing: speech " + command.usage);
+    }
     if (line.args.size() > command.max_args) {
         throw UsageError("there are more arguments than speech " + command.usage + " takes; quote an argument that holds spaces");
     }
@@ -149,6 +152,7 @@ bool asks_for_help(const std::vector<std::string> & args) {
 
 std::string command_help(const Command & command) {
     std::string out = "usage: speech " + command.usage + "\n\n" + command.description + "\n";
+    if (command.model) out += "MODEL is a model file (.gguf), or the NAME[:TYPE] of one in `speech models`, fetched the first time it is used.\n";
     constexpr size_t kWidth = 28;
     if (!command.flags.empty()) out += "\n";
     for (const Flag & f : command.flags) {

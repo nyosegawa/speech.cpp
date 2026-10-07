@@ -149,6 +149,14 @@ elseif (UNIX)
     set_property(TARGET speech APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/speech.map)
 endif()
 
+# The catalog of the models speech fetches by name goes into it as an array of bytes, since MSVC refuses a string
+# literal of more than 16380 bytes.
+file(READ tools/models/catalog.json SPEECH_CATALOG_HEX HEX)
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," SPEECH_CATALOG_BYTES "${SPEECH_CATALOG_HEX}")
+file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/catalog-json.cpp
+     CONTENT "extern const unsigned char speech_catalog_json[] = {@SPEECH_CATALOG_BYTES@0};\n" @ONLY)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS tools/models/catalog.json)
+
 # Every program on the library is one executable, speech, with a subcommand each (docs/adr/0017), the library and
 # ggml linked in. The target is speech-cli since the shared library holds the name speech. It has the one dependency
 # besides ggml, cpp-httplib's single header for `speech serve`, vendored in vendor/cpp-httplib from
@@ -158,6 +166,12 @@ add_executable(speech-cli
     tools/cli/tts.cpp
     tools/cli/asr.cpp
     tools/cli/model.cpp
+    tools/cli/models.cpp
+    tools/models/catalog.cpp
+    tools/models/cache.cpp
+    tools/models/fetch.cpp
+    tools/models/sha256.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/catalog-json.cpp
     tools/common/command-line.cpp
     tools/common/json-reader.cpp
     tools/common/request-options.cpp
@@ -167,7 +181,7 @@ add_executable(speech-cli
     tools/server/openai-api.cpp
 )
 set_target_properties(speech-cli PROPERTIES OUTPUT_NAME speech)
-target_include_directories(speech-cli PRIVATE tools/common tools/cli vendor/cpp-httplib)
+target_include_directories(speech-cli PRIVATE tools/common tools/cli tools/models vendor/cpp-httplib)
 target_link_libraries(speech-cli PRIVATE speech-static)
 if (WIN32)
     target_compile_definitions(speech-cli PRIVATE NOMINMAX)

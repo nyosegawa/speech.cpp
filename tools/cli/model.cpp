@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "commands.h"
+#include "fetch.h"
 #include "json-reader.h"
 #include "json.h"
 
@@ -138,7 +139,7 @@ int run_voice(const CommandLine & line, FILE *) {
     if (line.has("--keep-loudness")) check(speech_voice_params_keep_loudness(raw));
     const std::string & out = line.args.back();
     const auto t0 = std::chrono::steady_clock::now();
-    check(speech_voice_make_from(line.args[0].c_str(), raw, out.c_str(), params.get()));
+    check(speech_voice_make_from(model_file(line.args[0]).c_str(), raw, out.c_str(), params.get()));
     const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     std::fprintf(stderr, "wrote %s in %.2f s\n", out.c_str(), took);
     if (line.has("-v")) std::fprintf(stderr, "speech.cpp %s, device %s\n", speech_version(), loading.device->c_str());
@@ -255,7 +256,7 @@ void print_info(const speech_model_info * m, bool meta, FILE * out) {
 }
 
 int run_info(const CommandLine & line, FILE * out) {
-    const ModelInfo info = file_info(line.args[0]);
+    const ModelInfo info = file_info(model_file(line.args[0]));
     const speech_model_info * m = info.get();
     const bool meta = line.has("--meta");
     if (!line.has("--json")) {
@@ -320,6 +321,7 @@ Command voice_command() {
         threads_flag(),
         verbose_flag("also report the release and the device"),
     };
+    c.model = ModelKind::VoiceFiles;
     c.min_args = 3;
     c.max_args = SIZE_MAX;
     c.run = run_voice;
@@ -340,6 +342,7 @@ Command info_command() {
         {"--json", "", false, "print the model information as the JSON object that the worker's ready message carries"},
         {"--meta", "", false, "add every metadata entry of the GGUF file, whole as a \"meta\" object in JSON"},
     };
+    c.model = ModelKind::Any;
     c.min_args = 1;
     c.max_args = 1;
     c.run = run_info;

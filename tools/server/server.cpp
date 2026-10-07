@@ -14,6 +14,7 @@
 #include "httplib.h"
 
 #include "commands.h"
+#include "fetch.h"
 #include "jobs.h"
 #include "json.h"
 #include "openai-api.h"
@@ -330,7 +331,7 @@ int run_serve(const CommandLine & line, FILE *) {
     const std::string host = line.value("--host").value_or("127.0.0.1");
     const int port = line.integer("--port").value_or(8080);
     if (port < 0 || port > 65535) throw UsageError("--port takes a port from 0 to 65535, not " + std::to_string(port));
-    const Model model = load_model(line.args[0], line.loading(true));
+    const Model model = load_model(model_file(line.args[0]), line.loading(true));
     const ModelInfo info = model_info(model.get());
     std::fprintf(stderr, "speech serve: %s (%s) on %s, %d Hz, speech.cpp %s\n", speech_model_info_name(info.get()),
                  speech_model_info_architecture(info.get()), speech_model_info_device(info.get()), speech_model_info_sample_rate(info.get()),
@@ -371,6 +372,7 @@ Command serve_command() {
         threads_flag(),
         no_warmup_flag(),
     };
+    c.model = ModelKind::Any;
     c.min_args = 1;
     c.max_args = 1;
     c.run = run_serve;

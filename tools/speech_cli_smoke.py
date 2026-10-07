@@ -50,7 +50,7 @@ if "--embedding" in args:
     del args[at:at + 2]
 speech, work, model, *dumps = args
 added = [o.split("=", 1)[0] for i, o in enumerate(options) if i > 0 and options[i - 1] == "--add-voice"]
-SUBCOMMANDS = ["tts", "asr", "voice", "info", "devices", "serve", "worker"]
+SUBCOMMANDS = ["tts", "asr", "voice", "info", "devices", "models", "pull", "rm", "serve", "worker"]
 
 
 def run(*command, input=None, stdout=subprocess.PIPE, code=0):
