@@ -1514,7 +1514,7 @@ On an Apple M5, for the 0.6B and the 1.7B model:
 | Argmax teacher-forced on the dump's ids (1176 and 1184 steps) | every step | every step | all but 8 and 1 | all but 5 and 1 |
 | Greedy ids from the dump's projector output, every later stage ours | the dump's on all 80 requests | the same | the dump's on 37 and 38 of 40 | on 37 and 39 of 40 |
 | Text from the audio, every stage ours | the dump's on all 80 | the same | on 37 and 35 of 40 | on 37 and 40 of 40 |
-| Decoding of the dump's ids, parse of its raw text, 180 cases of the parse | equal | equal | equal | equal |
+| Decoding of the dump's ids, parse of its raw text, 262 cases of the parse, each with its language | equal | equal | equal | equal |
 
 The prompt's logits come from an F32 cache, which leaves the arithmetic of the weights alone; the recognizer's own
 F16 cache puts them 42 to 56 dB from transformers' on the CPU in F32, where every text is the dump's as well. With F16
@@ -1524,6 +1524,14 @@ the dump's margin between the two tokens is within our error on their two logits
 of 0.03 to 1.39: the near-silent input with its language forced, where the model writes another filler; the 25.50 s
 input, in a name's middle dot (グレン・クッシング for グレンクッシング), a comma, 熱気道 for 熱挙動 and 安定 for 判定; and
 the spaces around a Latin name in the 8.64 s one.
+
+The language the result gives, from the dump's raw text and from the audio with every stage ours, is the one qwen-asr
+parsed for every dumped request, the forced requests and the 0.6B model's `language None` for the near-silent input
+included (the 1.7B model hears Chinese in it, 嗯。, without a prompt): on all 80 on Metal in F32 and in Q8_0, where it
+is the dump's also for the texts that differ, and on the 0.6B model's 40 on the CPU in F32. The 262 cases of
+`parse_cases.py` hold what the dumps do not: names in other cases and in the code points outside ASCII that Python's
+case mappings turn into ASCII, names that are none of the model's (8, which give none where qwen-asr passes the name
+on), `None` in other cases and places, a language line after another line, and the line breaks of `str.splitlines()`.
 
 The Metal column is the decoder's flash attention. With the two products forced (`products`), as a GPU without ggml's
 flash attention runs them, the prompt's logits lie 47.9 to 71.3 dB and 48.8 to 66.5 dB from transformers' in F32 and
@@ -1536,7 +1544,8 @@ speech-like bursts, silence, a last part of 0.2 s that is padded, and audio of e
 and on the 1338.42 s input, cut at 1202.97 s. There, with the 0.6B model in Q8_0 on Metal, the first part's prompt
 and its 4096 ids are the dump's, the model repeating three sentences until the limit, and the second part's prompt is
 the dump's and its first 137 ids of 376. With the 0.6B model in F32 on the CPU, every id of both parts, 4096 and 376,
-is the dump's, and so is the joined text.
+is the dump's, and so is the joined text, as on Metal in F32. Both parts write Japanese, and the result's language is
+the dump's, `ja`, on Metal in F32 and Q8_0.
 
 ### Speed
 
