@@ -230,8 +230,8 @@ private:
     }
 
     /**
-     * Recognizes the form's WAV file and answers with its text once it is done, as json, text or verbose_json, and with
-     * why the recognition ended in X-Speech-Stop.
+     * Recognizes the form's WAV file and answers with its text once it is done, as json, text or verbose_json, which
+     * also carries the language the model heard, and with why the recognition ended in X-Speech-Stop.
      */
     void transcription(const httplib::Request & req, httplib::Response & res) {
         openai::TranscriptionRequest asked;
@@ -239,7 +239,8 @@ private:
             std::vector<openai::FormPart> parts;
             for (const auto & [field_name, field] : req.form.fields) parts.push_back({field_name, field.content, "", false});
             for (const auto & [file_name, file] : req.form.files) parts.push_back({file_name, file.content, file.filename, true});
-            asked = openai::read_transcription_request(req.is_multipart_form_data(), parts, name());
+            asked = openai::read_transcription_request(req.is_multipart_form_data(), parts, name(),
+                                                       speech_model_info_takes(info_.get(), SPEECH_OPT_TIMESTAMPS));
         } catch (const ApiError & e) {
             send_error(res, e);
             return;
@@ -269,7 +270,7 @@ private:
         if (asked.format == "text") {
             res.set_content(speech_result_text(result), "text/plain; charset=utf-8");
         } else if (asked.format == "verbose_json") {
-            res.set_content(openai::transcription_verbose_json(result, job->duration), "application/json");
+            res.set_content(openai::transcription_verbose_json(result, job->duration, asked.timestamps), "application/json");
         } else {
             res.set_content(openai::transcription_json(speech_result_text(result)), "application/json");
         }

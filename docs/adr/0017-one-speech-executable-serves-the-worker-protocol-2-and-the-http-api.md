@@ -1,5 +1,7 @@
 # One speech executable serves the worker protocol 2 and the HTTP API
 
+Superseded in part by docs/adr/0020: `verbose_json` carries the language the model heard, and a model that gives no times answers it without segments.
+
 Decided 2026-10-06.
 
 ## Context

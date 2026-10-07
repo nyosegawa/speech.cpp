@@ -902,20 +902,25 @@ A transcription request is a `multipart/form-data` form, as OpenAI's API referen
 | `model` | the loaded model's `id`, or left out; any other model is a 404 (`model_not_found`) |
 | `language` | the option `language`: a BCP 47 tag of one of the model's languages, or `auto` (the default) |
 | `prompt` | the option `prompt`: what the model is told of the audio before it hears it, for a model that takes it (Qwen3-ASR); OpenAI's own member, which it describes as text to guide the model's style or continue a previous segment |
-| `response_format` | `json` (the default), which answers `{"text":"..."}`; `text`, which answers the text alone as `text/plain`; or `verbose_json`, which sets the option `timestamps`, refused by a model that gives no times (Qwen3-ASR), and answers `{"task":"transcribe","duration":…,"text":…,"segments":[{"id":0,"start":…,"end":…,"text":…}]}`, the duration being the file's in seconds. `srt`, `vtt` and `diarized_json` are refused: speech.cpp gives neither subtitles nor speakers |
-| `timestamp_granularities[]` | `segment`, with `verbose_json`; `word` is refused |
+| `response_format` | `json` (the default), which answers `{"text":"..."}`; `text`, which answers the text alone as `text/plain`; or `verbose_json`, which answers `{"task":"transcribe","language":…,"duration":…,"text":…,"segments":[{"id":0,"start":…,"end":…,"text":…}]}`, the duration being the file's in seconds and `language` the language the model heard (below). With a model that gives times (FastConformer) it sets the option `timestamps` and carries the segments; with one that gives none (Qwen3-ASR) it carries no segments, which OpenAI's schema does not require. `srt`, `vtt` and `diarized_json` are refused: speech.cpp gives neither subtitles nor speakers |
+| `timestamp_granularities[]` | `segment`, with `verbose_json`, OpenAI's default, which a model that gives no times refuses (`unsupported_parameter`, `param` `timestamps`); `word` is refused |
 
 Every answer carries `X-Speech-Stop`, why the recognition ended: `complete`, or `model_limit` when it reached the most
-tokens the model writes, with the text written up to there. The members of OpenAI's segment that the recognizers have
-no value for (`seek`, `tokens`, `temperature`, `avg_logprob`, `compression_ratio`, `no_speech_prob`) are left out
-rather than made up, and so is the usage in tokens or seconds that OpenAI's answers carry. OpenAI's other members
-(`temperature`, `stream`, `include[]` and the rest) are refused with a 400 rather than ignored, and so is a member given
-twice. Audio the library cannot take is a 400 by its category with `param` `file`: no samples or fewer than the model
-needs, or a rate it cannot resample from; a language the model does not recognize is a 400 `unsupported_value` with
-`param` `language`, and a `prompt` to a model that takes none a 400 `unsupported_parameter`. The upload may be up to
-25 MB, OpenAI's limit; the model recognizes the whole file at once, so a file should be one utterance for
-FastConformer's parakeet models, where Qwen3-ASR takes up to 1200 s at once (below). The request waits its turn like a
-speech request, and a client that goes away cancels it.
+tokens the model writes, with the text written up to there. OpenAI's `verbose_json` requires `language` and describes
+it as the language of the input audio, its example being Whisper's `english`; speech.cpp gives the BCP 47 tag of the
+language, the form its `language` member takes (`ja`), from the result (The C API, above): the language Qwen3-ASR heard
+or the forced one, and for audio over 1200 s whose parts it heard in several, their tags joined with commas in the
+order of the audio (`ja,en`), as qwen-asr's `transcribe()` joins their names. Where the result has no language, for
+FastConformer, which writes none, and for audio without speech, `language` is left out rather than made up, as are the
+members of OpenAI's segment that the recognizers have no value for (`seek`, `tokens`, `temperature`, `avg_logprob`,
+`compression_ratio`, `no_speech_prob`) and the usage in tokens or seconds that OpenAI's answers carry. OpenAI's other
+members (`temperature`, `stream`, `include[]` and the rest) are refused with a 400 rather than ignored, and so is a
+member given twice. Audio the library cannot take is a 400 by its category with `param` `file`: no samples or fewer
+than the model needs, or a rate it cannot resample from; a language the model does not recognize is a 400
+`unsupported_value` with `param` `language`, and a `prompt` to a model that takes none a 400 `unsupported_parameter`.
+The upload may be up to 25 MB, OpenAI's limit; the model recognizes the whole file at once, so a file should be one
+utterance for FastConformer's parakeet models, where Qwen3-ASR takes up to 1200 s at once (below). The request waits its
+turn like a speech request, and a client that goes away cancels it.
 
 ```sh
 curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@utterance.wav -F response_format=text

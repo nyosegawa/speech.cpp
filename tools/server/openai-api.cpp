@@ -104,7 +104,8 @@ SpeechRequest read_speech_request(const std::string & body, const std::string & 
     return r;
 }
 
-TranscriptionRequest read_transcription_request(bool multipart, const std::vector<FormPart> & parts, const std::string & model_name) {
+TranscriptionRequest read_transcription_request(bool multipart, const std::vector<FormPart> & parts, const std::string & model_name,
+                                                bool gives_times) {
     if (!multipart) {
         throw ApiError{400, "The body is not multipart/form-data. Send the audio as the form's \"file\", as OpenAI's create transcription takes it.",
                        "", ""};
@@ -147,7 +148,11 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
     }
     if (language) r.options.push_back({SPEECH_OPT_LANGUAGE, language->content});
     if (prompt) r.options.push_back({SPEECH_OPT_PROMPT, prompt->content});
-    if (r.format == "verbose_json") r.options.push_back({SPEECH_OPT_TIMESTAMPS, true});
+    // OpenAI's verbose_json requires the language, the duration and the text alone, and its timestamp granularity is
+    // segment unless the request names one: a model that gives no times answers it without segments, and refuses a
+    // granularity the request names.
+    r.timestamps = r.format == "verbose_json" && (gives_times || !granularities.empty());
+    if (r.timestamps) r.options.push_back({SPEECH_OPT_TIMESTAMPS, true});
     const std::string & bytes = file->content;
     if (bytes.size() < 12 || bytes.compare(0, 4, "RIFF") != 0 || bytes.compare(8, 4, "WAVE") != 0) {
         throw ApiError{400, "The file " + json_string(file->filename) + " is not a WAV file. speech.cpp reads WAV alone (16-, 24- or 32-bit PCM or "
@@ -181,9 +186,13 @@ std::string transcription_json(const std::string & text) {
     return "{\"text\":" + json_string(text) + "}";
 }
 
-std::string transcription_verbose_json(const speech_result * result, double duration) {
-    std::string out = "{\"task\":\"transcribe\",\"duration\":" + json_number(duration) + ",\"text\":" + json_string(speech_result_text(result)) +
-                      ",\"segments\":[";
+std::string transcription_verbose_json(const speech_result * result, double duration, bool timestamps) {
+    std::string language;
+    for (size_t i = 0; i < speech_result_language_count(result); i++) language += (i ? "," : "") + std::string(speech_result_language(result, i));
+    std::string out = "{\"task\":\"transcribe\"" + (language.empty() ? "" : ",\"language\":" + json_string(language)) +
+                      ",\"duration\":" + json_number(duration) + ",\"text\":" + json_string(speech_result_text(result));
+    if (!timestamps) return out + "}";
+    out += ",\"segments\":[";
     for (size_t i = 0; i < speech_result_segment_count(result); i++) {
         double start = 0, end = 0;
         const char * text = nullptr;
