@@ -34,6 +34,7 @@ public:
     speech_stop speak(const std::string & text, const RequestValues & values, Run & run) override {
         irodori::Request r;
         r.text = text;
+        if (values.has(SPEECH_OPT_INSTRUCTIONS)) r.caption = values.string(SPEECH_OPT_INSTRUCTIONS);
         r.seed = (uint64_t) values.integer(SPEECH_OPT_SEED);
         r.steps = (int) values.integer(SPEECH_OPT_STEPS);
         r.length.seconds = values.has(SPEECH_OPT_SECONDS) ? values.number(SPEECH_OPT_SECONDS) : 0;
@@ -87,6 +88,7 @@ private:
         g.speaker_kv_scale = (float) values.number(SPEECH_OPT_SPEAKER_KV_SCALE);
         g.speaker_kv_min_t = (float) values.number(SPEECH_OPT_SPEAKER_KV_MIN_T);
         g.speaker_kv_layers = (int) values.integer(SPEECH_OPT_SPEAKER_KV_MAX_LAYERS);
+        if (values.has(SPEECH_OPT_CFG_SCALE_INSTRUCTIONS)) g.caption = (float) values.number(SPEECH_OPT_CFG_SCALE_INSTRUCTIONS);
         return g;
     }
 
@@ -121,7 +123,8 @@ struct TokenCounter {
  * where the file holds the null speaker; a request otherwise speaks in a voice added since loading. Its one language
  * is checked and not used. It fixes the length before it makes the speech, so it takes seconds and a scale of the
  * predicted length rather than max_seconds. An RF model takes the official runtime's guidance, schedule and scaling of
- * the speaker, which a MeanFlow model folded into its training or ignores and does not take.
+ * the speaker, which a MeanFlow model folded into its training or ignores and does not take. A file with the caption's
+ * encoder takes instructions, the runtime's caption, and an RF one the caption's scale.
  */
 FamilyInfo describe_irodori_tts(const std::shared_ptr<const ModelFile> & file) {
     const ModelFile & m = *file;
@@ -144,6 +147,14 @@ FamilyInfo describe_irodori_tts(const std::shared_ptr<const ModelFile> & file) {
         {SPEECH_OPT_DURATION_SCALE, false, true, 1.0, 0, INFINITY, true},
         {SPEECH_OPT_STEPS, false, true, (int64_t) m.u32("irodori-tts.sampler.default_steps"), 1, (double) INT_MAX},
     };
+    const bool caption = m.boolean("irodori-tts.caption_condition");
+    if (caption) {
+        info.options.push_back({SPEECH_OPT_INSTRUCTIONS, false, true, std::string()});
+    } else {
+        info.lacks.push_back({SPEECH_OPT_INSTRUCTIONS, "",
+                              m.path() + " has layout " + std::to_string(m.layout_version()) +
+                                  ", which lacks the caption's encoder that instructions need; " + m.remedy()});
+    }
     const bool rf = m.one_of("irodori-tts.flow", {"meanflow", "rf_velocity"}) == "rf_velocity";
     const std::string s = "irodori-tts.sampler.";
     if (rf) {
@@ -178,6 +189,7 @@ FamilyInfo describe_irodori_tts(const std::shared_ptr<const ModelFile> & file) {
             {SPEECH_OPT_SPEAKER_KV_MAX_LAYERS, false, true, layers, 1, (double) layers},
         });
     }
+    if (rf && caption) info.options.push_back({SPEECH_OPT_CFG_SCALE_INSTRUCTIONS, false, true, (double) m.f32(s + "cfg_caption"), 0, INFINITY});
     const auto counter = std::make_shared<Lazy<TokenCounter>>(file);
     info.count_tokens = [counter](const std::string & text) { return counter->get().count(text); };
     return info;

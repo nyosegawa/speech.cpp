@@ -53,6 +53,8 @@ struct TailCut {
 
 struct Request {
     std::string text;
+    /** The caption that describes the voice and the way of speaking (VoiceDesign); one that strips to nothing is none. */
+    std::string caption;
     uint64_t seed = 0;
     /** The sampler's steps; 0 takes the model's default (4 for MeanFlow, 40 for RF). */
     int steps = 0;
@@ -108,6 +110,8 @@ public:
     const TailCut & default_tail() const { return tail_; }
     /** Whether the file holds the null speaker, which a voice without a reference speaks with. */
     bool has_null_speaker() const { return model_->boolean("irodori-tts.duration.null_speaker"); }
+    /** Whether the file holds the caption's encoder, which a request with a caption needs. */
+    bool has_caption() const { return model_->boolean("irodori-tts.caption_condition"); }
 
     /** The decoder's first window, in frames; a short one brings the first audio early. */
     int first_window = 12;

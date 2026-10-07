@@ -37,6 +37,7 @@ Sampler::Sampler(const Dit & dit, const ModelFile & m, ggml_backend_t backend) :
     if (!dit.meanflow()) {
         guidance_.text = m.f32("irodori-tts.sampler.cfg_text");
         guidance_.speaker = m.f32("irodori-tts.sampler.cfg_speaker");
+        if (m.boolean("irodori-tts.caption_condition")) guidance_.caption = m.f32("irodori-tts.sampler.cfg_caption");
         guidance_.min_t = m.f32("irodori-tts.sampler.cfg_min_t");
         guidance_.max_t = m.f32("irodori-tts.sampler.cfg_max_t");
         guidance_.speaker_kv_min_t = m.f32("irodori-tts.sampler.speaker_kv_min_t");
@@ -49,7 +50,11 @@ Sampler::~Sampler() {
     if (allocr_) ggml_gallocr_free(allocr_);
 }
 
-Guidance Sampler::check(const Guidance & g, int steps, bool reference) const {
+Guidance Sampler::check(const Guidance & g, int steps, bool reference, bool caption) const {
+    if (!caption && g.caption != guidance_.caption && g.caption != 0) {
+        throw Error(Fault::InvalidArgument, "a request without instructions has no caption to guide by, so cfg_scale_instructions has no effect; leave it out",
+                    "cfg_scale_instructions");
+    }
     if (!reference) {
         // Without a reference the runtime turns the speaker's guidance off and ignores what would steer it.
         const char * idle = g.speaker != guidance_.speaker && g.speaker != 0 ? "cfg_scale_speaker"
@@ -81,9 +86,13 @@ Guidance Sampler::check(const Guidance & g, int steps, bool reference) const {
                         ", so the guidance runs at no step; give a cfg_min_t no greater than cfg_max_t",
                     "cfg_min_t");
     }
-    const bool text = g.text > 0, speaker = reference && g.speaker > 0;
-    if (!text && !speaker) {
-        // Without a scale above 0 the runtime runs no guidance and ignores how it would have run.
+    Guidance run = g;
+    if (!reference) run.speaker = 0;
+    if (!caption) run.caption = 0;
+    const bool speaker = run.speaker > 0;
+    if (run.text <= 0 && !speaker && run.caption <= 0) {
+        // Without a scale above 0 for a condition the request has, the runtime runs no guidance and ignores how it
+        // would have run.
         const char * idle = g.mode != guidance_.mode       ? "cfg_guidance_mode"
                             : g.min_t != guidance_.min_t   ? "cfg_min_t"
                             : g.max_t != guidance_.max_t   ? "cfg_max_t"
@@ -91,17 +100,27 @@ Guidance Sampler::check(const Guidance & g, int steps, bool reference) const {
                                                            : nullptr;
         if (idle) {
             throw Error(Fault::InvalidArgument,
-                        std::string(reference ? "with cfg_scale_text and cfg_scale_speaker at 0" : "with cfg_scale_text at 0 and no reference") +
-                            " no guidance runs, so " + idle + " has no effect; leave it out",
+                        std::string("with no scale above 0 for a condition of the request no guidance runs, so ") + idle + " has no effect; leave it out",
                         idle);
         }
     }
-    if (g.mode == GuidanceMode::Joint && text && speaker && g.text != g.speaker) {
-        throw Error(Fault::InvalidArgument,
-                    "the joint guidance leaves out the text and the speaker together and takes one scale, and cfg_scale_text is " +
-                        number(g.text) + " and cfg_scale_speaker " + number(g.speaker) +
-                        "; give them the same value, or another cfg_guidance_mode",
-                    "cfg_guidance_mode");
+    if (g.mode == GuidanceMode::Joint) {
+        std::string scales;
+        float first = 0;
+        bool differ = false;
+        for (const auto & [name, scale] : {std::pair<const char *, float>{"cfg_scale_text", run.text}, {"cfg_scale_speaker", run.speaker},
+                                           {"cfg_scale_instructions", run.caption}}) {
+            if (scale <= 0) continue;
+            differ = differ || (!scales.empty() && scale != first);
+            if (scales.empty()) first = scale;
+            scales += (scales.empty() ? "" : ", ") + std::string(name) + " " + number(scale);
+        }
+        if (differ) {
+            throw Error(Fault::InvalidArgument,
+                        "the joint guidance leaves out every condition together and takes one scale, and the scales above 0 differ (" + scales +
+                            "); give them the same value, or another cfg_guidance_mode",
+                        "cfg_guidance_mode");
+        }
     }
     // Only the joint guidance leaves the speaker out without a speaker scale above 0, since it leaves out everything.
     if (g.speaker_noise && !speaker && g.mode != GuidanceMode::Joint) {
@@ -119,8 +138,6 @@ Guidance Sampler::check(const Guidance & g, int steps, bool reference) const {
                         "sway_coeff");
         }
     }
-    Guidance run = g;
-    if (!reference) run.speaker = 0;
     return run;
 }
 
@@ -142,22 +159,25 @@ std::vector<float> Sampler::schedule(int steps, float sway) const {
 std::vector<Branch> Sampler::branches(int step, float t, const Guidance & g, std::vector<float> * scales) const {
     std::vector<Branch> out(1);
     if (scales) scales->clear();
+    enum class Condition { Text, Speaker, Caption };
     struct Guide {
-        bool text;
+        Condition condition;
         float scale;
     };
+    // The runtime's order: the text's guidance added first, then the speaker's, then the caption's.
     std::vector<Guide> enabled;
-    if (g.text > 0) enabled.push_back({true, g.text});
-    if (g.speaker > 0) enabled.push_back({false, g.speaker});
+    if (g.text > 0) enabled.push_back({Condition::Text, g.text});
+    if (g.speaker > 0) enabled.push_back({Condition::Speaker, g.speaker});
+    if (g.caption > 0) enabled.push_back({Condition::Caption, g.caption});
     if (dit_.meanflow() || enabled.empty() || !((double) t >= g.min_t && (double) t <= g.max_t)) return out;
     const Branch::Speaker left = g.speaker_noise ? Branch::Speaker::Noise : Branch::Speaker::Left;
     auto without = [&](const Guide & e) {
         Branch b;
-        if (e.text) b.text = false;
-        else b.speaker = left;
+        if (e.condition == Condition::Text) b.text = false;
+        if (e.condition == Condition::Speaker) b.speaker = left;
+        if (e.condition == Condition::Caption) b.caption = false;
         return b;
     };
-    // The runtime's order: the text's guidance added first, then the speaker's.
     switch (g.mode) {
         case GuidanceMode::Independent:
             for (const Guide & e : enabled) {
@@ -166,7 +186,7 @@ std::vector<Branch> Sampler::branches(int step, float t, const Guidance & g, std
             }
             break;
         case GuidanceMode::Joint:
-            out.push_back({false, left, false});
+            out.push_back({false, left, false, false});
             if (scales) scales->push_back(enabled[0].scale);
             break;
         case GuidanceMode::Alternating: {

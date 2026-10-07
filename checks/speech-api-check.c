@@ -8,8 +8,8 @@
  * each option's values with the category and the option's name and accepts the neutral ones, speaks one sentence into
  * a WAVE file, repeats a drawn seed's audio, gives the same audio with every option set at its default as with none,
  * checks the family's rules of the whole request (Qwen3-TTS's max_seconds, longest text, sampling and instructions,
- * Irodori-TTS's lengths, steps, progress, cut at the tail and guidance), cancels a request from another thread and one
- * before it runs, and runs requests from two threads at once.
+ * Irodori-TTS's lengths, steps, progress, cut at the tail, guidance, voice none and instructions), cancels a request
+ * from another thread and one before it runs, and runs requests from two threads at once.
  *
  * With a recognition model (transcribe), speech-api-recognition.c, which takes F32 or F16 weights only.
  *
@@ -596,24 +596,34 @@ static void run_concurrent(void * arg) {
     c->status = speech_synthesize(c->request, collect, &c->audio);
 }
 
-/** Cancels a request from another thread and one before it runs, and runs two at once. */
-static int check_threads(speech_model * model, const char * voice) {
+/**
+ * Runs `request`, which it frees, while another thread cancels it once it has reported progress or passed audio;
+ * whether it stopped as cancelled with at most one call of a callback after the cancel.
+ */
+static int cancelled_from_another_thread(speech_request * request, const char * what) {
     Cancelling c;
     memset(&c, 0, sizeof c);
     monitor_init(&c.monitor);
-    c.request = new_request(model, "これは途中で止める長めの文です。止まったら、残りの音声は届きません。", voice, 8);
-    speech_request_set_progress(c.request, on_cancelling_progress, &c);
+    c.request = request;
+    speech_request_set_progress(request, on_cancelling_progress, &c);
     Thread thread;
     thread_start(&thread, canceller, &c);
-    const speech_status status = speech_synthesize(c.request, on_cancelling_audio, &c);
+    const speech_status status = speech_synthesize(request, on_cancelling_audio, &c);
     thread_join(&thread);
-    const speech_result * result = speech_request_result(c.request);
-    int ok = expect(status, SPEECH_CANCELLED, NULL, "a request cancelled from another thread") && result &&
-             speech_result_stop(result) == SPEECH_STOP_CANCELLED && c.after_cancel <= 1;
-    printf("cancelled from another thread: %llu samples, %d call(s) of a callback after the cancel\n",
-           result ? (unsigned long long) speech_result_samples(result) : 0ULL, c.after_cancel);
-    speech_request_free(c.request);
+    const speech_result * result = speech_request_result(request);
+    const int ok = expect(status, SPEECH_CANCELLED, NULL, what) && result && speech_result_stop(result) == SPEECH_STOP_CANCELLED &&
+                   c.after_cancel <= 1;
+    printf("%s: %llu samples, %d call(s) of a callback after the cancel\n", what, result ? (unsigned long long) speech_result_samples(result) : 0ULL,
+           c.after_cancel);
+    speech_request_free(request);
     monitor_free(&c.monitor);
+    return ok;
+}
+
+/** Cancels a request from another thread and one before it runs, and runs two at once. */
+static int check_threads(speech_model * model, const char * voice) {
+    int ok = cancelled_from_another_thread(new_request(model, "これは途中で止める長めの文です。止まったら、残りの音声は届きません。", voice, 8),
+                                           "a request cancelled from another thread");
 
     speech_request * early = new_request(model, SENTENCE, voice, 9);
     speech_request_cancel(early);
@@ -637,6 +647,73 @@ static int check_threads(speech_model * model, const char * voice) {
     }
     if (ok) printf("two requests from two threads ran one after another\n");
     else fprintf(stderr, "FAIL: a request is not cancelled alone, or two requests at once do not both run\n");
+    return ok ? 0 : 1;
+}
+
+/**
+ * Irodori-TTS's instructions, the runtime's caption: a file without the caption's encoder takes "" and refuses any
+ * other naming what it lacks; one with it speaks a caption, gives the audio of none for one that strips to nothing,
+ * refuses one past its longest and RF's caption scale without one, and stops a caption's request at its progress and
+ * from another thread.
+ */
+static int check_irodori_instructions(speech_model * model, const speech_model_info * info, const char * voice) {
+    const char * caption = "落ち着いた女性の声で、近い距離感でやわらかく自然に読み上げてください。";
+    int ok = 1;
+    speech_request * r = new_request(model, "はい。", voice, 3);
+    if (!speech_model_info_takes(info, SPEECH_OPT_INSTRUCTIONS)) {
+        ok &= expect(speech_request_set_string(r, SPEECH_OPT_INSTRUCTIONS, ""), SPEECH_OK, NULL, "empty instructions") &&
+              expect(speech_request_set_string(r, SPEECH_OPT_INSTRUCTIONS, caption), SPEECH_ERROR_UNSUPPORTED, "instructions",
+                     "instructions without the caption's encoder") &&
+              strstr(speech_last_error(), "caption") != NULL;
+        speech_request_free(r);
+        if (ok) printf("a file without the caption's encoder refuses instructions: %s\n", speech_last_error());
+        else fprintf(stderr, "FAIL: a file without the caption's encoder does not refuse instructions by what it lacks\n");
+        return ok ? 0 : 1;
+    }
+    speech_request_free(r);
+    const int rate = speech_model_info_sample_rate(info);
+    Audio plain = {NULL, 0, 0}, blank = {NULL, 0, 0}, described = {NULL, 0, 0};
+    ok &= expect(speak(new_request(model, SENTENCE, voice, 4), &plain, NULL, NULL), SPEECH_OK, NULL, "a request without instructions");
+    r = new_request(model, SENTENCE, voice, 4);
+    speech_request_set_string(r, SPEECH_OPT_INSTRUCTIONS, "\xe3\x80\x80 \n");
+    ok &= expect(speak(r, &blank, NULL, NULL), SPEECH_OK, NULL, "instructions of spaces alone") && same_audio(&plain, &blank);
+    r = new_request(model, SENTENCE, voice, 4);
+    speech_request_set_string(r, SPEECH_OPT_INSTRUCTIONS, caption);
+    ok &= expect(speak(r, &described, NULL, NULL), SPEECH_OK, NULL, "instructions") && described.n > 0 && !same_audio(&plain, &described);
+    if (ok) {
+        printf("instructions of spaces alone give the %zu samples of none, and a caption %.2f s of other audio\n", plain.n,
+               (double) described.n / rate);
+    }
+    // 600 copies of a two-token word, past the 512 tokens of v4.1's captions.
+    char * long_caption = (char *) malloc(600 * 6 + 1);
+    long_caption[0] = '\0';
+    for (int i = 0; i < 600; i++) strcat(long_caption, "声、");
+    r = new_request(model, "はい。", voice, 4);
+    speech_request_set_string(r, SPEECH_OPT_INSTRUCTIONS, long_caption);
+    ok &= expect(speak(r, &blank, NULL, NULL), SPEECH_ERROR_OUT_OF_RANGE, "instructions", "instructions past the longest");
+    free(long_caption);
+    if (speech_model_info_takes(info, SPEECH_OPT_CFG_SCALE_INSTRUCTIONS)) {
+        r = new_request(model, "はい。", voice, 4);
+        speech_request_set_float(r, SPEECH_OPT_CFG_SCALE_INSTRUCTIONS, 5);
+        ok &= expect(speak(r, &blank, NULL, NULL), SPEECH_ERROR_INVALID_ARGUMENT, "cfg_scale_instructions", "a caption scale without instructions");
+    }
+    Progress progress;
+    memset(&progress, 0, sizeof progress);
+    progress.stop_at = 0.5;
+    r = new_request(model, SENTENCE, voice, 5);
+    speech_request_set_string(r, SPEECH_OPT_INSTRUCTIONS, caption);
+    speech_request_set_progress(r, record_progress, &progress);
+    Audio none = {NULL, 0, 0};
+    speech_stop stop;
+    ok &= expect(speak(r, &none, &stop, NULL), SPEECH_CANCELLED, NULL, "a caption's request stopped by its progress at 0.5") && none.n == 0 &&
+          stop == SPEECH_STOP_CANCELLED;
+    r = new_request(model, SENTENCE, voice, 6);
+    speech_request_set_string(r, SPEECH_OPT_INSTRUCTIONS, caption);
+    ok &= cancelled_from_another_thread(r, "a caption's request cancelled from another thread");
+    free(plain.samples);
+    free(blank.samples);
+    free(described.samples);
+    if (!ok) fprintf(stderr, "FAIL: Irodori-TTS's instructions are not followed as the runtime follows its caption\n");
     return ok ? 0 : 1;
 }
 
@@ -710,7 +787,7 @@ static int check_model(speech_model * model, const char * model_path, const char
 
     if (check_defaults(model, info, voice) != 0) return 1;
     if (irodori ? check_irodori_tts(model, info, voice) != 0 || check_irodori_options(model, info, voice) != 0 ||
-                      check_irodori_without_reference(model, info) != 0
+                      check_irodori_without_reference(model, info) != 0 || check_irodori_instructions(model, info, voice) != 0
                 : check_qwen3_tts(model, info, voice) != 0 || check_qwen3_tts_sampling(model, voice) != 0 ||
                       check_qwen3_tts_instructions(model, info, voice) != 0) {
         return 1;

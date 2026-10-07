@@ -8,22 +8,26 @@
 
 namespace irodori {
 
+/** A condition that ModernBERT-ja makes of tokens, by its projector and norm. */
+enum class Condition { Text, Caption };
+
 /**
- * The text condition: ModernBERT-ja on the tokens, then the residual projector and the norm that map
- * its 768 channels to the DiT's text space.
+ * The text and the caption conditions: ModernBERT-ja on the tokens, which the two share, then the condition's own
+ * residual projector and norm that map its 768 channels to the condition's space.
  *
- * The official runtime pads the tokens to 256 and masks the padding out of every attention; a padded
- * position never reaches a real one, so this runs on the real tokens alone.
+ * The official runtime pads the tokens to 256 (512 for a caption) and masks the padding out of every attention; a
+ * padded position never reaches a real one, so this runs on the real tokens alone.
  */
 class TextEncoder {
 public:
     explicit TextEncoder(const ModelFile & m);
 
     /**
-     * The text condition of `ids`, [dim, n]. When `layers` is given it receives ModernBERT's hidden
-     * states: the embeddings, then the output of each layer, the last after the final norm.
+     * The condition of `ids`, [dim, n]. When `layers` is given it receives ModernBERT's hidden states: the embeddings,
+     * then the output of each layer, the last after the final norm.
      */
-    ggml_tensor * build(Graph & g, const std::vector<int32_t> & ids, std::vector<ggml_tensor *> * layers = nullptr) const;
+    ggml_tensor * build(Graph & g, const std::vector<int32_t> & ids, Condition condition = Condition::Text,
+                        std::vector<ggml_tensor *> * layers = nullptr) const;
 
     int dim() const { return dim_; }
     int max_tokens() const { return max_tokens_; }

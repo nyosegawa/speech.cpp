@@ -163,6 +163,23 @@ if irodori:
     gaps = [b["_at"] - a["_at"] for a, b in zip(progress, progress[1:])]
     assert done == sorted(done) and 0 <= done[0] and done[-1] <= 1 and all(g > 0.9 for g in gaps), (done, gaps)
     print(f"p: 160 steps, {len(progress)} progress messages ({', '.join(f'{d:.2f}' for d in done)}) at least a second apart")
+    # The official runtime's settings that the file declares, each taken once and refused where it has no effect.
+    takes = {o["name"] for o in info["options"]}
+    speak("k", text="はい。", keep_tail=True, seconds=2)
+    expect_error({"type": "synthesize", "id": "e15", "text": "あ。", "voice": voice, "keep_tail": True, "tail_window_size": 5},
+                 "invalid_argument", "tail_window_size")
+    if "cfg_scale_text" in takes:
+        speak("g", text="はい。", steps=4, cfg_guidance_mode="joint", cfg_scale_text=4, cfg_scale_speaker=4, speaker_kv_scale=1.5)
+        expect_error({"type": "synthesize", "id": "e16", "text": "あ。", "voice": voice, "cfg_guidance_mode": "joint", "cfg_scale_text": 3,
+                      "cfg_scale_speaker": 5}, "invalid_argument", "cfg_guidance_mode")
+    if "none" in [v["name"] for v in info["voices"]]:
+        w.request({"type": "synthesize", "id": "none", "text": "はい。", "voice": "none"})
+        w.terminal("none", "end")
+    if "instructions" in takes:
+        expect_error({"type": "synthesize", "id": "e17", "text": "あ。", "voice": voice, "instructions": "声、" * 600}, "out_of_range",
+                     "instructions")
+    print("k, g and none: the runtime's settings the file declares were taken, and settings without effect and a caption past the "
+          "file's longest refused")
 else:
     expect_error({"type": "synthesize", "id": "e12", "text": "あ。", "voice": voice, "speed": 1.5}, "unsupported", "speed")
     expect_error({"type": "synthesize", "id": "e13", "text": "あ。", "voice": voice, "seconds": 2}, "unsupported", "seconds")

@@ -90,6 +90,7 @@ const OptionName vocabulary[] = {
     {"speaker_kv_scale", SPEECH_TYPE_FLOAT},
     {"speaker_kv_min_t", SPEECH_TYPE_FLOAT},
     {"speaker_kv_max_layers", SPEECH_TYPE_INT},
+    {"cfg_scale_instructions", SPEECH_TYPE_FLOAT},
 };
 constexpr size_t kOptions = sizeof vocabulary / sizeof vocabulary[0];
 

@@ -42,6 +42,15 @@ public:
     std::string text() const { return string(*member(meta_, "text")); }
     /** Whether the request spoke with a reference; meta.json's "reference" is null for one without. */
     bool reference() const { return member(meta_, "reference")->kind != JsonValue::Kind::Null; }
+    /** The request's instructions, the runtime's caption, or "" for a request without. */
+    std::string instructions() const {
+        for (const auto & [name, v] : options_) {
+            if (name == "instructions") return v.text;
+        }
+        return "";
+    }
+    /** Whether the runtime spoke with a caption, which dump.py saved the condition of. */
+    bool caption() const { return has("caption_state.npy"); }
     /** A number of meta.json, or `absent` when it has none. */
     double number(const std::string & key, double absent) const {
         const JsonValue * v = meta_.member(key);
@@ -60,7 +69,7 @@ public:
     /** Whether the request set an option of RF's guidance or schedule. */
     bool sets_guidance() const {
         for (const auto & option : options_) {
-            if (option.first.rfind("tail_", 0) != 0 && option.first != "keep_tail") return true;
+            if (option.first.rfind("tail_", 0) != 0 && option.first != "keep_tail" && option.first != "instructions") return true;
         }
         return false;
     }
@@ -81,6 +90,7 @@ public:
             else if (name == "speaker_kv_scale") g.speaker_kv_scale = (float) std::stod(v.text);
             else if (name == "speaker_kv_min_t") g.speaker_kv_min_t = (float) std::stod(v.text);
             else if (name == "speaker_kv_max_layers") g.speaker_kv_layers = std::stoi(v.text);
+            else if (name == "cfg_scale_instructions") g.caption = (float) std::stod(v.text);
         }
         return g;
     }
@@ -101,7 +111,8 @@ private:
     static constexpr const char * kKnown[] = {"cfg_scale_text", "cfg_scale_speaker", "cfg_guidance_mode", "cfg_min_t", "cfg_max_t",
                                               "truncation_factor", "rescale_k", "rescale_sigma", "speaker_uncond_mode", "sway_coeff",
                                               "keep_tail", "tail_window_size", "tail_std_threshold", "tail_mean_threshold",
-                                              "speaker_kv_scale", "speaker_kv_min_t", "speaker_kv_max_layers"};
+                                              "speaker_kv_scale", "speaker_kv_min_t", "speaker_kv_max_layers", "instructions",
+                                              "cfg_scale_instructions"};
 
     static irodori::GuidanceMode mode(const std::string & name) {
         for (size_t i = 0; i < std::size(irodori::kGuidanceModes); i++) {

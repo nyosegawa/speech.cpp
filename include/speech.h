@@ -273,8 +273,9 @@ typedef enum speech_option {
     SPEECH_OPT_CODE_PREDICTOR_TEMPERATURE = 19,
     /**
      * "instructions", a string: how to speak the text, described in words ("怒った口調で", "Speak slowly and softly."), as
-     * OpenAI's speech API names it, for a model trained to follow such a description; "" (the neutral value) gives none.
-     * One too long for the model beside the text is refused when the request runs, naming the option. Added in 3.1.
+     * OpenAI's speech API names it, for a model trained to follow such a description, which may describe the voice too
+     * (Irodori-TTS's caption); "" (the neutral value) gives none. One too long for the model is refused when the request
+     * runs, naming the option. Added in 3.1.
      */
     SPEECH_OPT_INSTRUCTIONS = 20,
     /**
@@ -353,7 +354,12 @@ typedef enum speech_option {
      * "speaker_kv_max_layers", an integer of 1 or more: the layers, from the first, that speaker_kv_scale reaches.
      * Added in 3.1.
      */
-    SPEECH_OPT_SPEAKER_KV_MAX_LAYERS = 37
+    SPEECH_OPT_SPEAKER_KV_MAX_LAYERS = 37,
+    /**
+     * "cfg_scale_instructions", a number of 0 or more: how strongly a guided sampler follows the instructions, as
+     * cfg_scale_text. Added in 3.1.
+     */
+    SPEECH_OPT_CFG_SCALE_INSTRUCTIONS = 38
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */

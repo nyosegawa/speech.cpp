@@ -46,11 +46,19 @@ int main(int argc, char ** argv) {
             const Npy cond = npy("dit_cond.npy"), blocks = npy("dit_step0_blocks.npy");
             // A request without a reference attends to no speaker.
             const Npy speaker = d.reference() ? npy("speaker_state.npy") : Npy{};
-            Conditions c{text.f32, (int) text.shape[0], speaker.f32, d.reference() ? (int) speaker.shape[0] : 0, {}};
+            if (d.caption() && !model.boolean("irodori-tts.caption_condition")) {
+                std::printf("%s: skipped, the file lacks the caption's encoder that instructions need\n", d.dir().filename().u8string().c_str());
+                continue;
+            }
+            // A request without a caption attends to none.
+            const Npy caption = d.caption() ? npy("caption_state.npy") : Npy{};
+            Conditions c{text.f32, (int) text.shape[0], speaker.f32, d.reference() ? (int) speaker.shape[0] : 0, {},
+                         caption.f32, d.caption() ? (int) caption.shape[0] : 0};
             const int frames = (int) noise.shape[0], steps = (int) times.shape[0];
             const size_t n = (size_t) frames * dit.latent_dim();
             std::printf("%s (%d frames, %d steps)\n", d.dir().filename().u8string().c_str(), frames, steps);
-            const Guidance guidance = sampler.check(dit.meanflow() ? sampler.guidance() : d.guidance(sampler.guidance()), steps, d.reference());
+            const Guidance guidance =
+                sampler.check(dit.meanflow() ? sampler.guidance() : d.guidance(sampler.guidance()), steps, d.reference(), d.caption());
             // The dump's times and the 0 the last step ends at.
             std::vector<float> dumped = times.f32;
             dumped.push_back(0.0f);
@@ -128,7 +136,8 @@ int main(int argc, char ** argv) {
                 // runtime, or a port that ignored it would pass.
                 Conditions plain = c;
                 plain.speaker_noise.clear();
-                const std::vector<float> default_x = sampler.sample(plain, noise.f32, frames, steps, sampler.check(sampler.guidance(), steps, d.reference()));
+                const std::vector<float> default_x =
+                    sampler.sample(plain, noise.f32, frames, steps, sampler.check(sampler.guidance(), steps, d.reference(), d.caption()));
                 const Diff dd = compare(default_x.data(), &xs.f32[(steps - 1) * n], n);
                 print_diff("  the same with the default guidance", dd);
                 ok = ok && dd.snr_db + 6 < df.snr_db;

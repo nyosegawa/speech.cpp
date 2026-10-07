@@ -111,17 +111,19 @@ size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
     if (r.guidance && dit_.meanflow()) throw std::logic_error("a MeanFlow model takes no guidance, and the options of its file offer none");
     const bool reference = voice.speaker_tokens > 0;
     if (!reference && !has_null_speaker()) throw std::logic_error("a voice without a reference reached a file without the null speaker");
+    const std::string caption = strip_caption(r.caption);
+    if (!caption.empty() && !has_caption()) throw std::logic_error("a caption reached a file without the caption's encoder");
     const TailCut & tail = r.tail ? *r.tail : tail_;
     const int steps = r.steps > 0 ? r.steps : sampler_.default_steps();
     duration_.check(r.length);
-    const Guidance guidance = sampler_.check(r.guidance ? *r.guidance : sampler_.guidance(), steps, reference);
+    const Guidance guidance = sampler_.check(r.guidance ? *r.guidance : sampler_.guidance(), steps, reference, !caption.empty());
     tail_.check(tail);
     Stats local;
     Stats & st = stats ? *stats : local;
     const auto start = std::chrono::steady_clock::now();
-    std::vector<float> text_state;
+    std::vector<float> text_state, caption_state;
     float predicted = 0;
-    int tokens = 0;
+    int tokens = 0, caption_tokens = 0;
     {
         Timer t{st.text};
         const std::string text = normalize_text(r.text);
@@ -133,20 +135,35 @@ size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
                                                std::to_string(text_.max_tokens()) + "; split it into sentences",
                         "text");
         }
+        // The caption is tokenized as it is, after <s>, as the runtime's caption tokenizer takes it.
+        std::vector<int32_t> caption_ids;
+        if (!caption.empty()) {
+            caption_ids = tokenizer_.encode(caption);
+            caption_tokens = (int) caption_ids.size();
+            const int most = (int) model_->u32("irodori-tts.caption.max_tokens");
+            if (caption_tokens > most) {
+                throw Error(Fault::OutOfRange, "the instructions are " + std::to_string(caption_tokens) + " tokens long and Irodori-TTS takes at most " +
+                                                   std::to_string(most) + "; shorten them",
+                            "instructions");
+            }
+        }
         Graph g;
         ggml_tensor * state = text_.build(g, ids);
         g.output(state);
+        ggml_tensor * caption_condition = caption.empty() ? nullptr : text_.build(g, caption_ids, Condition::Caption);
+        if (caption_condition) g.output(caption_condition);
         // The runtime runs the duration predictor only when no length is fixed.
         ggml_tensor * sum = nullptr;
         if (!r.length.fixed()) {
             // The speaker's summary is its condition's first token, or the learned null speaker without a reference.
             ggml_tensor * summary = reference ? g.input(std::vector<float>(voice.speaker.begin(), voice.speaker.begin() + speaker_.dim()), speaker_.dim())
                                               : model_->tensor("duration.null_speaker");
-            sum = duration_.build(g, state, summary);
+            sum = duration_.build(g, state, summary, caption_condition);
             g.output(sum);
         }
         g.compute(backend_, allocr_);
         text_state = Graph::read(state);
+        if (caption_condition) caption_state = Graph::read(caption_condition);
         if (sum) predicted = Graph::read(sum)[0];
     }
     const Length length = duration_.length(r.length, predicted);
@@ -154,7 +171,7 @@ size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
     std::vector<float> x;
     {
         Timer t{st.sampling};
-        Conditions c{text_state, tokens, voice.speaker, voice.speaker_tokens, {}};
+        Conditions c{text_state, tokens, voice.speaker, voice.speaker_tokens, {}, caption_state, caption_tokens};
         const size_t n = (size_t) frames * codec_.latent_dim(), m = guidance.speaker_noise ? voice.speaker.size() : 0;
         std::vector<float> noise = r.noise, speaker_draw = r.speaker_noise;
         if (noise.empty()) {

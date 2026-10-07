@@ -8,10 +8,10 @@
 namespace irodori {
 
 /**
- * What the DiT attends to besides the latent: the text and speaker conditions, channel-first, and the noise that takes
- * the speaker condition's place in a branch of RF's guidance, of the speaker condition's shape, when the request asks
- * for it. A request without a reference has no speaker tokens, and the DiT then attends to no speaker, as the runtime's
- * mask of no_ref makes it.
+ * What the DiT attends to besides the latent: the text, speaker and caption conditions, channel-first, and the noise
+ * that takes the speaker condition's place in a branch of RF's guidance, of the speaker condition's shape, when the
+ * request asks for it. A request without a reference has no speaker tokens and one without a caption no caption tokens,
+ * and the DiT then attends to none of them, as the runtime's masks of no_ref and of an empty caption make it.
  */
 struct Conditions {
     std::vector<float> text;
@@ -19,18 +19,22 @@ struct Conditions {
     std::vector<float> speaker;
     int speaker_tokens = 0;
     std::vector<float> speaker_noise;
+    std::vector<float> caption;
+    int caption_tokens = 0;
 };
 
 /**
  * What one latent of the DiT's batch attends to besides itself. RF's guidance runs the latent again without the text,
- * without the speaker, or with noise in the speaker's place. `scaled` says whether a request's scale of the speaker's
- * keys and values reaches the branch, which the runtime leaves off the joint guidance's branch without every condition.
+ * without the speaker, with noise in the speaker's place, or without the caption. `scaled` says whether a request's
+ * scale of the speaker's keys and values reaches the branch, which the runtime leaves off the joint guidance's branch
+ * without every condition.
  */
 struct Branch {
     enum class Speaker { Kept, Left, Noise };
     bool text = true;
     Speaker speaker = Speaker::Kept;
     bool scaled = true;
+    bool caption = true;
 };
 
 /** The factor of the speaker's keys and values in the first `layers` blocks, as the runtime's speaker_kv_scale applies it. */

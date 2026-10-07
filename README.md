@@ -142,7 +142,7 @@ N`, the C API's load parameters. `speech tts` and `speech asr` take every reques
 `--speed`, `--seconds`, `--duration-scale`, `--steps`, `--max-seconds`, `--timestamps`, `--prompt`, `--decoding`,
 `--do-sample`, `--top-k`, `--top-p`, `--temperature`, `--repetition-penalty`, the code predictor's
 `--code-predictor-do-sample`, `--code-predictor-top-k`, `--code-predictor-top-p` and `--code-predictor-temperature`,
-`--instructions`, and Irodori-TTS's options from `--cfg-scale-text` to `--speaker-kv-max-layers`. A flag's value follows
+`--instructions`, and Irodori-TTS's options from `--cfg-scale-text` to `--cfg-scale-instructions`. A flag's value follows
 it or an `=` (`--seed 7`, `--seed=7`), and a number is read whole: `--steps 4x` is a usage error. A boolean option is
 true by its flag alone and takes `true` or `false` only after an `=` (`--timestamps`, `--do-sample=false`,
 `--keep-tail`), so that the argument after it stays an argument. The model refuses an option it does not take, as in
@@ -500,13 +500,13 @@ nothing else.
 | `code_predictor_top_k` | int | none | 0 (every token) to 2147483647, default `qwen3-tts.generation.code_predictor.top_k` (50) | not taken | not taken | not taken |
 | `code_predictor_top_p` | float | none | 0 to 1, default `qwen3-tts.generation.code_predictor.top_p` (1) | not taken | not taken | not taken |
 | `code_predictor_temperature` | float | none | above 0, default `qwen3-tts.generation.code_predictor.temperature` (0.9) | not taken | not taken | not taken |
-| `instructions` | string | `""` | 1.7B: default `""`, any text; steers. 0.6B: not taken | not taken | not taken | not taken |
+| `instructions` | string | `""` | 1.7B: default `""`, any text; steers. 0.6B: not taken | default `""`, any text of at most `irodori-tts.caption.max_tokens` (512) tokens, where the file holds the caption's encoder (`irodori-tts.caption_condition`); steers | not taken | not taken |
 
-The options after `prompt` are Irodori-TTS's, fields of the official runtime's request that a request sets as the
-runtime takes them (Irodori-TTS, Guidance, schedule and the tail, below). The other families do not take them, and
-none has a neutral value. An RF file (v4.1-Small) takes the guidance and the schedule, which a MeanFlow file
-(v4.1-Small-MF) does not take, since MeanFlow folded the guidance into its training and the runtime ignores them for
-it:
+The options from `cfg_scale_text` to `speaker_kv_max_layers` and `cfg_scale_instructions` are Irodori-TTS's, fields
+of the official runtime's request that a request sets as the runtime takes them (Irodori-TTS, Guidance, schedule and
+the tail, below). The other families do not take them, and none has a neutral value. An RF file (v4.1-Small) takes
+the guidance and the schedule, which a MeanFlow file (v4.1-Small-MF) does not take, since MeanFlow folded the guidance
+into its training and the runtime ignores them for it:
 
 | Option | Type | RF (v4.1-Small) | MeanFlow (v4.1-Small-MF) |
 |---|---|---|---|
@@ -524,6 +524,7 @@ it:
 | `speaker_kv_scale` | float | above 0, default 1 | not taken |
 | `speaker_kv_min_t` | float | 0 to 1, default `irodori-tts.sampler.speaker_kv_min_t` (0.9) | not taken |
 | `speaker_kv_max_layers` | int | 1 to `irodori-tts.dit.num_layers` (12), default 12 | not taken |
+| `cfg_scale_instructions` | float | 0 or more, default `irodori-tts.sampler.cfg_caption` (3), where the file holds the caption's encoder | not taken |
 
 A value at an option's neutral value is accepted by every model; any other value of an option a model does not take
 is `unsupported`, and an option marked "none" has no neutral value. A string option's value must be one of its
@@ -564,8 +565,8 @@ What only the whole request shows is refused when the request runs, before any w
   length is kept within the bounds, as the official runtime keeps it.
 - Irodori-TTS, one of `rescale_k` and `rescale_sigma` without the other: `invalid_argument`, option the one left out.
 - Irodori-TTS, `cfg_min_t` above `cfg_max_t`: `invalid_argument`, option `cfg_min_t`.
-- Irodori-TTS, the `joint` guidance with `cfg_scale_text` and `cfg_scale_speaker` both above 0 and not equal:
-  `invalid_argument`, option `cfg_guidance_mode`.
+- Irodori-TTS, the `joint` guidance with scales above 0 that are not equal, of `cfg_scale_text`,
+  `cfg_scale_speaker` and, with instructions, `cfg_scale_instructions`: `invalid_argument`, option `cfg_guidance_mode`.
 - Irodori-TTS, a `sway_coeff` that leaves two of the request's steps at the same time: `out_of_range`, option
   `sway_coeff`.
 - Irodori-TTS, a value other than the default that another value of the request leaves without effect:
@@ -575,7 +576,10 @@ What only the whole request shows is refused when the request runs, before any w
   `tail_std_threshold` and `tail_mean_threshold` with `keep_tail`; `speaker_kv_min_t` and `speaker_kv_max_layers`
   with `speaker_kv_scale` at 1, which scales nothing; and, with the voice `none`, which has no speaker condition,
   `cfg_scale_speaker` other than its default and 0, `speaker_uncond_mode` `noise` and `speaker_kv_scale` other than
-  1. The runtime ignores each, mostly without a word.
+  1; and `cfg_scale_instructions` other than its default and 0 without instructions. The runtime ignores each, mostly
+  without a word.
+- Irodori-TTS, instructions of more tokens than `irodori-tts.caption.max_tokens` (512), `<s>` included:
+  `out_of_range`, option `instructions`. The runtime cuts them.
 - A text longer than `speech_model_info_max_text_tokens()`: `out_of_range`, option `text`. Irodori-TTS counts the
   tokens of the normalized text and takes at most `irodori-tts.text.max_tokens` (256). Qwen3-TTS takes what leaves its
   talker room for the longest speech: `qwen3-tts.talker.max_position_embeddings` - `qwen3-tts.generation.max_frames` -
@@ -1204,11 +1208,12 @@ runtime's guidance, text 3.0 and speaker 5.0 while t ≥ 0.5):
   both samplers, RF's with the runtime's guidance modes and scales, Sway Sampling, the truncation of the noise, the
   temporal score rescaling and the scaling of the speaker's keys and values,
 - speaking without a reference, the runtime's `no_ref`, as the voice `none` of a layout 2 file,
+- captions (VoiceDesign), the runtime's `caption`, as the request's `instructions`, with the caption's guidance of RF,
 - the tail cut where the latent goes flat, with the runtime's settings, and the codec decoder, a first window of 12
   frames (0.48 s) and then 48 at a time, each window giving the samples of decoding the whole latent at once.
 
-Not implemented: captions (VoiceDesign), voices of several references or another loudness, speaker-inversion
-embeddings, LoRA adapters and SilentCipher's watermark. The noise comes
+Not implemented: voices of several references or another loudness, speaker-inversion embeddings, LoRA adapters and
+SilentCipher's watermark. The noise comes
 from speech.cpp's own generator, so a seed gives other audio than the same seed in the official runtime. A reference
 at another rate than 48 kHz is resampled with the library's filter, not with the runtime's torchaudio defaults (Audio
 at another rate, above).
@@ -1272,9 +1277,10 @@ under the C API's names (Options, above), and a request that sets none of them s
 
 - **Guidance, RF.** v4.1-Small runs its DiT on a batch, the latent with every condition and the latent with one left
   out, and moves along the first plus each scale times its difference from the others, while the step's time lies
-  from `cfg_min_t` to `cfg_max_t`. `cfg_scale_text` and `cfg_scale_speaker` are the scales, and 0 leaves that branch
-  out. `cfg_guidance_mode` `joint` leaves out the text and the speaker in one branch at one scale, and `alternating`
-  leaves out one condition a step, in turn by the step's number, unguided steps counted. `speaker_uncond_mode`
+  from `cfg_min_t` to `cfg_max_t`. `cfg_scale_text`, `cfg_scale_speaker` and, with instructions,
+  `cfg_scale_instructions` are the scales, and 0 leaves that branch out. `cfg_guidance_mode` `joint` leaves out every
+  condition in one branch at one scale, and `alternating` leaves out one condition a step, in turn by the step's
+  number, unguided steps counted. `speaker_uncond_mode`
   `noise` gives the branch without the speaker noise of the speaker condition's spread in its place, drawn from the
   request's seed after the latent's noise.
 - **Schedule and noise, RF.** `sway_coeff` bends the linear schedule as Sway Sampling (F5-TTS) does, which the runtime
@@ -1293,7 +1299,31 @@ under the C API's names (Options, above), and a request that sets none of them s
   keeps the whole length.
 
 v4.1-Small-MF takes none of RF's options: MeanFlow folded the guidance into its training, and the runtime ignores
-the guidance, the schedule, the noise's settings and the speaker's scaling for it. Where the runtime ignores a setting that another one
+the guidance, the schedule, the noise's settings and the speaker's scaling for it.
+
+### Instructions
+
+`instructions`, the runtime's caption, describes in words the voice and the way of speaking, as OpenAI's speech API's
+member of the same name does: 「落ち着いた女性の声で、近い距離感でやわらかく自然に読み上げてください。」. With a
+reference the speech keeps the reference's voice and follows the description where it can; with the voice `none` the
+description alone chooses the voice, the runtime's VoiceDesign:
+
+```sh
+build/speech tts Irodori-TTS-866M-MF-v4.1-F16.gguf --voice none --instructions "低く落ち着いた男性の声で、ゆっくりと読み上げてください。" \
+    -o out.wav "明日の東京は晴れです。"
+```
+
+The caption is not normalized as the text is: it loses what Python's `str.strip()` removes at either end, U+3000
+among it, and is tokenized after `<s>` by the text's tokenizer. One that strips to nothing is no caption, and the
+request speaks as one without, sample for sample. It is at most `irodori-tts.caption.max_tokens` (512) tokens, `<s>`
+included; the runtime cuts a longer one, which speech.cpp refuses. ModernBERT-ja, shared with the text, and the
+caption's own projector and norm make its condition, which the DiT attends to after the speaker and the duration
+predictor takes as the mean of its tokens in place of the null caption. With RF, the guidance also runs a branch
+without the caption at `cfg_scale_instructions`. A request without instructions computes none of this: the caption's
+weights stay in memory and the graph is the one a file without them builds.
+
+A layout 1 file holds no caption's encoder; it takes `""` and refuses other instructions, naming what it lacks
+(docs/adr/0026). Where the runtime ignores a setting that another one
 leaves without effect, or clamps a value, speech.cpp refuses it (Options, above).
 
 The runtime's request takes more, which speech.cpp does not offer:
@@ -1362,6 +1392,16 @@ audio.cpp v0.8.2 took 1.22 s (M5) and 0.80 s (RTX 2080) to the median first audi
 steps, answering with the whole sentence. Memory is the worker's peak memory footprint on the M5 and the
 rise of the GPU's memory on the RTX 2080, with the F32 codec. The first audio comes after the text, the
 whole sampler and the codec's first window, so it grows with the sentence.
+
+The table's requests have no instructions, and a layout 2 file runs them as a layout 1 file does. Instructions add the
+caption's pass through ModernBERT-ja beside the text's and its keys to every block of the DiT, and with RF a branch to
+the batch of each guided step. `checks/irodori-caption-timing.py` times the same sentences without instructions and
+with a caption through the worker:
+
+```sh
+python3 checks/irodori-caption-timing.py build/speech Irodori-TTS-866M-MF-v4.1-F16.gguf prompts/speak-ja-JP.json \
+    bright=bright-young-woman-10s.voice.gguf [--steps 16] [--caption TEXT]...
+```
 
 ## FastConformer
 

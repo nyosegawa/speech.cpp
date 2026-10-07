@@ -27,8 +27,11 @@ constexpr const char * kSpeakerNoise = "noise";
  * folded the guidance into its training and takes none of it.
  */
 struct Guidance {
-    /** The scales of the guidance by the text and by the speaker; a scale of 0 runs no branch without its condition. */
-    float text = 0, speaker = 0;
+    /**
+     * The scales of the guidance by the text, by the speaker and by the caption; a scale of 0 runs no branch without
+     * its condition.
+     */
+    float text = 0, speaker = 0, caption = 0;
     GuidanceMode mode = GuidanceMode::Independent;
     /** The times the guidance runs at, from min_t to max_t, compared in double precision as the runtime compares them. */
     double min_t = 0, max_t = 0;
@@ -65,14 +68,16 @@ public:
 
     /**
      * Throws, naming the option at fault, unless the runtime would run `g` in `steps` steps, for a voice with a speaker
-     * condition or, without `reference`, for one without, as it is asked: the rescaling given whole, a guidance range
-     * that is not empty, the scales equal for the joint guidance, a schedule whose times fall at every step, and no
-     * setting that has no effect because of another (a guidance mode, range or speaker mode without a scale above 0 to
-     * use it, the speaker's scaling's time or layers without a scale, and the speaker's guidance, noise or scaling
-     * without a reference). The runtime ignores such a setting, mostly without a word, and raises an error for the
-     * others. Returns the guidance as the runtime runs it, which has no speaker's scale without a reference.
+     * condition or, without `reference`, for one without, and for a request with a caption or, without `caption`, one
+     * without, as it is asked: the rescaling given whole, a guidance range that is not empty, the scales above 0 equal
+     * for the joint guidance, a schedule whose times fall at every step, and no setting that has no effect because of
+     * another (a guidance mode, range or speaker mode without a scale above 0 to use it, the speaker's scaling's time or
+     * layers without a scale, the speaker's guidance, noise or scaling without a reference, and the caption's scale
+     * without a caption). The runtime ignores such a setting, mostly without a word, and raises an error for the
+     * others. Returns the guidance as the runtime runs it, which has no speaker's scale without a reference and no
+     * caption's without a caption.
      */
-    Guidance check(const Guidance & g, int steps, bool reference = true) const;
+    Guidance check(const Guidance & g, int steps, bool reference = true, bool caption = false) const;
 
     /** The times the sampler visits, steps + 1 of them, computed in float32 as torch computes them. */
     std::vector<float> schedule(int steps, float sway = 0) const;

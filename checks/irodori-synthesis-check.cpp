@@ -25,7 +25,9 @@ namespace {
  * The least SNR against the official that a dump's audio reaches. Measured on an Apple M5 on 2026-10-07: 72 to 112 dB on
  * the CPU in F32. On Metal the sampler carries the half-precision rounding of Metal's matrix kernel into the latent, and
  * the audio lies 22 to 61 dB from the official (11 to 29 dB with Q8_0 weights): the same speech, not the same waveform.
- * A wrong stage gives a few dB.
+ * The guidance's branch without the caption carries it further: rf-weather-caption lies 11.8 dB from the official on
+ * Metal and 88 dB on the CPU, while each of its DiT steps lies 44 dB or more from the official's. A wrong stage gives a
+ * few dB.
  */
 double least_snr_db(const std::string & dump) {
     // rf-weather-cfg's speaker scale of 7, guiding from t 0.9 down to 0.3, carries the rounding furthest: its audio lies
@@ -57,10 +59,15 @@ int main(int argc, char ** argv) {
                 std::printf("%s: skipped, the file lacks the null speaker that a request without a reference speaks with\n", name.c_str());
                 continue;
             }
+            if (d.caption() && !synth.has_caption()) {
+                std::printf("%s: skipped, the file lacks the caption's encoder that instructions need\n", name.c_str());
+                continue;
+            }
             const Voice voice = d.reference() ? synth.voice_from_latent(read_npy(d.file("ref_latent.npy").u8string()).f32) : Voice{};
             const Npy official = read_npy(d.file("audio.npy").u8string());
             Request r;
             r.text = d.text();
+            r.caption = d.instructions();
             r.steps = (int) d.number("steps", 0);
             r.length = d.length();
             if (!meanflow) r.guidance = d.guidance(synth.default_guidance());

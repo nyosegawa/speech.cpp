@@ -24,11 +24,16 @@ DurationPredictor::DurationPredictor(const ModelFile & m) : m_(m) {
     max_frames_ = std::max(1, (int) std::floor(max_seconds_ * sample_rate_ / (double) hop_));
 }
 
-ggml_tensor * DurationPredictor::build(Graph & g, ggml_tensor * text_state, ggml_tensor * speaker_summary) const {
+ggml_tensor * DurationPredictor::build(Graph & g, ggml_tensor * text_state, ggml_tensor * speaker_summary, ggml_tensor * caption_state) const {
     ggml_context * ctx = g.ctx();
     const Layers l{ctx, m_, eps_};
     ggml_tensor * speaker = ggml_silu(ctx, speaker_summary);
-    ggml_tensor * caption = ggml_silu(ctx, m_.tensor("duration.null_caption"));
+    ggml_tensor * summary = m_.tensor("duration.null_caption");
+    if (caption_state) {
+        // The runtime's masked mean over the caption's tokens, every one of which is real here.
+        summary = ggml_reshape_1d(ctx, ggml_mean(ctx, ggml_cont(ctx, ggml_transpose(ctx, caption_state))), caption_state->ne[0]);
+    }
+    ggml_tensor * caption = ggml_silu(ctx, summary);
     ggml_tensor * h = l.linear(text_state, "duration.in_proj");
     const int64_t dim = h->ne[0];
     for (int i = 0; i < layers_; i++) {

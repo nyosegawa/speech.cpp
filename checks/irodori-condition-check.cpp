@@ -1,7 +1,7 @@
 // Checks the speaker encoder and the duration predictor of Irodori-TTS against the official implementation
 // on every dump of reference/irodori-tts/dump.py, each stage from the dump's own inputs: the reference latent
-// for the speaker encoder, and the text and speaker conditions for the duration predictor, or the null speaker
-// for a dump without a reference. The length is checked against the frames the official runtime synthesized,
+// for the speaker encoder, and the text, speaker and caption conditions for the duration predictor, the null
+// speaker for a dump without a reference and the null caption for one without instructions. The length is checked against the frames the official runtime synthesized,
 // with the dump's seconds, duration scale and speed: a dump with fixed seconds has no prediction, and only its
 // length is checked.
 //
@@ -38,6 +38,7 @@ int main(int argc, char ** argv) {
         const SpeakerEncoder speaker(model);
         const DurationPredictor duration(model);
         const bool null_speaker = model.boolean("irodori-tts.duration.null_speaker");
+        const bool caption = model.boolean("irodori-tts.caption_condition");
         ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
 
         // The speaker encoder and the duration predictor are the same in v4.1-Small-MF and v4.1-Small, so every
@@ -53,6 +54,10 @@ int main(int argc, char ** argv) {
             std::printf("%s\n", dir.filename().u8string().c_str());
             if (!d.reference() && !null_speaker) {
                 std::printf("  skipped: the file lacks the null speaker that a request without a reference speaks with\n");
+                continue;
+            }
+            if (d.caption() && !caption) {
+                std::printf("  skipped: the file lacks the caption's encoder that instructions need\n");
                 continue;
             }
             std::vector<float> summary;
@@ -87,13 +92,18 @@ int main(int argc, char ** argv) {
             Graph g;
             ggml_tensor * text_state = g.input(text.f32, text.shape[1], text.shape[0]);
             ggml_tensor * speaker_summary = d.reference() ? g.input(summary, (int64_t) summary.size()) : model.tensor("duration.null_speaker");
-            ggml_tensor * sum = duration.build(g, text_state, speaker_summary);
+            ggml_tensor * caption_state = nullptr;
+            if (d.caption()) {
+                const Npy c = read_npy(d.file("caption_state.npy").u8string());
+                caption_state = g.input(c.f32, c.shape[1], c.shape[0]);
+            }
+            ggml_tensor * sum = duration.build(g, text_state, speaker_summary, caption_state);
             g.output(sum);
             g.compute(backend, allocr);
             const float predicted = Graph::read(sum)[0];
             const int frames = duration.length(options, predicted).frames;
-            std::printf("  duration%s: log(1 + frames) %.6f (official %.6f), scale %g at speed %g, %d frames (official %d)\n",
-                        d.reference() ? "" : " with the null speaker", std::log1p(predicted), log_frames.f32[0], options.duration_scale,
+            std::printf("  duration%s%s: log(1 + frames) %.6f (official %.6f), scale %g at speed %g, %d frames (official %d)\n",
+                        d.reference() ? "" : " with the null speaker", d.caption() ? " with the caption" : "", std::log1p(predicted), log_frames.f32[0], options.duration_scale,
                         options.speed, frames, want);
             // F32 and F16 give the official frames; Q8_0 weights move a 27 s text by one frame (40 ms).
             ok = ok && std::abs(frames - want) <= 1;

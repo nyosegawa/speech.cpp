@@ -15,9 +15,10 @@ meta.json's "reference" is then null.
 The request options are the C API's names of the runtime's SamplingRequest fields, in kebab-case: for rf
 --cfg-scale-text, --cfg-scale-speaker, --cfg-guidance-mode, --cfg-min-t, --cfg-max-t, --truncation-factor,
 --rescale-k, --rescale-sigma, --speaker-uncond-mode, --sway-coeff (Sway Sampling when not 0),
---speaker-kv-scale, --speaker-kv-min-t and --speaker-kv-max-layers, and for both --keep-tail,
---tail-window-size, --tail-std-threshold and --tail-mean-threshold. meta.json keeps the ones given under the C
-API's names in "options", and a check takes the model's default for the others.
+--speaker-kv-scale, --speaker-kv-min-t, --speaker-kv-max-layers and --cfg-scale-instructions, and for both
+--instructions (the runtime's caption), --keep-tail, --tail-window-size, --tail-std-threshold and
+--tail-mean-threshold. meta.json keeps the ones given under the C API's names in "options", and a check takes the
+model's default for the others.
 
 The official runtime.synthesize() runs once with its stages wrapped, so what is saved is what it computed.
 The finer stages (the text encoder's layers, the speaker encoder, each DiT block of the first step, the
@@ -28,6 +29,8 @@ result as synthesize(). Writes <out dir>/*.npy and meta.json:
   text_layers          ModernBERT's hidden states on the N tokens alone: embeddings then each layer, [26, N, 768]
   text_backbone        ModernBERT's final output on the padded input, [N, 768]
   text_state           the text condition after the projector and its norm, [N, 512]
+  caption_ids          with instructions: the caption's tokens with <s>, [C]; the runtime pads them to 512
+  caption_state        the caption condition after its projector and norm, [C, 512]
   ref_wav              the reference as read, mono float32 at 48 kHz
   ref_wav_normalized   the reference after loudness normalization to -16 LUFS
   ref_latent           its DACVAE latent (the encoder's mean), [T, 32]
@@ -87,9 +90,9 @@ RF_OPTIONS = {"cfg_scale_text": (float, "cfg_scale_text"), "cfg_scale_speaker": 
               "rescale_k": (float, "rescale_k"), "rescale_sigma": (float, "rescale_sigma"),
               "speaker_uncond_mode": (str, "speaker_uncond_mode"), "sway_coeff": (float, "sway_coeff"),
               "speaker_kv_scale": (float, "speaker_kv_scale"), "speaker_kv_min_t": (float, "speaker_kv_min_t"),
-              "speaker_kv_max_layers": (int, "speaker_kv_max_layers")}
+              "speaker_kv_max_layers": (int, "speaker_kv_max_layers"), "cfg_scale_instructions": (float, "cfg_scale_caption")}
 OPTIONS = {**RF_OPTIONS, "tail_window_size": (int, "tail_window_size"), "tail_std_threshold": (float, "tail_std_threshold"),
-           "tail_mean_threshold": (float, "tail_mean_threshold")}
+           "tail_mean_threshold": (float, "tail_mean_threshold"), "instructions": (str, "caption")}
 for name, (kind, _) in OPTIONS.items():
     parser.add_argument("--" + name.replace("_", "-"), type=kind)
 parser.add_argument("--keep-tail", action="store_true")
@@ -184,6 +187,17 @@ state = model.text_norm(model.text_encoder(backbone, kwargs["text_input_ids"], k
 assert torch.equal(state, text_state[0, :n])
 save("text_state", state)
 
+# Caption: the runtime pads it to 512 tokens and masks the rest, and masks all of one that strips to nothing.
+caption_state, caption_mask = calls["encode_conditions"][-1][1][4:6]
+has_caption = bool(caption_mask.any())
+assert has_caption == bool(options.get("instructions", "").strip())
+if has_caption:
+    c = int(caption_mask[0].sum())
+    save("caption_ids", kwargs["caption_input_ids"][0, :c])
+    recomputed = model.caption_norm(model.caption_encoder(backbone, kwargs["caption_input_ids"], kwargs["caption_mask"]))[0, :c]
+    assert torch.equal(recomputed, caption_state[0, :c])
+    save("caption_state", caption_state[0, :c])
+
 # Reference: loudness, the DACVAE encoder, the speaker encoder. Without a reference the runtime encodes a zero
 # latent whose every position is masked, which the port leaves out.
 if not args.no_ref:
@@ -232,11 +246,13 @@ if not meanflow and uncond_mode == "noise":
     save("speaker_uncond", speaker_uncond[0])
 scales = {}
 if not meanflow:
-    text_scale, _, speaker_scale, _ = ir.resolve_cfg_scales(
+    text_scale, caption_scale, speaker_scale, _ = ir.resolve_cfg_scales(
         cfg_guidance_mode=mode, cfg_scale_text=request.cfg_scale_text, cfg_scale_caption=request.cfg_scale_caption,
-        cfg_scale_speaker=request.cfg_scale_speaker, cfg_scale=request.cfg_scale, use_caption_condition=False,
+        cfg_scale_speaker=request.cfg_scale_speaker, cfg_scale=request.cfg_scale, use_caption_condition=has_caption,
         use_speaker_condition=not args.no_ref)
-    scales = {name: scale for name, scale in (("text", text_scale), ("speaker", speaker_scale)) if scale > 0}
+    # The runtime's order of the guidance: text, speaker, caption.
+    scales = {name: scale for name, scale in (("text", text_scale), ("speaker", speaker_scale),
+                                              ("caption", caption_scale if has_caption else 0.0)) if scale > 0}
 enabled = list(scales)
 save("dit_t", torch.stack([group[0][0]["t"][0] for group in calls_by_step]))
 velocities, branches, branch_names = [], [], []
