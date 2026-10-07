@@ -104,7 +104,8 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
 - **Results.** `speech_request_result()` gives what a request that returned `SPEECH_OK` or `SPEECH_CANCELLED` did: why it
   stopped (`complete`, `max_seconds`, `model_limit` or `cancelled`), the seed of a synthesis, the samples it passed, and
   the text of a recognition with its segments and tokens when the request set `timestamps`, and the languages it heard
-  (`speech_result_language_count()`, `speech_result_language()`). The seed is the request's, or one the library drew
+  (`speech_result_language_count()`, `speech_result_language()`), none for a model that names none, such as
+  FastConformer, and none for a cancelled request. The seed is the request's, or one the library drew
   from 0 to 2^53 - 1, with which the same request repeats its audio on the same device.
 - **Devices.** `speech_device_count()`, `speech_device_name()`, `speech_device_description()`,
   `speech_device_get_kind()` and `speech_device_memory()` list the CPU and the GPUs a model can run on, in ggml's order.

@@ -32,7 +32,7 @@ the models given, warmed up as the worker warms them, listens once they are read
 | Endpoint | What it does |
 |---|---|
 | `GET /health` | answers `{"status":"ok"}` |
-| `GET /v1/models` | lists the models held, the synthesis model first, as OpenAI's model objects (`id` is the model's name, `owned_by` is `"speech.cpp"`) with `version`, the release, and `speech`, the model information ([c-api.md](c-api.md#model-information-as-json)) |
+| `GET /v1/models` | lists the models held, the synthesis model first, as OpenAI's model objects (`id` is the model's name, with `object`, `created`, and `owned_by` `"speech.cpp"`) with `version`, the release, and `speech`, the model information ([c-api.md](c-api.md#model-information-as-json)) |
 | `GET /v1/models/{id}` | one model; another id is a 404 (`model_not_found`) |
 | `POST /v1/audio/speech` | speaks a text, as [OpenAI's create speech](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create) does |
 | `POST /v1/audio/transcriptions` | recognizes the speech in a WAV file, as [OpenAI's create transcription](https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create) does |

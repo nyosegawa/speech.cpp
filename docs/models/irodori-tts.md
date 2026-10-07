@@ -88,7 +88,7 @@ For a 10.7 s reference, the voice file is 35 KB against the WAVE file's 1 MB, an
 | `language` | `auto` | `ja`; only checked |
 | `seed` | drawn | 0 to 2^53 - 1 |
 | `steps` | 4 (MF), 40 (RF) | 1 to 2147483647 |
-| `seconds` | none | 0.5 to 30: fixes the length; the duration predictor does not run |
+| `seconds` | none | 0.5 to 30: fixes the length, and the audio is cut at `int(seconds / speed × 48000)` samples; the duration predictor does not run |
 | `duration_scale` | 1 | above 0: multiplies the predicted frames |
 | `speed` | 1 | 0.25 to 4: divides the length, `seconds / speed` or the prediction times `duration_scale / speed`, as [Irodori-TTS-Server](https://github.com/Aratako/Irodori-TTS-Server) does with OpenAI's `speed` |
 | `instructions` | `""` | layout 2: the voice and the way of speaking in words, at most 512 tokens |

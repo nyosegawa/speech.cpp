@@ -133,7 +133,8 @@ carries voice files ([ADR 0002](../adr/0002-asist-carries-irodori-tts-voices-as-
 Through 0.7.1's worker on speech-bench's 20 sentences, an Apple M5 sent the 48-frame second window 0.288 s after the
 first, 0.19 s before the first window's audio ran out, and an RTX 2080 0.32 s after; a machine half as fast as the M5
 would have run dry there, and now sends 24 frames second. 24 frames decode 44 with their margins, 29% more decoding per
-second of audio than 48 frames (68), where 12 frames would decode 32, 88% more.
+second of audio than 48 frames (68), where 12 frames would decode 32, 88% more. `irodori-window-check` checks the rule
+on simulated machines.
 
 The window sizes follow the clock, and the audio does not: the decoder is convolutions without a cache, and the 10
 frames on either side cover its receptive field of 7.7, so decoding in windows of any sizes gives the samples of
