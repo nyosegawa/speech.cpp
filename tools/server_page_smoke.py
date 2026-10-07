@@ -20,6 +20,8 @@ folder of the script's own (SPEECH_MODEL_DIR), so that loading one by its name f
   by its catalog name;
 - a fetch the page stops: the load of a model not in the folder, closed at its first progress, leaves a part and the
   model held as it was (a few megabytes come from Hugging Face; the part is removed after);
+- a load whose page goes away while it waits for another process's lock on the file, which that process then puts in
+  place, leaves the model held as it was;
 - a voice added to a model that takes voice files, or refused by one that does not;
 - a server on 0.0.0.0, which has no page and answers its endpoints with how to reach them (on Windows its firewall may
   ask about it).
@@ -237,6 +239,45 @@ assert state[absent["task"]]["replacing"] is None and not part["fetched"] and pa
 assert state[absent["task"]]["held"] == held_before, "a stopped fetch changed the model held"
 subprocess.run([speech, "rm", absent["name"]], env=env, capture_output=True, check=True)
 print(f"a fetch the page stopped: {part['partial']} bytes of {absent['name']} kept as a part, the {absent['task']} model as it was")
+
+# Another process holds the third model's lock with its file out of place, as one that fetches it does; the page's load
+# waits on the lock and goes away; the other process puts the file in place and lets the lock go.
+third_file = next(f for m in catalog["models"] for f in m["files"] if (m["name"] if f["type"] == m["type"] else f"{m['name']}:{f['type']}") == third["name"])
+moved = third_file["path"] + ".away"
+os.rename(third_file["path"], moved)
+holder = open(third_file["path"] + ".lock", "a+b")
+if os.name == "nt":
+    import msvcrt
+    msvcrt.locking(holder.fileno(), msvcrt.LK_NBLCK, 1)
+else:
+    import fcntl
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+held_before = json.loads(call("GET", "/speech/models", headers=auth)[2])[third["task"]]["held"]
+connection = http.client.HTTPConnection("127.0.0.1", port, timeout=600)
+connection.request("POST", "/speech/load", json.dumps({"model": third["name"]}).encode(), {**auth, "Content-Type": "application/json"})
+r = connection.getresponse()
+buffer = b""
+while b'"type":"note"' not in buffer:
+    chunk = r.read1(4096)
+    assert chunk, f"the load of {third['name']} ended before it waited for the lock: {buffer[-300:]!r}"
+    buffer += chunk
+connection.close()
+time.sleep(0.5)
+os.rename(moved, third_file["path"])
+if os.name == "nt":
+    holder.seek(0)
+    msvcrt.locking(holder.fileno(), msvcrt.LK_UNLCK, 1)
+else:
+    fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+holder.close()
+for _ in range(300):
+    state = json.loads(call("GET", "/speech/models", headers=auth)[2])
+    if state[third["task"]]["replacing"] is None:
+        break
+    time.sleep(0.1)
+assert state[third["task"]]["replacing"] is None, "the load that lost its page did not end"
+assert state[third["task"]]["held"] == held_before, f"a load whose page went away replaced the model by {state[third['task']]['held']['name']}"
+print(f"a load of {third['name']} whose page went away while it waited for the lock: the {third['task']} model as it was")
 
 out = server.stop()
 assert out == b"", out[:200]

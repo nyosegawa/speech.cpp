@@ -214,6 +214,8 @@ void Page::load(const httplib::Request & req, httplib::Response & res) {
             return sink.is_writable() && sink.write(data.data(), data.size());
         };
         // A page that goes away stops the fetch, whose part the next load resumes; a load once begun ends all the same.
+        // fetch_model() tells of no progress while it waits for another process's lock, nor when that process has put
+        // the file in place, so whether the page is still there is asked again before the model is replaced.
         bool listening = true;
         fs::path path;
         try {
@@ -229,8 +231,11 @@ void Page::load(const httplib::Request & req, httplib::Response & res) {
             sink.done();
             return true;
         }
+        if (!listening || !send("{\"type\":\"load\"}")) {
+            sink.done();
+            return true;
+        }
         replacing->loading();
-        send("{\"type\":\"load\"}");
         try {
             const auto served = models_.replace(task, path.u8string());
             report_(*served);
