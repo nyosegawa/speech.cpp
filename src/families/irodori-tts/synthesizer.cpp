@@ -64,6 +64,28 @@ int TailCut::flattening_point(const std::vector<float> & latent, int frames, int
     return frames;
 }
 
+/*
+ * The decoder's windows after the first run from 24 to 48 frames, sized as it measures its speed so that the next one
+ * arrives while the listener still has 0.1 s of the audio sent, a fifth of the first window, for the error of an
+ * estimate made from a window or two and the time the caller takes to queue the audio. On an Apple M5 (2026-10-07,
+ * 0.7.1 through the worker on speech-bench's 20 sentences) the 48-frame second window came 0.288 s after the first
+ * window's 0.48 s, and on an RTX 2080 0.32 s, so a machine half as fast as the M5 ran dry between them.
+ *
+ * Each window decodes 10 frames on either side of its own (Codec::kDecoderMargin): 12 frames decode 32, 24 decode 44
+ * and 48 decode 68. A floor of 24 halves the wait for a window against 48 for 29% more decoding per second of audio,
+ * where 12 would cost 88% more, which a machine that decodes 48-frame windows barely faster than real time could not
+ * afford. The ceiling is 48, 0.7.1's window, so that a cancel and the silence between a worker's chunks never wait
+ * longer than they did.
+ *
+ * The sizes may follow the clock because the audio does not depend on them: the decoder is convolutions without a
+ * cache, and a margin of 10 frames covers its receptive field of 7.7, so decoding in windows of any sizes gives the
+ * samples of decoding at once, bit for bit on the CPU and on Metal (irodori-codec-check), and a seed repeats its
+ * samples. Qwen3-TTS's chunked codec differs by up to 7e-4 between chunkings and keeps a fixed schedule.
+ */
+WindowRule Synthesizer::window_rule(int hop, int sample_rate) {
+    return {24, 48, Codec::kDecoderMargin, (double) hop / sample_rate, 0.1};
+}
+
 Synthesizer::Synthesizer(const std::string & model_path, ggml_backend_t backend)
     : backend_(backend),
       model_(std::make_unique<ModelFile>(model_path, backend, model_layout)),
@@ -204,7 +226,8 @@ size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
     size_t emitted = 0;
     {
         Timer t{st.codec};
-        codec_.decode(x, samples, first_window, window, [&](const float * s, size_t n) {
+        const WindowRule rule = window_rule(codec_.hop(), codec_.sample_rate());
+        codec_.decode(x, samples, kFirstWindow, [&](const DecodeProgress & p) { return next_window(rule, p); }, [&](const float * s, size_t n) {
             if (emitted == 0) st.first_audio = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
             emitted += n;
             return sink(s, n);

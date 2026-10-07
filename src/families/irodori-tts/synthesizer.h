@@ -115,9 +115,9 @@ public:
     bool has_caption() const { return model_->boolean("irodori-tts.caption_condition"); }
 
     /** The decoder's first window, in frames; a short one brings the first audio early. */
-    int first_window = 12;
-    /** The decoder's later windows, in frames. */
-    int window = 48;
+    static constexpr int kFirstWindow = 12;
+    /** How the decoder sizes its later windows as it measures its speed, for a codec's frames (synthesizer.cpp says why). */
+    static WindowRule window_rule(int hop, int sample_rate);
 
 private:
     ggml_backend_t backend_;

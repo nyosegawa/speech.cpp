@@ -1240,7 +1240,8 @@ runtime's guidance, text 3.0 and speaker 5.0 while t ≥ 0.5):
 - captions (VoiceDesign), the runtime's `caption`, as the request's `instructions`, with the caption's guidance of RF,
 - speaker-inversion embeddings, the runtime's `ref_embed`, as voice files made of them,
 - the tail cut where the latent goes flat, with the runtime's settings, and the codec decoder, a first window of 12
-  frames (0.48 s) and then 48 at a time, each window giving the samples of decoding the whole latent at once.
+  frames (0.48 s) and then windows of 24 to 48 sized as the decoder measures its speed (Streaming, below), each window
+  giving the samples of decoding the whole latent at once.
 
 Not implemented: LoRA adapters and SilentCipher's watermark. The noise comes
 from speech.cpp's own generator, so a seed gives other audio than the same seed in the official runtime. A reference
@@ -1370,6 +1371,28 @@ The runtime's request takes more, which speech.cpp does not offer:
   reference's latent.
 - `ref_ensure_max`: on, as the runtime's default; it bounds the peak of a reference that is not normalized.
 
+### Streaming
+
+The sampler makes a sentence's whole latent before any audio, and the codec decodes it in windows, passing each
+window's samples on as it is decoded: the first window of 12 frames (0.48 s), as early as before, and then windows of
+24 to 48 frames. Each later window is the largest that the decoder expects to finish while the listener still has
+0.1 s of the audio sent, the listener taken to play from the first window on, and its time is the decoder's time per
+frame as measured on the windows before, each window decoding 10 frames on either side of its own. Where not even 24
+frames finish in time and decoding is slower than real time, the window is 48 frames, the most audio for the frames
+decoded, and the player has to buffer. 48 frames, the window of 0.7.1, is never exceeded, so a cancel and the silence
+between a worker's chunks wait no longer than they did. `irodori-window-check` checks the rule on simulated machines.
+
+Through 0.7.1's worker on speech-bench's 20 sentences, an Apple M5 sent the 48-frame second window 0.288 s after the
+first, 0.19 s before the first window's audio ran out, and an RTX 2080 0.32 s after; a machine half as fast as the M5
+would have run dry there, and now sends 24 frames second. 24 frames decode 44 with their margins, 29% more decoding per
+second of audio than 48 frames (68), where 12 frames would decode 32, 88% more.
+
+The window sizes follow the clock, and the audio does not: the decoder is convolutions without a cache, and the 10
+frames on either side cover its receptive field of 7.7, so decoding in windows of any sizes gives the samples of
+decoding the whole latent at once, bit for bit (`irodori-codec-check` decodes seven patterns of sizes against one
+decode on the CPU and Metal), and a seed repeats its samples. Qwen3-TTS's codec, which keeps a cache, gives other
+samples in other chunkings and keeps its fixed schedule.
+
 ### Accuracy
 
 `reference/irodori-tts/dump.py` runs the official implementation on the CPU in float32 with fixed noise and
@@ -1385,7 +1408,7 @@ saves every stage; the check tools compare each stage, given the dump's own inpu
 | DiT steps, MF and RF (`irodori-dit-check`) | 95 dB or more | 46 dB or more | 63 dB or more (MF) |
 | Sampled latent, MF / RF 40 steps | 86 to 122 dB / 109 to 111 dB | 36 to 67 dB / 59 to 67 dB | 66 dB (MF, 27 frames) |
 | Decoded audio (`irodori-codec-check`) | 119 dB | 68 dB | 68 dB |
-| Decoding in windows against at once | equal | equal | 89 dB (encoder), equal (decoder) |
+| Decoding in windows against at once, seven patterns of window sizes for the decoder | equal | equal | 89 dB (encoder), equal (decoder, 0.7.1's windows) |
 | Whole synthesis from the dump's noise (`irodori-synthesis-check`) | 75 to 110 dB, the same length | 22 to 61 dB, the same length | 58 dB (MF, 27 frames), the same length |
 
 The Metal and Vulkan columns were measured on an Apple M5 and an RTX 2080 with driver 591.86.
@@ -2105,8 +2128,9 @@ and, for RF, `sampler.speaker_kv_min_t` 0.9, the runtime's at the commit every l
 tensors are then the ones layout 1 held. The model information shows its own layout, and its metadata, in the
 information and in `speech info --meta`, lists the keys the upgrade sets.
 
-Constants that stay in the C++, since they are not the model's: the decoder's windows of 12 and 48 frames, which are
-how speech.cpp streams a latent the official runtime decodes whole; the encoder's and decoder's margins of 8 and 10
+Constants that stay in the C++, since they are not the model's: the decoder's first window of 12 frames and the bounds
+of the later ones, 24 and 48 frames with 0.1 s in hand, which are how speech.cpp streams a latent the official runtime
+decodes whole; the encoder's and decoder's margins of 8 and 10
 frames, which follow from the codec's architecture; SentencePiece's penalty for an unknown piece; and the widths
 DACVAE fixes in its code rather than in its configuration, 7 for the first and the last convolution and a residual
 unit's first, 3 for the encoder's last, and 1 for a residual unit's second and the decoder's input projection.

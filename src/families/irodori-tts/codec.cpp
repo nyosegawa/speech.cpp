@@ -1,7 +1,10 @@
 #include "codec.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <stdexcept>
+#include <string>
 
 #include "error.h"
 
@@ -165,22 +168,46 @@ ggml_tensor * Codec::build_decoder(Graph & g, const std::vector<float> & latent,
     return ggml_tanh(g.ctx(), l.conv(l.snake(x, "codec.dec.out_snake"), "codec.dec.conv_out"));
 }
 
-void Codec::decode(const std::vector<float> & latent, int64_t samples, int first_window, int window, const AudioSink & sink) {
+int next_window(const WindowRule & rule, const DecodeProgress & p) {
+    if (p.frames_left <= rule.floor) return (int) p.frames_left;
+    const int most = (int) std::min<int64_t>(rule.ceiling, p.frames_left);
+    const double buffer = p.audio_sent - p.since_first;
+    const double fits = (buffer - rule.margin) / p.seconds_per_frame - 2.0 * rule.context;
+    if (fits >= rule.floor) return (int) std::min<double>(most, std::floor(fits));
+    const double floor_takes = p.seconds_per_frame * (rule.floor + 2.0 * rule.context);
+    return floor_takes < rule.floor * rule.frame_seconds ? rule.floor : most;
+}
+
+void Codec::decode(const std::vector<float> & latent, int64_t samples, int first_window, const WindowChoice & next, const AudioSink & sink) {
+    using Clock = std::chrono::steady_clock;
     const int64_t frames = (int64_t) latent.size() / latent_dim_;
     const int64_t needed = std::min(frames, (samples + hop_ - 1) / hop_);
     int64_t emitted = 0;
+    DecodeProgress progress;
+    Clock::time_point first_sent;
     for (int64_t a = 0; a < needed;) {
-        const int64_t b = std::min(needed, a + (a == 0 ? first_window : window));
+        progress.frames_left = needed - a;
+        if (a > 0) progress.since_first = std::chrono::duration<double>(Clock::now() - first_sent).count();
+        const int window = a == 0 ? first_window : next(progress);
+        if (window < 1 || window > progress.frames_left) {
+            throw std::logic_error("a window of " + std::to_string(window) + " frames with " + std::to_string(progress.frames_left) + " left");
+        }
+        const int64_t b = a + window;
         // The margin, and at least two frames, so that the window is long enough to decode.
         int64_t from = std::max<int64_t>(0, a - kDecoderMargin), to = std::min(frames, b + kDecoderMargin);
         if (to - from < 2) from = std::max<int64_t>(0, to - 2);
+        const Clock::time_point start = Clock::now();
         Graph g;
         ggml_tensor * out = build_decoder(g, std::vector<float>(latent.begin() + from * latent_dim_, latent.begin() + to * latent_dim_));
         g.output(out);
         g.compute(backend_, allocr_);
         const std::vector<float> audio = Graph::read(out);
+        const double took = std::chrono::duration<double>(Clock::now() - start).count();
+        progress.seconds_per_frame = next_estimate(progress.seconds_per_frame, took / (double) (to - from));
         const int64_t first = (a - from) * hop_, count = std::min((b - a) * hop_, samples - emitted);
         emitted += count;
+        if (a == 0) first_sent = Clock::now();
+        progress.audio_sent += (double) count / sample_rate_;
         if (!sink(audio.data() + first, (size_t) count)) return;
         a = b;
     }

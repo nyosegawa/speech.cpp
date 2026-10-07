@@ -4,9 +4,9 @@
 // Encoder: reading the reference WAVE file, bringing its loudness to the dump's (the model's, another target, or kept
 // as recorded), encoding it, encoding in windows against at once, and the whole path from the file; for a dump of
 // several references, the latent of each file joined in order, as a voice file of them holds it.
-// Decoder: each stage on the dump's latent, decoding in windows against at once, and, when the device is
-// not the CPU, the same decoding on the CPU: how far below the voice the device's error lies, and how loud
-// the quietest parts are on each, where a device that mishandles the decoder shows its error first.
+// Decoder: each stage on the dump's latent, decoding in windows of several patterns against at once, bit for bit, and,
+// when the device is not the CPU, the same decoding on the CPU: how far below the voice the device's error lies, and
+// how loud the quietest parts are on each, where a device that mishandles the decoder shows its error first.
 //
 // usage: irodori-codec-check <model.gguf> <dump dir> <reference.wav>... [gpu|cpu|device name]
 
@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -160,21 +161,34 @@ bool check_decoder(Codec & codec, ggml_backend_t backend, const std::string & mo
     // Measured on an Apple M5: 119 dB on the CPU in F32 and 47 dB on Metal.
     ok = ok && whole.size() == official.f32.size() && dw.snr_db > 30;
 
-    std::vector<float> windowed;
-    double first_s = -1;
-    t0 = std::chrono::steady_clock::now();
-    codec.decode(latent, (int64_t) whole.size(), 12, 48, [&](const float * s, size_t count) {
-        if (first_s < 0) first_s = seconds_since(t0);
-        windowed.insert(windowed.end(), s, s + count);
-        return true;
-    });
-    const double windowed_s = seconds_since(t0);
-    const Diff dv = compare(windowed, whole);
-    print_diff("decoder in windows against at once", dv);
+    // The windows of 0.7.1 and windows of other sizes, which a decoder that measures its speed may choose: each must give
+    // the samples of decoding at once, bit for bit, so that a seed repeats its samples whatever the clock says.
+    const std::vector<std::vector<int>> patterns = {{12, 48}, {12, 24}, {12, 32}, {24, 24}, {12, 24, 48, 32}, {12, 30, 25, 48, 17, 36}, {5, 3, 48, 2, 24}};
     const double audio_s = (double) whole.size() / codec.sample_rate();
-    std::printf("decoding %.2f s of audio: first 12 frames in %.3f s, all in windows %.3f s, at once %.3f s\n", audio_s,
-                first_s, windowed_s, whole_s);
-    ok = ok && windowed.size() == whole.size() && dv.snr_db > 60;
+    for (const std::vector<int> & p : patterns) {
+        std::vector<float> windowed;
+        size_t k = 0;
+        double first_s = -1;
+        std::string name;
+        for (int w : p) name += (name.empty() ? "" : ", ") + std::to_string(w);
+        t0 = std::chrono::steady_clock::now();
+        codec.decode(
+            latent, (int64_t) whole.size(), p[0],
+            [&](const DecodeProgress & progress) {
+                // The pattern's sizes after the first, in turn.
+                k = k + 1 < p.size() ? k + 1 : 1;
+                return (int) std::min<int64_t>(p[k], progress.frames_left);
+            },
+            [&](const float * s, size_t count) {
+                if (first_s < 0) first_s = seconds_since(t0);
+                windowed.insert(windowed.end(), s, s + count);
+                return true;
+            });
+        const bool same = windowed.size() == whole.size() && std::memcmp(windowed.data(), whole.data(), whole.size() * sizeof(float)) == 0;
+        std::printf("decoder in windows of %s against at once: %s; %.2f s of audio, the first window in %.3f s, all in %.3f s, at once %.3f s\n",
+                    name.c_str(), same ? "the same samples" : "OTHER SAMPLES", audio_s, first_s, seconds_since(t0), whole_s);
+        ok = ok && same;
+    }
 
     if (std::string(ggml_backend_name(backend)) != "CPU") {
         ggml_backend_t cpu = ggml_backend_cpu_init();
