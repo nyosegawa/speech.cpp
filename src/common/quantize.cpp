@@ -51,16 +51,23 @@ public:
             const auto element = (gguf_type) read<uint32_t>();
             const uint64_t n = read<uint64_t>();
             if (element == GGUF_TYPE_ARRAY) throw Error(Fault::File, path_ + " holds arrays of arrays, which no layout has", "model_path");
-            for (uint64_t i = 0; i < n && element == GGUF_TYPE_STRING; i++) string();
-            if (element != GGUF_TYPE_STRING) take(n * gguf_scalar_size(element));
+            if (element == GGUF_TYPE_STRING) {
+                for (uint64_t i = 0; i < n; i++) string();
+            } else {
+                const size_t size = gguf_scalar_size(element);
+                if (n > (bytes_.size() - at_) / size) throw ended();
+                take(n * size);
+            }
         } else {
             take(gguf_scalar_size(type));
         }
     }
 
 private:
+    Error ended() const { return Error(Fault::File, "the metadata of " + path_ + " ends before its header says", "model_path"); }
+
     const uint8_t * take(uint64_t n) {
-        if (n > bytes_.size() - at_) throw Error(Fault::File, "the metadata of " + path_ + " ends before its header says", "model_path");
+        if (n > bytes_.size() - at_) throw ended();
         const uint8_t * p = bytes_.data() + at_;
         at_ += n;
         return p;
@@ -136,8 +143,8 @@ void pad(std::vector<uint8_t> & out, size_t alignment) {
 }
 
 /**
- * Converts `n` float32 values, rows of `row` values, to `type`, the rows spread over the machine's threads; ggml
- * converts each row on its own, so the bytes do not depend on the threads.
+ * Converts `values`, rows of `row` values, to `type`, the rows spread over the machine's threads; ggml converts each row
+ * on its own, so the bytes do not depend on the threads.
  */
 std::vector<uint8_t> convert(const std::vector<float> & values, int64_t row, ggml_type type) {
     const int64_t rows = (int64_t) values.size() / row;
