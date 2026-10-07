@@ -201,5 +201,9 @@ std::unique_ptr<Engine> load_irodori_tts(const std::string & path, ggml_backend_
 }
 
 void make_irodori_tts_voice(const std::string & model_path, const VoiceRecipe & recipe, const std::string & voice_path, ggml_backend_t backend) {
+    if (!recipe.embedding.empty()) {
+        irodori::make_embedding_voice_file(model_path, recipe.embedding, (int) recipe.embedding_tokens, voice_path);
+        return;
+    }
     irodori::make_voice_file(model_path, recipe.references, {recipe.normalize, recipe.lufs}, voice_path, backend);
 }

@@ -33,6 +33,7 @@ void write_voice_file(const std::string & path, const std::vector<float> & laten
     gguf_set_val_str(g.get(), "general.architecture", kVoiceArchitecture);
     gguf_set_val_u32(g.get(), "speech.layout", kVoiceLayout);
     gguf_set_val_str(g.get(), "speech.requires", kVoiceLayoutRequires);
+    gguf_set_val_str(g.get(), "irodori-tts-voice.source", "references");
     gguf_set_val_str(g.get(), "irodori-tts-voice.codec_sha256", codec_sha256.c_str());
     std::vector<float> seconds;
     std::vector<int32_t> rates;
@@ -49,6 +50,36 @@ void write_voice_file(const std::string & path, const std::vector<float> & laten
     if (!gguf_write_to_file(g.get(), path.c_str(), false)) {
         throw Error(Fault::Io, "cannot write " + path + "; check that its folder exists and is writable");
     }
+}
+
+void make_embedding_voice_file(const std::string & model_path, const std::vector<float> & embedding, int tokens, const std::string & voice_path) {
+    const auto model = naming("model_path", [&] { return std::make_unique<const ModelFile>(model_path, model_layout); });
+    const int dim = (int) model->u32("irodori-tts.speaker.dim");
+    if (embedding.size() != (size_t) tokens * dim) {
+        throw Error(Fault::InvalidArgument, "the embedding has " + std::to_string(embedding.size() / tokens) + " values a token, and " +
+                                                model->str("general.name") + "'s speaker condition " + std::to_string(dim) +
+                                                "; give an embedding learned against this model",
+                    "embedding");
+    }
+    const size_t bytes = embedding.size() * sizeof(float);
+    ggml_init_params params = {ggml_tensor_overhead() + bytes + 64, nullptr, false};
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> ctx(ggml_init(params), ggml_free);
+    if (!ctx) throw Error(Fault::OutOfMemory, "cannot hold the embedding of a voice file in memory");
+    ggml_tensor * t = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, dim, tokens);
+    ggml_set_name(t, "speaker");
+    std::memcpy(t->data, embedding.data(), bytes);
+    std::unique_ptr<gguf_context, decltype(&gguf_free)> g(gguf_init_empty(), gguf_free);
+    gguf_set_val_str(g.get(), "general.architecture", kVoiceArchitecture);
+    gguf_set_val_u32(g.get(), "speech.layout", kVoiceLayout);
+    gguf_set_val_str(g.get(), "speech.requires", kVoiceLayoutRequires);
+    gguf_set_val_str(g.get(), "irodori-tts-voice.source", "embedding");
+    gguf_set_val_str(g.get(), "irodori-tts-voice.model", model->str("general.source.url").c_str());
+    gguf_add_tensor(g.get(), t);
+    naming("voice_path", [&] {
+        if (!gguf_write_to_file(g.get(), voice_path.c_str(), false)) {
+            throw Error(Fault::Io, "cannot write " + voice_path + "; check that its folder exists and is writable");
+        }
+    });
 }
 
 void make_voice_file(const std::string & model_path, const std::vector<std::string> & reference_paths, const Loudness & loudness,

@@ -8,16 +8,17 @@ worker's audio of the same lines and seed, into a file, into a regular file thro
 content and through a pipe into cat, where the header cannot be written again in place and keeps its sizes at
 0xFFFFFFFF; that nothing but the WAVE reaches stdout and a failed run leaves no file; for Qwen3-TTS a stop at
 --max-seconds reported on stderr, and boolean and sampling flags against the worker's members; --instructions against
-the worker's member where the model takes it and its refusal where it does not; and with --reference a voice file made
-by `speech voice` that `speech tts` speaks with. For a recognition model: `speech asr` on WAVE files of the dumps of
-reference/fastconformer/dump.py or reference/qwen3-asr/dump.py against the worker's text of the same samples, as text
-and as JSON with the stop and the languages, the one qwen-asr parsed or none, and where the model takes timestamps as
-text with --timestamps one line per segment and as JSON with them, the segments and tokens the worker's; and for a dump
-that holds requests with a forced language and a prompt, or with a decoding other than the default, `speech asr
---language --prompt` or `speech asr --decoding` against the worker's text of the same request, and as JSON its
-languages.
+the worker's member where the model takes it and its refusal where it does not; with --reference a voice file made by
+`speech voice` that `speech tts` speaks with; and with --embedding one made of a speaker-inversion embedding. For a
+recognition model: `speech asr` on WAVE files of the dumps of reference/fastconformer/dump.py or
+reference/qwen3-asr/dump.py against the worker's text of the same samples, as text and as JSON with the stop and the
+languages, the one qwen-asr parsed or none, and where the model takes timestamps as text with --timestamps one line per
+segment and as JSON with them, the segments and tokens the worker's; and for a dump that holds requests with a forced
+language and a prompt, or with a decoding other than the default, `speech asr --language --prompt` or `speech asr
+--decoding` against the worker's text of the same request, and as JSON its languages.
 
-usage: python3 tools/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav] [-- load options...]
+usage: python3 tools/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav]
+                                         [--embedding E.speaker.safetensors] [-- load options...]
 """
 
 import array
@@ -41,6 +42,11 @@ reference = None
 if "--reference" in args:
     at = args.index("--reference")
     reference = args[at + 1]
+    del args[at:at + 2]
+embedding = None
+if "--embedding" in args:
+    at = args.index("--embedding")
+    embedding = args[at + 1]
     del args[at:at + 2]
 speech, work, model, *dumps = args
 added = [o.split("=", 1)[0] for i, o in enumerate(options) if i > 0 and options[i - 1] == "--add-voice"]
@@ -224,6 +230,13 @@ if info["task"] == "synthesis":
         r = run("voice", model, reference, made, "--lufs", "-23", "--keep-loudness", code=2)
         os.remove(made)
         print("speech voice made voice files of one reference and of two at -23 LUFS on the CPU, which speech tts speaks with")
+    if embedding:
+        made = os.path.join(work, "speech-cli-smoke.embedding.voice.gguf")
+        run("voice", model, embedding, made)
+        run("tts", model, "-o", path, "--add-voice", f"made={made}", "--voice", "made", *options, lines[0])
+        os.remove(path)
+        os.remove(made)
+        print("speech voice made a voice file of a speaker-inversion embedding, which speech tts speaks with")
 else:
     def read_npy(path):
         with open(path, "rb") as f:

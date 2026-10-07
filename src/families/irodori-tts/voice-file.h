@@ -52,4 +52,11 @@ void write_voice_file(const std::string & path, const std::vector<float> & laten
 void make_voice_file(const std::string & model_path, const std::vector<std::string> & reference_paths, const Loudness & loudness,
                      const std::string & voice_path, ggml_backend_t backend);
 
+/**
+ * Makes a voice file at `voice_path` of a speaker-inversion embedding, `tokens` vectors of the model's speaker width row
+ * by row, for the model file at `model_path`, whose general.source.url it names, reading the model file's metadata
+ * alone. An embedding of another width throws, naming "embedding".
+ */
+void make_embedding_voice_file(const std::string & model_path, const std::vector<float> & embedding, int tokens, const std::string & voice_path);
+
 }  // namespace irodori

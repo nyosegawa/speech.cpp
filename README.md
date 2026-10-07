@@ -216,12 +216,14 @@ are already on stdout.
 ### `speech voice`
 
 ```
-speech voice MODEL REFERENCE.wav... VOICE.gguf [--lufs LUFS | --keep-loudness] [--device NAME] [--threads N] [-v]
+speech voice MODEL (REFERENCE.wav... | EMBEDDING.speaker.safetensors) VOICE.gguf [--lufs LUFS | --keep-loudness]
+             [--device NAME] [--threads N] [-v]
 ```
 
 Makes a voice file from one or more reference recordings at any rate, each encoded on its own and joined in order,
 reading only the codec's encoder from MODEL (Irodori-TTS voices, below). Each recording is brought to the model's
-loudness, or to `--lufs`, or kept as it is with `--keep-loudness`. `--device` defaults to `cpu` here, the one device whose latent is the official encoder's to 99 dB
+loudness, or to `--lufs`, or kept as it is with `--keep-loudness`. A `.speaker.safetensors` file, a speaker-inversion
+embedding as the official runtime saves one, makes a voice for MODEL alone. `--device` defaults to `cpu` here, the one device whose latent is the official encoder's to 99 dB
 (docs/adr/0002).
 
 ### `speech info`
@@ -406,8 +408,9 @@ speech_model_free(model);
   file from a reference, reading only the codec's encoder from the model file (Irodori-TTS voices, below).
   `speech_voice_make_from()` writes one of the parameters `speech_voice_params_new()` makes: several references
   (`speech_voice_params_add_reference()`), each encoded on its own and joined, and another loudness
-  (`speech_voice_params_set_loudness()`) or the recordings' own (`speech_voice_params_keep_loudness()`). A model that
-  takes no voice files answers all three with `SPEECH_ERROR_UNSUPPORTED`.
+  (`speech_voice_params_set_loudness()`) or the recordings' own (`speech_voice_params_keep_loudness()`), or a
+  speaker-inversion embedding instead (`speech_voice_params_set_embedding()`). A model that takes no voice files answers
+  all three with `SPEECH_ERROR_UNSUPPORTED`.
 - **Requests.** A request is made for one model with `speech_request_new()`. It takes a text
   (`speech_request_set_text()`) or audio (`speech_request_set_audio()`, mono at any rate, resampled to the model's;
   Audio at another rate, above), and options through the setter of each option's type. Each value is checked against
@@ -869,6 +872,18 @@ recorded with a peak above 1 scaled down to 1 (`--keep-loudness`, `speech_voice_
 `ref_normalize_db` of `None`. `--add-voice` and the worker's `add_voice` take one file, a voice file or one WAVE file at
 the model's loudness; a voice of several references or another loudness is made into a voice file first.
 
+A voice file may instead hold a speaker-inversion embedding, the runtime's `ref_embed`: vectors that the official
+training learns against one model to stand for a speaker, which the DiT attends to in place of the speaker condition a
+reference gives and whose first vector the duration predictor takes as the speaker's. `speech voice` reads the
+`.speaker.safetensors` file the runtime saves (the tensor `speaker_embedding`, float32 [tokens, 768]), and
+`speech_voice_params_set_embedding()` takes the vectors. The file names the model it was made for by its
+`general.source.url`, since the embedding fits that model's DiT and no other: a voice of an embedding made for
+v4.1-Small is refused by v4.1-Small-MF, in any type of either file.
+
+```sh
+speech voice Irodori-TTS-859M-v4.1-F16.gguf my-speaker.speaker.safetensors my-speaker.voice.gguf
+```
+
 ```sh
 speech voice Irodori-TTS-848M-MF-v4.1-F16.gguf bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf
 speech voice Irodori-TTS-848M-MF-v4.1-F16.gguf take-1.wav take-2.wav take-3.wav --lufs -23 three-takes.voice.gguf
@@ -1223,10 +1238,11 @@ runtime's guidance, text 3.0 and speaker 5.0 while t ≥ 0.5):
   temporal score rescaling and the scaling of the speaker's keys and values,
 - speaking without a reference, the runtime's `no_ref`, as the voice `none` of a layout 2 file,
 - captions (VoiceDesign), the runtime's `caption`, as the request's `instructions`, with the caption's guidance of RF,
+- speaker-inversion embeddings, the runtime's `ref_embed`, as voice files made of them,
 - the tail cut where the latent goes flat, with the runtime's settings, and the codec decoder, a first window of 12
   frames (0.48 s) and then 48 at a time, each window giving the samples of decoding the whole latent at once.
 
-Not implemented: speaker-inversion embeddings, LoRA adapters and SilentCipher's watermark. The noise comes
+Not implemented: LoRA adapters and SilentCipher's watermark. The noise comes
 from speech.cpp's own generator, so a seed gives other audio than the same seed in the official runtime. A reference
 at another rate than 48 kHz is resampled with the library's filter, not with the runtime's torchaudio defaults (Audio
 at another rate, above).
@@ -1349,6 +1365,7 @@ The runtime's request takes more, which speech.cpp does not offer:
 - `cfg_scale`: the runtime's deprecated single scale, which the two scales at one value give.
 - `min_seconds`, `max_seconds`, `max_ref_seconds`, `max_text_len` and `max_caption_len`: the model's bounds, which
   its file gives and past which speech.cpp refuses where the runtime clamps or cuts.
+- `ref_embed` as a request's: a voice file holds an embedding (Irodori-TTS voices, above).
 - `ref_latent` and `ref_latents`: latents saved with `torch.save()`, which is Python's pickle; a voice file holds a
   reference's latent.
 - `ref_ensure_max`: on, as the runtime's default; it bounds the peak of a reference that is not normalized.
@@ -2213,15 +2230,18 @@ A voice file of Irodori-TTS is a GGUF file of its own, layout 1:
 | `general.architecture` | string | `irodori-tts-voice` |
 | `speech.layout` | u32 | 2 |
 | `speech.requires` | string | `0.8.0` |
-| `irodori-tts-voice.codec_sha256` | string | the `irodori-tts.codec.sha256` of the model that encoded it; a model with another hash refuses it |
+| `irodori-tts-voice.source` | string | `references` or `embedding`: what the voice is made of |
+| `irodori-tts-voice.codec_sha256` | string | the `irodori-tts.codec.sha256` of the model that encoded it; a model with another hash refuses it. Present for `references`, as the keys below to `device_kind` |
 | `irodori-tts-voice.references.seconds` | [f32] | each reference recording's length, in the order they are joined |
 | `irodori-tts-voice.references.sample_rates` | [i32] | each recording's rate, before it was resampled, aligned |
 | `irodori-tts-voice.normalized` | bool | whether each recording was brought to a loudness before it was encoded |
 | `irodori-tts-voice.lufs` | f32 | that loudness in LUFS; present when `normalized` is true |
 | `irodori-tts-voice.device_kind` | string | `cpu`, `gpu` or `igpu`: the kind of device that encoded it |
+| `irodori-tts-voice.model` | string | the `general.source.url` of the model the embedding was made for; present for `embedding`. Another model refuses it |
 
-and one tensor, `latent`, F32 with ne = [`latent_dim`, frames], the recordings' latents joined, `latent_dim` being the
-model's. A voice file of another codec is refused as the caller's mistake before its latent is checked. A voice file
+and one tensor: for `references`, `latent`, F32 with ne = [`latent_dim`, frames], the recordings' latents joined,
+`latent_dim` being the model's; for `embedding`, `speaker`, F32 with ne = [`speaker.dim`, tokens]. A voice file of
+another codec or another model is refused as the caller's mistake before its tensor is checked. A voice file
 of layout 1, which releases from 0.7.0 wrote with one reference brought to the model's -16 LUFS, is read as one of
 layout 2 that says so, and releases before 0.8.0 refuse layout 2 naming 0.8.0. Voice files made before 0.7.0 have no
 `speech.layout` and are refused; they are made again from their WAVE files.

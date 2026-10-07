@@ -519,12 +519,37 @@ speech_status speech_voice_params_keep_loudness(speech_voice_params * params) {
     });
 }
 
+speech_status speech_voice_params_set_embedding(speech_voice_params * params, const float * values, size_t tokens, size_t dim) {
+    return guarded([&] {
+        require(params, "params");
+        require(values, "values", "embedding");
+        if (tokens == 0 || dim == 0) throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the embedding has no tokens or no values in a token", "embedding");
+        for (size_t i = 0; i < tokens * dim; i++) {
+            if (!std::isfinite(values[i])) {
+                throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "value " + std::to_string(i) + " of the embedding is not a finite number", "embedding");
+            }
+        }
+        params->recipe.embedding.assign(values, values + tokens * dim);
+        params->recipe.embedding_tokens = tokens;
+        return SPEECH_OK;
+    });
+}
+
 speech_status speech_voice_make_from(const char * model_path, const speech_voice_params * voice, const char * voice_path,
                                      const speech_load_params * params) {
     return guarded([&] {
         require(voice, "voice");
-        if (voice->recipe.references.empty()) {
-            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the voice has no reference; add one with speech_voice_params_add_reference()", "references");
+        const VoiceRecipe & recipe = voice->recipe;
+        if (!recipe.embedding.empty() && (!recipe.references.empty() || !recipe.normalize || recipe.lufs)) {
+            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT,
+                           "a voice of an embedding has no references and no loudness; make it of the embedding alone or of references alone",
+                           "embedding");
+        }
+        if (recipe.references.empty() && recipe.embedding.empty()) {
+            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT,
+                           "the voice has no reference and no embedding; add one with speech_voice_params_add_reference() or "
+                           "speech_voice_params_set_embedding()",
+                           "references");
         }
         make_voice(model_path, voice->recipe, voice_path, params);
         return SPEECH_OK;

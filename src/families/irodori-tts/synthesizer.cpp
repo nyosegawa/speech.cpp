@@ -101,10 +101,16 @@ Voice Synthesizer::load_voice(const std::string & path) {
         return voice_from_latent(encode_reference(codec_, path, reference_).latent);
     }
     const ModelFile file(path, backend_, voice_layout(*model_));
-    ggml_tensor * t = file.tensor("latent");
-    std::vector<float> latent(ggml_nelements(t));
-    ggml_backend_tensor_get(t, latent.data(), 0, ggml_nbytes(t));
-    return voice_from_latent(std::move(latent));
+    const bool embedding = file.str("irodori-tts-voice.source") == "embedding";
+    ggml_tensor * t = file.tensor(embedding ? "speaker" : "latent");
+    std::vector<float> values(ggml_nelements(t));
+    ggml_backend_tensor_get(t, values.data(), 0, ggml_nbytes(t));
+    if (!embedding) return voice_from_latent(std::move(values));
+    // The runtime attends to an embedding as it is, in place of the speaker condition a reference would give.
+    Voice v;
+    v.speaker_tokens = (int) t->ne[1];
+    v.speaker = std::move(values);
+    return v;
 }
 
 size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const AudioSink & sink, Stats * stats) {

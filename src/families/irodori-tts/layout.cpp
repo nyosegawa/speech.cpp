@@ -292,6 +292,7 @@ void upgrade(ModelFile & m) {
  */
 void voice_upgrade(ModelFile & m) {
     const std::string p = "irodori-tts-voice.";
+    m.upgrade_str(p + "source", "references");
     m.upgrade_f32_array(p + "references.seconds", {m.f32(p + "reference_seconds")});
     m.upgrade_i32_array(p + "references.sample_rates", {(int32_t) m.u32(p + "reference_sample_rate")});
     m.upgrade_bool(p + "normalized", true);
@@ -309,6 +310,16 @@ Layout voice_layout(const ModelFile & model) {
     return {kVoiceArchitecture, kVoiceLayout, "make it again from its WAVE files with speech voice MODEL REFERENCE.wav... VOICE.gguf",
             [&model](const ModelFile & m) {
                 const std::string p = "irodori-tts-voice.";
+                if (m.one_of(p + "source", {"references", "embedding"}) == "embedding") {
+                    // An embedding is learned against one model's DiT and duration predictor, which no other model shares.
+                    const std::string made = m.str(p + "model"), own = model.str("general.source.url");
+                    if (made != own) {
+                        throw Error(Fault::InvalidArgument, m.path() + " was made of an embedding for the model " + made + ", and " +
+                                                                model.str("general.name") + " is " + own +
+                                                                "; make the voice again from an embedding learned against this model");
+                    }
+                    return std::vector<TensorSpec>{{"speaker", {model.size("irodori-tts.speaker.dim"), m.width("speaker", 1)}, kF32}};
+                }
                 const std::string codec = m.str(p + "codec_sha256"), own = model.str("irodori-tts.codec.sha256");
                 require(codec.size() == 64, m, "irodori-tts-voice.codec_sha256 is not a SHA-256 in hexadecimal");
                 if (codec != own) {

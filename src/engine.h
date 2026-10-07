@@ -43,12 +43,15 @@ struct OptionSpec {
 
 /**
  * What a voice file is made of: reference recordings, joined in the order given, and the loudness each is brought to
- * before it is encoded, the model's unless `lufs` gives another, or the recording's own without `normalize`.
+ * before it is encoded, the model's unless `lufs` gives another, or the recording's own without `normalize`; or,
+ * instead of recordings, a speaker-inversion embedding of `embedding_tokens` vectors, row by row.
  */
 struct VoiceRecipe {
     std::vector<std::string> references;
     bool normalize = true;
     std::optional<double> lufs;
+    std::vector<float> embedding;
+    size_t embedding_tokens = 0;
 };
 
 /** A voice as the model information shows it; what the model file does not say is empty. */

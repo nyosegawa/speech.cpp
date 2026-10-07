@@ -19,8 +19,9 @@
 namespace irodori {
 
 /**
- * A voice: the latent of its reference and the speaker condition the model makes of it. A voice without a reference has
- * neither and speaks as the runtime's no_ref, with the null speaker of a file that holds it.
+ * A voice: the latent of its reference and the speaker condition the model makes of it, or a speaker-inversion
+ * embedding as the speaker condition without a latent. A voice without a reference has neither and speaks as the
+ * runtime's no_ref, with the null speaker of a file that holds it.
  */
 struct Voice {
     std::vector<float> latent;
@@ -92,8 +93,8 @@ public:
     ~Synthesizer();
 
     /**
-     * A voice from a reference WAVE file or a voice file of this model's codec (voice-file.h). A voice file of another
-     * codec throws.
+     * A voice from a reference WAVE file or a voice file of this model's codec or, for an embedding, of this model
+     * (voice-file.h). A voice file of another codec or model throws.
      */
     Voice load_voice(const std::string & path);
     /** A voice from the latent of its reference, row-major [frames, latent_dim]. */

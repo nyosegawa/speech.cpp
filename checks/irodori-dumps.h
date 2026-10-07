@@ -43,6 +43,11 @@ public:
     std::string text() const { return string(*member(meta_, "text")); }
     /** Whether the request spoke with a reference; meta.json's "reference" is null for one without. */
     bool reference() const { return member(meta_, "reference")->kind != JsonValue::Kind::Null; }
+    /** Whether the reference was a speaker-inversion embedding, which the dump's speaker_state is. */
+    bool embedding() const {
+        const JsonValue * v = meta_.member("embedding");
+        return v && v->boolean;
+    }
     /** The request's instructions, the runtime's caption, or "" for a request without. */
     std::string instructions() const {
         for (const auto & [name, v] : options_) {

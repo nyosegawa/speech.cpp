@@ -1,7 +1,8 @@
 // Checks the whole synthesis of Irodori-TTS against the official runtime: for every dump of
 // reference/irodori-tts/dump.py made with the same model, the dump's text spoken in the voice of the dump's
-// reference latent, or without a reference, from the dump's noise and with its request's length, steps, guidance and
-// cut at the tail, against the audio the official synthesize() returned, the cut at the tail included.
+// reference latent, of its embedding, or without a reference, from the dump's noise and with its request's length,
+// steps, guidance and cut at the tail, against the audio the official synthesize() returned, the cut at the tail
+// included.
 //
 // usage: irodori-synthesis-check <model.gguf> <reference out dir> [gpu|cpu|device name]
 
@@ -22,9 +23,9 @@ using namespace irodori;
 namespace {
 
 /**
- * The least SNR against the official that a dump's audio reaches. Measured on an Apple M5 on 2026-10-07: 72 to 112 dB on
+ * The least SNR against the official that a dump's audio reaches. Measured on an Apple M5 on 2026-10-07: 72 to 116 dB on
  * the CPU in F32. On Metal the sampler carries the half-precision rounding of Metal's matrix kernel into the latent, and
- * the audio lies 22 to 61 dB from the official (11 to 29 dB with Q8_0 weights): the same speech, not the same waveform.
+ * the audio lies 22 to 63 dB from the official (11 to 29 dB with Q8_0 weights): the same speech, not the same waveform.
  * The guidance's branch without the caption carries it further: rf-weather-caption lies 11.8 dB from the official on
  * Metal and 88 dB on the CPU, while each of its DiT steps lies 44 dB or more from the official's. A wrong stage gives a
  * few dB.
@@ -63,7 +64,14 @@ int main(int argc, char ** argv) {
                 std::printf("%s: skipped, the file lacks the caption's encoder that instructions need\n", name.c_str());
                 continue;
             }
-            const Voice voice = d.reference() ? synth.voice_from_latent(read_npy(d.file("ref_latent.npy").u8string()).f32) : Voice{};
+            Voice voice;
+            if (d.embedding()) {
+                const Npy state = read_npy(d.file("speaker_state.npy").u8string());
+                voice.speaker = state.f32;
+                voice.speaker_tokens = (int) state.shape[0];
+            } else if (d.reference()) {
+                voice = synth.voice_from_latent(read_npy(d.file("ref_latent.npy").u8string()).f32);
+            }
             const Npy official = read_npy(d.file("audio.npy").u8string());
             Request r;
             r.text = d.text();

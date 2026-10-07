@@ -780,7 +780,26 @@ static int check_voice_params(const char * model_path, const char * reference, c
     ok &= expect(speech_voice_make_from(model_path, v, path, params), SPEECH_ERROR_OUT_OF_RANGE, "references", "references past 120 s together");
     speech_voice_params_free(v);
     remove(path);
-    if (ok) printf("voices of two references, at -23 LUFS and of the loudness kept were made: %s, %s, %s\n", two, quiet, kept);
+    // An embedding of eight tokens of a model's 768 values, made up, and one of another width.
+    float values[8 * 768];
+    for (int i = 0; i < 8 * 768; i++) values[i] = 0.5f * sinf(0.01f * (float) i);
+    snprintf(path, sizeof path, "%s.embedding.gguf", made);
+    if (speech_voice_params_new(&v) != SPEECH_OK) return fail("speech_voice_params_new");
+    ok &= expect(speech_voice_params_set_embedding(v, values, 8, 512), SPEECH_OK, NULL, "an embedding of 512 values a token") &&
+          expect(speech_voice_make_from(model_path, v, path, params), SPEECH_ERROR_INVALID_ARGUMENT, "embedding", "an embedding of another width");
+    values[5] = NAN;
+    ok &= expect(speech_voice_params_set_embedding(v, values, 8, 768), SPEECH_ERROR_INVALID_ARGUMENT, "embedding", "an embedding with NaN");
+    values[5] = 0;
+    ok &= expect(speech_voice_params_set_embedding(v, values, 8, 768), SPEECH_OK, NULL, "an embedding") &&
+          expect(speech_voice_params_add_reference(v, reference), SPEECH_OK, NULL, "a reference beside an embedding") &&
+          expect(speech_voice_make_from(model_path, v, path, params), SPEECH_ERROR_INVALID_ARGUMENT, "embedding", "an embedding with a reference");
+    speech_voice_params_free(v);
+    if (speech_voice_params_new(&v) != SPEECH_OK) return fail("speech_voice_params_new");
+    ok &= expect(speech_voice_params_set_embedding(v, values, 8, 768), SPEECH_OK, NULL, "an embedding") &&
+          expect(speech_voice_make_from(model_path, v, path, params), SPEECH_OK, NULL, "a voice of an embedding");
+    speech_voice_params_free(v);
+    if (ok) printf("voices of two references, at -23 LUFS, of the loudness kept and of an embedding were made: %s, %s, %s, %s\n", two, quiet, kept,
+                   path);
     else fprintf(stderr, "FAIL: a voice of several references or another loudness is not made as speech_voice_make() makes one\n");
     return ok ? 0 : 1;
 }
@@ -828,6 +847,14 @@ static int check_model(speech_model * model, const char * model_path, const char
         return 1;
     }
     printf("the drawn seed %lld gives the same %zu samples again\n", (long long) seed, again.n);
+    if (made) {
+        Audio embedded = {NULL, 0, 0};
+        if (speak(new_request(model, SENTENCE, "embedded", 7), &embedded, NULL, NULL) != SPEECH_OK || embedded.n == 0) {
+            return fail("a request in the voice of an embedding");
+        }
+        printf("the voice of an embedding spoke %.2f s\n", (double) embedded.n / rate);
+        free(embedded.samples);
+    }
 
     r = new_request(model, "どの値も中立です。", voice, 12);
     int ok = expect(speech_request_set_float(r, SPEECH_OPT_SPEED, 1), SPEECH_OK, NULL, "speed 1") &&
@@ -915,6 +942,10 @@ int main(int argc, char ** argv) {
         if (check_voice_params(model_path, reference, made, params) != 0) return 1;
         names[n_voices] = (char *) "made";
         paths[n_voices++] = (char *) made;
+        static char embedded[4096];
+        snprintf(embedded, sizeof embedded, "%s.embedding.gguf", made);
+        names[n_voices] = (char *) "embedded";
+        paths[n_voices++] = embedded;
     }
 
     speech_model * model = NULL;

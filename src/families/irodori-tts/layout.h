@@ -24,8 +24,9 @@ constexpr const char * kVoiceLayoutRequires = "0.8.0";
  * Layout 2 of a voice file for the model file `model`, which outlives it: the codec latent of one or more reference
  * recordings, encoded one by one and joined, F32 [latent_dim, frames], the hash of the codec that encoded it, each
  * recording's length and rate, whether their loudness was brought to a target and which, and the kind of device that
- * encoded them. A voice file of a codec other than the model's is refused as the caller's mistake, before its latent is
- * checked. A file of layout 1 reads as one of a recording brought to -16 LUFS.
+ * encoded them; or a speaker-inversion embedding, F32 [speaker.dim, tokens], and the general.source.url of the model it
+ * was made for. A voice file of a codec or a model other than the model's is refused as the caller's mistake, before
+ * its tensor is checked. A file of layout 1 reads as one of a recording brought to -16 LUFS.
  */
 Layout voice_layout(const ModelFile & model);
 

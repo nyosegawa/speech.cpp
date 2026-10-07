@@ -1,6 +1,6 @@
 """Runs the official Irodori-TTS on the CPU in float32 and saves the tensors the C++ port is checked against.
 
-usage: uv run python dump.py <mf|rf> <out dir> <text> (<reference.wav>... | --no-ref) [--seed n] [--steps n]
+usage: uv run python dump.py <mf|rf> <out dir> <text> (<reference.wav>... | --no-ref | --ref-embed f) [--seed n] [--steps n]
                              [--seconds s | --duration-scale x] [--speed x] [--ref-normalize-db x | --no-normalize]
                              [request options]
 
@@ -14,6 +14,8 @@ are not written. --no-ref speaks without a reference (the runtime's no_ref, spee
 meta.json's "reference" is then null. Several references are the runtime's ref_wavs, each encoded on its own and
 joined, and meta.json's "reference" lists them. --ref-normalize-db brings each to another loudness than -16 LUFS and
 --no-normalize keeps it as recorded (ref_normalize_db None), which meta.json keeps as "ref_normalize_db".
+--ref-embed speaks in a speaker-inversion embedding (a .speaker.safetensors file, the runtime's ref_embed), which
+meta.json names as its "reference" with "embedding" true; its speaker_state is the embedding.
 
 The request options are the C API's names of the runtime's SamplingRequest fields, in kebab-case: for rf
 --cfg-scale-text, --cfg-scale-speaker, --cfg-guidance-mode, --cfg-min-t, --cfg-max-t, --truncation-factor,
@@ -72,6 +74,7 @@ from irodori_tts import inference_runtime as ir
 from irodori_tts import rf
 from irodori_tts.codec import DACVAECodec
 from irodori_tts.model import get_timestep_embedding, patch_sequence_with_mask
+from irodori_tts.speaker_inversion import load_speaker_inversion_payload
 from irodori_tts.text_normalization import normalize_text
 from pins import CODE, CODEC, MODELS, snapshot
 
@@ -81,6 +84,7 @@ parser.add_argument("out_dir")
 parser.add_argument("text")
 parser.add_argument("references", nargs="*")
 parser.add_argument("--no-ref", action="store_true")
+parser.add_argument("--ref-embed")
 parser.add_argument("--ref-normalize-db", type=float)
 parser.add_argument("--no-normalize", action="store_true")
 parser.add_argument("--seed", type=int, default=0)
@@ -104,7 +108,7 @@ parser.add_argument("--keep-tail", action="store_true")
 args = parser.parse_args()
 # The runtime ignores a duration scale given with seconds; speech.cpp refuses that request.
 assert not (args.seconds > 0 and args.duration_scale != 1.0), "give --seconds or --duration-scale, not both"
-assert bool(args.references) != args.no_ref, "give references or --no-ref"
+assert bool(args.references) + args.no_ref + bool(args.ref_embed) == 1, "give references, --no-ref or --ref-embed"
 assert args.ref_normalize_db is None or not args.no_normalize, "give --ref-normalize-db or --no-normalize, not both"
 options = {name: getattr(args, name) for name in OPTIONS if getattr(args, name) is not None}
 if args.keep_tail:
@@ -178,6 +182,8 @@ elif args.references:
     fields["ref_wavs"] = args.references
 if args.no_normalize or args.ref_normalize_db is not None:
     fields["ref_normalize_db"] = None if args.no_normalize else args.ref_normalize_db
+if args.ref_embed:
+    fields["ref_embed"] = args.ref_embed
 request = ir.SamplingRequest(text=args.text, no_ref=args.no_ref, seed=args.seed, seconds=seconds,
                              duration_scale=args.duration_scale / args.speed, num_steps=args.steps, **fields)
 result = runtime.synthesize(request)
@@ -212,7 +218,12 @@ if has_caption:
 
 # Reference: loudness, the DACVAE encoder, the speaker encoder. Without a reference the runtime encodes a zero
 # latent whose every position is masked, which the port leaves out.
-if not args.no_ref:
+if args.ref_embed:
+    # The runtime attends to the embedding as it is, every token unmasked.
+    embedding = load_speaker_inversion_payload(args.ref_embed)["speaker_embedding"]
+    assert torch.equal(speaker_state[0], embedding) and bool(speaker_mask.all()) and not calls["encode_in"]
+    save("speaker_state", speaker_state[0])
+elif not args.no_ref:
     assert len(calls["encode_in"]) == len(args.references)
     latent = torch.cat([out for _, out in calls["encode_in"]], dim=1)
     if len(args.references) == 1:
@@ -349,8 +360,9 @@ for name, array in saved.items():
 meta = {
     "code": CODE, "model": MODELS[args.model], "codec": CODEC, "seed": args.seed,
     "text": args.text, "normalized_text": normalized_text, "tokens": n,
-    "reference": None if args.no_ref else (os.path.basename(args.references[0]) if len(args.references) == 1
-                                           else [os.path.basename(r) for r in args.references]),
+    "reference": None if args.no_ref else os.path.basename(args.ref_embed) if args.ref_embed
+                 else (os.path.basename(args.references[0]) if len(args.references) == 1 else [os.path.basename(r) for r in args.references]),
+    "embedding": bool(args.ref_embed),
     **({"ref_normalize_db": fields["ref_normalize_db"]} if "ref_normalize_db" in fields else {}),
     "seconds": args.seconds, "duration_scale": args.duration_scale, "speed": args.speed,
     "steps": len(calls_by_step), "options": options, "branches": branch_names,

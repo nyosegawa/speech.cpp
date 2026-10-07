@@ -1,7 +1,8 @@
 // Checks the speaker encoder and the duration predictor of Irodori-TTS against the official implementation
 // on every dump of reference/irodori-tts/dump.py, each stage from the dump's own inputs: the reference latent
 // for the speaker encoder, and the text, speaker and caption conditions for the duration predictor, the null
-// speaker for a dump without a reference and the null caption for one without instructions. The length is checked against the frames the official runtime synthesized,
+// speaker for a dump without a reference, the embedding's first token for one of an embedding, and the null caption
+// for one without instructions. The length is checked against the frames the official runtime synthesized,
 // with the dump's seconds, duration scale and speed: a dump with fixed seconds has no prediction, and only its
 // length is checked.
 //
@@ -61,7 +62,11 @@ int main(int argc, char ** argv) {
                 continue;
             }
             std::vector<float> summary;
-            if (d.reference()) {
+            if (d.embedding()) {
+                // An embedding is the speaker condition itself; its first token is the speaker's summary.
+                const Npy state = read_npy(d.file("speaker_state.npy").u8string());
+                summary.assign(state.f32.begin(), state.f32.begin() + state.shape[1]);
+            } else if (d.reference()) {
                 const Npy latent = read_npy(d.file("ref_latent.npy").u8string());
                 const Npy encoded_ref = read_npy(d.file("speaker_encoded.npy").u8string());
                 const Npy state_ref = read_npy(d.file("speaker_state.npy").u8string());
