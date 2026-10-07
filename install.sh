@@ -130,6 +130,9 @@ root=$HOME/.local/share/speech.cpp
 bin=$HOME/.local/bin
 target=$root/$version/speech
 link=$bin/speech
+archive=speech-$version-$platform.zip
+# The archive a version was installed from, which tells a build for the CPU from one for Vulkan of the same version.
+record=$root/$version/.archive
 if [ -e "$link" ] || [ -L "$link" ]; then
     case "$(readlink "$link" 2>/dev/null || true)" in
         "$root"/*) ;;
@@ -137,10 +140,13 @@ if [ -e "$link" ] || [ -L "$link" ]; then
     esac
 fi
 
-if [ "$(readlink "$link" 2>/dev/null || true)" = "$target" ] && [ -x "$target" ]; then
+installed=$(cat "$record" 2>/dev/null || true)
+if [ "$(readlink "$link" 2>/dev/null || true)" = "$target" ] && [ -x "$target" ] && [ "$installed" = "$archive" ]; then
     say "speech.cpp $version is installed already, in $(home "$root/$version")."
 else
-    archive=speech-$version-$platform.zip
+    if [ -n "$installed" ] && [ "$installed" != "$archive" ]; then
+        say "speech.cpp $version is installed from $installed; this system takes $archive, which replaces it."
+    fi
     base=https://github.com/$repository/releases/download/v$version
     # Nothing goes under the home folder until the archive is checked and its speech starts.
     work=$(mktemp -d "${TMPDIR:-/tmp}/speech.cpp-install.XXXXXX")
@@ -164,6 +170,7 @@ else
         "speech.cpp $version,"*) ;;
         *) fail "the unpacked speech says \"$started\", not speech.cpp $version" ;;
     esac
+    printf '%s\n' "$archive" >"$work/unpacked/.archive"
     mkdir -p "$root" "$bin"
     rm -rf "${root:?}/$version"
     mv "$work/unpacked" "$root/$version"

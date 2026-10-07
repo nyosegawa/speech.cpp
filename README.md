@@ -54,8 +54,9 @@ When the folder of `speech` is not on PATH, the installer adds it and says where
 `$SHELL` (`~/.zshrc` for zsh, `~/.bashrc` for bash on Linux and `~/.bash_profile` on macOS,
 `~/.config/fish/conf.d/speech.cpp.fish` for fish, `~/.profile` for any other), or on Windows to the start of the
 user's PATH. `--no-modify-path` (`-NoModifyPath` on Windows) changes nothing and says what to add. Running the
-installer again updates to the latest release and removes the version it replaces; `--version X.Y.Z` (`-Version
-X.Y.Z`) installs that release instead. Options go after `sh -s --`, and in PowerShell to the script as a script block:
+installer again updates to the latest release and removes the version it replaces, and on Linux replaces a build of
+the same version for the CPU by the Vulkan build once the loader is installed, or the other way round once it is
+removed; `--version X.Y.Z` (`-Version X.Y.Z`) installs that release instead. Options go after `sh -s --`, and in PowerShell to the script as a script block:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.sh | sh -s -- --no-modify-path
