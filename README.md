@@ -20,6 +20,66 @@ is its `general.architecture`, which the model information calls `architecture`:
 several model lines can share, as `fastconformer` runs both parakeet lines and ReazonSpeech. Each family's section below
 says what it implements.
 
+## Install
+
+On macOS with Apple silicon and on Linux x86-64:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.sh | sh
+```
+
+On Windows x64, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.ps1 | iex
+```
+
+Then name a model, which is fetched the first time (Models by name, below):
+
+```sh
+speech asr qwen3-asr-0.6b recording.wav                                  # 0.84 GB the first time
+speech tts qwen3-tts-0.6b --voice ono_anna -o hello.wav "こんにちは。"     # 1.21 GB the first time
+```
+
+The installer downloads the latest release's archive for the system (Binaries, below) from GitHub, checks it against
+the release's `SHA256SUMS`, unpacks it into `~/.local/share/speech.cpp/<version>/`, checks that `speech` starts, and
+links `~/.local/bin/speech` to it. On Windows the folder is `%LOCALAPPDATA%\Programs\speech.cpp\<version>\`, and the
+junction `%LOCALAPPDATA%\Programs\speech.cpp\current` points to it. On Linux it installs the Vulkan build where the
+Vulkan loader, `libvulkan.so.1`, is installed, and the CPU build elsewhere, saying why; the Vulkan build needs the
+loader to start, and with the loader but no GPU driver it runs on the CPU, since ggml then registers no Vulkan device.
+Windows needs the Vulkan loader, `vulkan-1.dll`, which the GPU driver of NVIDIA, AMD or Intel installs; without it the
+installer stops and says so.
+
+When the folder of `speech` is not on PATH, the installer adds it and says where: to the startup file of the shell in
+`$SHELL` (`~/.zshrc` for zsh, `~/.bashrc` for bash on Linux and `~/.bash_profile` on macOS,
+`~/.config/fish/conf.d/speech.cpp.fish` for fish, `~/.profile` for any other), or on Windows to the start of the
+user's PATH. `--no-modify-path` (`-NoModifyPath` on Windows) changes nothing and says what to add. Running the
+installer again updates to the latest release and removes the version it replaces; `--version X.Y.Z` (`-Version
+X.Y.Z`) installs that release instead. Options go after `sh -s --`, and in PowerShell to the script as a script block:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.sh | sh -s -- --no-modify-path
+```
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.ps1))) -NoModifyPath
+```
+
+To remove speech.cpp, remove its folder, its link and the models it fetched, and the line
+`export PATH="$HOME/.local/bin:$PATH"` the installer added, if it said it did, from the file it named:
+
+```sh
+rm -rf ~/.local/share/speech.cpp ~/.local/bin/speech
+rm -rf ~/Library/Caches/speech.cpp     # the models on macOS; ~/.cache/speech.cpp on Linux
+```
+
+On Windows, remove the two folders and take `%LOCALAPPDATA%\Programs\speech.cpp\current` out of the user's PATH
+(Settings, System, About, Advanced system settings, Environment Variables):
+
+```powershell
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Programs\speech.cpp", "$env:LOCALAPPDATA\speech.cpp"
+```
+
 ## Models by name
 
 Every subcommand that takes a model (`tts`, `asr`, `voice`, `info`, `serve`, `worker`) takes a model file's path,
