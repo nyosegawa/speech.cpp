@@ -703,9 +703,10 @@ SPEECH_API const char * speech_model_info_meta_value(const speech_model_info * i
  * order, but general.file_type, general.quantization_version, which a quantized file has, and speech.requires, which
  * names the first release that reads the file: 0.8.0 for Q6_K, Q5_K and Q4_K, which releases before it refuse. A file
  * whose weights are not F32 is SPEECH_ERROR_INVALID_ARGUMENT naming "model_path": a quantized file is not quantized
- * again, and a type made of F16 weights would hold other bytes than the same type made of the F32 weights. `out_path`,
- * which may not be the model file itself, is replaced, and removed again when the writing fails. It runs on the CPU,
- * with the machine's threads. Added in 3.1.
+ * again, and a type made of F16 weights would hold other bytes than the same type made of the F32 weights. A weight that
+ * is not finite, NaN or an infinity, is SPEECH_ERROR_MODEL_FILE naming "model_path". `out_path`, which may not be the
+ * model file itself, is replaced, and removed again when the writing fails. It runs on the CPU, with the machine's
+ * threads; a thread that the host cannot start is SPEECH_ERROR_OUT_OF_MEMORY. Added in 3.1.
  */
 SPEECH_API speech_status speech_quantize(const char * model_path, const char * type, const char * out_path);
 

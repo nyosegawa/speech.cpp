@@ -270,6 +270,10 @@ add_executable(irodori-synthesis-check checks/irodori-synthesis-check.cpp tools/
 target_include_directories(irodori-synthesis-check PRIVATE tools/common)
 target_link_libraries(irodori-synthesis-check PRIVATE irodoritts)
 
+# What speech quantize refuses of the weights it is given, on a model file of a layout of the check's own.
+add_executable(quantize-check checks/quantize-check.cpp)
+target_link_libraries(quantize-check PRIVATE speechcommon)
+
 add_executable(speech-api-check checks/speech-api-check.c checks/speech-api-irodori.c checks/speech-api-recognition.c checks/speech-api-common.c
                checks/speech-api-platform.c)
 target_link_libraries(speech-api-check PRIVATE speech)

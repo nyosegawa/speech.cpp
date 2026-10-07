@@ -240,6 +240,8 @@ speech quantize MODEL OUT --type f16|q8_0|q6_k|q5_k|q4_k
 - MODEL is a path, and its weights must be F32: a quantized file is not quantized again, and a type made of F16 weights
   would hold other bytes than the same type made of the F32 weights. Either is refused with exit 1
   (`speech: invalid_argument (model_path): ...`), before anything is written.
+- A weight that is not finite, NaN or an infinity, is refused with exit 1 (`speech: model_file (model_path): ...`),
+  naming the tensor, and nothing is left at OUT.
 
 ## speech serve and speech worker
 

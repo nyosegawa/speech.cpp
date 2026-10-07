@@ -1,6 +1,7 @@
 #include "quantize.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -293,6 +294,14 @@ void write_model_file(const std::string & in, const std::string & out, const Wei
         if (!seek_file(source.get(), gguf_get_data_offset(gguf.get()) + gguf_get_tensor_offset(gguf.get(), i)) ||
             std::fread(values.data(), 1, size, source.get()) != size) {
             throw Error(Fault::File, "cannot read the tensor " + std::string(t->name) + " of " + in + "; the file is shorter than its header says",
+                        "model_path");
+        }
+        // ggml's quantizers assert that a value is finite where assertions are on and write garbage where they are off.
+        const auto bad = std::find_if(values.begin(), values.end(), [](float v) { return !std::isfinite(v); });
+        if (bad != values.end()) {
+            throw Error(Fault::File,
+                        "the tensor " + std::string(t->name) + " of " + in + " holds " + (std::isnan(*bad) ? "NaN" : *bad > 0 ? "infinity" : "-infinity") +
+                            " at value " + std::to_string(bad - values.begin()) + ", which no weight of a model is; " + model->remedy(),
                         "model_path");
         }
         std::vector<uint8_t> data = convert(values, t->ne[0], types[i]);
