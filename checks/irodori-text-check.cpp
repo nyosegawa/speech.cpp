@@ -99,7 +99,10 @@ int main(int argc, char ** argv) {
 
         ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
         std::vector<std::filesystem::path> dumps;
-        for (const auto & e : std::filesystem::recursive_directory_iterator(dir)) {
+        // A dump may be a link to a folder, as in a worktree whose out/ links another checkout's dumps; the iterator
+        // descends into a linked folder only when told to.
+        const auto follow = std::filesystem::directory_options::follow_directory_symlink;
+        for (const auto & e : std::filesystem::recursive_directory_iterator(dir, follow)) {
             if (e.is_regular_file() && e.path().filename() == "text_layers.npy") dumps.push_back(e.path().parent_path());
         }
         std::sort(dumps.begin(), dumps.end());
@@ -131,7 +134,7 @@ int main(int argc, char ** argv) {
             worst = std::min(worst, ds.snr_db);
         }
         std::vector<std::filesystem::path> captions;
-        for (const auto & e : std::filesystem::recursive_directory_iterator(dir)) {
+        for (const auto & e : std::filesystem::recursive_directory_iterator(dir, follow)) {
             if (caption && e.is_regular_file() && e.path().filename() == "caption_state.npy") captions.push_back(e.path().parent_path());
         }
         std::sort(captions.begin(), captions.end());

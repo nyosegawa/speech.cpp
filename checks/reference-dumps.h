@@ -18,7 +18,9 @@ inline std::vector<std::filesystem::path> reference_dumps(const std::string & ro
     const std::filesystem::path dir = std::filesystem::u8path(root) / std::filesystem::u8path(model.str("general.name"));
     std::vector<std::filesystem::path> dumps;
     if (std::filesystem::is_directory(dir)) {
-        for (const auto & e : std::filesystem::recursive_directory_iterator(dir)) {
+        // A dump may be a link to a folder, as in a worktree whose out/ links another checkout's dumps; the iterator
+        // descends into a linked folder only when told to.
+        for (const auto & e : std::filesystem::recursive_directory_iterator(dir, std::filesystem::directory_options::follow_directory_symlink)) {
             if (e.is_regular_file() && e.path().filename() == "features.npy") dumps.push_back(e.path().parent_path());
         }
     }
