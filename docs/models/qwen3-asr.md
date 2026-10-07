@@ -60,9 +60,11 @@ tokens a second) and the 4096 the model may write, are more than the decoder's 6
 ## Long audio
 
 The model takes at most 1200 s at once. Longer audio is cut as qwen-asr's `transcribe()` cuts it: at 1200 s from the last
-cut, moved to the quietest 0.1 s within 5 s on either side. Each part is recognized alone, the texts are joined without a
-separator, and the languages are merged in the order of the audio, one for each run of parts in the same language. The
-memory is that of the longest part.
+cut, moved to the quietest 0.1 s within 5 s on either side and to its quietest sample, with a part shorter than 0.5 s
+padded with zeros. Each part is recognized alone, and the texts are joined without a separator. The languages are merged
+as qwen-asr's `merge_languages()` merges them, in the order of the audio, one for each run of parts in the same language
+and none for a part without one, so a recording heard in Japanese and then in English gives `ja` and `en`. The memory
+is that of the longest part.
 
 A part that reaches the 4096 tokens stops there, and the request says `model_limit` with the text of every part. A
 recording of over a few minutes may reach them: on the first 1203 s of FLEURS ja_jp joined, the 0.6B model repeats three

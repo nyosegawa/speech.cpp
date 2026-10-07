@@ -102,17 +102,18 @@ takes none of them: MeanFlow folded the guidance into its training, and the runt
 | Option | Default | What it does |
 |---|---|---|
 | `cfg_scale_text`, `cfg_scale_speaker`, `cfg_scale_instructions` | 3, 5, 3 | the guidance's scales; 0 leaves that condition's branch out |
-| `cfg_guidance_mode` | `independent` | `joint` leaves out every condition in one branch at one scale; `alternating` leaves out one condition a step, in turn |
+| `cfg_guidance_mode` | `independent` | `joint` leaves out every condition in one branch at one scale; `alternating` leaves out one condition a step, in turn by the step's number, unguided steps counted |
 | `cfg_min_t`, `cfg_max_t` | 0.5, 1 | the guidance runs while the step's time lies between them |
-| `speaker_uncond_mode` | `mask` | `noise` gives the branch without the speaker noise in place of the speaker condition |
+| `speaker_uncond_mode` | `mask` | `noise` gives the branch without the speaker noise of the speaker condition's spread in its place, drawn from the request's seed after the latent's noise |
 | `sway_coeff` | 0 | bends the linear schedule as Sway Sampling does: below 0 the steps gather near the noise, above 0 near the speech; the runtime's own `sway` uses -1 |
 | `truncation_factor` | none | multiplies the starting noise |
 | `rescale_k`, `rescale_sigma` | none | temporal score rescaling of each step's velocity; both or neither |
 | `speaker_kv_scale` | 1 | above 1, the speech follows the voice more closely |
-| `speaker_kv_min_t`, `speaker_kv_max_layers` | 0.9, 12 | the scaling covers the steps that start at or above this time, in the DiT's first layers up to this number |
+| `speaker_kv_min_t`, `speaker_kv_max_layers` | 0.9, 12 | the scaling covers the steps that start at or above this time, or every step when it lies above the first step's time, in the DiT's first layers up to this number |
 
 The numbers are float32, as the runtime's tensors take them, so their ranges stop at the largest float (3.4e38), and an
-option above 0 starts at the smallest normal float (1.2e-38). `speech info` shows the bounds.
+option above 0 starts at the smallest normal float (1.2e-38), which Metal does not flush to 0. `speech info` shows the
+bounds.
 
 A request that sets none of these speaks as before they were options, sample for sample. Where the runtime clamps a value
 or ignores a setting that another one leaves without effect, speech.cpp refuses the request before any work, naming the
