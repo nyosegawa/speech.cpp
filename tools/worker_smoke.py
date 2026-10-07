@@ -172,6 +172,11 @@ if irodori:
         speak("g", text="はい。", steps=4, cfg_guidance_mode="joint", cfg_scale_text=4, cfg_scale_speaker=4, speaker_kv_scale=1.5)
         expect_error({"type": "synthesize", "id": "e16", "text": "あ。", "voice": voice, "cfg_guidance_mode": "joint", "cfg_scale_text": 3,
                       "cfg_scale_speaker": 5}, "invalid_argument", "cfg_guidance_mode")
+        # The largest scale the range takes, whose guidance overflows the float32, gives speech that is not finite, refused
+        # naming no option.
+        largest = next(o["maximum"] for o in info["options"] if o["name"] == "cfg_scale_text")
+        expect_error({"type": "synthesize", "id": "e19", "text": "あ。", "voice": voice, "steps": 4, "cfg_scale_text": largest}, "out_of_range",
+                     None)
     if "none" in [v["name"] for v in info["voices"]]:
         w.request({"type": "synthesize", "id": "none", "text": "はい。", "voice": "none"})
         w.terminal("none", "end")

@@ -39,7 +39,8 @@ sets none of the new fields gives the same audio as before.
 - **The ranges stop at what a float32 holds**, since the family computes with these numbers as float32: at the
   largest float, and, for an option above 0, at the smallest normal float. A value past them, which would turn into
   infinity or 0, is out_of_range when the request sets it, as any value outside a range, and the model information
-  shows the bounds.
+  shows the bounds. Values within them whose products overflow are refused when the speech comes out not finite
+  (docs/adr/0032).
 - **What the runtime would ignore or cannot run is refused before any work**, naming the option: one of the rescaling's
   two settings alone, `cfg_min_t` above `cfg_max_t`, the joint guidance with two scales that differ, a schedule that
   stops, and a value other than the default that another value leaves without effect (the guidance's mode, range and

@@ -198,6 +198,13 @@ public:
 
     bool audio(const float * samples, size_t n) override {
         if (stopped()) return false;
+        // Every family's audio passes here, so no synthesis returns audio that is not finite as speech.
+        for (size_t i = 0; i < n; i++) {
+            if (!std::isfinite(samples[i])) {
+                throw Error(Fault::OutOfRange, "the speech came out as numbers that are not finite, which the model's float32 cannot hold: the "
+                                               "request's scales or settings are larger than the model computes with; give smaller ones");
+            }
+        }
         passed_ = true;
         samples_ += n;
         if (on_audio_(samples, n, user_data_) != 0) stop_ = true;

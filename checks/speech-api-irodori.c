@@ -200,6 +200,21 @@ static int check_irodori_options(speech_model * model, const speech_model_info *
         set.n = 0;
         ok &= expect(speak(r, &set, NULL, NULL), SPEECH_OK, NULL, "a request of every guidance option") && set.n > 0;
         if (set.n > 0) printf("a request of every guidance option spoke %.2f s\n", (double) set.n / rate);
+
+        // The largest text scale the range takes, which a float32 holds but whose guidance overflows it, gives speech that
+        // is not finite on every device (1e38 does on Metal alone, where the CPU's latent stays finite and the codec's
+        // tanh saturates); it is refused naming no option, with nothing passed on.
+        double lowest = 0, largest = 0;
+        int exclusive = 0;
+        speech_model_info_option_range(info, SPEECH_OPT_CFG_SCALE_TEXT, &lowest, &largest, &exclusive);
+        r = new_request(model, "はい。", voice, 5);
+        speech_request_set_int(r, SPEECH_OPT_STEPS, 8);
+        speech_request_set_float(r, SPEECH_OPT_CFG_SCALE_TEXT, largest);
+        Audio overflow = {NULL, 0, 0};
+        char what[96];
+        snprintf(what, sizeof what, "a text scale of %g", largest);
+        ok &= expect(speak(r, &overflow, NULL, NULL), SPEECH_ERROR_OUT_OF_RANGE, NULL, what) && overflow.n == 0;
+        free(overflow.samples);
     }
     free(set.samples);
     free(cut.samples);

@@ -609,9 +609,12 @@ What only the whole request shows is refused when the request runs, before any w
 - Qwen3-TTS, a `temperature` or `repetition_penalty` that the sampler's float rounds to 0 or to infinity (below about
   1e-45 or above about 3.4e38): `out_of_range`, naming the option.
 
-One more failure shows only while the speech is made: a `temperature` or `repetition_penalty` so far from 1 that it
+Two more failures show only while the speech is made. A `temperature` or `repetition_penalty` so far from 1 that it
 pushes a logit beyond the range of a float (1e-40 does) ends the request with `out_of_range`, naming the option, where
-the official package fails on the same values with an error of PyTorch's.
+the official package fails on the same values with an error of PyTorch's. And speech that comes out not finite, as from
+Irodori-TTS's `cfg_scale_text` at its largest, 3.4e38, which a float32 holds but whose guidance it does not, is never
+passed on: the request ends with `out_of_range` naming no option, since each value was within its range and none is
+known to be at fault, and a new request with smaller scales or settings speaks (docs/adr/0032).
 
 ### Model information as JSON
 

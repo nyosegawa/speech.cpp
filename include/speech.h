@@ -85,7 +85,11 @@ typedef enum speech_status {
     SPEECH_ERROR_INVALID_ARGUMENT = -1,
     /** The model cannot do what was asked: an option it does not take, given a value other than the neutral one. */
     SPEECH_ERROR_UNSUPPORTED = -2,
-    /** The model takes the option, but not this value: outside its range, not one of its choices, or too long. */
+    /**
+     * The model takes the option, but not this value: outside its range, not one of its choices, or too long; or a
+     * synthesis whose values, each within its range, are together more than the model computes, whose speech came out
+     * not finite (speech_synthesize()), naming no option.
+     */
     SPEECH_ERROR_OUT_OF_RANGE = -3,
     /**
      * A model or voice file that cannot be used: not GGUF, an architecture no family has, a layout this release does
@@ -852,16 +856,19 @@ SPEECH_API void speech_request_cancel(speech_request * request);
 
 /**
  * Receives the audio of a synthesis as it is made: `n_samples` mono samples, at least one, at the model's sample
- * rate, nominally within [-1, 1] and not clamped, valid only during the call. Returning nonzero stops the request. It
- * runs on the thread that called speech_synthesize() and must not call into the library with the same model.
+ * rate, nominally within [-1, 1] and not clamped, each a finite number, valid only during the call. Returning nonzero
+ * stops the request. It runs on the thread that called speech_synthesize() and must not call into the library with the
+ * same model.
  */
 typedef int (*speech_audio_callback)(const float * samples, size_t n_samples, void * user_data);
 
 /**
  * Speaks a request, passing its audio to `on_audio` with `user_data`. It returns SPEECH_OK once the speech has ended
  * or has been stopped by a limit, with the reason in the result; SPEECH_CANCELLED once it was cancelled; or an error,
- * after which no more audio comes. The request is checked as a whole before any work starts. A recognition model is
- * SPEECH_ERROR_UNSUPPORTED.
+ * after which no more audio comes. The request is checked as a whole before any work starts. Speech that comes out not
+ * finite, as from a guidance scale that a float32 holds but whose products it does not, is never passed on: the request
+ * fails with SPEECH_ERROR_OUT_OF_RANGE naming no option, since each value was within its range and none is known to be
+ * at fault, and the caller makes a new request with smaller values. A recognition model is SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_synthesize(speech_request * request, speech_audio_callback on_audio, void * user_data);
 
