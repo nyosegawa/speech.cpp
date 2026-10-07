@@ -1,27 +1,41 @@
-// The speak panel: a text and the synthesis model's options, the speech played as the server makes it, which can be
-// stopped and saved as a WAVE file, and for a model that takes voice files, a voice made from a recording.
+// The speak panel: a text and the synthesis model's options, the speech played as the server makes it, and below it the
+// result, which plays again, pauses, moves, saves as a WAVE file and goes to the transcribe panel; and for a model that
+// takes voice files, a voice made from a recording.
 
 import * as api from './api.js';
 import { AudioInput } from './audio-input.js';
+import { scriptLanguage } from './languages.js';
 import { OptionForm } from './options.js';
 import { Player } from './player.js';
 import { save } from './wav.js';
+import { Waveform } from './waveform.js';
 
 const $ = (id) => document.getElementById(id);
 
 const STOPS = {
-  max_seconds: 'It stopped at the length that max seconds sets.',
-  model_limit: 'It stopped at the longest speech the model makes.',
+  max_seconds: 'stopped at max seconds',
+  model_limit: 'stopped at the longest speech the model makes',
 };
+
+function clock(seconds) {
+  const whole = Math.floor(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+}
 
 export class SpeakPanel {
   #held = null;
   #options = null;
   #player = new Player();
   #controller = null;
+  #frame = 0;
   #voice = new AudioInput($('voice-audio'));
+  #waveform = new Waveform($('speech-wave'), $('speech-seek'), (seconds) => {
+    this.#player.seek(seconds);
+    this.#paint();
+  });
 
-  constructor() {
+  /** `transcribe(wav, label)` hands the speech to the transcribe panel. */
+  constructor(transcribe) {
     $('speak-form').addEventListener('submit', (event) => {
       event.preventDefault();
       this.#speak();
@@ -29,11 +43,15 @@ export class SpeakPanel {
     $('speak-text').addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) $('speak-form').requestSubmit();
     });
+    $('speak-text').addEventListener('input', () => this.#options?.suggestVoice(scriptLanguage($('speak-text').value)));
     $('speak-stop').addEventListener('click', () => {
       this.#controller?.abort();
-      this.#player.stop();
+      this.#player.pause();
     });
-    $('speak-save').addEventListener('click', () => save(this.#player.wav(), 'speech.wav'));
+    $('speech-play').addEventListener('click', () => (this.#player.playing ? this.#player.pause() : this.#player.play()));
+    $('speech-save').addEventListener('click', () => save(this.#player.wav(), 'speech.wav'));
+    $('speech-transcribe').addEventListener('click', () => transcribe(this.#player.wav(), `Speech of ${this.#held.model.name}`));
+    this.#player.onchange = () => this.#animate();
     $('voice-form').addEventListener('submit', (event) => {
       event.preventDefault();
       this.#addVoice();
@@ -43,15 +61,18 @@ export class SpeakPanel {
   /** Shows the synthesis model held, `held` of GET /speech/models, or that there is none. */
   show(held) {
     this.#held = held;
-    $('speak-empty').hidden = held !== null;
     $('speak-form').hidden = held === null;
     $('voice-maker').hidden = !held?.model.voice_files;
-    if (!held) return;
+    // A model that speaks only in voices made from recordings has nothing to speak with until one is made.
+    if (held?.model.voice_files && held.model.voices.length === 0) $('voice-maker').open = true;
+    if (!held) {
+      $('speech-result').hidden = true;
+      return;
+    }
     const kept = this.#options?.values() ?? {};
-    const { model } = held;
-    $('speak-model').textContent = `${model.name} on ${model.device}, ${model.sample_rate} Hz`;
-    this.#options = new OptionForm(model, $('speak-options'), $('speak-more'));
+    this.#options = new OptionForm(held.model, $('speak-options'), $('speak-more'));
     this.#options.restore(kept);
+    this.#options.suggestVoice(scriptLanguage($('speak-text').value));
   }
 
   #status(text) {
@@ -64,6 +85,7 @@ export class SpeakPanel {
       $('speak-text').setAttribute('aria-invalid', 'true');
       $('speak-text-error').textContent = error.message;
       $('speak-text-error').hidden = false;
+      $('speak-text').focus();
       return;
     }
     if (error.param && this.#options.showError(error.param, error.message)) return;
@@ -71,49 +93,82 @@ export class SpeakPanel {
     $('speak-error').hidden = false;
   }
 
-  async #speak() {
-    const text = $('speak-text');
+  #clearErrors() {
     this.#options.clearErrors();
-    text.removeAttribute('aria-invalid');
+    $('speak-text').removeAttribute('aria-invalid');
     $('speak-text-error').hidden = true;
     $('speak-error').hidden = true;
+  }
+
+  /** Keeps the waveform and the time in step with the player while it plays. */
+  #animate() {
+    cancelAnimationFrame(this.#frame);
+    this.#paint();
+    if (this.#player.playing || this.#controller) this.#frame = requestAnimationFrame(() => this.#animate());
+  }
+
+  #paint() {
+    const player = this.#player;
+    this.#waveform.update(player.chunks, player.duration, player.position);
+    $('speech-time').textContent = `${clock(player.position)} / ${clock(player.duration)}`;
+    $('speech-play').setAttribute('aria-label', player.playing ? 'Pause' : 'Play');
+    $('speech-play').classList.toggle('playing', player.playing);
+  }
+
+  async #speak() {
+    const text = $('speak-text');
+    this.#clearErrors();
     if (!text.value.trim()) {
       this.#fail({ param: 'input', message: 'Write the text to speak.' });
-      text.focus();
       return;
     }
     this.#controller = new AbortController();
-    $('speak-start').disabled = true;
-    $('speak-stop').disabled = false;
-    $('speak-save').disabled = true;
+    $('speak-start').hidden = true;
+    $('speak-stop').hidden = false;
+    $('speech-result').hidden = true;
     this.#status('Starting');
+    const model = this.#held.model.name;
     const started = performance.now();
     let firstAudio = 0;
+    let done = null;
     try {
       for await (const event of api.speak({ input: text.value, ...this.#options.values() }, this.#controller.signal)) {
         if (event.type === 'start') {
           await this.#player.begin(event.rate);
         } else if (event.type === 'audio') {
-          firstAudio ||= performance.now();
+          if (!firstAudio) {
+            firstAudio = performance.now();
+            $('speech-result').hidden = false;
+            this.#setResultEnabled(false);
+          }
           this.#player.push(event.samples);
-          this.#status(`Speaking: ${this.#player.seconds.toFixed(1)} s of audio`);
+          this.#status('Speaking');
+          this.#animate();
         } else {
-          const first = ((firstAudio - started) / 1000).toFixed(2);
-          this.#status(`${this.#player.seconds.toFixed(2)} s of audio, the first after ${first} s; seed ${event.seed}. ${STOPS[event.stop] ?? ''}`);
+          done = event;
         }
       }
     } catch (error) {
-      if (error.name === 'AbortError') this.#status(`Stopped after ${this.#player.seconds.toFixed(2)} s of audio.`);
-      else {
-        this.#status('');
-        this.#fail(error);
-      }
+      if (error.name !== 'AbortError') this.#fail(error);
     } finally {
       this.#controller = null;
-      $('speak-start').disabled = false;
-      $('speak-stop').disabled = true;
-      $('speak-save').disabled = this.#player.seconds === 0;
+      $('speak-start').hidden = false;
+      $('speak-stop').hidden = true;
+      this.#status('');
     }
+    if (!firstAudio) return;
+    const parts = [model, `first audio after ${((firstAudio - started) / 1000).toFixed(2)} s`,
+      `made in ${((performance.now() - started) / 1000).toFixed(2)} s`];
+    if (done) parts.push(`seed ${done.seed}`);
+    if (done && STOPS[done.stop]) parts.push(STOPS[done.stop]);
+    if (!done) parts.push('stopped before its end');
+    $('speech-meta').textContent = parts.join(' · ');
+    this.#setResultEnabled(true);
+    this.#animate();
+  }
+
+  #setResultEnabled(enabled) {
+    for (const id of ['speech-play', 'speech-seek', 'speech-save', 'speech-transcribe']) $(id).disabled = !enabled;
   }
 
   async #addVoice() {
@@ -137,7 +192,7 @@ export class SpeakPanel {
       const recording = await this.#voice.wav(this.#held.model.sample_rate);
       this.show(await api.addVoice(name.value.trim(), recording));
       this.#options.select('voice', name.value.trim());
-      $('voice-status').textContent = `Added the voice ${name.value.trim()}, chosen above.`;
+      $('voice-status').textContent = `Added ${name.value.trim()}, chosen above.`;
       name.value = '';
     } catch (e) {
       $('voice-status').textContent = '';

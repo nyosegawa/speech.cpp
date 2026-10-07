@@ -1282,15 +1282,17 @@ On 127.0.0.1, `::1` or `localhost`, the server also serves a page on which to tr
 speech serve --open
 ```
 
-It lists the catalog's models in two groups, speaking and transcribing, each with its size, whether it is fetched, and
-the languages for which it is the model to start with. Picking one fetches it with its progress, which can be cancelled
-and is resumed the next time, and loads it in place of the model of its task. Speak takes a text and the synthesis
-model's options, built from its information (the common ones shown, the rest folded away), plays the speech as the
-server streams it, and saves it as a WAVE file; for a model that takes voice files (Irodori-TTS) it makes a voice from
-a recording dropped on it or recorded in the browser. Transcribe takes an audio file in any format the browser decodes,
-or a recording, brought to one channel at the model's rate, and shows the text, the language heard and the segments
-with their times where the model gives them. Errors appear in the server's words next to what caused them. The page
-is plain HTML, CSS and JavaScript built into `speech`, and needs nothing from the network.
+It has a panel to speak and a panel to transcribe, side by side on a wide screen. At the top of each, a picker shows the
+model in use and lists the catalog's models of its task, each with its size, whether it is fetched, its languages by
+name and those it is the one to start with; picking one fetches it with its progress, which can be cancelled and is
+resumed the next time, and loads it in place of the model of its task. Speak takes a text and the synthesis model's
+options, built from its information (the common ones shown, the rest folded away), chooses a voice of the text's
+language where its script tells it, plays the speech as the server streams it, and then plays it again, saves it as a
+WAVE file or hands it to Transcribe; for a model that takes voice files (Irodori-TTS) it makes a voice from a recording
+dropped on it or recorded in the browser. Transcribe takes an audio file in any format the browser decodes, or a
+recording, brought to one channel at the model's rate, and shows the text with the language heard, the time it took
+and the segments with their times where the model gives them. Errors appear in the server's words next to what caused
+them. The page is plain HTML, CSS and JavaScript built into `speech`, and needs nothing from the network.
 
 The server has no authentication, and any web page open in a browser can send requests to 127.0.0.1, so the page is
 guarded (docs/adr/0039):

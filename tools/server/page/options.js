@@ -1,37 +1,44 @@
 // The fields of a model's request options, built from its information as speech info --json gives it: each option's
 // type, whether it is required, its default, its range and its choices. The common options are shown and the rest are
-// folded away; an option the model checks but does not steer by has no field, and a field left at its default sends
+// folded away; an option the model checks but does not steer by has no field, and a field left as it came sends
 // nothing, so that the model's own default applies.
+
+import { languageName } from './languages.js';
 
 const COMMON = new Set(['voice', 'language', 'speed', 'seed', 'instructions', 'prompt']);
 const LONG = new Set(['instructions', 'prompt']);
-const languages = new Intl.DisplayNames(['en'], { type: 'language' });
+/** A bound at or past which a range says nothing a user needs: the largest int32 and 2^53 - 1 among them. */
+const UNBOUNDED = 1e6;
 let fieldCount = 0;
 
 function label(name) {
   return name[0].toUpperCase() + name.slice(1).replaceAll('_', ' ');
 }
 
-/** The English name of the language of a BCP 47 tag, or the tag where the browser has none. */
-export function languageName(tag) {
-  try {
-    return languages.of(tag) ?? tag;
-  } catch {
-    return tag;
-  }
+/** The range of a number as a user reads it: "0 to 1", "1 or more", "above 0", or nothing for one without bounds. */
+function range(option) {
+  const low = option.minimum ?? option.exclusive_minimum;
+  const high = option.maximum ?? option.exclusive_maximum;
+  const hasLow = low !== undefined && Math.abs(low) < UNBOUNDED;
+  const hasHigh = high !== undefined && Math.abs(high) < UNBOUNDED;
+  const above = option.exclusive_minimum !== undefined;
+  if (hasLow && hasHigh) return above ? `above ${low}, up to ${high}` : `${low} to ${high}`;
+  if (hasLow) return above ? `above ${low}` : `${low} or more`;
+  if (hasHigh) return `up to ${high}`;
+  return '';
 }
 
-function range(option) {
+function hint(option) {
+  if (option.name === 'seed') return 'drawn for each request when empty';
   const parts = [];
-  if (option.minimum !== undefined) parts.push(`from ${option.minimum}`);
-  if (option.exclusive_minimum !== undefined) parts.push(`above ${option.exclusive_minimum}`);
-  if (option.maximum !== undefined && option.maximum < 1e15) parts.push(`to ${option.maximum}`);
-  if (option.exclusive_maximum !== undefined) parts.push(`below ${option.exclusive_maximum}`);
-  return parts.join(' ');
+  if (option.default !== undefined && option.type !== 'bool' && !option.choices && option.default !== '') parts.push(`default ${option.default}`);
+  if (option.type === 'int' || option.type === 'float') parts.push(range(option));
+  return parts.filter(Boolean).join(', ');
 }
 
 export class OptionForm {
   #fields = new Map();
+  #voiceChosen = false;
 
   /**
    * Builds the fields of `info`'s options into `visible`, and the uncommon ones into `more`, the folded part, which is
@@ -57,9 +64,10 @@ export class OptionForm {
     const caption = document.createElement('label');
     caption.htmlFor = id;
     caption.textContent = label(option.name);
-    const hint = document.createElement('p');
-    hint.className = 'hint';
-    hint.id = `${id}-hint`;
+    const help = document.createElement('p');
+    help.className = 'hint';
+    help.id = `${id}-hint`;
+    help.textContent = hint(option);
     const error = document.createElement('p');
     error.className = 'error';
     error.id = `${id}-error`;
@@ -71,57 +79,86 @@ export class OptionForm {
       input.type = 'checkbox';
       input.checked = option.default ?? false;
       element.classList.add('check');
+    } else if (option.name === 'voice') {
+      input = this.#voices(option, info, help);
     } else if (option.choices) {
-      input = this.#select(option, info, hint);
+      input = document.createElement('select');
+      if (!option.required) input.append(new Option(option.default !== undefined ? `Default (${this.#choiceText(option, option.default)})` : 'Default', ''));
+      for (const choice of option.choices) input.append(new Option(this.#choiceText(option, choice), choice));
     } else if (option.type === 'int' || option.type === 'float') {
       input = document.createElement('input');
       input.type = 'number';
+      input.inputMode = option.type === 'int' ? 'numeric' : 'decimal';
       input.step = option.type === 'int' ? '1' : 'any';
       if (option.minimum !== undefined) input.min = option.minimum;
-      if (option.maximum !== undefined && option.maximum < 1e15) input.max = option.maximum;
-      input.placeholder = option.default !== undefined ? String(option.default) : '';
-      hint.textContent = option.name === 'seed' ? 'Left empty, each request draws one.' : range(option);
+      if (option.maximum !== undefined && option.maximum < UNBOUNDED) input.max = option.maximum;
     } else {
       input = document.createElement(LONG.has(option.name) ? 'textarea' : 'input');
       if (LONG.has(option.name)) {
         input.rows = 2;
         element.classList.add('wide');
       }
-      input.placeholder = option.default ?? '';
     }
     input.id = id;
     input.name = option.name;
-    input.setAttribute('aria-describedby', `${hint.id} ${error.id}`);
+    input.setAttribute('aria-describedby', `${help.id} ${error.id}`);
     if (option.type === 'bool') element.append(input, caption, error);
-    else element.append(caption, input, hint, error);
+    else element.append(caption, input, help, error);
     return { option, input, error, element };
   }
 
-  #select(option, info, hint) {
+  #choiceText(option, choice) {
+    return option.name === 'language' && choice !== 'auto' ? languageName(choice) : choice;
+  }
+
+  /** The voices, grouped by their language, with the chosen one's description below them. */
+  #voices(option, info, help) {
     const select = document.createElement('select');
     const voices = new Map((info.voices ?? []).map((v) => [v.name, v]));
-    if (!option.required) {
-      const fallback = new Option(option.default !== undefined ? `Default (${option.default})` : 'Default', '');
-      select.append(fallback);
-    } else if (option.choices.length === 0) {
-      select.append(new Option(option.name === 'voice' ? 'No voice yet; make one below' : 'None', ''));
+    if (option.choices.length === 0) {
+      select.append(new Option('No voice yet', ''));
       select.disabled = true;
     }
+    const groups = new Map();
     for (const choice of option.choices) {
-      const voice = voices.get(choice);
-      let text = option.name === 'language' ? `${languageName(choice)} (${choice})` : choice;
-      if (voice?.language) text += ` (${[languageName(voice.language), voice.gender].filter(Boolean).join(', ')})`;
-      select.append(new Option(text, choice));
+      const language = voices.get(choice)?.language ?? '';
+      if (!groups.has(language)) groups.set(language, []);
+      groups.get(language).push(choice);
     }
-    if (option.name === 'voice') {
-      const describe = () => (hint.textContent = voices.get(select.value)?.description ?? '');
-      select.addEventListener('change', describe);
+    const ordered = [...groups.keys()].sort((a, b) => (a && b ? languageName(a).localeCompare(languageName(b)) : a ? 1 : -1));
+    for (const language of ordered) {
+      const parent = language ? Object.assign(document.createElement('optgroup'), { label: languageName(language) }) : select;
+      for (const choice of groups.get(language)) parent.append(new Option(choice, choice));
+      if (parent !== select) select.append(parent);
+    }
+    // The description says what the name does not: the voice's character, and its gender where the model gives one.
+    const describe = () => {
+      const voice = voices.get(select.value);
+      const none = option.choices.length === 0 && info.voice_files ? 'Make one from a recording below.' : '';
+      help.textContent = voice ? voice.description || voice.gender : none;
+    };
+    select.addEventListener('change', (event) => {
       describe();
-    }
+      if (event.isTrusted) this.#voiceChosen = true;
+    });
+    describe();
+    this.voices = voices;
     return select;
   }
 
-  /** The values set, by option name and of the option's type, without the fields left at their defaults. */
+  /**
+   * Chooses a voice of `language` for the text, unless the user chose one or the voice chosen is of that language
+   * already.
+   */
+  suggestVoice(language) {
+    const field = this.#fields.get('voice');
+    if (!field || !language || this.#voiceChosen) return;
+    if (this.voices.get(field.input.value)?.language === language) return;
+    const match = [...this.voices.values()].find((v) => v.language === language && field.option.choices.includes(v.name));
+    if (match) this.select('voice', match.name);
+  }
+
+  /** The values set, by option name and of the option's type, without the fields left as they came. */
   values() {
     const out = {};
     for (const [name, { option, input }] of this.#fields) {

@@ -17,28 +17,11 @@
   <main>
     <p class="notice" id="page-error" role="alert" hidden></p>
 
-    <section class="panel" aria-labelledby="models-heading">
-      <h2 id="models-heading">Models</h2>
-      <p class="muted">Choose a model to speak with and one to transcribe with. The first time, a model is fetched from
-        Hugging Face, which takes the size it shows; after that it loads from <span id="model-dir">its folder</span>.</p>
-      <div class="columns">
-        <section aria-labelledby="synthesis-heading">
-          <h3 id="synthesis-heading">Speaking</h3>
-          <ul class="model-list" id="synthesis-models"></ul>
-        </section>
-        <section aria-labelledby="recognition-heading">
-          <h3 id="recognition-heading">Transcribing</h3>
-          <ul class="model-list" id="recognition-models"></ul>
-        </section>
-      </div>
-    </section>
-
-    <div class="columns wide">
-      <section class="panel" aria-labelledby="speak-heading">
+    <div class="panels">
+      <section class="panel" id="speak" aria-labelledby="speak-heading">
         <h2 id="speak-heading">Speak</h2>
-        <p class="muted" id="speak-empty">Choose a speaking model above.</p>
+        <div class="picker-slot" data-task="synthesis"></div>
         <form id="speak-form" novalidate hidden>
-          <p class="model-in-use" id="speak-model"></p>
           <div class="field">
             <label for="speak-text">Text</label>
             <textarea id="speak-text" rows="4" required aria-describedby="speak-text-hint speak-text-error"></textarea>
@@ -52,92 +35,135 @@
           </details>
           <div class="actions">
             <button type="submit" class="primary" id="speak-start">Speak</button>
-            <button type="button" id="speak-stop" disabled>Stop</button>
-            <button type="button" id="speak-save" disabled>Save WAVE</button>
+            <button type="button" id="speak-stop" hidden>Stop</button>
+            <p class="status" id="speak-status" role="status"></p>
           </div>
-          <p class="status" id="speak-status" role="status"></p>
           <p class="error" id="speak-error" role="alert" hidden></p>
         </form>
+        <div class="result speech-result" id="speech-result" hidden>
+          <div class="player">
+            <button type="button" class="icon-button" id="speech-play" aria-label="Play">
+              <svg class="icon-play" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg>
+              <svg class="icon-pause" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/></svg>
+            </button>
+            <div class="wave">
+              <canvas id="speech-wave" aria-hidden="true"></canvas>
+              <input type="range" id="speech-seek" min="0" max="1" step="0.001" value="0" aria-label="Position in the speech">
+            </div>
+            <span class="time" id="speech-time">0:00</span>
+          </div>
+          <div class="result-actions">
+            <button type="button" id="speech-save">Save WAVE</button>
+            <button type="button" id="speech-transcribe">Transcribe this</button>
+          </div>
+          <p class="meta" id="speech-meta"></p>
+        </div>
         <details class="voice-maker" id="voice-maker" hidden>
           <summary>Make a voice from a recording</summary>
           <form id="voice-form" novalidate>
-            <p class="muted">A few seconds of one speaker, without music or noise. The voice lasts as long as the
-              model stays loaded.</p>
+            <p class="muted">A few seconds of one speaker, without music or noise. The voice lasts while the model stays
+              loaded.</p>
             <div class="audio-slot" id="voice-audio"></div>
             <div class="field">
               <label for="voice-name">Name of the voice</label>
-              <input id="voice-name" required autocomplete="off" spellcheck="false">
+              <input id="voice-name" required autocomplete="off" spellcheck="false" aria-describedby="voice-error">
             </div>
             <div class="actions">
               <button type="submit" class="primary" id="voice-add">Add the voice</button>
+              <p class="status" id="voice-status" role="status"></p>
             </div>
-            <p class="status" id="voice-status" role="status"></p>
             <p class="error" id="voice-error" role="alert" hidden></p>
           </form>
         </details>
       </section>
 
-      <section class="panel" aria-labelledby="transcribe-heading">
+      <section class="panel" id="transcribe" aria-labelledby="transcribe-heading">
         <h2 id="transcribe-heading">Transcribe</h2>
-        <p class="muted" id="transcribe-empty">Choose a transcribing model above.</p>
-        <form id="transcribe-form" novalidate hidden>
-          <p class="model-in-use" id="transcribe-model"></p>
+        <div class="picker-slot" data-task="recognition"></div>
+        <form id="transcribe-form" novalidate>
           <div class="audio-slot" id="transcribe-audio"></div>
           <div class="fields" id="transcribe-options"></div>
           <div class="actions">
-            <button type="submit" class="primary" id="transcribe-start">Transcribe</button>
-            <button type="button" id="transcribe-stop" disabled>Stop</button>
+            <button type="submit" class="primary" id="transcribe-start" disabled>Transcribe</button>
+            <button type="button" id="transcribe-stop" hidden>Stop</button>
+            <p class="status" id="transcribe-status" role="status"></p>
           </div>
-          <p class="status" id="transcribe-status" role="status"></p>
           <p class="error" id="transcribe-error" role="alert" hidden></p>
         </form>
-        <section class="transcript" id="transcript" aria-labelledby="transcript-heading" hidden>
-          <h3 id="transcript-heading">Text</h3>
+        <section class="result transcript" id="transcript" aria-labelledby="transcript-heading" hidden>
+          <div class="transcript-head">
+            <h3 id="transcript-heading">Text</h3>
+            <button type="button" id="transcript-copy">Copy</button>
+          </div>
           <p class="transcript-text" id="transcript-text"></p>
-          <p class="muted" id="transcript-meta"></p>
-          <table id="segments" hidden>
-            <caption>Segments</caption>
-            <thead><tr><th scope="col">Start</th><th scope="col">End</th><th scope="col">Text</th></tr></thead>
-            <tbody></tbody>
-          </table>
+          <p class="meta" id="transcript-meta"></p>
+          <details class="segments" id="segments" hidden>
+            <summary></summary>
+            <table>
+              <thead><tr><th scope="col">Start</th><th scope="col">End</th><th scope="col">Text</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </details>
         </section>
       </section>
     </div>
   </main>
 
+  <template id="picker">
+    <div class="picker">
+      <button type="button" class="picker-button" aria-haspopup="dialog">
+        <span class="picker-name"></span>
+        <span class="picker-size"></span>
+        <svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>
+      </button>
+      <div class="picker-progress" hidden>
+        <progress max="1"></progress>
+        <span class="picker-progress-text" role="status"></span>
+        <button type="button" class="picker-cancel">Cancel</button>
+      </div>
+      <p class="error" role="alert" hidden></p>
+      <dialog class="picker-dialog">
+        <div class="dialog-head">
+          <h3></h3>
+          <button type="button" class="icon-button dialog-close" aria-label="Close">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+          </button>
+        </div>
+        <ul class="model-list"></ul>
+        <p class="dialog-foot muted"></p>
+      </dialog>
+    </div>
+  </template>
+
   <template id="model-item">
     <li class="model">
       <div class="model-text">
-        <div class="model-head">
-          <span class="model-name"></span>
-          <span class="badge" hidden>In use</span>
-        </div>
+        <p class="model-head"><span class="model-name"></span><span class="badge in-use" hidden>In use</span></p>
         <p class="model-meta"></p>
-        <p class="model-languages"></p>
+        <div class="model-languages"></div>
       </div>
       <button type="button" class="model-use"></button>
-      <div class="model-progress-row" hidden>
-        <progress class="model-progress" max="1"></progress>
-        <span class="model-progress-text" aria-live="polite"></span>
-        <button type="button" class="model-cancel">Cancel</button>
-      </div>
-      <p class="error" role="alert" hidden></p>
     </li>
   </template>
 
   <template id="audio-input">
     <div class="audio-input">
-      <div class="drop" tabindex="-1">
-        <p>Drop an audio file here, or</p>
+      <div class="drop">
+        <p class="drop-empty">Drop an audio file here, or</p>
+        <div class="drop-chosen" hidden>
+          <audio class="audio-preview" controls preload="metadata"></audio>
+          <p class="audio-name"></p>
+        </div>
+        <div class="drop-recording" hidden>
+          <span class="recording-dot" aria-hidden="true"></span>
+          <span class="recording-time" role="status"></span>
+        </div>
         <div class="actions">
           <button type="button" class="audio-choose">Choose a file</button>
           <button type="button" class="audio-record" aria-pressed="false">Record</button>
+          <button type="button" class="audio-remove" hidden>Remove</button>
         </div>
         <input type="file" class="audio-file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.opus,.webm" hidden>
-      </div>
-      <div class="audio-chosen" hidden>
-        <p class="audio-name"></p>
-        <audio class="audio-preview" controls preload="metadata"></audio>
       </div>
       <p class="error" role="alert" hidden></p>
     </div>

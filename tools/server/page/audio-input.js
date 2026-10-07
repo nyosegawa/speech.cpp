@@ -1,7 +1,12 @@
-// A place to give audio: drop a file on it, choose one, or record the microphone, with the audio given played back.
-// The speak panel's voice maker and the transcribe panel each have one.
+// A place to give audio: drop a file on it, choose one, or record the microphone. Once audio is given it shows its name,
+// its length and a small player in place of the prompt to drop one. The speak panel's voice maker and the transcribe
+// panel each have one.
 
 import { Recorder, toWav } from './audio.js';
+
+function seconds(value) {
+  return `${value.toFixed(1)} s`;
+}
 
 export class AudioInput {
   #file = null;
@@ -14,18 +19,29 @@ export class AudioInput {
     slot.append(document.querySelector('#audio-input').content.cloneNode(true));
     const $ = (selector) => slot.querySelector(selector);
     this.drop = $('.drop');
+    this.empty = $('.drop-empty');
+    this.chosen = $('.drop-chosen');
+    this.recording = $('.drop-recording');
+    this.recordingTime = $('.recording-time');
     this.input = $('.audio-file');
     this.choose = $('.audio-choose');
     this.record = $('.audio-record');
-    this.chosen = $('.audio-chosen');
+    this.remove = $('.audio-remove');
     this.name = $('.audio-name');
     this.audio = $('.audio-preview');
     this.error = $('.error');
     this.changed = changed;
 
     this.choose.addEventListener('click', () => this.input.click());
-    this.input.addEventListener('change', () => this.input.files[0] && this.#take(this.input.files[0], this.input.files[0].name));
+    this.input.addEventListener('change', () => {
+      if (this.input.files[0]) this.use(this.input.files[0], this.input.files[0].name);
+      this.input.value = '';
+    });
     this.record.addEventListener('click', () => (this.#recorder ? this.#stopRecording() : this.#startRecording()));
+    this.remove.addEventListener('click', () => this.#clear());
+    this.audio.addEventListener('loadedmetadata', () => {
+      if (Number.isFinite(this.audio.duration)) this.name.textContent = `${this.label}, ${seconds(this.audio.duration)}`;
+    });
     this.drop.addEventListener('dragover', (event) => {
       event.preventDefault();
       this.drop.classList.add('over');
@@ -35,8 +51,9 @@ export class AudioInput {
       event.preventDefault();
       this.drop.classList.remove('over');
       const file = event.dataTransfer.files[0];
-      if (file) this.#take(file, file.name);
+      if (file) this.use(file, file.name);
     });
+    this.#show('empty');
   }
 
   /** Whether audio is given. */
@@ -49,14 +66,41 @@ export class AudioInput {
     return toWav(await this.#file.arrayBuffer(), rate);
   }
 
-  #take(file, label) {
+  /** Takes `file`, a File or a Blob of audio, shown as `label`. */
+  use(file, label) {
     this.#file = file;
+    this.label = label;
     this.error.hidden = true;
     if (this.#preview) URL.revokeObjectURL(this.#preview);
     this.#preview = URL.createObjectURL(file);
     this.audio.src = this.#preview;
     this.name.textContent = label;
-    this.chosen.hidden = false;
+    this.#show('chosen');
+    this.changed();
+  }
+
+  /** Shows a failure of the audio given, the browser's or as the server words it. */
+  fail(message) {
+    this.error.textContent = message;
+    this.error.hidden = false;
+  }
+
+  #show(state) {
+    this.empty.hidden = state !== 'empty';
+    this.chosen.hidden = state !== 'chosen';
+    this.recording.hidden = state !== 'recording';
+    this.remove.hidden = state !== 'chosen';
+    this.choose.textContent = state === 'chosen' ? 'Another file' : 'Choose a file';
+    this.choose.disabled = state === 'recording';
+    this.drop.dataset.state = state;
+  }
+
+  #clear() {
+    this.#file = null;
+    this.audio.removeAttribute('src');
+    if (this.#preview) URL.revokeObjectURL(this.#preview);
+    this.#preview = null;
+    this.#show('empty');
     this.changed();
   }
 
@@ -71,8 +115,9 @@ export class AudioInput {
     }
     this.#recorder = recorder;
     this.record.setAttribute('aria-pressed', 'true');
-    this.choose.disabled = true;
-    const tick = () => (this.record.textContent = `Stop recording (${recorder.seconds.toFixed(1)} s)`);
+    this.record.textContent = 'Stop recording';
+    this.#show('recording');
+    const tick = () => (this.recordingTime.textContent = `Recording, ${seconds(recorder.seconds)}`);
     tick();
     this.#ticking = setInterval(tick, 200);
   }
@@ -83,14 +128,6 @@ export class AudioInput {
     this.#recorder = null;
     this.record.setAttribute('aria-pressed', 'false');
     this.record.textContent = 'Record';
-    this.choose.disabled = false;
-    const seconds = recorder.seconds;
-    this.#take(await recorder.stop(), `Recording, ${seconds.toFixed(1)} s`);
-  }
-
-  /** Shows a failure of the audio given, the browser's or as the server words it. */
-  fail(message) {
-    this.error.textContent = message;
-    this.error.hidden = false;
+    this.use(await recorder.stop(), 'Recording');
   }
 }
