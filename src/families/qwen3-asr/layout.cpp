@@ -17,7 +17,11 @@ namespace {
  * How the layout stores a tensor in a file of each weight type (docs/adr/0040): a matrix of a linear layer or the token
  * embeddings, which are also the decoder's output matrix and which ggml_mul_mat() and ggml_get_rows() alone read, in the
  * file's type; a convolution kernel, which ggml_im2col() reads in F16 or F32 alone, in F16, or F32 in an F32 file; and the
- * norms, the biases and the frontend in F32.
+ * norms, the biases and the frontend in F32. The encoder holds in Q8_0: with the decoder's weights of the Q8_0 file,
+ * teacher-forced on the dumps' ids of every input of up to 30 s (requests auto and auto-prompt), its output from a Q8_0
+ * file moved the argmax of 1 or 2 of 605 steps with the 0.6B model and of none of 604 with the 1.7B, on the CPU and on
+ * Metal of an Apple M5, where the official encoder's output moved 2 and none (2026-10-06); each step it moved had a margin
+ * of 0.13 or less in the official model.
  */
 const Storage & kMatrix = kQuantized;
 const Storage & kConv = kHalf;

@@ -88,6 +88,9 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
   voices added. `speech_model_info_text_tokens()` counts a text's tokens as a synthesis counts them against the longest
   text, so that a caller can split a long text first. `speech_model_info_json()` writes the whole as one JSON object
   (below).
+- **Quantizing.** `speech_quantize()` (added in 3.1) writes a model file of F32 weights in F16, Q8_0, Q6_K, Q5_K or Q4_K,
+  each tensor in the type its family's layout gives it in a file of that type ([gguf.md](gguf.md#weight-types)), on the
+  CPU. It refuses a file whose weights are not F32, naming `model_path`, and an unknown type, naming `type`.
 - **Voices.** `speech_voice_add()` adds a voice to a loaded model from a voice file or a reference WAVE file at any rate.
   `speech_voice_make()` writes a voice file from a reference, reading only the codec's encoder from the model file.
   `speech_voice_make_from()` writes one from the parameters `speech_voice_params_new()` makes: several references
@@ -144,7 +147,7 @@ API wrote past its output on the M5 ([ADR 0003](adr/0003-metal-runs-without-the-
 A function that can fail returns a `speech_status`, negative for an error, whose category says what kind of failure it
 is. `speech_status_name()` gives its name, `speech_last_error()` the message, and `speech_last_error_option()` the input
 it concerns (an option's name, `text`, `audio`, `device`, `threads`, `name`, `path`, or a parameter's name for
-`speech_voice_make()`), on the same thread. No C++ exception crosses the API.
+`speech_voice_make()` or `speech_quantize()`), on the same thread. No C++ exception crosses the API.
 
 | Status | Name | Meaning |
 |---|---|---|
@@ -252,7 +255,7 @@ loaded on Metal, with two of its nine voices and four of its options shown:
 
 - `organization` to `weight_type` are the model's identity, from the general keys of its file ([gguf.md](gguf.md)).
   `finetune` and `version` are left out for a model whose name has none. `source` is the repository the file was
-  converted from and the revision. `weight_type` is the type that holds most of the weights: `F32`, `F16` or `Q8_0`.
+  converted from and the revision. `weight_type` is the type that holds most of the weights: `F32`, `F16`, `Q8_0`, `Q6_K`, `Q5_K` or `Q4_K`.
 - `architecture` is the family ([models.md](models.md#families)), and `layout` is the version of the family's layout
   that the file has.
 - `incremental` is true for a model that passes audio while it still makes the rest (Qwen3-TTS), so that its first

@@ -118,7 +118,7 @@ That latent lies 30.6 dB from the 48 kHz reference's at 44.1 kHz and 10.7 dB at 
 The audio may end before the length where the latent goes flat, as in the runtime. The frames are the
 official runtime's for every combination the dumps cover (`irodori-condition-check`, `irodori-synthesis-check`).
 
-Of the types the converter writes, Qwen3-ASR 1.7B transcribed the 20 sentences of the speed table
+Of the F32, F16 and Q8_0 files, Qwen3-ASR 1.7B transcribed the 20 sentences of the speed table
 ([models/irodori-tts.md](../models/irodori-tts.md#speed)) with 2.99% CER in F32 and in F16, and 3.81% in Q8_0, which
 garbled one phrase.
 

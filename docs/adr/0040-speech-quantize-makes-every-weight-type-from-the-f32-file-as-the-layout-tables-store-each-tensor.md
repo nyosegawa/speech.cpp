@@ -42,6 +42,8 @@ writes the released F16 and Q8_0 files byte for byte (`tools/quantize_compare.py
   are not whole blocks of 256 values takes Q8_0, and F16 where they are not whole blocks of 32; the same F16 stands for
   Q8_0 in a Q8_0 file, as the converters did. A weight whose operation reads F16 or F32 alone has no quantized type in
   its storage at all.
+- **The converters write F32 alone.** F16 goes as well as Q8_0: `speech quantize` writes the converters' F16 byte for
+  byte, and a converter that kept it would be a second place deciding the types.
 - **A file names the release that reads it.** `speech.requires` becomes the later of the input's and the weight type's
   first release: 0.7.0 for F32, F16 and Q8_0, so that the files of those types are the released ones, and 0.8.0 for
   Q6_K, Q5_K and Q4_K. A reader from 0.8.0 that does not know a file's `general.file_type`, or finds a tensor in a type
@@ -69,7 +71,7 @@ The alternatives were turned down:
 
 ## Consequences
 
-Releases before 0.8.0
+Converting a model is two steps, and the F32 file, 8.1 GB for the 1.7B models, is written first. Releases before 0.8.0
 refuse a Q6_K, Q5_K or Q4_K file because its `general.file_type` is none they know, without naming 0.8.0. FastConformer's
 files can be Q8_0 and K-quants. Qwen3-ASR 0.6B's encoder, 896 wide, is Q8_0 in its K-quant files, and FastConformer's
 prediction network and joint, 640 wide, too.

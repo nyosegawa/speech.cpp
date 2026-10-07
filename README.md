@@ -82,6 +82,7 @@ uninstall, and what each platform needs. On an Intel Mac or another system, [bui
 | `speech info` | prints what a model file says of its model |
 | `speech devices` | lists the devices a model can run on |
 | `speech models`, `pull`, `rm` | list, fetch and remove models |
+| `speech quantize` | writes a model file of F32 weights in F16, Q8_0 or a smaller type |
 | `speech serve` | serves models over HTTP with OpenAI's audio API, and a page to try them |
 | `speech worker` | serves a model over JSON Lines on stdin and stdout, for programs |
 
