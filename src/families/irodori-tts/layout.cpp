@@ -274,7 +274,7 @@ std::vector<TensorSpec> model_tensors(const ModelFile & m) {
 }
 
 /**
- * Layout 1, which releases from 0.7.0 read, holds neither the null speaker nor the caption's encoder and has no time at
+ * Layout 1 of a model file, which releases from 0.7.0 read, holds neither the null speaker nor the caption's encoder and has no time at
  * which a request's scaling of the speaker ends. A file of it speaks with a reference and no caption, its duration
  * predictor's caption is as wide as the text condition, as layout 1 checked it, and its RF model ends the scaling at the
  * runtime's 0.9 that layout 2 writes, since every layout 1 file was converted from the runtime at 89f9d8f.
@@ -286,6 +286,18 @@ void upgrade(ModelFile & m) {
     if (m.str("irodori-tts.flow") == "rf_velocity") m.upgrade_f32("irodori-tts.sampler.speaker_kv_min_t", 0.9f);
 }
 
+/**
+ * Layout 1 of a voice file, which releases from 0.7.0 wrote, holds one reference brought to the model's loudness, which
+ * every model file of layout 1 gives as the runtime's -16 LUFS.
+ */
+void voice_upgrade(ModelFile & m) {
+    const std::string p = "irodori-tts-voice.";
+    m.upgrade_f32_array(p + "references.seconds", {m.f32(p + "reference_seconds")});
+    m.upgrade_i32_array(p + "references.sample_rates", {(int32_t) m.u32(p + "reference_sample_rate")});
+    m.upgrade_bool(p + "normalized", true);
+    m.upgrade_f32(p + "lufs", -16.0f);
+}
+
 }  // namespace
 
 const Layout model_layout = {"irodori-tts", 2,
@@ -294,19 +306,26 @@ const Layout model_layout = {"irodori-tts", 2,
                              model_tensors, upgrade};
 
 Layout voice_layout(const ModelFile & model) {
-    return {kVoiceArchitecture, kVoiceLayout, "make it again from its WAVE file with speech voice MODEL REFERENCE.wav VOICE.gguf", [&model](const ModelFile & m) {
+    return {kVoiceArchitecture, kVoiceLayout, "make it again from its WAVE files with speech voice MODEL REFERENCE.wav... VOICE.gguf",
+            [&model](const ModelFile & m) {
                 const std::string p = "irodori-tts-voice.";
                 const std::string codec = m.str(p + "codec_sha256"), own = model.str("irodori-tts.codec.sha256");
                 require(codec.size() == 64, m, "irodori-tts-voice.codec_sha256 is not a SHA-256 in hexadecimal");
                 if (codec != own) {
                     throw Error(Fault::InvalidArgument, m.path() + " was made with the codec of SHA-256 " + codec + ", and " + model.str("general.name") +
-                                                            " has the codec " + own + "; make the voice again from its WAVE file with this model");
+                                                            " has the codec " + own + "; make the voice again from its WAVE files with this model");
                 }
-                require(m.f32(p + "reference_seconds") > 0 && m.u32(p + "reference_sample_rate") > 0, m,
-                        "the voice file gives its recording no length or no rate");
+                const std::vector<float> seconds = m.f32_array(p + "references.seconds");
+                const std::vector<int32_t> rates = m.i32_array(p + "references.sample_rates");
+                require(!seconds.empty() && seconds.size() == rates.size(), m, "the voice file does not give each of its recordings a length and a rate");
+                for (size_t i = 0; i < seconds.size(); i++) {
+                    require(seconds[i] > 0 && rates[i] > 0, m, "the voice file gives a recording no length or no rate");
+                }
+                if (m.boolean(p + "normalized")) m.f32(p + "lufs");
                 m.one_of(p + "device_kind", {"cpu", "gpu", "igpu"});
                 return std::vector<TensorSpec>{{"latent", {model.size("irodori-tts.latent_dim"), m.width("latent", 1)}, kF32}};
-            }};
+            },
+            voice_upgrade};
 }
 
 }  // namespace irodori

@@ -118,8 +118,9 @@ SPEECH_API const char * speech_last_error(void);
 /**
  * The input the last failed call on the calling thread concerns: an option's name as speech_option_name() gives it,
  * "text" or "audio" for a request's input, "device", "threads" or "warmup" for a load parameter, "name" or "path"
- * for a voice being added, or "model_path", "reference_path" or "voice_path" for a voice file being made. NULL when
- * the failure concerns no single input. It stays valid until the next call into the library on the same thread.
+ * for a voice being added, or "model_path", "reference_path", "references", "loudness" or "voice_path" for a voice file
+ * being made ("references" and "loudness" added in 3.1). NULL when the failure concerns no single input. It stays
+ * valid until the next call into the library on the same thread.
  */
 SPEECH_API const char * speech_last_error_option(void);
 
@@ -708,8 +709,10 @@ SPEECH_API speech_status speech_model_get_info(const speech_model * model, speec
 
 /*
  * Voices made from reference recordings, for a model whose information says it takes voice files. A voice file holds
- * the codec's latent of a reference recording, the recording's length and rate, the kind of device that encoded it
- * and the hash of the codec it was encoded with, and it works with every model whose codec has that hash.
+ * the codec's latent of one or more reference recordings joined, each recording's length and rate, the loudness they
+ * were brought to, the kind of device that encoded them and the hash of the codec they were encoded with, and it works
+ * with every model whose codec has that hash. A voice file of several recordings or of a loudness other than the model's
+ * is of the voice file's layout 2, added in 3.1, which earlier releases refuse.
  */
 
 /**
@@ -730,6 +733,45 @@ SPEECH_API speech_status speech_voice_add(speech_model * model, const char * nam
  */
 SPEECH_API speech_status speech_voice_make(const char * model_path, const char * reference_path,
                                            const char * voice_path, const speech_load_params * params);
+
+/*
+ * Voice parameters: what speech_voice_make_from() makes a voice file of, several reference recordings and the loudness
+ * each is brought to, as the official runtime's ref_wavs and ref_normalize_db. Added in 3.1.
+ */
+typedef struct speech_voice_params speech_voice_params;
+
+/** Parameters without a reference, at the model's loudness. Added in 3.1. */
+SPEECH_API speech_status speech_voice_params_new(speech_voice_params ** params);
+
+/** Frees parameters. NULL is ignored. Added in 3.1. */
+SPEECH_API void speech_voice_params_free(speech_voice_params * params);
+
+/**
+ * Adds a reference recording in the WAVE file at `path`, which is encoded on its own and joined after the references
+ * added before. The references together may be at most as long as the model's file allows; a failure names
+ * "references". Added in 3.1.
+ */
+SPEECH_API speech_status speech_voice_params_add_reference(speech_voice_params * params, const char * path);
+
+/**
+ * Brings each reference to `lufs`, a finite loudness in LUFS, before it is encoded, instead of the model's
+ * (irodori-tts.reference.lufs, -16 LUFS), which speech_voice_make() and speech_voice_add() take. Added in 3.1.
+ */
+SPEECH_API speech_status speech_voice_params_set_loudness(speech_voice_params * params, double lufs);
+
+/**
+ * Keeps each reference's loudness as recorded, scaling down one whose peak exceeds 1, instead of bringing it to a
+ * loudness. Added in 3.1.
+ */
+SPEECH_API speech_status speech_voice_params_keep_loudness(speech_voice_params * params);
+
+/**
+ * Makes a voice file at `voice_path` from the references of `voice`, at least one, for the model file at `model_path`,
+ * as speech_voice_make() makes one of a single reference at the model's loudness, which this gives for one reference
+ * and no loudness of its own. Added in 3.1.
+ */
+SPEECH_API speech_status speech_voice_make_from(const char * model_path, const speech_voice_params * voice, const char * voice_path,
+                                                const speech_load_params * params);
 
 /*
  * Requests. A request is made for one model and checks every value as it is set against what that model declares:

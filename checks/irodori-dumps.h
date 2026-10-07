@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -48,6 +49,14 @@ public:
             if (name == "instructions") return v.text;
         }
         return "";
+    }
+    /** Whether the request's references were brought to a loudness of their own (ref_normalize_db), or kept. */
+    bool has_loudness() const { return meta_.member("ref_normalize_db") != nullptr; }
+    /** That loudness in LUFS, or none for references kept as recorded. */
+    std::optional<double> loudness() const {
+        const JsonValue * v = member(meta_, "ref_normalize_db");
+        if (v->kind == JsonValue::Kind::Null) return std::nullopt;
+        return std::stod(v->text);
     }
     /** Whether the runtime spoke with a caption, which dump.py saved the condition of. */
     bool caption() const { return has("caption_state.npy"); }

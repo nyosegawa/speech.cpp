@@ -207,7 +207,8 @@ target_link_libraries(qwen3-decoder-check PRIVATE qwen3tts)
 add_executable(irodori-text-check checks/irodori-text-check.cpp)
 target_link_libraries(irodori-text-check PRIVATE irodoritts)
 
-add_executable(irodori-codec-check checks/irodori-codec-check.cpp)
+add_executable(irodori-codec-check checks/irodori-codec-check.cpp tools/common/json-reader.cpp)
+target_include_directories(irodori-codec-check PRIVATE tools/common)
 target_link_libraries(irodori-codec-check PRIVATE irodoritts)
 
 # These read the dump's meta.json with the JSON reader of `speech`.

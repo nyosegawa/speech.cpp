@@ -3,8 +3,9 @@
  * speech.h is checked to be plain C.
  *
  * In every mode: the versions, the names of the statuses, the stop reasons and the options, the devices, and the load
- * parameters and loads it refuses. With a synthesis model: optionally makes an Irodori-TTS voice file, loads the model
- * without a warm-up, compares the information read without loading with the loaded model's, adds the voices, refuses
+ * parameters and loads it refuses. With a synthesis model: optionally makes an Irodori-TTS voice file, and voice files
+ * of several references and of another loudness, loads the model without a warm-up, compares the information read
+ * without loading with the loaded model's, adds the voices, refuses
  * each option's values with the category and the option's name and accepts the neutral ones, speaks one sentence into
  * a WAVE file, repeats a drawn seed's audio, gives the same audio with every option set at its default as with none,
  * checks the family's rules of the whole request (Qwen3-TTS's max_seconds, longest text, sampling and instructions,
@@ -717,6 +718,73 @@ static int check_irodori_instructions(speech_model * model, const speech_model_i
     return ok ? 0 : 1;
 }
 
+/** The bytes of the file at `path`, which the caller frees, and their number in `n`; NULL when it cannot be read. */
+static unsigned char * read_file(const char * path, size_t * n) {
+    FILE * f = open_utf8(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    *n = (size_t) ftell(f);
+    fseek(f, 0, SEEK_SET);
+    unsigned char * bytes = (unsigned char *) malloc(*n ? *n : 1);
+    if (fread(bytes, 1, *n, f) != *n) {
+        free(bytes);
+        bytes = NULL;
+    }
+    fclose(f);
+    return bytes;
+}
+
+/** Whether the files at `a` and `b` hold the same bytes. */
+static int same_file(const char * a, const char * b) {
+    size_t na = 0, nb = 0;
+    unsigned char * x = read_file(a, &na), * y = read_file(b, &nb);
+    const int same = x && y && na == nb && memcmp(x, y, na) == 0;
+    free(x);
+    free(y);
+    return same;
+}
+
+/**
+ * Voice files of several references and of another loudness: one reference at the model's loudness gives the bytes of
+ * speech_voice_make(), several and another or the kept loudness give other files, and what cannot be made is refused
+ * naming its input.
+ */
+static int check_voice_params(const char * model_path, const char * reference, const char * made, const speech_load_params * params) {
+    char path[4096];
+    int ok = 1;
+    speech_voice_params * v = NULL;
+    if (speech_voice_params_new(&v) != SPEECH_OK) return fail("speech_voice_params_new");
+    snprintf(path, sizeof path, "%s.from.gguf", made);
+    ok &= expect(speech_voice_make_from(model_path, v, path, params), SPEECH_ERROR_INVALID_ARGUMENT, "references", "a voice without a reference");
+    ok &= expect(speech_voice_params_set_loudness(v, NAN), SPEECH_ERROR_INVALID_ARGUMENT, "loudness", "a loudness of NaN");
+    ok &= expect(speech_voice_params_add_reference(v, reference), SPEECH_OK, NULL, "a reference") &&
+          expect(speech_voice_make_from(model_path, v, path, params), SPEECH_OK, NULL, "a voice of one reference") && same_file(path, made);
+    if (ok) printf("a voice of one reference at the model's loudness is the file speech_voice_make() writes\n");
+    char two[4096], quiet[4096], kept[4096];
+    snprintf(two, sizeof two, "%s.two.gguf", made);
+    snprintf(quiet, sizeof quiet, "%s.quiet.gguf", made);
+    snprintf(kept, sizeof kept, "%s.kept.gguf", made);
+    ok &= expect(speech_voice_params_add_reference(v, reference), SPEECH_OK, NULL, "a second reference") &&
+          expect(speech_voice_make_from(model_path, v, two, params), SPEECH_OK, NULL, "a voice of two references") && !same_file(two, made);
+    speech_voice_params_free(v);
+    v = NULL;
+    if (speech_voice_params_new(&v) != SPEECH_OK) return fail("speech_voice_params_new");
+    speech_voice_params_add_reference(v, reference);
+    ok &= expect(speech_voice_params_set_loudness(v, -23), SPEECH_OK, NULL, "a loudness of -23 LUFS") &&
+          expect(speech_voice_make_from(model_path, v, quiet, params), SPEECH_OK, NULL, "a voice at -23 LUFS") && !same_file(quiet, made);
+    ok &= expect(speech_voice_params_keep_loudness(v), SPEECH_OK, NULL, "the loudness kept") &&
+          expect(speech_voice_make_from(model_path, v, kept, params), SPEECH_OK, NULL, "a voice of the loudness kept") && !same_file(kept, made) &&
+          !same_file(kept, quiet);
+    // Thirteen copies of a reference of about 10 s are past the 120 s a voice takes.
+    for (int i = 0; i < 12; i++) speech_voice_params_add_reference(v, reference);
+    ok &= expect(speech_voice_make_from(model_path, v, path, params), SPEECH_ERROR_OUT_OF_RANGE, "references", "references past 120 s together");
+    speech_voice_params_free(v);
+    remove(path);
+    if (ok) printf("voices of two references, at -23 LUFS and of the loudness kept were made: %s, %s, %s\n", two, quiet, kept);
+    else fprintf(stderr, "FAIL: a voice of several references or another loudness is not made as speech_voice_make() makes one\n");
+    return ok ? 0 : 1;
+}
+
 /** The checks of a loaded synthesis model, which main frees whatever they find. */
 static int check_model(speech_model * model, const char * model_path, const char * out_wav, char ** names, char ** paths, size_t n_voices,
                        int made) {
@@ -844,6 +912,7 @@ int main(int argc, char ** argv) {
         const double start = now_seconds();
         if (speech_voice_make(model_path, reference, made, params) != SPEECH_OK) return fail("speech_voice_make");
         printf("made the voice file %s in %.3f s\n", made, now_seconds() - start);
+        if (check_voice_params(model_path, reference, made, params) != 0) return 1;
         names[n_voices] = (char *) "made";
         paths[n_voices++] = (char *) made;
     }

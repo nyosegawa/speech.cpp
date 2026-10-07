@@ -10,6 +10,7 @@
 #include "engine.h"
 #include "irodori-tts/synthesizer.h"
 #include "irodori-tts/text-normalizer.h"
+#include "irodori-tts/voice-file.h"
 
 namespace {
 
@@ -197,4 +198,8 @@ FamilyInfo describe_irodori_tts(const std::shared_ptr<const ModelFile> & file) {
 
 std::unique_ptr<Engine> load_irodori_tts(const std::string & path, ggml_backend_t backend) {
     return std::make_unique<IrodoriTtsEngine>(path, backend);
+}
+
+void make_irodori_tts_voice(const std::string & model_path, const VoiceRecipe & recipe, const std::string & voice_path, ggml_backend_t backend) {
+    irodori::make_voice_file(model_path, recipe.references, {recipe.normalize, recipe.lufs}, voice_path, backend);
 }

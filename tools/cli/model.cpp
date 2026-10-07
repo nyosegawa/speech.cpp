@@ -3,7 +3,10 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -31,10 +34,24 @@ std::string gigabytes(uint64_t bytes) {
 int run_voice(const CommandLine & line, FILE *) {
     const Loading loading = line.loading(false, std::string("cpu"));
     const LoadParams params = load_params(loading);
+    const std::optional<std::string> lufs = line.value("--lufs");
+    if (lufs && line.has("--keep-loudness")) throw UsageError("give --lufs or --keep-loudness, not both");
+    speech_voice_params * raw = nullptr;
+    check(speech_voice_params_new(&raw));
+    const std::unique_ptr<speech_voice_params, decltype(&speech_voice_params_free)> voice(raw, speech_voice_params_free);
+    for (size_t i = 1; i + 1 < line.args.size(); i++) check(speech_voice_params_add_reference(raw, line.args[i].c_str()));
+    if (lufs) {
+        char * end = nullptr;
+        const double value = std::strtod(lufs->c_str(), &end);
+        if (lufs->empty() || *end != '\0' || !std::isfinite(value)) throw UsageError("--lufs takes a number, not \"" + *lufs + "\"");
+        check(speech_voice_params_set_loudness(raw, value));
+    }
+    if (line.has("--keep-loudness")) check(speech_voice_params_keep_loudness(raw));
+    const std::string & out = line.args.back();
     const auto t0 = std::chrono::steady_clock::now();
-    check(speech_voice_make(line.args[0].c_str(), line.args[1].c_str(), line.args[2].c_str(), params.get()));
+    check(speech_voice_make_from(line.args[0].c_str(), raw, out.c_str(), params.get()));
     const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    std::fprintf(stderr, "wrote %s in %.2f s\n", line.args[2].c_str(), took);
+    std::fprintf(stderr, "wrote %s in %.2f s\n", out.c_str(), took);
     if (line.has("-v")) std::fprintf(stderr, "speech.cpp %s, device %s\n", speech_version(), loading.device->c_str());
     return 0;
 }
@@ -198,19 +215,23 @@ int run_devices(const CommandLine & line, FILE * out) {
 Command voice_command() {
     Command c;
     c.name = "voice";
-    c.usage = "voice MODEL REFERENCE.wav VOICE.gguf [options]";
-    c.summary = "make a voice file from a reference recording";
+    c.usage = "voice MODEL REFERENCE.wav... VOICE.gguf [options]";
+    c.summary = "make a voice file from reference recordings";
     c.description =
-        "Makes a voice file from a reference recording in a WAVE file at any rate, reading only the codec's encoder from\n"
-        "MODEL, for a model whose information says it takes voice files (Irodori-TTS). On the CPU, the default here, the\n"
-        "voice's latent is the official encoder's to 99 dB SNR; a GPU computes it in less precision.";
+        "Makes a voice file from one or more reference recordings in WAVE files at any rate, each encoded on its own and\n"
+        "joined in order, reading only the codec's encoder from MODEL, for a model whose information says it takes voice\n"
+        "files (Irodori-TTS). Each recording is brought to the model's loudness first, or to --lufs, or kept as it is with\n"
+        "--keep-loudness. On the CPU, the default here, the voice's latent is the official encoder's to 99 dB SNR; a GPU\n"
+        "computes it in less precision.";
     c.flags = {
+        {"--lufs", "LUFS", false, "the loudness each recording is brought to, instead of the model's (-16)"},
+        {"--keep-loudness", "", false, "keep each recording's loudness, scaling down a peak above 1"},
         device_flag("cpu (the default here), auto, gpu or a name `speech devices` lists"),
         threads_flag(),
         verbose_flag("also report the release and the device"),
     };
     c.min_args = 3;
-    c.max_args = 3;
+    c.max_args = SIZE_MAX;
     c.run = run_voice;
     return c;
 }

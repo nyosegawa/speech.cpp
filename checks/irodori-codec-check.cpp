@@ -1,13 +1,14 @@
 // Checks the codec of Irodori-TTS against the official implementation on a dump of
 // reference/irodori-tts/dump.py, each stage from the dump's own input.
 //
-// Encoder: reading the reference WAVE file, normalizing its loudness, encoding it, encoding in windows
-// against at once, and the whole path from the file.
+// Encoder: reading the reference WAVE file, bringing its loudness to the dump's (the model's, another target, or kept
+// as recorded), encoding it, encoding in windows against at once, and the whole path from the file; for a dump of
+// several references, the latent of each file joined in order, as a voice file of them holds it.
 // Decoder: each stage on the dump's latent, decoding in windows against at once, and, when the device is
 // not the CPU, the same decoding on the CPU: how far below the voice the device's error lies, and how loud
 // the quietest parts are on each, where a device that mishandles the decoder shows its error first.
 //
-// usage: irodori-codec-check <model.gguf> <dump dir> <reference.wav> [gpu|cpu|device name]
+// usage: irodori-codec-check <model.gguf> <dump dir> <reference.wav>... [gpu|cpu|device name]
 
 #include <algorithm>
 #include <chrono>
@@ -21,6 +22,7 @@
 #include "args.h"
 #include "backend.h"
 #include "compare.h"
+#include "irodori-dumps.h"
 #include "ggml-cpu.h"
 #include "irodori-tts/codec.h"
 #include "irodori-tts/layout.h"
@@ -75,9 +77,9 @@ bool check_encoder(Codec & codec, const ReferenceRules & rules, const std::strin
     print_diff("reading the WAVE file", dr);
     ok = ok && read.size() == ref_wav.f32.size() && dr.max_abs == 0;
 
-    const std::vector<float> normalized = normalize_loudness(ref_wav.f32, codec.sample_rate(), rules.lufs);
+    const std::vector<float> normalized = rules.lufs ? normalize_loudness(ref_wav.f32, codec.sample_rate(), *rules.lufs) : bound_peak(ref_wav.f32);
     const Diff dn = compare(normalized, ref_normalized.f32);
-    print_diff("loudness normalization", dn);
+    print_diff(rules.lufs ? "loudness normalization to " + std::to_string(*rules.lufs) + " LUFS" : std::string("loudness kept"), dn);
     ok = ok && dn.snr_db > 80;
 
     auto t0 = std::chrono::steady_clock::now();
@@ -105,6 +107,18 @@ bool check_encoder(Codec & codec, const ReferenceRules & rules, const std::strin
     const Diff df = compare(from_file, ref_latent.f32);
     print_diff("reference file to latent", df);
     return ok && df.snr_db > 30;
+}
+
+/** The latent of several references, each encoded from its file and joined, against the dump's. */
+bool check_references(Codec & codec, const ReferenceRules & rules, const std::string & dir, const std::vector<std::string> & paths) {
+    std::vector<EncodedReference> references;
+    for (const std::string & path : paths) references.push_back(encode_reference(codec, path, rules));
+    const std::vector<float> latent = join_references(references, codec, rules, "references");
+    const Npy ref_latent = read_npy(dir + "/ref_latent.npy");
+    const Diff d = compare(latent, ref_latent.f32);
+    print_diff(std::to_string(paths.size()) + " references, each encoded and joined", d);
+    // The same bound as one reference's latent from its file.
+    return latent.size() == ref_latent.f32.size() && d.snr_db > 30;
 }
 
 /** The decoder's output for the whole latent at once. */
@@ -197,18 +211,25 @@ bool check_decoder(Codec & codec, ggml_backend_t backend, const std::string & mo
 
 int main(int argc, char ** argv) {
     const std::vector<std::string> args = utf8_args(argc, argv);
-    if (args.size() < 4) {
-        std::fprintf(stderr, "usage: %s <model.gguf> <dump dir> <reference.wav> [gpu|cpu|device name]\n", args[0].c_str());
+    std::vector<std::string> references;
+    for (size_t i = 3; i < args.size() && std::filesystem::u8path(args[i]).extension() == ".wav"; i++) references.push_back(args[i]);
+    if (references.empty()) {
+        std::fprintf(stderr, "usage: %s <model.gguf> <dump dir> <reference.wav>... [gpu|cpu|device name]\n", args[0].c_str());
         return 2;
     }
     try {
-        ggml_backend_t backend = init_backend(args.size() > 4 ? args[4] : "");
+        const size_t device_at = 3 + references.size();
+        ggml_backend_t backend = init_backend(args.size() > device_at ? args[device_at] : "");
         std::printf("backend: %s\n", ggml_backend_name(backend));
         bool ok;
         {
             const ModelFile model(args[1], backend, model_layout);
             Codec codec(model, backend);
-            ok = check_encoder(codec, ReferenceRules(model), args[2], args[3]);
+            // The dump's loudness: the model's where its meta.json says none, a target, or null for kept.
+            ReferenceRules rules(model);
+            const IrodoriDump dump(std::filesystem::u8path(args[2]));
+            if (dump.has_loudness()) rules.lufs = dump.loudness();
+            ok = references.size() == 1 ? check_encoder(codec, rules, args[2], references[0]) : check_references(codec, rules, args[2], references);
             ok = check_decoder(codec, backend, args[1], args[2]) && ok;
         }
         ggml_backend_free(backend);

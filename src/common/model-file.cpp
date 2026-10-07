@@ -293,6 +293,18 @@ void ModelFile::upgrade_bool(const std::string & key, bool value) {
     gguf_set_val_bool(gguf_.get(), key.c_str(), value);
 }
 
+void ModelFile::upgrade_str(const std::string & key, const std::string & value) {
+    gguf_set_val_str(gguf_.get(), key.c_str(), value.c_str());
+}
+
+void ModelFile::upgrade_i32_array(const std::string & key, const std::vector<int32_t> & values) {
+    gguf_set_arr_data(gguf_.get(), key.c_str(), GGUF_TYPE_INT32, values.data(), values.size());
+}
+
+void ModelFile::upgrade_f32_array(const std::string & key, const std::vector<float> & values) {
+    gguf_set_arr_data(gguf_.get(), key.c_str(), GGUF_TYPE_FLOAT32, values.data(), values.size());
+}
+
 int ModelFile::size(const std::string & key) const {
     const uint32_t value = u32(key);
     if (value == 0 || value > (uint32_t) INT_MAX) {
@@ -352,6 +364,12 @@ std::vector<int32_t> ModelFile::i32_array(const std::string & key) const {
     const int64_t id = key_id(key, GGUF_TYPE_ARRAY, GGUF_TYPE_INT32);
     const int32_t * data = (const int32_t *) gguf_get_arr_data(gguf_.get(), id);
     return std::vector<int32_t>(data, data + gguf_get_arr_n(gguf_.get(), id));
+}
+
+std::vector<float> ModelFile::f32_array(const std::string & key) const {
+    const int64_t id = key_id(key, GGUF_TYPE_ARRAY, GGUF_TYPE_FLOAT32);
+    const float * data = (const float *) gguf_get_arr_data(gguf_.get(), id);
+    return std::vector<float>(data, data + gguf_get_arr_n(gguf_.get(), id));
 }
 
 std::vector<double> ModelFile::f64_array(const std::string & key) const {

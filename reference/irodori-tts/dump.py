@@ -1,7 +1,8 @@
 """Runs the official Irodori-TTS on the CPU in float32 and saves the tensors the C++ port is checked against.
 
-usage: uv run python dump.py <mf|rf> <out dir> <text> (<reference.wav> | --no-ref) [--seed n] [--steps n]
-                             [--seconds s | --duration-scale x] [--speed x] [request options]
+usage: uv run python dump.py <mf|rf> <out dir> <text> (<reference.wav>... | --no-ref) [--seed n] [--steps n]
+                             [--seconds s | --duration-scale x] [--speed x] [--ref-normalize-db x | --no-normalize]
+                             [request options]
 
 mf is v4.1-Small-MF with its 4 MeanFlow steps; rf is v4.1-Small with 40 Euler steps and the runtime's
 default guidance (text 3.0 and speaker 5.0, each against a branch without it, while t >= 0.5).
@@ -10,7 +11,9 @@ default guidance (text 3.0 and speaker 5.0, each against a branch without it, wh
 them. --speed is OpenAI's speed, which Irodori-TTS-Server divides both by before it calls the runtime;
 meta.json keeps the three as given. With --seconds the duration predictor does not run, and its two files
 are not written. --no-ref speaks without a reference (the runtime's no_ref, speech.cpp's voice none), and
-meta.json's "reference" is then null.
+meta.json's "reference" is then null. Several references are the runtime's ref_wavs, each encoded on its own and
+joined, and meta.json's "reference" lists them. --ref-normalize-db brings each to another loudness than -16 LUFS and
+--no-normalize keeps it as recorded (ref_normalize_db None), which meta.json keeps as "ref_normalize_db".
 
 The request options are the C API's names of the runtime's SamplingRequest fields, in kebab-case: for rf
 --cfg-scale-text, --cfg-scale-speaker, --cfg-guidance-mode, --cfg-min-t, --cfg-max-t, --truncation-factor,
@@ -31,10 +34,10 @@ result as synthesize(). Writes <out dir>/*.npy and meta.json:
   text_state           the text condition after the projector and its norm, [N, 512]
   caption_ids          with instructions: the caption's tokens with <s>, [C]; the runtime pads them to 512
   caption_state        the caption condition after its projector and norm, [C, 512]
-  ref_wav              the reference as read, mono float32 at 48 kHz
-  ref_wav_normalized   the reference after loudness normalization to -16 LUFS
-  ref_latent           its DACVAE latent (the encoder's mean), [T, 32]
-  ref_encoder          the DACVAE encoder's output before the bottleneck, [1024, T]
+  ref_wav              one reference as read, mono float32 at 48 kHz
+  ref_wav_normalized   the reference at its loudness, -16 LUFS but for the options above
+  ref_encoder          the DACVAE encoder's output before the bottleneck, [1024, T], for one reference
+  ref_latent           the DACVAE latent (the encoder's mean), [T, 32], of several references joined
   speaker_encoded      the speaker encoder's output on the latent in patches of 4, [T / 4, 768]
   speaker_state        after its norm, with the masked mean prepended, [1 + T / 4, 768]
   duration_features    the 14 features of the text, [14]
@@ -76,8 +79,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument("model", choices=sorted(MODELS))
 parser.add_argument("out_dir")
 parser.add_argument("text")
-parser.add_argument("reference", nargs="?")
+parser.add_argument("references", nargs="*")
 parser.add_argument("--no-ref", action="store_true")
+parser.add_argument("--ref-normalize-db", type=float)
+parser.add_argument("--no-normalize", action="store_true")
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--steps", type=int)
 parser.add_argument("--seconds", type=float, default=0.0)
@@ -99,7 +104,8 @@ parser.add_argument("--keep-tail", action="store_true")
 args = parser.parse_args()
 # The runtime ignores a duration scale given with seconds; speech.cpp refuses that request.
 assert not (args.seconds > 0 and args.duration_scale != 1.0), "give --seconds or --duration-scale, not both"
-assert (args.reference is None) == args.no_ref, "give a reference or --no-ref"
+assert bool(args.references) != args.no_ref, "give references or --no-ref"
+assert args.ref_normalize_db is None or not args.no_normalize, "give --ref-normalize-db or --no-normalize, not both"
 options = {name: getattr(args, name) for name in OPTIONS if getattr(args, name) is not None}
 if args.keep_tail:
     options["keep_tail"] = True
@@ -166,7 +172,13 @@ fields["trim_tail"] = not args.keep_tail
 # speech.cpp's sway_coeff of 0 is the runtime's linear schedule, which Sway Sampling with 0 equals.
 if options.get("sway_coeff", 0.0) != 0.0:
     fields["t_schedule_mode"] = "sway"
-request = ir.SamplingRequest(text=args.text, ref_wav=args.reference, no_ref=args.no_ref, seed=args.seed, seconds=seconds,
+if len(args.references) == 1:
+    fields["ref_wav"] = args.references[0]
+elif args.references:
+    fields["ref_wavs"] = args.references
+if args.no_normalize or args.ref_normalize_db is not None:
+    fields["ref_normalize_db"] = None if args.no_normalize else args.ref_normalize_db
+request = ir.SamplingRequest(text=args.text, no_ref=args.no_ref, seed=args.seed, seconds=seconds,
                              duration_scale=args.duration_scale / args.speed, num_steps=args.steps, **fields)
 result = runtime.synthesize(request)
 normalized_text = normalize_text(args.text).strip()
@@ -201,13 +213,22 @@ if has_caption:
 # Reference: loudness, the DACVAE encoder, the speaker encoder. Without a reference the runtime encodes a zero
 # latent whose every position is masked, which the port leaves out.
 if not args.no_ref:
-    wav_in, latent = calls["encode_in"][0]
-    save("ref_wav", wav_in.reshape(-1))
-    save("ref_wav_normalized", calls["normalized"][0])
-    padded_wav = codec.model._pad(calls["normalized"][0].reshape(1, 1, -1))
-    encoded = codec.model.encoder(padded_wav)
-    assert torch.equal(codec.model.quantizer.in_proj(encoded).chunk(2, dim=1)[0].transpose(1, 2), latent)
-    save("ref_encoder", encoded[0])
+    assert len(calls["encode_in"]) == len(args.references)
+    latent = torch.cat([out for _, out in calls["encode_in"]], dim=1)
+    if len(args.references) == 1:
+        wav_in, _ = calls["encode_in"][0]
+        save("ref_wav", wav_in.reshape(-1))
+        if calls["normalized"]:
+            processed = calls["normalized"][0]
+        else:
+            # Kept as recorded: the codec scales down a peak above 1 (ensure_max).
+            peak = wav_in.reshape(-1).abs().max()
+            processed = wav_in.reshape(-1) * (1.0 / float(peak)) if peak > 1 else wav_in.reshape(-1)
+        save("ref_wav_normalized", processed)
+        padded_wav = codec.model._pad(processed.reshape(1, 1, -1))
+        encoded = codec.model.encoder(padded_wav)
+        assert torch.equal(codec.model.quantizer.in_proj(encoded).chunk(2, dim=1)[0].transpose(1, 2), latent)
+        save("ref_encoder", encoded[0])
     save("ref_latent", latent[0])
     patched, patch_mask = patch_sequence_with_mask(latent, torch.ones(latent.shape[:2], dtype=torch.bool),
                                                    model.cfg.speaker_patch_size)
@@ -328,7 +349,9 @@ for name, array in saved.items():
 meta = {
     "code": CODE, "model": MODELS[args.model], "codec": CODEC, "seed": args.seed,
     "text": args.text, "normalized_text": normalized_text, "tokens": n,
-    "reference": None if args.no_ref else os.path.basename(args.reference),
+    "reference": None if args.no_ref else (os.path.basename(args.references[0]) if len(args.references) == 1
+                                           else [os.path.basename(r) for r in args.references]),
+    **({"ref_normalize_db": fields["ref_normalize_db"]} if "ref_normalize_db" in fields else {}),
     "seconds": args.seconds, "duration_scale": args.duration_scale, "speed": args.speed,
     "steps": len(calls_by_step), "options": options, "branches": branch_names,
     "latent_frames": int(z.shape[1]), "audio_samples": int(result.audio.shape[-1]),

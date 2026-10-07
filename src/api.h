@@ -16,15 +16,14 @@
 /**
  * A family behind the C API, one line of the table in speech.cpp: its task, the layout its reader takes, which names
  * the general.architecture of its files, its table of options and what else the information shows (describe), its
- * engine (load), and, for a family that takes voice files, how it makes one from a reference recording.
+ * engine (load), and, for a family that takes voice files, how it makes one of a VoiceRecipe.
  */
 struct Family {
     speech_task task;
     const Layout & layout;
     FamilyInfo (*describe)(const std::shared_ptr<const ModelFile> & file);
     std::unique_ptr<Engine> (*load)(const std::string & path, ggml_backend_t backend);
-    void (*make_voice)(const std::string & model_path, const std::string & reference_path, const std::string & voice_path,
-                       ggml_backend_t backend);
+    void (*make_voice)(const std::string & model_path, const VoiceRecipe & recipe, const std::string & voice_path, ggml_backend_t backend);
 };
 
 /** The family of the model file at `path`, by its general.architecture; an architecture no family has throws. */

@@ -216,11 +216,12 @@ are already on stdout.
 ### `speech voice`
 
 ```
-speech voice MODEL REFERENCE.wav VOICE.gguf [--device NAME] [--threads N] [-v]
+speech voice MODEL REFERENCE.wav... VOICE.gguf [--lufs LUFS | --keep-loudness] [--device NAME] [--threads N] [-v]
 ```
 
-Makes a voice file from a reference recording at any rate, reading only the codec's encoder from MODEL (Irodori-TTS
-voices, below). `--device` defaults to `cpu` here, the one device whose latent is the official encoder's to 99 dB
+Makes a voice file from one or more reference recordings at any rate, each encoded on its own and joined in order,
+reading only the codec's encoder from MODEL (Irodori-TTS voices, below). Each recording is brought to the model's
+loudness, or to `--lufs`, or kept as it is with `--keep-loudness`. `--device` defaults to `cpu` here, the one device whose latent is the official encoder's to 99 dB
 (docs/adr/0002).
 
 ### `speech info`
@@ -402,8 +403,11 @@ speech_model_free(model);
 - **Voices.** Irodori-TTS's one voice of its own is `none`, which speaks without a reference, in a file that holds the
   null speaker: `speech_voice_add()` adds one to a loaded model from a voice file or a reference WAVE file at any
   rate, under a name compared with case that is not the model's own or `none`, and `speech_voice_make()` writes a voice
-  file from a reference, reading only the codec's encoder from the model file (Irodori-TTS voices, below). A model
-  that takes no voice files answers both with `SPEECH_ERROR_UNSUPPORTED`.
+  file from a reference, reading only the codec's encoder from the model file (Irodori-TTS voices, below).
+  `speech_voice_make_from()` writes one of the parameters `speech_voice_params_new()` makes: several references
+  (`speech_voice_params_add_reference()`), each encoded on its own and joined, and another loudness
+  (`speech_voice_params_set_loudness()`) or the recordings' own (`speech_voice_params_keep_loudness()`). A model that
+  takes no voice files answers all three with `SPEECH_ERROR_UNSUPPORTED`.
 - **Requests.** A request is made for one model with `speech_request_new()`. It takes a text
   (`speech_request_set_text()`) or audio (`speech_request_set_audio()`, mono at any rate, resampled to the model's;
   Audio at another rate, above), and options through the setter of each option's type. Each value is checked against
@@ -851,14 +855,23 @@ such voice and refuses it, naming the null speaker it lacks. A voice added is ei
 - a reference WAVE file: at most 120 s, 16-, 24- or 32-bit PCM or 32-bit float at any rate, the channels
   averaged and resampled to 48 kHz. `speech_voice_add()`, and so `--add-voice` and the worker's `add_voice`,
   normalizes its loudness and encodes it with the codec, as the official runtime does for every request.
-- a voice file, which `speech voice` or `speech_voice_make()` writes from a reference WAVE file, reading only the
-  codec's encoder from the model file: the reference's codec latent in a GGUF file of its own (Voice files, below) that
-  carries the hash of the codec's tensors. It works with every model file of the same codec, v4.1-Small-MF and
-  v4.1-Small in any type, and a model of another codec refuses it. Voice files made before 0.7.0 have no layout and are
-  refused; make them again from their WAVE files.
+- a voice file, which `speech voice`, `speech_voice_make()` or `speech_voice_make_from()` writes from reference WAVE
+  files, reading only the codec's encoder from the model file: the references' codec latent in a GGUF file of its own
+  (Voice files, below) that carries the hash of the codec's tensors. It works with every model file of the same codec,
+  v4.1-Small-MF and v4.1-Small in any type, and a model of another codec refuses it. Voice files made before 0.7.0 have
+  no layout and are refused; make them again from their WAVE files.
+
+A voice file may be made of several references, as the official runtime's `ref_wavs`: each is encoded on its own and
+the latents are joined in the order given, up to 120 s together (3000 frames, `irodori-tts.reference.max_seconds`),
+past which the runtime cuts and speech.cpp refuses. Each reference is brought to the model's loudness,
+`irodori-tts.reference.lufs` (-16 LUFS), or to another (`--lufs`, `speech_voice_params_set_loudness()`), or kept as
+recorded with a peak above 1 scaled down to 1 (`--keep-loudness`, `speech_voice_params_keep_loudness()`), the runtime's
+`ref_normalize_db` of `None`. `--add-voice` and the worker's `add_voice` take one file, a voice file or one WAVE file at
+the model's loudness; a voice of several references or another loudness is made into a voice file first.
 
 ```sh
 speech voice Irodori-TTS-848M-MF-v4.1-F16.gguf bright-young-woman-10s.wav bright-young-woman-10s.voice.gguf
+speech voice Irodori-TTS-848M-MF-v4.1-F16.gguf take-1.wav take-2.wav take-3.wav --lufs -23 three-takes.voice.gguf
 ```
 
 For the 10.7 s reference bright-young-woman-10s.wav, the voice file is 35 KB against the WAVE file's 1 MB,
@@ -1203,7 +1216,8 @@ runtime's guidance, text 3.0 and speaker 5.0 while t ≥ 0.5):
   which keeps the 56 emoji the model reads as directions (🤭 a giggle, 😮‍💨 a sigh, 👂 a whisper and the
   rest of the runtime's `ALLOWED_ANNOTATION_EMOJIS`),
 - the SentencePiece Unigram tokenizer with byte fallback, and ModernBERT-ja with its projector,
-- the reference's loudness normalization and the codec encoder, in windows of 100 frames,
+- the reference's loudness normalization, to the runtime's -16 LUFS, another or none, the codec encoder, in windows of
+  100 frames, and voices of several references joined,
 - the speaker encoder, the duration predictor with the runtime's `seconds` and `duration_scale`, the DiT and
   both samplers, RF's with the runtime's guidance modes and scales, Sway Sampling, the truncation of the noise, the
   temporal score rescaling and the scaling of the speaker's keys and values,
@@ -1212,8 +1226,7 @@ runtime's guidance, text 3.0 and speaker 5.0 while t ≥ 0.5):
 - the tail cut where the latent goes flat, with the runtime's settings, and the codec decoder, a first window of 12
   frames (0.48 s) and then 48 at a time, each window giving the samples of decoding the whole latent at once.
 
-Not implemented: voices of several references or another loudness, speaker-inversion embeddings, LoRA adapters and
-SilentCipher's watermark. The noise comes
+Not implemented: speaker-inversion embeddings, LoRA adapters and SilentCipher's watermark. The noise comes
 from speech.cpp's own generator, so a seed gives other audio than the same seed in the official runtime. A reference
 at another rate than 48 kHz is resampled with the library's filter, not with the runtime's torchaudio defaults (Audio
 at another rate, above).
@@ -2198,15 +2211,19 @@ A voice file of Irodori-TTS is a GGUF file of its own, layout 1:
 | Key | Type | Meaning |
 |---|---|---|
 | `general.architecture` | string | `irodori-tts-voice` |
-| `speech.layout` | u32 | 1 |
-| `speech.requires` | string | `0.7.0` |
+| `speech.layout` | u32 | 2 |
+| `speech.requires` | string | `0.8.0` |
 | `irodori-tts-voice.codec_sha256` | string | the `irodori-tts.codec.sha256` of the model that encoded it; a model with another hash refuses it |
-| `irodori-tts-voice.reference_seconds` | f32 | the reference recording's length |
-| `irodori-tts-voice.reference_sample_rate` | u32 | the reference recording's rate, before it was resampled |
+| `irodori-tts-voice.references.seconds` | [f32] | each reference recording's length, in the order they are joined |
+| `irodori-tts-voice.references.sample_rates` | [i32] | each recording's rate, before it was resampled, aligned |
+| `irodori-tts-voice.normalized` | bool | whether each recording was brought to a loudness before it was encoded |
+| `irodori-tts-voice.lufs` | f32 | that loudness in LUFS; present when `normalized` is true |
 | `irodori-tts-voice.device_kind` | string | `cpu`, `gpu` or `igpu`: the kind of device that encoded it |
 
-and one tensor, `latent`, F32 with ne = [`latent_dim`, frames], `latent_dim` being the model's. A voice file of another
-codec is refused as the caller's mistake before its latent is checked. Voice files made before 0.7.0 have no
+and one tensor, `latent`, F32 with ne = [`latent_dim`, frames], the recordings' latents joined, `latent_dim` being the
+model's. A voice file of another codec is refused as the caller's mistake before its latent is checked. A voice file
+of layout 1, which releases from 0.7.0 wrote with one reference brought to the model's -16 LUFS, is read as one of
+layout 2 that says so, and releases before 0.8.0 refuse layout 2 naming 0.8.0. Voice files made before 0.7.0 have no
 `speech.layout` and are refused; they are made again from their WAVE files.
 
 ## License

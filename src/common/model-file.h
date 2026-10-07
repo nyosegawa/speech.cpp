@@ -107,6 +107,7 @@ public:
     /** A string that names a kind; a value other than `values` throws. */
     std::string one_of(const std::string & key, std::initializer_list<const char *> values) const;
     std::vector<int32_t> i32_array(const std::string & key) const;
+    std::vector<float> f32_array(const std::string & key) const;
     std::vector<double> f64_array(const std::string & key) const;
     std::vector<std::string> str_array(const std::string & key) const;
 
@@ -117,6 +118,9 @@ public:
     void upgrade_u32(const std::string & key, uint32_t value);
     void upgrade_f32(const std::string & key, float value);
     void upgrade_bool(const std::string & key, bool value);
+    void upgrade_str(const std::string & key, const std::string & value);
+    void upgrade_i32_array(const std::string & key, const std::vector<int32_t> & values);
+    void upgrade_f32_array(const std::string & key, const std::vector<float> & values);
 
     const std::string & path() const { return path_; }
     /** The layout's remedy, for a message about the file that a family's reader throws. */

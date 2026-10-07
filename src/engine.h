@@ -41,6 +41,16 @@ struct OptionSpec {
     std::vector<std::string> choices = {};
 };
 
+/**
+ * What a voice file is made of: reference recordings, joined in the order given, and the loudness each is brought to
+ * before it is encoded, the model's unless `lufs` gives another, or the recording's own without `normalize`.
+ */
+struct VoiceRecipe {
+    std::vector<std::string> references;
+    bool normalize = true;
+    std::optional<double> lufs;
+};
+
 /** A voice as the model information shows it; what the model file does not say is empty. */
 struct VoiceInfo {
     std::string name, language, gender, description;
@@ -188,6 +198,7 @@ std::unique_ptr<Engine> load_qwen3_tts(const std::string & path, ggml_backend_t 
 
 FamilyInfo describe_irodori_tts(const std::shared_ptr<const ModelFile> & file);
 std::unique_ptr<Engine> load_irodori_tts(const std::string & path, ggml_backend_t backend);
+void make_irodori_tts_voice(const std::string & model_path, const VoiceRecipe & recipe, const std::string & voice_path, ggml_backend_t backend);
 
 FamilyInfo describe_fastconformer(const std::shared_ptr<const ModelFile> & file);
 std::unique_ptr<Engine> load_fastconformer(const std::string & path, ggml_backend_t backend);

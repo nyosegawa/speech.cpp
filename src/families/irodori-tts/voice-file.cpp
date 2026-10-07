@@ -34,8 +34,16 @@ void write_voice_file(const std::string & path, const std::vector<float> & laten
     gguf_set_val_u32(g.get(), "speech.layout", kVoiceLayout);
     gguf_set_val_str(g.get(), "speech.requires", kVoiceLayoutRequires);
     gguf_set_val_str(g.get(), "irodori-tts-voice.codec_sha256", codec_sha256.c_str());
-    gguf_set_val_f32(g.get(), "irodori-tts-voice.reference_seconds", (float) origin.reference_seconds);
-    gguf_set_val_u32(g.get(), "irodori-tts-voice.reference_sample_rate", (uint32_t) origin.reference_sample_rate);
+    std::vector<float> seconds;
+    std::vector<int32_t> rates;
+    for (const Recording & r : origin.recordings) {
+        seconds.push_back((float) r.seconds);
+        rates.push_back(r.sample_rate);
+    }
+    gguf_set_arr_data(g.get(), "irodori-tts-voice.references.seconds", GGUF_TYPE_FLOAT32, seconds.data(), seconds.size());
+    gguf_set_arr_data(g.get(), "irodori-tts-voice.references.sample_rates", GGUF_TYPE_INT32, rates.data(), rates.size());
+    gguf_set_val_bool(g.get(), "irodori-tts-voice.normalized", origin.lufs.has_value());
+    if (origin.lufs) gguf_set_val_f32(g.get(), "irodori-tts-voice.lufs", (float) *origin.lufs);
     gguf_set_val_str(g.get(), "irodori-tts-voice.device_kind", origin.device_kind.c_str());
     gguf_add_tensor(g.get(), t);
     if (!gguf_write_to_file(g.get(), path.c_str(), false)) {
@@ -43,8 +51,8 @@ void write_voice_file(const std::string & path, const std::vector<float> & laten
     }
 }
 
-void make_voice_file(const std::string & model_path, const std::string & reference_path, const std::string & voice_path,
-                     ggml_backend_t backend) {
+void make_voice_file(const std::string & model_path, const std::vector<std::string> & reference_paths, const Loudness & loudness,
+                     const std::string & voice_path, ggml_backend_t backend) {
     // Codec::build_encoder() reads these tensors and no others.
     const auto model = naming("model_path", [&] {
         return std::make_unique<const ModelFile>(model_path, backend, model_layout, [](const std::string & name) {
@@ -52,11 +60,19 @@ void make_voice_file(const std::string & model_path, const std::string & referen
         });
     });
     Codec codec(*model, backend);
-    const EncodedReference reference = naming("reference_path", [&] { return encode_reference(codec, reference_path, ReferenceRules(*model)); });
-    naming("voice_path", [&] {
-        write_voice_file(voice_path, reference.latent, codec.latent_dim(), codec.sha256(),
-                         {reference.seconds, reference.sample_rate, device_kind(backend)});
-    });
+    ReferenceRules rules(*model);
+    if (!loudness.normalize) rules.lufs.reset();
+    else if (loudness.lufs) rules.lufs = loudness.lufs;
+    // One reference is the reference_path of speech_voice_make(), several the references of a voice's parameters.
+    const char * input = reference_paths.size() == 1 ? "reference_path" : "references";
+    std::vector<EncodedReference> references;
+    VoiceOrigin origin{{}, rules.lufs, device_kind(backend)};
+    for (const std::string & path : reference_paths) {
+        references.push_back(naming(input, [&] { return encode_reference(codec, path, rules); }));
+        origin.recordings.push_back({references.back().seconds, references.back().sample_rate});
+    }
+    const std::vector<float> latent = join_references(references, codec, rules, input);
+    naming("voice_path", [&] { write_voice_file(voice_path, latent, codec.latent_dim(), codec.sha256(), origin); });
 }
 
 }  // namespace irodori

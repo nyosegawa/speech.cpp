@@ -218,8 +218,12 @@ if info["task"] == "synthesis":
         run("voice", model, reference, made)
         run("tts", model, "-o", path, "--add-voice", f"made={made}", "--voice", "made", *options, lines[0])
         os.remove(path)
+        run("voice", model, reference, reference, made, "--lufs", "-23")
+        run("tts", model, "-o", path, "--add-voice", f"made={made}", "--voice", "made", *options, lines[0])
+        os.remove(path)
+        r = run("voice", model, reference, made, "--lufs", "-23", "--keep-loudness", code=2)
         os.remove(made)
-        print("speech voice made a voice file on the CPU, which speech tts speaks with")
+        print("speech voice made voice files of one reference and of two at -23 LUFS on the CPU, which speech tts speaks with")
 else:
     def read_npy(path):
         with open(path, "rb") as f:

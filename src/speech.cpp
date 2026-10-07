@@ -1,5 +1,6 @@
 #include "speech.h"
 
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -14,7 +15,6 @@
 #include "error.h"
 #include "fastconformer/layout.h"
 #include "irodori-tts/layout.h"
-#include "irodori-tts/voice-file.h"
 #include "log.h"
 #include "qwen3-asr/layout.h"
 #include "qwen3-tts/layout.h"
@@ -31,7 +31,7 @@ namespace {
  */
 const Family families[] = {
     {SPEECH_TASK_SYNTHESIS, qwen3_tts_layout, describe_qwen3_tts, load_qwen3_tts, nullptr},
-    {SPEECH_TASK_SYNTHESIS, irodori::model_layout, describe_irodori_tts, load_irodori_tts, irodori::make_voice_file},
+    {SPEECH_TASK_SYNTHESIS, irodori::model_layout, describe_irodori_tts, load_irodori_tts, make_irodori_tts_voice},
     {SPEECH_TASK_RECOGNITION, fastconformer::layout, describe_fastconformer, load_fastconformer, nullptr},
     {SPEECH_TASK_RECOGNITION, qwen3_asr::layout, describe_qwen3_asr, load_qwen3_asr, nullptr},
 };
@@ -115,6 +115,10 @@ struct speech_load_params {
     /** 0 for the library's default. */
     int threads = 0;
     bool warmup = false;
+};
+
+struct speech_voice_params {
+    VoiceRecipe recipe;
 };
 
 speech_stop Engine::speak(const std::string &, const RequestValues &, Run &) {
@@ -232,6 +236,27 @@ bool speech_model::has_voice(const std::string & name) const {
     }
     return false;
 }
+
+namespace {
+
+/** Makes the voice file at `voice_path` of `recipe` for the model file at `model_path`, on the device of `params`. */
+void make_voice(const char * model_path, const VoiceRecipe & recipe, const char * voice_path, const speech_load_params * params) {
+    require(model_path, "model_path", "model_path");
+    require(voice_path, "voice_path", "voice_path");
+    const speech_load_params defaults;
+    const speech_load_params & p = params ? *params : defaults;
+    const Family & family = naming("model_path", [&]() -> const Family & { return family_of(model_path); });
+    if (!family.make_voice) {
+        throw ApiError(SPEECH_ERROR_UNSUPPORTED, std::string(model_path) + " is a model of " + family.layout.architecture +
+                                                     ", which takes no voices made from recordings",
+                       "model_path");
+    }
+    std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> backend(
+        start_device(find_device(p.device), p.threads > 0 ? p.threads : default_threads()), ggml_backend_free);
+    family.make_voice(model_path, recipe, voice_path, backend.get());
+}
+
+}  // namespace
 
 extern "C" {
 
@@ -448,20 +473,60 @@ speech_status speech_voice_add(speech_model * model, const char * name, const ch
 speech_status speech_voice_make(const char * model_path, const char * reference_path, const char * voice_path,
                                 const speech_load_params * params) {
     return guarded([&] {
-        require(model_path, "model_path", "model_path");
         require(reference_path, "reference_path", "reference_path");
-        require(voice_path, "voice_path", "voice_path");
-        const speech_load_params defaults;
-        const speech_load_params & p = params ? *params : defaults;
-        const Family & family = naming("model_path", [&]() -> const Family & { return family_of(model_path); });
-        if (!family.make_voice) {
-            throw ApiError(SPEECH_ERROR_UNSUPPORTED, std::string(model_path) + " is a model of " + family.layout.architecture +
-                                                         ", which takes no voices made from recordings",
-                           "model_path");
+        make_voice(model_path, {{reference_path}}, voice_path, params);
+        return SPEECH_OK;
+    });
+}
+
+speech_status speech_voice_params_new(speech_voice_params ** params) {
+    return guarded([&] {
+        require(params, "params");
+        *params = new speech_voice_params();
+        return SPEECH_OK;
+    });
+}
+
+void speech_voice_params_free(speech_voice_params * params) {
+    delete params;
+}
+
+speech_status speech_voice_params_add_reference(speech_voice_params * params, const char * path) {
+    return guarded([&] {
+        require(params, "params");
+        require(path, "path", "references");
+        params->recipe.references.push_back(path);
+        return SPEECH_OK;
+    });
+}
+
+speech_status speech_voice_params_set_loudness(speech_voice_params * params, double lufs) {
+    return guarded([&] {
+        require(params, "params");
+        if (!std::isfinite(lufs)) throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the loudness is not a finite number of LUFS", "loudness");
+        params->recipe.normalize = true;
+        params->recipe.lufs = lufs;
+        return SPEECH_OK;
+    });
+}
+
+speech_status speech_voice_params_keep_loudness(speech_voice_params * params) {
+    return guarded([&] {
+        require(params, "params");
+        params->recipe.normalize = false;
+        params->recipe.lufs.reset();
+        return SPEECH_OK;
+    });
+}
+
+speech_status speech_voice_make_from(const char * model_path, const speech_voice_params * voice, const char * voice_path,
+                                     const speech_load_params * params) {
+    return guarded([&] {
+        require(voice, "voice");
+        if (voice->recipe.references.empty()) {
+            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the voice has no reference; add one with speech_voice_params_add_reference()", "references");
         }
-        std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> backend(
-            start_device(find_device(p.device), p.threads > 0 ? p.threads : default_threads()), ggml_backend_free);
-        family.make_voice(model_path, reference_path, voice_path, backend.get());
+        make_voice(model_path, voice->recipe, voice_path, params);
         return SPEECH_OK;
     });
 }
