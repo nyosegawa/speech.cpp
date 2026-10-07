@@ -173,10 +173,10 @@ bool check_decoder(Codec & codec, ggml_backend_t backend, const std::string & mo
         for (int w : p) name += (name.empty() ? "" : ", ") + std::to_string(w);
         t0 = std::chrono::steady_clock::now();
         codec.decode(
-            latent, (int64_t) whole.size(), p[0],
+            latent, (int64_t) whole.size(),
             [&](const DecodeProgress & progress) {
-                // The pattern's sizes after the first, in turn.
-                k = k + 1 < p.size() ? k + 1 : 1;
+                // The pattern's first size, then its others in turn.
+                k = progress.frames_done == 0 ? 0 : k + 1 < p.size() ? k + 1 : 1;
                 return (int) std::min<int64_t>(p[k], progress.frames_left);
             },
             [&](const float * s, size_t count) {

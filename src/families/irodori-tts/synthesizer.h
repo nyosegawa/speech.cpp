@@ -114,9 +114,10 @@ public:
     /** Whether the file holds the caption's encoder, which a request with a caption needs. */
     bool has_caption() const { return model_->boolean("irodori-tts.caption_condition"); }
 
-    /** The decoder's first window, in frames; a short one brings the first audio early. */
-    static constexpr int kFirstWindow = 12;
-    /** How the decoder sizes its later windows as it measures its speed, for a codec's frames (synthesizer.cpp says why). */
+    /**
+     * How the decoder sizes its windows, a short first one of 12 frames, which brings the first audio early, and the
+     * later ones as it measures its speed, for a codec's frames (synthesizer.cpp says why).
+     */
     static WindowRule window_rule(int hop, int sample_rate);
 
 private:

@@ -18,8 +18,10 @@ constexpr int kCodecResidualUnits = 3;
 /** Called with each piece of audio as it is decoded; returning false stops the decoding. */
 using AudioSink = std::function<bool(const float * samples, size_t n)>;
 
-/** What the decoder knows when it sizes a window after the first: what it has passed on, and how fast it decodes. */
+/** What the decoder knows when it sizes a window: what it has passed on, and how fast it decodes. */
 struct DecodeProgress {
+    /** Frames passed on so far, 0 for the first window. */
+    int64_t frames_done = 0;
     /** Frames still to decode and pass on. */
     int64_t frames_left = 0;
     /** Seconds of audio passed on so far. */
@@ -30,7 +32,7 @@ struct DecodeProgress {
     double seconds_per_frame = 0;
 };
 
-/** The frames of the next window, which must be at least 1 and at most the frames left. */
+/** The frames of the next window, the first included, which must be at least 1 and at most the frames left. */
 using WindowChoice = std::function<int(const DecodeProgress & progress)>;
 
 /** The running estimate of the seconds per decoded frame after a window measured at `measured`; the first is its own. */
@@ -39,17 +41,18 @@ inline double next_estimate(double previous, double measured) {
 }
 
 /**
- * How a streaming decoder sizes its windows after the first: from `floor` to `ceiling` frames, so that the next one
- * arrives while the listener still has `margin` seconds of audio, a frame being `frame_seconds` of audio and each
- * window decoding `context` frames on either side of its own.
+ * How a streaming decoder sizes its windows: `first` frames first, then from `floor` to `ceiling` frames, so that the
+ * next one arrives while the listener still has `margin` seconds of audio, a frame being `frame_seconds` of audio and
+ * each window decoding `context` frames on either side of its own.
  */
 struct WindowRule {
-    int floor = 0, ceiling = 0, context = 0;
+    int first = 0, floor = 0, ceiling = 0, context = 0;
     double frame_seconds = 0, margin = 0;
 };
 
 /**
- * The frames of the next window under `rule`: the frames left when they are no more than the floor; otherwise the
+ * The frames of the next window under `rule`. The first window is `first` frames, or the frames left when fewer. After
+ * it, the frames left when they are no more than the floor; otherwise the
  * largest size from the floor to the ceiling whose decoding, estimated at `seconds_per_frame` for its frames and its
  * margins, ends before the listener's audio falls below the margin, the listener having the audio sent less the time
  * since the first window was sent, as if playback began with the first window. When not even the floor ends in time,
@@ -97,11 +100,11 @@ public:
     ggml_tensor * build_decoder(Graph & g, const std::vector<float> & latent, std::vector<ggml_tensor *> * stages = nullptr) const;
 
     /**
-     * Decodes the first `samples` samples of a latent, row-major [frames, latent_dim], `first_window` frames first and
-     * then windows of the sizes `next` chooses as it measures the decoding, each with enough frames around it that its
-     * samples are those of decoding the whole latent at once, and passes each window's samples to `sink`.
+     * Decodes the first `samples` samples of a latent, row-major [frames, latent_dim], in windows of the sizes `choose`
+     * gives as it measures the decoding, the first included, each with enough frames around it that its samples are
+     * those of decoding the whole latent at once, and passes each window's samples to `sink`.
      */
-    void decode(const std::vector<float> & latent, int64_t samples, int first_window, const WindowChoice & next, const AudioSink & sink);
+    void decode(const std::vector<float> & latent, int64_t samples, const WindowChoice & choose, const AudioSink & sink);
 
     /** The frames on each side of a window that the encoder's receptive field reaches. */
     static constexpr int kEncoderMargin = 8;

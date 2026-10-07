@@ -83,7 +83,7 @@ int TailCut::flattening_point(const std::vector<float> & latent, int frames, int
  * samples. Qwen3-TTS's chunked codec differs by up to 7e-4 between chunkings and keeps a fixed schedule.
  */
 WindowRule Synthesizer::window_rule(int hop, int sample_rate) {
-    return {24, 48, Codec::kDecoderMargin, (double) hop / sample_rate, 0.1};
+    return {12, 24, 48, Codec::kDecoderMargin, (double) hop / sample_rate, 0.1};
 }
 
 Synthesizer::Synthesizer(const std::string & model_path, ggml_backend_t backend)
@@ -227,7 +227,7 @@ size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
     {
         Timer t{st.codec};
         const WindowRule rule = window_rule(codec_.hop(), codec_.sample_rate());
-        codec_.decode(x, samples, kFirstWindow, [&](const DecodeProgress & p) { return next_window(rule, p); }, [&](const float * s, size_t n) {
+        codec_.decode(x, samples, [&](const DecodeProgress & p) { return next_window(rule, p); }, [&](const float * s, size_t n) {
             if (emitted == 0) st.first_audio = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
             emitted += n;
             return sink(s, n);

@@ -109,6 +109,17 @@ static int check_irodori_options(speech_model * model, const speech_model_info *
     speech_request_set_bool(r, SPEECH_OPT_KEEP_TAIL, 1);
     speech_request_set_int(r, SPEECH_OPT_TAIL_WINDOW_SIZE, 8);
     ok &= expect(speak(r, &kept, NULL, NULL), SPEECH_ERROR_INVALID_ARGUMENT, "tail_window_size", "keep_tail with a window");
+    // A cut at the tail that leaves fewer frames than the decoder's first window of 12 (7 for v4.1-Small-MF and 10 for
+    // v4.1-Small in this voice) is spoken whole, in one window.
+    Audio shortest = {NULL, 0, 0};
+    r = new_request(model, "はい。", voice, 5);
+    speech_request_set_float(r, SPEECH_OPT_SECONDS, 0.5);
+    speech_request_set_int(r, SPEECH_OPT_TAIL_WINDOW_SIZE, 1);
+    speech_request_set_float(r, SPEECH_OPT_TAIL_STD_THRESHOLD, 1);
+    speech_request_set_float(r, SPEECH_OPT_TAIL_MEAN_THRESHOLD, 0.1);
+    ok &= expect(speak(r, &shortest, NULL, NULL), SPEECH_OK, NULL, "はい。 cut at the tail within the first window") && shortest.n > 0;
+    printf("はい。 cut at the tail within the first window: %.3f s\n", (double) shortest.n / rate);
+    free(shortest.samples);
 
     if (rf) {
         struct {

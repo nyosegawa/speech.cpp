@@ -169,6 +169,7 @@ ggml_tensor * Codec::build_decoder(Graph & g, const std::vector<float> & latent,
 }
 
 int next_window(const WindowRule & rule, const DecodeProgress & p) {
+    if (p.frames_done == 0) return (int) std::min<int64_t>(rule.first, p.frames_left);
     if (p.frames_left <= rule.floor) return (int) p.frames_left;
     const int most = (int) std::min<int64_t>(rule.ceiling, p.frames_left);
     const double buffer = p.audio_sent - p.since_first;
@@ -178,7 +179,7 @@ int next_window(const WindowRule & rule, const DecodeProgress & p) {
     return floor_takes < rule.floor * rule.frame_seconds ? rule.floor : most;
 }
 
-void Codec::decode(const std::vector<float> & latent, int64_t samples, int first_window, const WindowChoice & next, const AudioSink & sink) {
+void Codec::decode(const std::vector<float> & latent, int64_t samples, const WindowChoice & choose, const AudioSink & sink) {
     using Clock = std::chrono::steady_clock;
     const int64_t frames = (int64_t) latent.size() / latent_dim_;
     const int64_t needed = std::min(frames, (samples + hop_ - 1) / hop_);
@@ -186,9 +187,10 @@ void Codec::decode(const std::vector<float> & latent, int64_t samples, int first
     DecodeProgress progress;
     Clock::time_point first_sent;
     for (int64_t a = 0; a < needed;) {
+        progress.frames_done = a;
         progress.frames_left = needed - a;
         if (a > 0) progress.since_first = std::chrono::duration<double>(Clock::now() - first_sent).count();
-        const int window = a == 0 ? first_window : next(progress);
+        const int window = choose(progress);
         if (window < 1 || window > progress.frames_left) {
             throw std::logic_error("a window of " + std::to_string(window) + " frames with " + std::to_string(progress.frames_left) + " left");
         }
