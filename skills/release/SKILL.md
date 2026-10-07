@@ -20,7 +20,9 @@ A file changes when its family's layout changes, a type is added, or a checkpoin
 
 1. Make the files: `convert.py` writes F32 and `speech quantize F32.gguf OUT --type <type>` the other types
    (docs/gguf.md, Convert a model); `tools/quantize_compare.py` shows that an unchanged file comes out byte for byte.
-   Check each with the family's stage checks and `speech-api-check`.
+   Check each with the family's stage checks and `speech-api-check`. Before a type is published for the first time,
+   `tools/quantize_releases.py` with the previous release's `speech` shows that each file's `speech.requires` names a
+   release that reads it.
 2. Write each file's information beside it: `speech info --json <file> > <file>.json`.
 3. **With the maintainer's approval**, upload to the model's repository, replacing the file of the same name or
    adding the new one: `hf upload sakasegawa/<Upstream>-GGUF <file>` and `<file>.json`. Old files stay in the history.
