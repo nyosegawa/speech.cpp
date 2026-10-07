@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <memory>
 #include <stdexcept>
+#include <system_error>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -143,6 +144,18 @@ void pad(std::vector<uint8_t> & out, size_t alignment) {
 }
 
 /**
+ * The threads of a conversion, joined when it ends however it ends: a std::thread that is destroyed while it can still be
+ * joined ends the process, which a failure to start a later thread would otherwise do to the ones started before it.
+ */
+struct Workers {
+    std::vector<std::thread> threads;
+
+    ~Workers() {
+        for (std::thread & t : threads) t.join();
+    }
+};
+
+/**
  * Converts `values`, rows of `row` values, to `type`, the rows spread over the machine's threads; ggml converts each row
  * on its own, so the bytes do not depend on the threads.
  */
@@ -150,12 +163,19 @@ std::vector<uint8_t> convert(const std::vector<float> & values, int64_t row, ggm
     const int64_t rows = (int64_t) values.size() / row;
     std::vector<uint8_t> out(ggml_row_size(type, row) * rows);
     const int64_t threads = std::max<int64_t>(1, std::min<int64_t>(std::thread::hardware_concurrency(), rows));
-    std::vector<std::thread> workers;
-    for (int64_t t = 0; t < threads; t++) {
-        const int64_t first = rows * t / threads, last = rows * (t + 1) / threads;
-        workers.emplace_back([&, first, last] { ggml_quantize_chunk(type, values.data(), out.data(), first * row, last - first, row, nullptr); });
+    {
+        Workers workers;
+        workers.threads.reserve((size_t) threads);
+        for (int64_t t = 0; t < threads; t++) {
+            const int64_t first = rows * t / threads, last = rows * (t + 1) / threads;
+            try {
+                workers.threads.emplace_back([&, first, last] { ggml_quantize_chunk(type, values.data(), out.data(), first * row, last - first, row, nullptr); });
+            } catch (const std::system_error & e) {
+                throw Error(Fault::OutOfMemory, std::string("the host cannot start another thread to quantize with (") + e.what() +
+                                                    "); close other programs and run it again");
+            }
+        }
     }
-    for (std::thread & w : workers) w.join();
     return out;
 }
 
