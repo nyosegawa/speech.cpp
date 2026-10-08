@@ -78,6 +78,28 @@ if (check(speech_model_load("silero-vad-309K-v6.2-F32.gguf", NULL, &model)) &&
 }
 ```
 
+The same regions while the audio arrives, as from a microphone, in pieces of any size at any rate:
+
+```c
+speech_detection * detection = NULL;
+size_t given = 0;
+if (check(speech_request_new(model, &request)) &&
+    check(speech_request_set_int(request, SPEECH_OPT_MIN_SILENCE_DURATION_MS, 500)) &&
+    check(speech_detection_start(request, 48000, &detection))) {
+    while (next_piece(&samples, &n_samples)) {  /* the caller's audio, at 48 kHz */
+        check(speech_detection_push(detection, samples, n_samples));
+        double start, end;
+        if (speech_detection_speaking(detection, &start)) { /* someone speaks, from start */ }
+        for (; given < speech_detection_region_count(detection); given++) {
+            speech_detection_region(detection, given, &start, &end);
+            printf("%.3f %.3f\n", start, end);  /* an utterance has ended */
+        }
+    }
+    check(speech_detection_end(detection));  /* and gives the regions left */
+}
+speech_detection_free(detection);
+```
+
 The library loads files and never reaches the network: a program passes a model file's path. `speech pull NAME` prints
 the path of a model of the catalog.
 
@@ -120,6 +142,10 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
   `speech_request_set_progress()` gives a callback that hears how far a request has come while it passes no audio.
   `speech_request_cancel()` stops a request, from any thread, at the next audio, step or stage; a request cancelled
   before it runs returns at once. Either returns `SPEECH_CANCELLED`.
+- **Detections of audio that arrives.** `speech_detection_start()` starts a detection with a request's options and the
+  rate of the audio to come; `speech_detection_push()` gives it samples, `speech_detection_end()` ends the audio, and
+  `speech_detection_region_count()`, `speech_detection_region()` and `speech_detection_speaking()` read what it has found
+  so far ([below](#detections)).
 - **Results.** `speech_request_result()` gives what a request that returned `SPEECH_OK` or `SPEECH_CANCELLED` did: why it
   stopped (`complete`, `max_seconds`, `model_limit` or `cancelled`), the seed of a synthesis, the samples it passed, and
   the regions of a detection as its segments, each with an empty text and no result text, the text of a recognition with
@@ -150,6 +176,30 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
   `out_of_range` naming no option.
 - Nothing is cut short or moved to another device behind the caller's back.
 
+## Detections
+
+A detection finds the regions of audio that arrives a piece at a time, with a detection model such as
+[Silero VAD](models/silero-vad.md).
+
+- **The regions are `speech_detect()`'s.** Once the audio has ended, they are the regions `speech_detect()` gives for all
+  of it, sample for sample, however it was cut into pieces.
+- **A region is given once the audio heard makes it certain**, and never changes. With `min_silence_duration_ms` at
+  least twice `speech_pad_ms`, as with the defaults, that is when `min_silence_duration_ms` of silence has ended it.
+  With less, its end waits on whether speech resumes within twice `speech_pad_ms`, for at most
+  2 × `speech_pad_ms` + `min_speech_duration_ms` + `min_silence_duration_ms` and two of the model's chunks (64 ms for
+  Silero VAD). A region that `max_speech_duration_s` cuts at an earlier silence is given at the cut at the earliest.
+- **`speech_detection_speaking()`** says whether a region has begun that is not given yet, and the start it will have:
+  someone speaks at the end of the audio heard, or, with `min_silence_duration_ms` below twice `speech_pad_ms`, a region
+  has ended whose end waits. Speech that ends no longer than `min_speech_duration_ms` makes no region.
+- **Any rate.** The audio is resampled to the model's rate a piece at a time, which holds back the last 4.3 ms of the
+  audio pushed from 24, 44.1 or 48 kHz (8.6 ms from 8 kHz) until more arrives. The model computes a chunk (32 ms for
+  Silero VAD) once its samples have arrived.
+- **Refusals.** A request that has audio, and a rate `speech_request_set_audio()` refuses, are `invalid_argument` with
+  the option `audio`; a push after the end, or after a push that failed, is `invalid_argument`. A synthesis or
+  recognition model is `unsupported`.
+- **Threads.** A detection is used by one thread at a time. A push computes while the model does nothing else, so the
+  pushes of several detections on one model and its requests wait for each other.
+
 ## Errors
 
 A function that can fail returns a `speech_status`, negative for an error, whose category says what kind of failure it
@@ -178,8 +228,9 @@ it concerns (an option's name, `text`, `audio`, `device`, `threads`, `name`, `pa
   `speech_stop_name()`) as long as the process, and the error message until the next call on the thread. Nothing the
   caller passes is kept after the call.
 - **Threads.** A model serves one request at a time; requests that several threads run on the same model wait for each
-  other. A request is used by one thread at a time, but `speech_request_cancel()` may be called from any thread.
-  Information never changes once made and may be read from any thread. Separate models are independent.
+  other and for the pushes of its detections. A request is used by one thread at a time, but `speech_request_cancel()`
+  may be called from any thread; a detection is used by one thread at a time. Information never changes once made and
+  may be read from any thread. Separate models are independent.
 - **Versions.** `speech_version()` gives the release the library was built from (`"0.8.0"`). `SPEECH_API_VERSION_MAJOR`
   and `SPEECH_API_VERSION_MINOR`, and `speech_api_version_major()` and `speech_api_version_minor()` for a caller that
   loads the library at run time, give the API's version, 3.1. The major rises when a declaration changes in a way an

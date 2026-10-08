@@ -27,7 +27,9 @@ bind their imports up front.
 - **A model does one task**, synthesis, recognition or detection
   ([the record of detection](detecting-speech-is-a-task-of-its-own-run-by-speech-detect-with-silero-vads-options-and-f32-files.md)), and the same handles serve every task: a model is loaded, described and freed
   alike, and a request is made, set, cancelled and freed alike, `speech_synthesize()`, `speech_transcribe()` or
-  `speech_detect()` running it. The call of another task is `unsupported`. The families are one table in `src/speech.cpp`, with each
+  `speech_detect()` running it. A detection of audio given a piece at a time is an object made from a request's
+  options ([its record](a-detection-of-audio-given-a-piece-at-a-time-gives-speech-detects-regions-each-once-it-is-certain.md)).
+  The call of another task is `unsupported`. The families are one table in `src/speech.cpp`, with each
   family's task, layout, information, engine and maker of voice files.
 - **One vocabulary, declared per family.** Every request option is a value of `speech_option` with a fixed snake_case
   name, which the worker, the server and the command line use as it is. Each family declares in one table which options
