@@ -57,9 +57,11 @@ public:
      * The length the runtime synthesizes for checked options and, when they fix no length, the predicted sum.
      * Fixed seconds give int(seconds * sample rate) samples in the frames that hold them. A prediction goes
      * through the runtime's float32 log1p and expm1, the scale in double precision and its rounding to the
-     * nearest frame with half to even, and gives whole frames of samples. At a scale and a speed of 1 the frames are
-     * kept within the model's bounds of the length, as the runtime keeps them; a prediction that a scale or a speed
-     * takes outside them throws, naming the scale, or the speed when the scale is 1.
+     * nearest frame with half to even, and gives whole frames of samples. A prediction past the model's longest length
+     * throws, naming the text, unless the scale and the speed bring it within the bounds; the runtime bounds it
+     * instead. At a scale and a speed of 1 a prediction under the shortest length is raised to it, as the runtime
+     * raises it; one that a scale or a speed takes outside the bounds throws, naming the scale, or the speed when the
+     * scale is 1.
      */
     Length length(const LengthOptions & options, float predicted_sum) const;
 

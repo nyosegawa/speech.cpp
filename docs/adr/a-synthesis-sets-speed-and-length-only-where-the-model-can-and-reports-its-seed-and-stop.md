@@ -6,9 +6,13 @@ The models differ in what they let a request say of the speech's rate and length
 before it makes it, and its official runtime lets a request fix the length (`seconds`) or scale the prediction
 (`duration_scale`); Irodori-TTS-Server, by the same author, serves OpenAI's speech API on it and turns OpenAI's `speed`
 (0.25 to 4) into those two by dividing both by it. Where the runtime goes on quietly, it clamps seconds outside 0.5 to
-30 s and ignores the scale when seconds are given. Qwen3-TTS's official implementation has no control of the rate or of
-the length: the talker decides frame by frame when the speech ends, and `generate_custom_voice()` takes no such
-argument.
+30 s, ignores the scale when seconds are given, and bounds a predicted length to the same 30 s. Speech squeezed into 30
+s loses words: in the voice none, eight short Japanese sentences that take 38.3 s spoken one at a time were predicted at
+30.7 s and, bounded to 30 s, lost two whole sentences, and three times that text, predicted at 47 s, gave 30 s in which
+neither Qwen3-ASR 0.6B nor ReazonSpeech v2 recognized a word of it (v4.1-Small, seed 1, Apple M5, 2026-10-08;
+v4.1-Small-MF predicts the same lengths). Each request completed. Qwen3-TTS's official implementation has no control of
+the rate or of the length: the talker decides frame by frame when the speech ends, and `generate_custom_voice()` takes
+no such argument.
 
 On a short interjection Qwen3-TTS goes on talking: ASIST measured "あー。" between 0.6 and 6.5 s in eight generations with
 `ono_anna` (2026-09-21). Its checkpoint's `max_new_tokens` allows 8192 frames, 655 s. A caller has to tell a sentence
@@ -23,6 +27,12 @@ the model finished from one a limit cut, and to repeat a request whose audio it 
   divides whichever length applies. The bounds of the length and of the speed are the file's (`irodori-tts.length.*`).
   Where the runtime goes on quietly, speech.cpp refuses: seconds outside the bounds, seconds together with a duration
   scale, and a length that the speed or the scale takes outside the bounds.
+- **Irodori-TTS refuses a text whose predicted length passes the longest**, `out_of_range` naming the text, before it
+  samples, where the runtime bounds the length and squeezes the speech into it; the message gives the predicted length
+  and the longest and says to split the text. A speed or a duration scale the caller sets that brings the length within
+  the bounds is followed, since the caller asked for that rate; one that takes a predicted length within the bounds past
+  them is refused naming that option, as above. Seconds the caller fixes keep their meaning. A prediction under the
+  shortest length is raised to it, as the runtime raises it, which adds silence and loses nothing.
 - **Qwen3-TTS takes `max_seconds`**, the longest the speech may be, and stops at its file's limit of frames otherwise.
   Its cache grows with the request, so that a sentence costs the memory of its own length. Irodori-TTS does not take
   `max_seconds`, since it fixes the length before it makes the speech.
@@ -39,6 +49,8 @@ The alternatives were turned down:
   followed.
 - Clamping seconds into the bounds as the runtime does. The caller gets a length other than the one it asked for, told
   only in a log.
+- Bounding a predicted length past the longest to it, as the runtime does. The speech loses words, or all of them, and
+  the request reports it complete; a caller cannot tell it from speech that holds the whole text.
 - Refusing `speed` together with a length. Irodori-TTS-Server combines them by division, and a caller moving from the
   server gets the same length here.
 - `max_seconds` for Irodori-TTS. A cap would cut a latent made to be longer; `seconds` asks for the length itself.
@@ -48,5 +60,7 @@ The alternatives were turned down:
 
 ## Consequences
 
-A caller learns from the model information which of the options a model takes, with their ranges. A Qwen3-TTS request
+A caller learns from the model information which of the options a model takes, with their ranges, and from the upper
+bound of `seconds` the longest an Irodori-TTS request speaks. A text of a few sentences can pass Irodori-TTS's 30 s, so a
+caller speaks such a text a sentence at a time; the refusal comes before any progress or audio. A Qwen3-TTS request
 without `max_seconds` can run to 655 s, so a caller that knows a plausible length sends it as `max_seconds`.
