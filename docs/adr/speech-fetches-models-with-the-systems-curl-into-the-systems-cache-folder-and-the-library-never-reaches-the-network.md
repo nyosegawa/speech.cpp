@@ -31,9 +31,11 @@ older release still installed may use.
   `$XDG_CACHE_HOME/speech.cpp/models` or `~/.cache/speech.cpp/models` on Linux (the XDG Base Directory specification,
   which ignores a value that is not absolute), and `%LOCALAPPDATA%\speech.cpp\models` on Windows. `SPEECH_MODEL_DIR`
   replaces it and must be an absolute path, so that its meaning does not depend on the current folder.
-- **Inside it, a file goes to `<owner>--<name>/<revision>/<file>`**, the repository and the commit it was pinned at, so
-  that two releases that pin different revisions never share a path, and a path, once filled, always holds the same
-  bytes. A file is there only once it is whole, so a name whose file is there loads without the network.
+- **Inside it, a file goes to `<owner>--<name>/<sha256>/<file>`**, the repository and the SHA-256 of the file's bytes,
+  so that a path, once filled, always holds the same bytes, and a release whose catalog pins the repository at a later
+  commit holding the same file finds it in place. The commit a catalog pins only makes the URL to fetch from, as
+  Hugging Face's own cache, llama.cpp and Ollama tell files by their content. A file is there only once it is whole, so
+  a name whose file is there loads without the network.
 - **Two processes that need the same file take turns on `<file>.lock`**, `flock()` on macOS and Linux and `LockFileEx()`
   on Windows, which the system releases when a process ends however it ends; the second finds the file in place and
   loads it. The lock is held while a process fetches or removes the file.
@@ -61,12 +63,19 @@ The alternatives were turned down:
   update of speech.cpp would have to carry the models along.
 - Hugging Face's own cache (`~/.cache/huggingface/hub`). Its layout is the hub library's to change, and its blobs and
   symbolic links work differently on Windows without Developer Mode.
-- A flat folder of file names. Two revisions of a file of the same name would overwrite each other.
+- A flat folder of file names. Two contents of a file of the same name would overwrite each other.
+- A folder for each commit a catalog pins, `<owner>--<name>/<revision>/<file>`. A commit that changes only the model
+  card, or adds a file of another type, moves the pin, and every file of the repository is fetched again though its
+  bytes did not change: the speeds added to four cards after 0.7.1 moved the pins of Qwen3-ASR 0.6B and 1.7B and
+  Qwen3-TTS 0.6B and 1.7B, 6.5 GB of files that had not changed.
+- Pinning each model at the newest commit that changed one of its files, with a folder per commit. A file of another
+  type added to the repository, such as a lower-bit one, would still move the pin of the files beside it.
 
 ## Consequences
 
 A fetch behaves as the user's curl does, proxies and certificates included. A machine without curl, such as a minimal
 container, fetches nothing and takes paths. Resuming depends on the server answering ranges, which Hugging Face's
-content servers do. A file fetched once serves every program that names it at the same revision. An upgrade leaves the
-previous release's files until the user removes them, which `speech models` points out. Uninstalling speech.cpp leaves
-the folder, which docs/install.md says how to remove.
+content servers do. A file fetched once serves every program that names the same bytes, at whatever commit. An upgrade
+leaves the previous release's files until the user removes them, which `speech models` points out. Uninstalling
+speech.cpp leaves the folder, which docs/install.md says how to remove. The `<revision>` folders of releases before
+0.8.2 are neither moved nor listed as old.

@@ -71,7 +71,8 @@ files it was checked with, so a file updated on Hugging Face reaches you with th
 | Linux | `$XDG_CACHE_HOME/speech.cpp/models`, or `~/.cache/speech.cpp/models` |
 | Windows | `%LOCALAPPDATA%\speech.cpp\models` |
 
-`SPEECH_MODEL_DIR`, an absolute path, replaces the folder. A file goes to `<owner>--<name>/<revision>/<file>` in it.
+`SPEECH_MODEL_DIR`, an absolute path, replaces the folder. A file goes to `<owner>--<name>/<sha256>/<file>` in it, by
+its content, so a release whose catalog pins the same file at a later commit uses it as it is.
 Nothing is removed automatically: `speech models` lists the files that no model of this release names as old, and
 `speech rm --old` removes them.
 

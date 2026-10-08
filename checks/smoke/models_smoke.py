@@ -14,7 +14,7 @@ one of the catalog's files, given as LOCAL.gguf and found by its size and SHA-25
 - while another process holds the file's lock, pull waits and writes no part, and once the file is in place and the
   lock released, it ends without fetching;
 - a subcommand given the name loads the fetched file without fetching (speech info --json equals that of LOCAL.gguf);
-- a file no entry names, an earlier revision's or another type's, is old in `speech models`, and `speech rm --old`
+- a file no entry names, of another content or another type, is old in `speech models`, and `speech rm --old`
   removes it and leaves the catalog's file, and files outside the folders a fetch makes, which are not old;
   `speech rm NAME` removes the file and the folders it leaves empty.
 
@@ -90,7 +90,7 @@ for m, c in zip(listing["models"], committed):
     for f in m["files"]:
         assert re.fullmatch(r"[0-9a-f]{64}", f["sha256"]), f
         assert f["url"] == f"https://huggingface.co/{m['repository']}/resolve/{m['revision']}/{f['file']}", f["url"]
-        assert f["path"] == os.path.join(folder, m["repository"].replace("/", "--"), m["revision"], f["file"]), f["path"]
+        assert f["path"] == os.path.join(folder, m["repository"].replace("/", "--"), f["sha256"], f["file"]), f["path"]
         assert not f["fetched"] and f["partial"] == 0, f
 assert len(listing["models"]) == len(committed), "speech's catalog has other models than catalog.json"
 starts = {}
@@ -193,7 +193,7 @@ assert next(f for f in entry["files"] if f["type"] == file["type"])["fetched"], 
 print(f"speech info {name}: the local copy's information, and speech models says it is fetched")
 
 repository_dir = os.path.dirname(os.path.dirname(path))
-earlier = os.path.join(repository_dir, "0" * 40, file["file"])
+earlier = os.path.join(repository_dir, "0" * 64, file["file"])
 other = os.path.join(os.path.dirname(path), "Other-F32.gguf")
 theirs = [os.path.join(folder, "notes.txt"), os.path.join(folder, "mine", "x.gguf"), os.path.join(repository_dir, "y.gguf")]
 os.makedirs(os.path.dirname(earlier))
@@ -210,7 +210,7 @@ assert not os.path.exists(earlier) and not os.path.exists(os.path.dirname(earlie
 assert all(os.path.exists(t) for t in theirs), "rm --old removed a file outside the folders a fetch makes"
 for t in theirs:
     os.remove(t)
-print("an earlier revision's file and another type's: old in speech models; rm --old removes them and their emptied folder, "
+print("a file of another content and one of another type: old in speech models; rm --old removes them and their emptied folder, "
       "and no file outside the fetch's folders")
 
 run("rm", name)

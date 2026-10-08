@@ -46,11 +46,16 @@ fs::path environment(const char * name) {
     return value ? fs::path(value) : fs::path();
 }
 
-/** The folder of a model's revision, from which a file of the catalog and every old file are found. */
-fs::path revision_dir(const CatalogModel & m) {
+/** The folder of a model's repository, which holds a folder for each content of a file. */
+fs::path repository_dir(const CatalogModel & m) {
     std::string repository = m.repository;
     repository.replace(repository.find('/'), 1, "--");
-    return model_dir() / fs::u8path(repository) / fs::u8path(m.revision);
+    return model_dir() / fs::u8path(repository);
+}
+
+/** A name of 64 lower-case hexadecimal digits, as a SHA-256 is written. */
+bool sha256_name(const std::string & name) {
+    return name.size() == 64 && name.find_first_not_of("0123456789abcdef") == std::string::npos;
 }
 
 uint64_t size_or_zero(const fs::path & path) {
@@ -58,6 +63,19 @@ uint64_t size_or_zero(const fs::path & path) {
     const uintmax_t size = fs::file_size(path, e);
     return e ? 0 : (uint64_t) size;
 }
+
+/** The files or the folders in `dir`, none when it is not there. */
+std::vector<fs::path> children(const fs::path & dir, bool files) {
+    std::vector<fs::path> out;
+    std::error_code e;
+    if (!fs::is_directory(dir, e)) return out;
+    for (fs::directory_iterator it(dir, e), end; !e && it != end; it.increment(e)) {
+        if (files ? it->is_regular_file(e) : it->is_directory(e)) out.push_back(it->path());
+    }
+    if (e) throw io_failure("cannot list " + dir.u8string() + ": " + e.message());
+    return out;
+}
+
 
 /** Removes `dir` and its parent when each is empty; another process may have put a file into either since. */
 void remove_empty_folders(fs::path dir) {
@@ -95,7 +113,7 @@ fs::path model_dir() {
 }
 
 fs::path model_path(const CatalogChoice & choice) {
-    return revision_dir(*choice.model) / fs::u8path(choice.file->file);
+    return repository_dir(*choice.model) / fs::u8path(choice.file->sha256) / fs::u8path(choice.file->file);
 }
 
 fs::path partial_path(const fs::path & path) {
@@ -121,28 +139,14 @@ std::vector<OldFile> old_files() {
             current.insert(partial_path(path));
         }
     }
-    // Only the folders a fetch makes are looked into, <owner>--<name>/<revision>, so that a SPEECH_MODEL_DIR that holds
+    // Only the folders a fetch makes are looked into, <owner>--<name>/<sha256>, so that a SPEECH_MODEL_DIR that holds
     // other files too never offers them for removal.
-    const auto children = [&](const fs::path & dir, bool files) {
-        std::vector<fs::path> out;
-        std::error_code e;
-        for (fs::directory_iterator it(dir, e), end; !e && it != end; it.increment(e)) {
-            if (files ? it->is_regular_file(e) : it->is_directory(e)) out.push_back(it->path());
-        }
-        if (e) throw io_failure("cannot list " + dir.u8string() + ": " + e.message());
-        return out;
-    };
-    const auto revision = [](const std::string & name) {
-        return name.size() == 40 && name.find_first_not_of("0123456789abcdef") == std::string::npos;
-    };
     std::vector<OldFile> out;
-    std::error_code e;
-    if (!fs::is_directory(root, e)) return out;
     for (const fs::path & repository : children(root, false)) {
         if (repository.filename().u8string().find("--") == std::string::npos) continue;
-        for (const fs::path & commit : children(repository, false)) {
-            if (!revision(commit.filename().u8string())) continue;
-            for (const fs::path & file : children(commit, true)) {
+        for (const fs::path & content : children(repository, false)) {
+            if (!sha256_name(content.filename().u8string())) continue;
+            for (const fs::path & file : children(content, true)) {
                 if (file.extension() != ".lock" && !current.count(file)) out.push_back({file, size_or_zero(file)});
             }
         }
