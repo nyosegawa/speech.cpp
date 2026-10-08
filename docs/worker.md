@@ -116,9 +116,8 @@ out {"type":"cancelled","id":"a"}
 - **Qwen3-TTS** passes audio as it makes it, from the first 0.08 s, at 24 kHz. A cancel takes effect at the next chunk.
 - **Irodori-TTS** makes a sentence at once and passes it as the codec decodes it, at 48 kHz, so a request should be one
   sentence. A cancel takes effect at the next sampler step or piece of audio.
-- **FastConformer** recognizes a request's audio at once. The parakeet models attend over all of it, so a request to them
-  should be one utterance; reazonspeech-nemo-v2 takes a recording of minutes. A cancel takes effect before or after the
-  encoder, or during the decoding.
+- **FastConformer** recognizes a request's audio at once, and loses whole sentences of a stretch that holds several, so
+  a request should be one utterance. A cancel takes effect before or after the encoder, or during the decoding.
 - **Qwen3-ASR** recognizes up to 1200 s at once, and longer audio in parts. A cancel takes effect within a fraction of a
   second.
 
