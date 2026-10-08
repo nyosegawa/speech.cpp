@@ -1,4 +1,4 @@
-# speech.cpp
+<p align="center"><img src="docs/images/banner.png" alt="speech.cpp" width="768"></p>
 
 speech.cpp runs speech synthesis and speech recognition models for voice conversation in C++ on
 [ggml](https://github.com/ggml-org/ggml), behind one C API, on the CPU, Metal and Vulkan.
