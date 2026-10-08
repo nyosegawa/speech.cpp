@@ -203,6 +203,43 @@ def dump_requests(speech, model, dump):
     return requests
 
 
+# The blocks of the scripts written without spaces between words: Han, Hiragana and Katakana with their radicals,
+# symbols, punctuation and full-width forms.
+UNSPACED = ((0x2E80, 0x2FDF), (0x3000, 0x30FF), (0x31F0, 0x33FF), (0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF),
+            (0xFF00, 0xFFEF), (0x1AFF0, 0x1B16F), (0x20000, 0x323AF))
+
+
+def joined_transcript(parts, timestamps):
+    """What transcription by regions answers for regions recognized alone, each given as (its offset in seconds, the
+    worker's end of its samples): the texts joined with a space unless either side is written without spaces or already
+    has one, the stop model_limit where any part stopped there, the languages in order with a run of one counted once,
+    and with `timestamps` the segments and tokens moved by their part's offset, the space beginning the first of each."""
+    def unspaced(c):
+        return any(a <= ord(c) <= b for a, b in UNSPACED)
+
+    whole = {"text": "", "stop": "complete", "languages": [], "segments": [], "tokens": []}
+    for offset, end in parts:
+        if end["stop"] == "model_limit":
+            whole["stop"] = "model_limit"
+        for language in end.get("languages", []):
+            if not whole["languages"] or whole["languages"][-1] != language:
+                whole["languages"].append(language)
+        if not end["text"]:
+            continue
+        a, b = whole["text"][-1:], end["text"][0]
+        space = " " if a and not (a.isspace() or b.isspace() or unspaced(a) or unspaced(b)) else ""
+        whole["text"] += space + end["text"]
+        if timestamps:
+            for kind in ("segments", "tokens"):
+                whole[kind] += [{"start": t["start"] + offset, "end": t["end"] + offset, "text": (space if i == 0 else "") + t["text"]}
+                                for i, t in enumerate(end[kind])]
+    if not whole["languages"]:
+        del whole["languages"]
+    if not timestamps:
+        del whole["segments"], whole["tokens"]
+    return whole
+
+
 def short(m):
     m = {k: v for k, v in m.items() if k != "_at"}
     if "pcm" in m:

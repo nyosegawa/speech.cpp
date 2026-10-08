@@ -311,7 +311,7 @@ private:
         if (asked.format == "text") {
             res.set_content(speech_result_text(result), "text/plain; charset=utf-8");
         } else if (asked.format == "verbose_json") {
-            res.set_content(openai::transcription_verbose_json(result, job->duration, asked.timestamps), "application/json");
+            res.set_content(openai::transcription_verbose_json(transcript_of(result, asked.timestamps), job->duration, asked.timestamps), "application/json");
         } else {
             res.set_content(openai::transcription_json(speech_result_text(result)), "application/json");
         }

@@ -212,6 +212,8 @@ add_executable(speech-cli
     tools/common/command-line.cpp
     tools/common/json-reader.cpp
     tools/common/request-options.cpp
+    tools/common/regions.cpp
+    tools/common/transcript.cpp
     tools/worker/worker.cpp
     tools/worker/inbox.cpp
     tools/server/server.cpp

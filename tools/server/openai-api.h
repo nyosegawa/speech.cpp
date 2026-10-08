@@ -6,6 +6,7 @@
 
 #include "failure.h"
 #include "request-options.h"
+#include "transcript.h"
 
 namespace httplib {
 struct Response;
@@ -112,6 +113,6 @@ std::string transcription_json(const std::string & text);
  * left out rather than made up: the language where the result has none, and the members of OpenAI's segment the
  * recognizers have no value for (seek, tokens, temperature, avg_logprob, compression_ratio, no_speech_prob).
  */
-std::string transcription_verbose_json(const speech_result * result, double duration, bool timestamps);
+std::string transcription_verbose_json(const Transcript & transcript, double duration, bool timestamps);
 
 }  // namespace openai

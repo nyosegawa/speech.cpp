@@ -194,19 +194,17 @@ std::string transcription_json(const std::string & text) {
     return "{\"text\":" + json_string(text) + "}";
 }
 
-std::string transcription_verbose_json(const speech_result * result, double duration, bool timestamps) {
+std::string transcription_verbose_json(const Transcript & transcript, double duration, bool timestamps) {
     std::string language;
-    for (size_t i = 0; i < speech_result_language_count(result); i++) language += (i ? "," : "") + std::string(speech_result_language(result, i));
+    for (size_t i = 0; i < transcript.languages.size(); i++) language += (i ? "," : "") + transcript.languages[i];
     std::string out = "{\"task\":\"transcribe\"" + (language.empty() ? "" : ",\"language\":" + json_string(language)) +
-                      ",\"duration\":" + json_number(duration) + ",\"text\":" + json_string(speech_result_text(result));
+                      ",\"duration\":" + json_number(duration) + ",\"text\":" + json_string(transcript.text);
     if (!timestamps) return out + "}";
     out += ",\"segments\":[";
-    for (size_t i = 0; i < speech_result_segment_count(result); i++) {
-        double start = 0, end = 0;
-        const char * text = nullptr;
-        check(speech_result_segment(result, i, &start, &end, &text));
-        out += std::string(i ? "," : "") + "{\"id\":" + std::to_string(i) + ",\"start\":" + json_number(start) + ",\"end\":" + json_number(end) +
-               ",\"text\":" + json_string(text) + "}";
+    for (size_t i = 0; i < transcript.segments.size(); i++) {
+        const Timed & s = transcript.segments[i];
+        out += std::string(i ? "," : "") + "{\"id\":" + std::to_string(i) + ",\"start\":" + json_number(s.start) + ",\"end\":" + json_number(s.end) +
+               ",\"text\":" + json_string(s.text) + "}";
     }
     return out + "]}";
 }

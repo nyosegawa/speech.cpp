@@ -7,6 +7,7 @@
 
 #include "failure.h"
 #include "json.h"
+#include "transcript.h"
 
 namespace {
 
@@ -36,18 +37,6 @@ bool whole_number(const std::string & text, double & out) {
     char * end = nullptr;
     out = std::strtod(text.c_str(), &end);
     return *end == '\0' && std::isfinite(out);
-}
-
-std::string timed_texts(const speech_result * result, bool segments) {
-    const size_t n = segments ? speech_result_segment_count(result) : speech_result_token_count(result);
-    std::string out = "[";
-    for (size_t i = 0; i < n; i++) {
-        double start = 0, end = 0;
-        const char * text = nullptr;
-        check(segments ? speech_result_segment(result, i, &start, &end, &text) : speech_result_token(result, i, &start, &end, &text));
-        out += std::string(i ? "," : "") + "{\"start\":" + json_number(start) + ",\"end\":" + json_number(end) + ",\"text\":" + json_string(text) + "}";
-    }
-    return out + "]";
 }
 
 }  // namespace
@@ -167,10 +156,5 @@ bool timestamps_in_effect(const speech_model_info * info, const std::vector<Requ
 }
 
 std::string recognition_members(const speech_result * result, bool timestamps) {
-    std::string out = ",\"text\":" + json_string(speech_result_text(result)) + ",\"stop\":\"" + speech_stop_name(speech_result_stop(result)) + "\"";
-    const size_t languages = speech_result_language_count(result);
-    for (size_t i = 0; i < languages; i++) out += (i ? "," : ",\"languages\":[") + json_string(speech_result_language(result, i));
-    if (languages) out += "]";
-    if (timestamps) out += ",\"segments\":" + timed_texts(result, true) + ",\"tokens\":" + timed_texts(result, false);
-    return out;
+    return recognition_members(transcript_of(result, timestamps), timestamps);
 }
