@@ -169,8 +169,8 @@ speech asr qwen3-asr-0.6b --vad silero-vad --live --format json > events.jsonl
   utterance's `item_id`, `input_audio_buffer.speech_stopped` with `audio_end_ms`, `input_audio_buffer.committed`,
   `conversation.item.input_audio_transcription.delta`, text that adds to the end of what came before, and
   `conversation.item.input_audio_transcription.completed`, whose `transcript` is the whole text and replaces the deltas.
-- On an Apple M5, speech started comes 0.85 s after the speech begins, the first text with it or soon after, and the final
-  text 0.7 to 1 s after the speech ends.
+- On an Apple M5, speech started comes 0.26 s after the speech begins, the first text 0.5 to 1.5 s after it, and the
+  final text 0.7 to 1.3 s after the speech ends.
 - stderr reports the microphone and its rate, and at the end the utterances and the time the detection took; `-v` also
   reports each utterance as it ends. A recognition that fails ends the run with exit 1, after the `failed` event in JSON.
 - `--timestamps` is refused: the times of an utterance are in its events.

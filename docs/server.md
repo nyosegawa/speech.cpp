@@ -243,8 +243,8 @@ texts as `chunking_strategy` with the same values. A server without a detection 
 | `prefix_padding_ms` | 300 | the audio kept before and after each utterance |
 | `silence_duration_ms` | 500 | the silence that ends an utterance |
 
-An utterance is at most 10 s long, cut at its longest silence. `speech_started` comes about 0.85 s after the speech
-begins, once it is certain to be kept, and the utterance is committed about 0.6 s after the speech ends. The buffer
+An utterance is at most 10 s long, cut at its longest silence. `speech_started` comes about 0.26 s after the speech
+begins, once it has lasted long enough to be kept, and the utterance is committed about 0.6 s after the speech ends. The buffer
 keeps only the utterance under way, or the last moments of silence, so a session can stay open through silence; a
 commit while `server_vad` runs transcribes it as an utterance, the one that `speech_started` named if speech is under
 way, and a clear drops it, and in both cases turn detection begins again on the audio that follows.

@@ -92,11 +92,6 @@ public:
     /** What keeps the model, which tells the model a host holds now from the one the detection runs on. */
     const void * model() const { return keep_.get(); }
     /**
-     * The seconds after a region's start, as speech_detection_speaking() gives it, past which a region still under way
-     * is certain to be kept.
-     */
-    double certain_after() const { return certain_after_; }
-    /**
      * How far before the audio heard a region not yet begun may start, its padding included, so that the audio before
      * that, outside every region, is no longer needed.
      */
@@ -107,8 +102,11 @@ public:
     size_t region_count() const;
     /** The region at `index`, in seconds from the start of the detection's audio. */
     std::pair<double, double> region(size_t index) const;
-    /** The start of the region begun and not given yet, as speech_detection_speaking() gives it, or nothing. */
-    std::optional<double> speaking() const;
+    /**
+     * The start of the region begun and not given yet, and whether it is certain to be given, as
+     * speech_detection_speaking() gives them, or nothing.
+     */
+    std::optional<std::pair<double, bool>> speaking() const;
     /** Starts again, on the audio that follows, with the same model and options. */
     void restart();
 
@@ -119,7 +117,7 @@ private:
     std::shared_ptr<const void> keep_;
     std::vector<RequestOption> options_;
     int rate_;
-    double certain_after_ = 0, reach_back_ = 0;
+    double reach_back_ = 0;
     std::unique_ptr<speech_detection, decltype(&speech_detection_free)> detection_{nullptr, speech_detection_free};
 };
 

@@ -17,11 +17,10 @@ namespace {
 constexpr double kReadAgainAfter = 0.2;
 
 /**
- * What a region under way must have lasted, beyond its padding, min_speech_duration_ms and min_silence_duration_ms, before
- * it is certain to be kept: the chunk of Silero VAD's 32 ms in which its probability fell, the chunk that ends the
- * silence, and the 4.3 ms the resampler holds back, rounded up.
+ * How far before the audio heard a region not yet begun may begin, beyond its padding: it begins at a chunk the detection
+ * has not yet taken, within a chunk of Silero VAD's 32 ms and the 4.3 ms the resampler holds back, rounded up.
  */
-constexpr double kCertainMargin = 0.1;
+constexpr double kReachMargin = 0.1;
 
 double seconds_since(std::chrono::steady_clock::time_point t0) {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
@@ -41,13 +40,7 @@ Detection::Detection(speech_model * model, std::shared_ptr<const void> keep, std
         check(speech_model_info_option_default_int(info.get(), option, &value));
         return (double) value;
     };
-    // A region under way is dropped once the silence after it lasts min_silence_duration_ms, if its speech lasted no
-    // longer than min_speech_duration_ms; the region's start as given lies its padding, at most, before its speech.
-    certain_after_ = (milliseconds(SPEECH_OPT_SPEECH_PAD_MS) + milliseconds(SPEECH_OPT_MIN_SPEECH_DURATION_MS) +
-                      milliseconds(SPEECH_OPT_MIN_SILENCE_DURATION_MS)) / 1000 + kCertainMargin;
-    // A region not yet begun begins at a chunk the detection has not yet taken, and its padding reaches back at most
-    // speech_pad_ms before that.
-    reach_back_ = milliseconds(SPEECH_OPT_SPEECH_PAD_MS) / 1000 + kCertainMargin;
+    reach_back_ = milliseconds(SPEECH_OPT_SPEECH_PAD_MS) / 1000 + kReachMargin;
 }
 
 void Detection::start() {
@@ -81,10 +74,11 @@ std::pair<double, double> Detection::region(size_t index) const {
     return {start, end};
 }
 
-std::optional<double> Detection::speaking() const {
+std::optional<std::pair<double, bool>> Detection::speaking() const {
     double start = 0;
-    if (!speech_detection_speaking(detection_.get(), &start, nullptr)) return std::nullopt;
-    return start;
+    int kept = 0;
+    if (!speech_detection_speaking(detection_.get(), &start, &kept)) return std::nullopt;
+    return std::make_pair(start, kept != 0);
 }
 
 Assembly::Assembly(Recognizer & recognizer, int rate, std::function<void(const Event &)> emit)
@@ -214,7 +208,7 @@ void Assembly::take_regions() {
         send(stopped);
         commit_samples(current_->number, first, last);
     }
-    const std::optional<double> speaking = detection_->speaking();
+    const std::optional<std::pair<double, bool>> speaking = detection_->speaking();
     if (!speaking) {
         if (current_) drop_current();
         // The audio before what a region still to come may reach back to lies outside every region.
@@ -222,11 +216,11 @@ void Assembly::take_regions() {
         if (heard_ - buffer_ > reach) keep_from(heard_ - reach);
         return;
     }
-    const uint64_t start = at(*speaking);
+    const uint64_t start = at(speaking->first);
     if (current_ && current_->start != start) drop_current();
     if (!current_) current_ = Utterance{next_++, start, false, start, "", "", ""};
     keep_from(start);
-    if ((double) pushed_ / rate_ >= *speaking + detection_->certain_after()) announce(*current_);
+    if (speaking->second) announce(*current_);
 }
 
 void Assembly::announce(Utterance & u) {

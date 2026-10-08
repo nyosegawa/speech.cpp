@@ -13,8 +13,8 @@ its client appends them and replaces them with the completed transcript
 The library recognizes a request's audio whole and gives its text once the recognition ends; no family decodes audio
 as it arrives. The detection of audio given a piece at a time gives `speech_detect()`'s regions, each once it is
 certain ([the record of that detection](a-detection-of-audio-given-a-piece-at-a-time-gives-speech-detects-regions-each-once-it-is-certain.md)),
-and `speech_detection_speaking()` reports a region under way, which is still dropped if its speech ends no longer than
-`min_speech_duration_ms` after it began. Transcription by regions cuts a file with the options `region_options()` gives
+and `speech_detection_speaking()` reports the region under way, and whether it is kept: until its speech has lasted
+longer than `min_speech_duration_ms`, it is dropped if its speech ends that soon. Transcription by regions cuts a file with the options `region_options()` gives
 ([its record](transcription-by-regions-recognizes-each-region-where-someone-speaks-alone-in-the-tools-and-joins-the-texts.md)).
 
 Silero VAD's graphs are small (Apple M5, 2026-10-08): a minute of 16 kHz audio pushed in pieces of 20 ms takes 0.12 s
@@ -51,21 +51,22 @@ on the CPU with one thread, 0.17 s with the performance cores and 0.52 s on Meta
   hands its copy of the buffer to the library's request and holds none of its own. With a detection, the buffer keeps
   only what a region may still need: from the start of the region under way, or without one the last `speech_pad_ms`
   and 0.1 s, so that silence does not pile up.
-- **Speech started is given once the region under way is certain to be kept**: when the detection gives it, or when the
-  audio heard since its padded start passes `speech_pad_ms`, `min_speech_duration_ms` and `min_silence_duration_ms`
-  and 0.1 s, the two chunks and the resampler's delay in which a region of shorter speech would have been dropped. With
-  the defaults that is 0.85 s after the speech begins. The utterance's deltas wait for it, so every speech started is
-  followed by its speech stopped and its commit, and the utterances are the regions.
+- **Speech started is given once the detection says the region under way is kept**, certain to be given: with the
+  defaults 0.26 s after the speech begins. The utterance's deltas wait for it, so every speech started is followed by its
+  speech stopped and its commit, and the utterances are the regions.
 - **A detection model runs on the CPU with one thread** wherever it is loaded beside another model: `speech asr --vad`
   and `speech serve`, whatever `--device` and `--threads` say, which are the recognition and synthesis models'. It is
   faster there in pieces, and a file and the same audio streamed are cut on one device into the same regions.
 
 The alternatives were turned down:
 
-- Speech started when `speech_detection_speaking()` first reports the region, 0.8 s sooner. A noise shorter than
+- Speech started when `speech_detection_speaking()` first reports the region, 0.2 s sooner. A noise shorter than
   `min_speech_duration_ms` would then start an item that is never committed, which a client that waits for each item's
   completion waits for forever, or else be committed and recognized, where a recognizer writes words for a click, and
   the utterances would no longer be the regions of `speech asr --vad`.
+- Speech started once the region has lasted its padding, `min_speech_duration_ms`, `min_silence_duration_ms` and 0.1 s,
+  which the assembly could tell without the detection's word: 0.6 s later, and still wrong where the probability stays
+  between the two thresholds, which keeps a region open without lengthening its speech.
 - Readings at a fixed interval. It wastes time on a fast machine and falls behind on a slow one.
 - Each reading's whole text as it comes, or the difference from the reading before. A delta cannot take back text, and
   each reading rewrites the end of the one before, which the end of its audio cut.
@@ -82,17 +83,16 @@ program using the GPU at times), the times counted from where speech vad finds t
 
 | | reazonspeech-v2 | qwen3-asr-0.6b |
 |---|---|---|
-| speech started, after the speech begins | 0.84 s | 0.84 s |
-| first delta, after the speech begins | 0.84 to 1.32 s | 0.84 to 1.34 s |
+| speech started, after the speech begins | 0.25 to 0.26 s | 0.25 to 0.27 s |
+| first delta, after the speech begins | 0.68 to 1.53 s | 0.48 to 1.12 s |
 | commit, after the speech ends | 0.60 s | 0.60 s |
-| completed, after the speech ends | 0.70 to 0.78 s | 0.72 to 1.28 s |
+| completed, after the speech ends | 0.69 to 1.15 s | 0.72 to 1.30 s |
 
-`speech asr -` at 16 kHz gave the same within 0.05 s. The first delta comes with speech started where two readings have
-agreed by then. The commit waits for the silence of `min_silence_duration_ms` and for what follows within twice
+Two runs each, while another program synthesized speech on the GPU. The first delta waits for two readings to agree
+past the mark or space before their end, about half a second of speech. The commit waits for the silence of `min_silence_duration_ms` and for what follows within twice
 `speech_pad_ms`. The detection took 0.12 s per minute of 16 kHz audio and 0.15 s of 24 kHz alone, and 0.3 to 0.6 s
 beside the readings, which take the GPU and the CPU it waits on.
 
 A beginning that two readings agree on and a later reading changes stays in the deltas until the completed event
-replaces it, and the deltas of that utterance stop there. The library cannot say yet whether a region under way is
-certain to be kept, which its rule knows once the speech has lasted `min_speech_duration_ms` without falling silent; with
-that, speech started and the first delta could come 0.5 s sooner.
+replaces it, and later readings add nothing to them; where the final text goes on from what they gave, one more delta
+gives the rest before the completed event, so that the deltas join into the text.
