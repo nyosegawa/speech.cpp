@@ -1,10 +1,7 @@
-#include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
 #include <mutex>
-#include <random>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -20,6 +17,7 @@
 #include "openai-api.h"
 
 #include "access.h"
+#include "audio-speech.h"
 #include "page.h"
 #include "realtime.h"
 #include "served-models.h"
@@ -61,34 +59,6 @@ speech_task other_task(speech_task task) {
     throw std::logic_error("no endpoint takes a model of speech detection");
 }
 
-std::string wav_header(size_t data_bytes, int sample_rate) {
-    std::string h;
-    auto u32 = [&](uint32_t v) { for (int i = 0; i < 4; i++) h += (char) ((v >> (8 * i)) & 0xFF); };
-    auto u16 = [&](uint16_t v) { h += (char) (v & 0xFF); h += (char) (v >> 8); };
-    h += "RIFF";
-    u32((uint32_t) (36 + data_bytes));
-    h += "WAVEfmt ";
-    u32(16);
-    u16(1);
-    u16(1);
-    u32((uint32_t) sample_rate);
-    u32((uint32_t) sample_rate * 2);
-    u16(2);
-    u16(16);
-    h += "data";
-    u32((uint32_t) data_bytes);
-    return h;
-}
-
-/** A seed from 0 to 2^53 - 1, the range the library draws from, for a request that sets none. */
-int64_t draw_seed() {
-    std::random_device device;
-    return (int64_t) (((uint64_t) device() << 32 | device()) & ((1ull << 53) - 1));
-}
-
-/** The interval at which a waiting handler looks whether its client is still there. */
-constexpr auto POLL = std::chrono::milliseconds(50);
-
 /** OpenAI's model object, with the release of speech.cpp and the model's information. */
 std::string model_json(const Served & served) {
     const auto info = served.info();
@@ -128,7 +98,7 @@ public:
             send_error(res, {404, "The model " + json_string(req.matches[1]) + " does not exist.", "model", "model_not_found"});
         });
         http.Post("/v1/audio/speech", [this](const httplib::Request & req, httplib::Response & res) {
-            if (auto served = held(SPEECH_TASK_SYNTHESIS, req, res)) speech(std::move(served), req, res);
+            if (auto served = held(SPEECH_TASK_SYNTHESIS, req, res)) answer_speech(std::move(served), req, res);
         });
         http.Post("/v1/audio/transcriptions", [this](const httplib::Request & req, httplib::Response & res) {
             if (auto served = held(SPEECH_TASK_RECOGNITION, req, res)) transcription(std::move(served), req, res);
@@ -198,88 +168,6 @@ private:
     }
 
     /**
-     * Waits until the job has finished, or with `until` until it says so; returns false for a client that went away
-     * meanwhile, whose request it cancels.
-     */
-    template <typename Until>
-    static bool wait(Job & job, const httplib::Request & req, std::unique_lock<std::mutex> & lock, Until until) {
-        while (!job.finished && !until()) {
-            if (job.changed.wait_for(lock, POLL) == std::cv_status::timeout && req.is_connection_closed()) {
-                lock.unlock();
-                job.abandon();
-                return false;
-            }
-        }
-        return true;
-    }
-
-    void speech(std::shared_ptr<Served> served, const httplib::Request & req, httplib::Response & res) {
-        const auto info = served->info();
-        const int sample_rate = speech_model_info_sample_rate(info.get());
-        openai::SpeechRequest asked;
-        try {
-            asked = openai::read_speech_request(req.body, speech_model_info_name(info.get()));
-        } catch (const ApiError & e) {
-            send_error(res, e);
-            return;
-        }
-        auto job = std::make_shared<SpeechJob>();
-        job->sample_rate = sample_rate;
-        std::optional<int64_t> seed;
-        std::string voice;
-        for (const RequestOption & o : asked.options) {
-            if (o.option == SPEECH_OPT_SEED) seed = std::get<int64_t>(o.value);
-            if (o.option == SPEECH_OPT_VOICE) voice = std::get<std::string>(o.value);
-        }
-        // A pcm stream's headers leave before its result, so the server draws the seed the library would draw.
-        if (!seed && speech_model_info_takes(info.get(), SPEECH_OPT_SEED)) {
-            seed = draw_seed();
-            asked.options.push_back({SPEECH_OPT_SEED, *seed});
-        }
-        job->served = served;
-        try {
-            job->request = new_request(served->get());
-            check(speech_request_set_text(job->request.get(), asked.input.c_str()));
-            apply_options(job->request.get(), asked.options);
-            check(speech_request_set_progress(job->request.get(), on_progress, job.get()));
-        } catch (const Failure & e) {
-            send_error(res, openai::library_error(e));
-            return;
-        }
-        char log[256];
-        std::snprintf(log, sizeof log, "speech: voice %s, seed %lld", voice.c_str(), (long long) seed.value_or(-1));
-        const uint64_t ticket = served->turns().take();
-        std::thread(synthesize, job, std::ref(served->turns()), ticket, std::string(log)).detach();
-
-        // A wav is sent whole, so it waits for the end; a stream waits until the library has begun the request's work,
-        // so that a request it refuses is answered with an error status rather than a stream that breaks off.
-        const bool whole = asked.format == "wav";
-        {
-            std::unique_lock<std::mutex> lock(job->mutex);
-            if (!wait(*job, req, lock, [&] { return !whole && job->accepted; })) return;
-            if (job->finished && job->status == SPEECH_CANCELLED) return;
-            if (job->finished && job->failure && (whole || !job->accepted)) {
-                send_error(res, openai::library_error(*job->failure));
-                return;
-            }
-        }
-        res.set_header("X-Sample-Rate", std::to_string(sample_rate));
-        if (seed) res.set_header("X-Speech-Seed", std::to_string(*seed));
-        if (whole) {
-            res.set_header("X-Speech-Stop", speech_stop_name(job->stop));
-            res.set_content(wav_header(job->pending.size(), sample_rate) + job->pending, "audio/wav");
-            return;
-        }
-        const bool sse = asked.sse;
-        if (sse) res.set_header("Cache-Control", "no-cache");
-        res.set_chunked_content_provider(
-            sse ? "text/event-stream" : "audio/pcm", [job, sse](size_t, httplib::DataSink & sink) { return stream(*job, sse, sink); },
-            [job](bool success) {
-                if (!success) job->abandon();
-            });
-    }
-
-    /**
      * Recognizes the form's WAV file, or with chunking_strategy each region of it where the detection model finds that
      * someone speaks, and answers with its text once it is done, as json, text or verbose_json, which also carries the
      * language the model heard, and with why the recognition ended in X-Speech-Stop.
@@ -332,7 +220,7 @@ private:
         const uint64_t ticket = served->turns().take();
         std::thread(transcribe, job, std::ref(served->turns()), ticket).detach();
         std::unique_lock<std::mutex> lock(job->mutex);
-        if (!wait(*job, req, lock, [] { return false; })) return;
+        if (!wait_for(*job, lock, [] { return false; }, [&] { return req.is_connection_closed(); })) return;
         if (job->failure) {
             send_error(res, openai::library_error(*job->failure));
             return;
@@ -365,55 +253,6 @@ private:
                               "leave chunking_strategy out.",
                          "chunking_strategy", "unsupported_parameter"});
         return nullptr;
-    }
-
-    /**
-     * Sends the audio as it is made. A failure after the stream has begun ends a pcm stream without its last chunk,
-     * which the client reads as a broken transfer, and an SSE stream with an error event.
-     */
-    static bool stream(SpeechJob & job, bool sse, httplib::DataSink & sink) {
-        std::unique_lock<std::mutex> lock(job.mutex);
-        for (;;) {
-            if (!job.pending.empty()) {
-                std::string pcm;
-                pcm.swap(job.pending);
-                lock.unlock();
-                const std::string out = sse ? openai::sse_delta(pcm) : pcm;
-                // A write to a socket the client has closed succeeds once more before it fails, so a client that went
-                // away is noticed a chunk earlier by looking first.
-                if (!sink.is_writable() || !sink.write(out.data(), out.size())) {
-                    job.abandon();
-                    return false;
-                }
-                lock.lock();
-                continue;
-            }
-            if (job.finished) break;
-            if (job.changed.wait_for(lock, POLL) == std::cv_status::timeout && !job.finished && job.pending.empty()) {
-                lock.unlock();
-                if (!sink.is_writable()) {
-                    job.abandon();
-                    return false;
-                }
-                lock.lock();
-            }
-        }
-        const speech_status status = job.status;
-        const std::optional<Failure> failure = job.failure;
-        const int64_t seed = job.seed;
-        const uint64_t samples = job.samples;
-        const speech_stop stop = job.stop;
-        lock.unlock();
-        if (status != SPEECH_OK && !sse) return false;
-        if (sse) {
-            std::string out;
-            if (status == SPEECH_OK) out = openai::sse_done(seed, samples, speech_stop_name(stop));
-            else if (failure) out = openai::sse_error(openai::library_error(*failure));
-            else return false;
-            if (!sink.write(out.data(), out.size())) return false;
-        }
-        sink.done();
-        return true;
     }
 };
 
