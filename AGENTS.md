@@ -7,8 +7,8 @@ Windows x64 with Vulkan and Linux x64 with Vulkan or the CPU alone, as a library
 `include/speech.h`, for any program that speaks text or recognizes speech: ASIST's worker, other tools, bindings
 and other people's applications. Each model's official
 implementation is the reference: every stage of a port is checked against tensors dumped from it.
-README.md and `docs/` are the documentation for users, `docs/development/` the pages for developers, and `docs/adr/`
-keeps the decisions. Read the relevant implementation and its check before changing behavior.
+README.md and `docs/` are the documentation for users; what a developer needs is in the code, this file and
+`skills/`, and `docs/adr/` keeps the decisions. Read the relevant implementation and its check before changing behavior.
 
 ## Architecture
 
@@ -90,11 +90,11 @@ another one.
   under the names it gives them, and the converter names the file from them by its naming convention; no key of
   speech.cpp's own holds a fact the specification has a key for. Every key is required, but for `general.finetune`
   and `general.version` where a model has none and `general.quantization_version` where it is not quantized, and has
-  one type, and the tensors are exactly the ones the keys call for. A change of layout changes the converter, the
-  reader and the tables of `docs/gguf.md` in the same commit, and a change a reader of the previous layout cannot read
-  raises `speech.layout`, adds the release that reads it to the converter's table and brings the previous layout up in
-  the family's one upgrade function. Every model constant lives in the file, from the checkpoint or, where it has none,
-  from the official code, and the converter says where.
+  one type, and the tensors are exactly the ones the keys call for. A change of layout changes the converter and the
+  reader in the same commit, and a change a reader of the previous layout cannot read raises `speech.layout`, adds the
+  release that reads it to the converter's table and brings the previous layout up in the family's one upgrade
+  function. Every model constant lives in the file, from the checkpoint or, where it has none, from the official code,
+  and the converter says where.
 - Do not add fallback behavior; fail loudly rather than degrade silently. A GGUF without a key or tensor, a key
   of another type, a tensor the keys do not call for, a layout the reader does not know,
   a text longer than the model takes, a WAVE format that is not understood and a device that does not

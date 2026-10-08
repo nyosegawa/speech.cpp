@@ -40,7 +40,8 @@ names keys, files and layouts.
 
 ## 4. Checks
 
-Read references/checks.md before setting or loosening any bound.
+Read references/checks.md before setting or loosening any bound. Each check prints its usage when run without
+arguments, and each `dump.py` and `convert.py` says its own at the top.
 
 - Each stage from the dump's own inputs, on the CPU in F32 to a tight bound, on Metal, and on Vulkan (windows-check).
   Tokens and text compare exactly; tensors compare by SNR.

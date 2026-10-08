@@ -14,12 +14,10 @@ speech worker reazonspeech-v2
 ```
 
 The worker serves one model. It speaks [JSON Lines](https://jsonlines.org): one JSON object per line on stdin and on
-stdout, in UTF-8
-([ADR 0006](adr/0006-the-worker-speaks-json-lines-and-version-names-the-release.md)).
+stdout, in UTF-8.
 
-- stdout carries the protocol and nothing else. Every log goes to stderr, and so does anything ggml, a system library or
-  the GPU driver prints to stdout. A caller treats a line on stdout that is not a JSON object as a defect of the worker
-  and fails, rather than skipping it.
+- stdout carries the protocol and nothing else; every log goes to stderr. A caller treats a line on stdout that is not a
+  JSON object as a defect of the worker and fails, rather than skipping it.
 - Every line in either direction is one JSON object with a string member `type`. A member set to `null` counts as left
   out. A member that the message's type does not have is refused, a name that is not an option included.
 - Option members take the option's type ([c-api.md](c-api.md#options)): a JSON string; an integer without a fraction or
@@ -30,7 +28,7 @@ stdout, in UTF-8
 ## Start
 
 ```
-out {"type":"ready","protocol":2,"version":"0.7.1","model":{...model information...}}
+out {"type":"ready","protocol":2,"version":"0.8.0","model":{...model information...}}
 out {"type":"fatal","error":{"code":"model_file","option":null,"message":"..."}}
 ```
 
@@ -127,16 +125,14 @@ out {"type":"cancelled","id":"a"}
 
 ## What each family does
 
-- **Qwen3-TTS** passes audio as it makes it, in chunks of 1, 1, 2 and then 4 frames of 0.08 s, at 24 kHz. A cancel
-  takes effect between two chunks.
+- **Qwen3-TTS** passes audio as it makes it, from the first 0.08 s, at 24 kHz. A cancel takes effect at the next chunk.
 - **Irodori-TTS** makes a sentence at once and passes it as the codec decodes it, at 48 kHz, so a request should be one
-  sentence. A text longer than 256 tokens is refused. A cancel takes effect between two sampler steps or two windows of
-  the codec.
+  sentence. A cancel takes effect at the next sampler step or piece of audio.
 - **FastConformer** recognizes a request's audio at once. The parakeet models attend over all of it, so a request to them
-  should be one utterance; reazonspeech-nemo-v2 takes a recording of minutes. A cancel takes effect before the encoder
-  starts, once it has run, or between two steps of the decoding.
-- **Qwen3-ASR** recognizes up to 1200 s at once, and longer audio in parts. A cancel takes effect between two of the
-  encoder's graphs, two blocks of 512 rows of the prompt, or two tokens.
+  should be one utterance; reazonspeech-nemo-v2 takes a recording of minutes. A cancel takes effect before or after the
+  encoder, or during the decoding.
+- **Qwen3-ASR** recognizes up to 1200 s at once, and longer audio in parts. A cancel takes effect within a fraction of a
+  second.
 
 ## A session
 

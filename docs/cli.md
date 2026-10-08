@@ -11,13 +11,10 @@ This page lists the subcommands of `speech` and their options. `speech <subcomma
 | [`speech devices`](#speech-devices) | lists the devices a model can run on |
 | [`speech models`](#speech-models) | lists the models a name fetches, what is fetched, and which model to start with |
 | [`speech pull`](#speech-pull) | fetches models ahead of their use |
-| [`speech rm`](#speech-rm) | removes fetched models, or the files of earlier releases |
+| [`speech rm`](#speech-rm) | removes fetched models, or the old files no model names |
 | [`speech quantize`](#speech-quantize) | writes a model file of F32 weights in another weight type |
 | [`speech serve`](server.md) | serves a model of each task over HTTP with OpenAI's audio API, and a page to try models on |
 | [`speech worker`](worker.md) | serves a model over JSON Lines on stdin and stdout, for programs such as ASIST |
-
-Each subcommand reaches the models through the C API alone
-([ADR 0017](adr/0017-one-speech-executable-serves-the-worker-protocol-2-and-the-http-api.md)).
 
 ## Examples
 
@@ -56,9 +53,9 @@ speech info irodori-tts-mf
 - A value follows its flag or an `=`: `--seed 7` or `--seed=7`. A number is read whole: `--steps 4x` is a usage error.
 - A boolean flag alone means true, and takes `true` or `false` only after an `=`: `--timestamps`, `--do-sample=false`.
 - An argument that begins with `-`, such as a text, follows `--`.
-- stdout carries the output alone. Whatever ggml, a system library or the GPU driver prints to stdout goes to stderr.
+- stdout carries the output alone, and every log goes to stderr.
 - On Windows the command line is read as UTF-8, and stdin and stdout are binary.
-- `speech --version` prints the release and the C API's version: `speech.cpp 0.7.1, C API 3.1`.
+- `speech --version` prints the release and the C API's version: `speech.cpp 0.8.0, C API 3.1`.
 
 | Exit | Meaning |
 |---|---|
@@ -81,18 +78,15 @@ speech tts MODEL -o FILE|- [options] [TEXT]
   `-o -` writes it to stdout.
 - `--voice` is required. Qwen3-TTS has named speakers; Irodori-TTS takes voices added with `--add-voice`
   ([models.md](models.md#voices)).
-- `--seed` applies to every request, so a line gives the audio a worker's request with the same seed gives. Without it,
-  each request draws its own seed, which `-v` reports.
+- `--seed` applies to every line. Without it, each request draws its own seed, which `-v` reports; the same seed gives
+  the same audio on the same device.
 - A request that stops at `--max-seconds`, or at the longest speech the model makes (655 s for Qwen3-TTS), is reported on
   stderr whatever `-v` says.
-- The model loads without a warm-up, so a GPU compiles its kernels during the first request.
-- The WAVE is written as the audio is made, so a player that reads stdout starts early. In a regular file, `> out.wav`
-  included, the RIFF and data sizes are set once the audio is complete. In a pipe or a file appended to with `>>` they
-  stay `0xFFFFFFFF`, as ffmpeg writes them to a pipe, and players read to the end of the stream.
-- A run that fails removes the WAVE file it was writing, so a file it leaves is complete.
-- Text on stdin is UTF-8. A byte order mark and CRLF line endings are accepted.
-- stderr reports where the time went: the load, and for each request its seconds of audio, the time to its first audio
-  and to its end, and the real-time factor, with sums when stdin gave several lines.
+- The WAVE is written as the audio is made, so a player that reads stdout starts on the first audio. A run that fails
+  removes the WAVE file it was writing.
+- Text on stdin is UTF-8.
+- stderr reports the load time and, for each request, its seconds of audio, the time to its first audio and to its end,
+  and the real-time factor.
 
 ## speech asr
 
@@ -130,8 +124,7 @@ speech voice MODEL (REFERENCE.wav... | EMBEDDING.speaker.safetensors) VOICE.gguf
   encoded on its own and the results are joined in order. Only the codec's encoder is read from MODEL.
 - A `.speaker.safetensors` file, a speaker-inversion embedding as the official runtime saves one, makes a voice for MODEL
   alone. It is the whole voice: a second embedding or a recording beside it is refused.
-- The device is `cpu` by default, the one device whose voice is the official encoder's to 99 dB
-  ([ADR 0002](adr/0002-asist-carries-irodori-tts-voices-as-voice-files.md)).
+- The device is `cpu` by default, which encodes a voice closest to the official encoder.
 - [models/irodori-tts.md](models/irodori-tts.md#voices) says what a voice file holds.
 
 ## speech info
@@ -154,9 +147,8 @@ speech info MODEL [--json] [--meta]
 speech devices [--json]
 ```
 
-Lists the CPU and the GPUs in ggml's order, with their kind (`cpu`, `gpu` or `igpu`), description and memory. An
-accelerator that ggml runs beside the CPU, such as BLAS, is not listed. `--json` prints one object, for a program that
-chooses a device before it starts a worker:
+Lists the CPU and the GPUs, with their kind (`cpu`, `gpu` or `igpu`), description and memory. `--json` prints one
+object, for a program that chooses a device before it starts a worker:
 
 ```json
 {"devices":[{"name":"Vulkan0","description":"NVIDIA GeForce RTX 2080","kind":"gpu","memory_total":8589934592,"memory_free":7516192768}]}
@@ -228,21 +220,29 @@ in the folder is refused with exit 1, before anything is removed.
 speech quantize MODEL OUT --type f16|q8_0|q6_k|q5_k|q4_k
 ```
 
-- Writes MODEL, a model file of F32 weights as the converters write it ([gguf.md](gguf.md#convert-a-model)), in another
-  weight type, on the CPU with the machine's threads. Each tensor takes the type its family's layout gives it in a file
-  of that type ([gguf.md](gguf.md#weight-types)), and every other key and tensor is kept as MODEL has it.
-- OUT is the file to write, or a folder, in which the file takes the name GGUF's naming convention gives it, such as
-  `Qwen3-ASR-0.6B-Q8_0.gguf`. A file OUT names is replaced, and removed again when the writing fails.
-- Of the F32 file a released file was converted from, `--type f16` or `--type q8_0` writes the released file byte for
-  byte.
-- `q6_k`, `q5_k` and `q4_k` make smaller files that compute less exactly
-  ([checks.md](development/checks.md#lower-bit-widths) gives what each loses), which speech.cpp 0.8.0 and later read, as
-  they read a FastConformer file in `q8_0`, which 0.7 reads in `f16` and `f32` alone.
-- MODEL is a path, and its weights must be F32: a quantized file is not quantized again, and a type made of F16 weights
-  would hold other bytes than the same type made of the F32 weights. Either is refused with exit 1
-  (`speech: invalid_argument (model_path): ...`), before anything is written.
-- A weight that is not finite, NaN or an infinity, is refused with exit 1 (`speech: model_file (model_path): ...`),
-  naming the tensor, and nothing is left at OUT.
+- Writes MODEL, a model file of F32 weights, in another weight type, on the CPU. Some tensors stay in a wider type, as
+  each family needs. A file in another type is refused.
+- OUT is the file to write, or a folder, in which the file takes its usual name, such as `Qwen3-ASR-0.6B-Q4_K.gguf`.
+- The F32 file comes from the official checkpoint through the model's converter, in a clone of this repository with
+  [uv](https://docs.astral.sh/uv/):
+
+  ```sh
+  cd reference/qwen3-asr && uv run python convert.py Qwen3-ASR-0.6B ../../models   # models/Qwen3-ASR-0.6B-F32.gguf
+  speech quantize ../../models/Qwen3-ASR-0.6B-F32.gguf ../../models --type q4_k
+  ```
+
+  The other converters are `reference/qwen3-tts/convert.py 0.6b|1.7b`, `reference/irodori-tts/convert.py mf|rf` and
+  `reference/fastconformer/convert.py <model name>`.
+
+`q6_k`, `q5_k` and `q4_k` make smaller files that compute less exactly. In the stage checks against the official
+implementation:
+
+| Family | Q6_K to Q4_K |
+|---|---|
+| Qwen3-TTS | in Q4_K, the 0.6B model spoke 2 of 20 sentences as other words, where F32 did so with 1 |
+| Irodori-TTS | the speech still says the text, with lengths that part from the official's |
+| FastConformer | reazonspeech-nemo-v2 writes 1.5% to 3.5% of its characters otherwise, against 0.9% in Q8_0 |
+| Qwen3-ASR | the 0.6B model keeps the official text on 34 (Q6_K) to 21 (Q4_K) of 40 requests, the 1.7B on 36 to 28 |
 
 ## speech serve and speech worker
 

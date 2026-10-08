@@ -37,7 +37,7 @@ struct WeightType {
 /** The weight types of the files speech.cpp writes, F32 first: F32, F16, Q8_0, Q6_K, Q5_K and Q4_K. */
 const std::vector<WeightType> & weight_types();
 
-/** A ggml type as docs/gguf.md and the model information write it: F32, F16, Q8_0, Q4_K. */
+/** A ggml type as the model information writes it: F32, F16, Q8_0, Q4_K. */
 std::string tensor_type_text(ggml_type type);
 
 /**
