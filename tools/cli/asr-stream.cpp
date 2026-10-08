@@ -23,6 +23,7 @@
 
 #include "microphone.h"
 #include "realtime-events.h"
+#include "regions.h"
 #include "utf8.h"
 #include "utterances.h"
 
@@ -172,6 +173,9 @@ size_t read_stdin(char * into, size_t n) {
 
 int transcribe_stream(const CommandLine & line, FILE * out, speech_model * recognizer, const std::vector<RequestOption> & options,
                       speech_model * detector, const std::vector<RequestOption> & detection, bool json) {
+    // The recognition's options are refused before any audio, as a file's are, where they would otherwise wait for the
+    // first utterance, which silence never brings.
+    check_recognition(recognizer, options);
     const bool live = line.has("--live");
     std::unique_ptr<Microphone> microphone;
     if (live) microphone = std::make_unique<Microphone>();

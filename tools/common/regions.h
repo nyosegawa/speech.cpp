@@ -58,10 +58,15 @@ Request detection_request(speech_model * detector, const std::vector<float> & sa
 std::optional<std::vector<Region>> detect_regions(speech_request * detection, Cancellation & cancellation);
 
 /**
+ * Checks that `recognizer` is a model of speech recognition and takes `options`, before any region, so that audio without
+ * regions refuses what audio with them would: the library's refusal throws a Failure, and another task unsupported.
+ */
+void check_recognition(speech_model * recognizer, const std::vector<RequestOption> & options);
+
+/**
  * Recognizes each region of `samples` alone on `recognizer` with `options`, and joins the results with append_part(),
- * the times of the segments and tokens (with `timestamps`) moved to those of the whole audio. The model's task and the
- * options are checked before any region, so audio without regions gives "" and still refuses a model that does not
- * recognize speech or an option it does not take. It returns nothing once cancelled.
+ * the times of the segments and tokens (with `timestamps`) moved to those of the whole audio, after check_recognition(),
+ * so audio without regions gives "". It returns nothing once cancelled.
  */
 std::optional<Transcript> transcribe_regions(speech_model * recognizer, const std::vector<float> & samples, int rate,
                                              const std::vector<Region> & regions, const std::vector<RequestOption> & options,

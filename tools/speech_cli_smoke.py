@@ -562,10 +562,13 @@ elif info["task"] == "recognition":
             r = run("asr", model, *command, *options, input=b"", code=2)
             assert "Run speech asr --help" in r.stderr.decode(), (command, r.stderr)
         failure(run("asr", model, "--vad", vad, *options, "-", input=joined[:4001], code=1), "invalid_argument", "audio")
+        # The recognition's options are refused before any audio, which no utterance may follow.
+        failure(run("asr", model, "--vad", vad, "--language", "zz", *options, "-", input=b"", code=1), "out_of_range", "language")
         # Below 8000 Hz the resampler holds back more audio than the assembly keeps for a region to come.
         failure(run("asr", model, "--vad", vad, "--rate", "100", *options, "-", input=joined[:2 * rate], code=1), "invalid_argument", "audio")
         print("asr --live and - without --vad, with files or --timestamps, --rate without - or of 0, and no audio: exit 2; an odd byte on "
-              "stdin and a rate of 100 Hz: exit 1, invalid_argument (audio)")
+              "stdin and a rate of 100 Hz: exit 1, invalid_argument (audio); a language the model does not take, on stdin "
+              "without audio: exit 1, out_of_range (language)")
         run("asr", model, "--vad", model, *options, long, code=2)
         failure(run("asr", model, "--vad", vad, "--threshold", "2", *options, long, code=1), "out_of_range", "threshold")
         failure(run("asr", model, "--threshold", "0.5", *options, long, code=1), "unsupported", "threshold")
