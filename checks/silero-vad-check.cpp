@@ -1,15 +1,17 @@
 // Checks Silero VAD against the official silero-vad package on each dump of reference/silero-vad/dump.py, in the order
 // data flows, each stage from the dump's own input: each chunk's input with its context, cut from the dump's audio; the
 // STFT's magnitude; each encoder block; the LSTM cell's h and c over every chunk from the dump's encoder output; the
-// decoder's probabilities from the dump's h; then the probabilities from the audio alone, and the regions of every set of
-// options in the dump's regions.json, which must equal the official's sample for sample, both from the official's
-// probabilities and from the ones computed here. The dumps are those in <reference out dir>/<the file's general.name>/.
+// decoder's probabilities from the dump's h; then the probabilities from the audio alone, which graphs of any number of
+// chunks must give bit for bit, as audio given a piece at a time computes them, and the regions of every set of options
+// in the dump's regions.json, which must equal the official's sample for sample, both from the official's probabilities
+// and from the ones computed here. The dumps are those in <reference out dir>/<the file's general.name>/.
 //
 // usage: silero-vad-check <model.gguf> <reference out dir> [gpu|cpu|device name]
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -90,13 +92,13 @@ int main(int argc, char ** argv) {
     try {
         ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
         std::printf("backend: %s\n", ggml_backend_name(backend));
-        // Measured on an Apple M5 on 2026-10-08 over the six dumps: on the CPU in F32 every stage lies 125 to 164 dB from
-        // the official, and the probabilities from the audio within 3.6e-6 of it; on Metal, whose matrix kernel rounds
-        // its inputs to half precision where it multiplies more than a few columns, 62 to 113 dB and within 6.2e-3. The
-        // dump of one chunk lies 120 dB or more from it on both, Metal multiplying a single column in float32. A wrong
-        // window, padding, stride or gate gives a few dB.
-        const bool cpu = ggml_backend_is_cpu(backend);
-        const double stage_db = cpu ? 100 : 50, probs_abs = cpu ? 1e-5 : 2e-2;
+        // Measured on an Apple M5 on 2026-10-08 over the six dumps, each product of the network multiplying one column:
+        // every stage lies 125 to 164 dB from the official on the CPU in F32 and 119 to 155 dB on Metal, and the
+        // probabilities from the audio within 3.6e-6 and 3.8e-6 of it. A GPU whose kernels round to half precision lies
+        // further: Metal's matrix kernel, which products of more columns took, gave 62 to 113 dB and 6.2e-3. A wrong window,
+        // padding, stride or gate gives a few dB.
+        const bool cpu = ggml_backend_is_cpu(backend), single = cpu || std::string(ggml_backend_name(backend)).rfind("MTL", 0) == 0;
+        const double stage_db = single ? 100 : 50, probs_abs = single ? 1e-5 : 2e-2;
         bool ok = true;
         {
             Detector detector(args[1], backend);
@@ -181,6 +183,25 @@ int main(int argc, char ** argv) {
                 const Diff dp = compare(got, probs.f32);
                 print_diff("  probabilities from the audio", dp);
                 ok = ok && got.size() == probs.f32.size() && dp.max_abs < probs_abs;
+
+                // The probabilities in graphs of other numbers of chunks than the detector's blocks, bit for bit.
+                bool independent = true;
+                for (const int64_t size : {1, 2, 3, 5, 8, 13, 100}) {
+                    std::vector<float> in_blocks;
+                    CellState state = detector.start();
+                    for (int64_t first = 0; first < n; first += size) {
+                        const int64_t count = std::min(size, n - first);
+                        detector.compute(detector.inputs(audio.f32, first, count), count, state, in_blocks);
+                    }
+                    const bool same = in_blocks.size() == got.size() && std::memcmp(in_blocks.data(), got.data(), got.size() * sizeof(float)) == 0;
+                    if (!same) {
+                        std::printf("  %-32s DIFFER, by up to %.2e\n", ("in graphs of " + std::to_string(size) + " chunks").c_str(),
+                                    compare(in_blocks, got).max_abs);
+                    }
+                    independent = independent && same;
+                }
+                std::printf("  %-32s %s\n", "in graphs of 1 to 100 chunks", independent ? "equal" : "DIFFER");
+                ok = ok && independent;
 
                 const JsonValue sets = parse_json(dump_text(d / "regions.json"));
                 for (const auto & [name, set] : sets.members) {
