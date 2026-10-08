@@ -48,9 +48,10 @@ README.md and `docs/` are the documentation for users; what a developer needs is
 - `checks/` holds one check per ported stage (`*-check.cpp`) that compares the stage with the reference
   dumps, and `speech-api-check`, which runs the C API through the shared library with a synthesis model, Irodori-TTS's
   own rules and voice files in `speech-api-irodori.c`, with `transcribe`, with a recognition model
-  (`speech-api-recognition.c`), and with `detect`, with a detection model (`speech-api-detection.c`), what they share in `speech-api-common.c` and what differs by the operating system in
-  `speech-api-platform.c`. Checks reach into
-  `src/` for the stage they check; they are built but not released.
+  (`speech-api-recognition.c`), and with `detect`, with a detection model (`speech-api-detection.c`, and detections of
+  audio given a piece at a time in `speech-api-detection-stream.c`), what they share in `speech-api-common.c` and what
+  differs by the operating system in `speech-api-platform.c`. Checks reach into `src/` for the stage they check; they are
+  built but not released.
 - `tools/server/` holds `speech serve`, which serves a synthesis model and a recognition model over HTTP with
   OpenAI's audio API (`POST /v1/audio/speech`, `POST /v1/audio/transcriptions`, `GET /v1/models`, `GET /health`)
   for programs that speak HTTP. Like the worker it reaches the models only through the C API; `openai-api.cpp` reads
