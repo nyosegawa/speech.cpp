@@ -237,11 +237,13 @@ add_executable(speech-cli
 set_target_properties(speech-cli PROPERTIES OUTPUT_NAME speech)
 target_include_directories(speech-cli PRIVATE tools/common tools/cli tools/models tools/server vendor/cpp-httplib vendor/miniaudio)
 target_link_libraries(speech-cli PRIVATE speech-static)
-# miniaudio captures audio and nothing else, so that its decoders, encoders and engine stay out of speech. On macOS it
-# links the system's audio frameworks; elsewhere it loads the system's audio library when the microphone opens, so
-# that no build needs the development packages of ALSA or PulseAudio and a Linux release needs no audio library to start.
+# miniaudio captures audio and nothing else, so that its decoders, encoders and engine stay out of speech, and without its
+# null backend, which opens "NULL Capture Device" when no real one does and gives silence, where speech asr --live is to
+# say that the microphone did not open. On macOS it links the system's audio frameworks; elsewhere it loads the system's
+# audio library when the microphone opens, so that no build needs the development packages of ALSA or PulseAudio and a
+# Linux release needs no audio library to start.
 target_compile_definitions(speech-cli PRIVATE MA_NO_DECODING MA_NO_ENCODING MA_NO_GENERATION MA_NO_ENGINE MA_NO_NODE_GRAPH
-                           MA_NO_RESOURCE_MANAGER)
+                           MA_NO_RESOURCE_MANAGER MA_NO_NULL)
 if (APPLE)
     target_compile_definitions(speech-cli PRIVATE MA_NO_RUNTIME_LINKING)
     target_link_libraries(speech-cli PRIVATE "-framework CoreFoundation" "-framework CoreAudio" "-framework AudioToolbox")
