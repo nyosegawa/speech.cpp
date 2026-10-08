@@ -19,9 +19,13 @@ may be large: a model's options, a feature with its page and docs, a set of fixe
 
 - Build and run the checks the change touches; AGENTS.md's Workflow names them (stage checks, `speech-api-check`, the
   smoke scripts with a model of each family). A defect fix comes with a check that fails before it.
+- A defect or a small fix found on the way goes into this pull request when it touches the same place, or into a small
+  pull request of its own; it is not left for later.
+- A rebase onto `origin/main` that changes no file a check reads does not call for running that check again; a long
+  check runs again only when what it reads moved.
 - Commit as each part works. The message is one English sentence in the imperative without a prefix, then what
   changed and why, then the checks run and what they gave ("Checked: …"), as earlier commits write them.
-- A decision the code cannot show gets an ADR in the same pull request.
+- A decision the code cannot show gets a record in `docs/adr/` in the same pull request (adr skill).
 
 ## 3. Open the pull request
 
@@ -31,15 +35,17 @@ A branch whose Windows or Linux code was not compiled locally can open as a draf
 
 ## 4. One review
 
-Run Codex once on the branch: `codex review --base origin/main -c model='"gpt-6-astra"'`. Read every finding; fix the
+Run Codex once on the branch: `codex review --base origin/main -c model='"gpt-6-astra"'`. A run that stops without a
+review, such as one flagged as a possible risk, is run again; that is not a second review. Read every finding; fix the
 real ones where their cause is, each with a check that fails without the fix where one can be written. Do not run the
 review again after fixing. Record anything checked outside CI (a Windows run, a page tried in a browser) as a comment on
 the pull request.
 
 ## 5. CI and merge
 
-- `gh pr checks <n> --watch` until every job ends. A failure is read from its log (`gh run view <run> --log-failed`)
-  and fixed on the branch.
+- `gh pr checks <n> --watch` until every job ends, started in the background. Right after a push it may report no
+  checks yet; wait until they appear (`until gh pr checks <n> | grep -q .; do sleep 10; done`) before watching. A
+  failure is read from its log (`gh run view <run> --log-failed`) and fixed on the branch.
 - Merge with a squash once CI passes and the review's findings are fixed, when the maintainer has asked you to merge:
   `gh pr merge <n> --squash --delete-branch`. Otherwise leave it for the maintainer.
 

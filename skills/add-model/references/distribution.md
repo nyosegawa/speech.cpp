@@ -4,9 +4,7 @@
 
 - One repository per upstream model, `sakasegawa/<Upstream name>-GGUF`, holding the recommended file and the other
   types, each with `<file>.json`, the output of `speech info --json <file>`.
-- The card (README.md) says: that the file runs only in speech.cpp and why other GGUF readers cannot run it; what the
-  model is and its languages; how it was checked; the license of the upstream weights, with `base_model` and
-  `base_model_relation` in the front matter; usage with `speech`; each file's SHA-256 and size.
+- The card (README.md) follows the release skill's references/model-card.md.
 - A file of a new layout replaces the old one in the same repository; the old one stays in the history, and programs
   that pin the old revision keep working.
 - **Upload only when the maintainer approves**, with `hf upload <repo> <file>` after checking the file's SHA-256
