@@ -60,17 +60,19 @@ and de_de, and two near-silent cuts), each with four requests, on an Apple M5:
 
 Where a Q8_0 text differs, the official choice between two tokens was within the arithmetic's error of a tie.
 
+On the 4,483 utterances of Common Voice 8.0's Japanese test set, trimmed to the voice, the CER in Q8_0 is 11.89% for the
+0.6B model and 9.49% for the 1.7B (7.05% and 4.67% accepting other spellings of the same words).
+
 ## Speed
 
-Apple M5, Q8_0 weights on Metal, after loading, the language left to the model:
+speech-bench on 2026-10-08: Common Voice's Japanese test set, Q8_0, one utterance at a time, the language left to the
+model.
 
-| Audio | 0.6B | 1.7B |
+| Model | Median, M5 / RTX 2080 | p90, M5 / RTX 2080 |
 |---|---|---|
-| ja_jp, 6.36 s | 0.19 s | 0.43 s |
-| ja_jp, 10.50 s | 0.28 s | 0.64 s |
-| de_de, 11.16 s | 0.34 s | 0.78 s |
-| en_us, 23.64 s | 0.63 s | 1.41 s |
-| ja_jp, 25.50 s | 0.87 s | 1.98 s |
+| 0.6B | 0.132 s / 0.087 s | 0.231 s / 0.158 s |
+| 1.7B | 0.309 s / 0.155 s | 0.544 s / 0.286 s |
 
-The decoding runs as fast as llama.cpp's on the same machine. 1338 s of audio take 120 s with the 0.6B model, nearly all
-of it the first part's 4096 tokens, with a peak memory footprint of 2.03 GB.
+Beside llama.cpp b11246 with ggml-org's Q8_0 files on the same day, the medians are the same on the M5, where
+llama.cpp's p90 is 8% lower, and speech.cpp's are 10% to 17% lower on the RTX 2080. 1338 s of audio take 120 s with
+the 0.6B model, nearly all of it the first part's 4096 tokens, with a peak memory footprint of 2.03 GB.

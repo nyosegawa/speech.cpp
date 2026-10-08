@@ -58,11 +58,14 @@ Every stage is checked against the official implementation's tensors:
 
 ## Speed
 
-Q8_0, Japanese sentences, after the shaders are compiled:
+speech-bench on 2026-10-08: the 20 sentences of its `prompts/speak-ja-JP.json` with the speaker `ono_anna`, one
+request at a time through the worker, Q8_0. The CER is of the speech as Qwen3-ASR 1.7B hears it.
 
-| Model | Device | First audio | Real-time factor | VRAM |
-|---|---|---|---|---|
-| 0.6B | Apple M5, Metal | 0.04 s | 0.31 | |
-| 1.7B | Apple M5, Metal | 0.07 s | 0.43 | |
-| 0.6B | RTX 2080, Vulkan | 0.07 s | 0.31 | 1.6 GB |
-| 1.7B | RTX 2080, Vulkan | 0.08 s | 0.36 | 2.7 GB |
+| Model | Device | Median first audio | p90 first audio | Real-time factor | CER |
+|---|---|---|---|---|---|
+| 0.6B | Apple M5, Metal | 0.038 s | 0.054 s | 0.31 | 5.8% |
+| 1.7B | Apple M5, Metal | 0.060 s | 0.110 s | 0.42 | 3.0% |
+| 0.6B | RTX 2080, Vulkan | 0.031 s | 0.039 s | 0.27 | 8.0% |
+| 1.7B | RTX 2080, Vulkan | 0.039 s | 0.052 s | 0.32 | 2.8% |
+
+On the RTX 2080 the 0.6B model takes 1.6 GB of video memory and the 1.7B 2.7 GB.

@@ -136,17 +136,29 @@ does: one request per line on stdin, its audio or text and one terminal message 
 Every stage of each port is compared with tensors dumped from the official implementation. The recognizers write the
 official text on every check input in F32 and F16.
 
-| Model | Device | Speed |
-|---|---|---|
-| Qwen3-TTS 0.6B, Q8_0 | Apple M5, Metal | first audio 0.04 s, real-time factor 0.31 |
-| Qwen3-TTS 0.6B, Q8_0 | RTX 2080, Vulkan | first audio 0.07 s, real-time factor 0.31 |
-| Irodori-TTS v4.1-Small-MF, F16 | Apple M5, Metal | median first audio 0.23 s, real-time factor 0.17 |
-| Irodori-TTS v4.1-Small-MF, F16 | RTX 2080, Vulkan | median first audio 0.13 s, real-time factor 0.10 |
-| parakeet-tdt_ctc-0.6b-ja, F16 | Apple M5, Metal | 0.28 s for 25.5 s of audio |
-| reazonspeech-nemo-v2, F16 | Apple M5, Metal | 4.9 s for 311 s of audio |
-| Qwen3-ASR 0.6B, Q8_0 | Apple M5, Metal | 0.87 s for 25.5 s of audio |
+Measured with [speech-bench](https://github.com/nyosegawa/speech-bench) on 2026-10-08, on an Apple M5 (Metal) and an
+RTX 2080 (Vulkan), one request at a time. Speech: 20 Japanese sentences, the time to the first audio, the real-time
+factor, and the CER of the speech as Qwen3-ASR 1.7B hears it.
 
-Each model's page has its accuracy and speed.
+| Model | First audio, M5 / RTX 2080 | Real-time factor | CER |
+|---|---|---|---|
+| `qwen3-tts-0.6b`, Q8_0 | 0.04 s / 0.03 s | 0.31 / 0.27 | 5.8% / 8.0% |
+| `qwen3-tts-1.7b`, Q8_0 | 0.06 s / 0.04 s | 0.42 / 0.32 | 3.0% / 2.8% |
+| `irodori-tts-mf`, F16 | 0.25 s / 0.12 s | 0.17 / 0.07 | 6.1% / 7.1% |
+| `irodori-tts`, F16, 16 steps | 1.24 s / 0.52 s | 0.34 / 0.13 | 3.2% / 3.2% |
+
+Recognition: the 4,483 utterances of Common Voice 8.0's Japanese test set, trimmed to the voice, with the CER that
+accepts other spellings of the same words in parentheses, and parakeet-tdt-0.6b-v3 on 300 English utterances of FLEURS.
+
+| Model | CER on Common Voice ja | Median time, M5 / RTX 2080 |
+|---|---|---|
+| `parakeet-tdt_ctc-0.6b-ja`, F16 | 7.9% (3.0%) | 0.06 s / 0.07 s |
+| `reazonspeech-v2`, F16 | 12.0% (7.1%) | 0.11 s / 0.16 s |
+| `qwen3-asr-0.6b`, Q8_0 | 11.9% (7.0%) | 0.13 s / 0.09 s |
+| `qwen3-asr-1.7b`, Q8_0 | 9.5% (4.7%) | 0.31 s / 0.16 s |
+| `parakeet-tdt-0.6b-v3`, F16 | WER 8.8% on FLEURS en | 0.10 s / 0.15 s |
+
+Each model's page has more.
 
 ## Documentation
 

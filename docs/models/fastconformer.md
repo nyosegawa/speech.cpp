@@ -55,15 +55,22 @@ Every stage is checked against NeMo's tensors on utterances of FLEURS' test spli
 
 The times of tokens and segments are NeMo's exactly.
 
+On the 4,483 utterances of Common Voice 8.0's Japanese test set, trimmed to the voice, the CER is 7.88% for
+parakeet-tdt_ctc-0.6b-ja, 12.03% for reazonspeech-nemo-v2 with beam search and 12.50% with greedy decoding (2.98%,
+7.13% and 7.69% accepting other spellings of the same words). parakeet-tdt-0.6b-v3's WER on 300 English utterances of
+FLEURS is 8.76%.
+
 ## Speed
 
-Apple M5, F16 weights on Metal, after loading:
+speech-bench on 2026-10-08, F16, one utterance at a time:
 
-| Model | Audio | Time | Real-time factor |
+| Model | Utterances | Median, M5 / RTX 2080 | p90, M5 / RTX 2080 |
 |---|---|---|---|
-| parakeet-tdt_ctc-0.6b-ja | 6.36 s, 10.50 s, 25.50 s | 0.07 s, 0.11 s, 0.28 s | about 0.011 |
-| parakeet-tdt-0.6b-v3 | 12 utterances of 5.6 to 23.4 s | 0.08 to 0.32 s | 0.012 |
-| reazonspeech-nemo-v2 | 6.36 s, 25.50 s, 64.80 s, 311.22 s | 0.17 s, 0.55 s, 1.4 s, 4.9 s | 0.016 to 0.027 |
+| parakeet-tdt_ctc-0.6b-ja | Common Voice ja | 0.059 s / 0.069 s | 0.086 s / 0.130 s |
+| reazonspeech-nemo-v2, beam search | Common Voice ja | 0.110 s / 0.157 s | 0.167 s / 0.268 s |
+| reazonspeech-nemo-v2, greedy | Common Voice ja | 0.077 s / 0.092 s | 0.104 s / 0.149 s |
+| parakeet-tdt-0.6b-v3 | FLEURS en | 0.103 s / 0.152 s | 0.167 s / 0.221 s |
 
-reazonspeech-nemo-v2's peak memory on the CPU with F16 weights is 1.35 GB for 6.36 s, 1.55 GB for 64.80 s and 2.35 GB for
-311.22 s. parakeet-tdt_ctc-0.6b-ja's is 1.30, 1.49 and 4.14 GB, growing with the square of the length.
+A long recording is recognized whole: reazonspeech-nemo-v2 takes 4.9 s for 311 s of audio on the M5. Its peak memory on
+the CPU with F16 weights is 1.35 GB for 6.36 s, 1.55 GB for 64.80 s and 2.35 GB for 311.22 s. parakeet-tdt_ctc-0.6b-ja's
+is 1.30, 1.49 and 4.14 GB, growing with the square of the length.
