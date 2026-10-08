@@ -164,10 +164,11 @@ bool too_long(const Failure & e) {
 /** One synthesis of a text, request after request. */
 class Speaker {
 public:
-    Speaker(speech_model * model, const speech_model_info * info, const std::vector<RequestOption> & options, speech_audio_callback on_audio,
-            speech_progress_callback on_progress, void * user_data, Cancellation & cancellation)
+    Speaker(speech_model * model, const speech_model_info * info, const std::vector<RequestOption> & options, Split split,
+            speech_audio_callback on_audio, speech_progress_callback on_progress, void * user_data, Cancellation & cancellation)
         : model_(model),
           options_(options),
+          split_(split),
           on_progress_(on_progress),
           user_data_(user_data),
           cancellation_(cancellation),
@@ -177,14 +178,15 @@ public:
                       std::none_of(options.begin(), options.end(), [](const RequestOption & o) { return o.option == SPEECH_OPT_SEED; })) {}
 
     std::optional<Spoken> speak_text(const std::string & text) {
-        const std::vector<std::string> sentences = by_sentence_ ? cut_text(text, Cut::Sentences) : std::vector<std::string>();
+        const bool sentence_each = by_sentence_ && split_ == Split::Sentences;
+        const std::vector<std::string> sentences = sentence_each ? cut_text(text, Cut::Sentences) : std::vector<std::string>();
         if (sentences.size() > 1) {
             for (size_t i = 0; i < sentences.size(); i++) {
                 if (i > 0) joiner_.sentence_ended();
                 if (!speak(sentences[i], Cut::Clauses)) break;
             }
         } else {
-            speak(text, by_sentence_ ? std::optional<Cut>(Cut::Clauses) : std::nullopt);
+            speak(text, !by_sentence_ ? std::nullopt : std::optional<Cut>(sentence_each ? Cut::Clauses : Cut::Sentences));
         }
         if (cancelled_) return std::nullopt;
         spoken_.samples = joiner_.passed();
@@ -223,13 +225,17 @@ private:
         return spoken_.stop == SPEECH_STOP_COMPLETE;
     }
 
-    /** Speaks the pieces of a text the library refused, cut at `cut` or, where that leaves it whole, finer. */
+    /**
+     * Speaks the pieces of a text the library refused, cut at `cut` or, where that leaves it whole, finer; sentences
+     * cut apart are joined with a sentence's pause, as a text spoken a sentence at a time.
+     */
     bool speak_pieces(const std::string & text, Cut cut, const Failure & refused) {
         for (std::optional<Cut> at = cut; at; at = finer(*at)) {
             const std::vector<std::string> pieces = cut_text(text, *at);
             if (pieces.size() < 2) continue;
-            for (const std::string & piece : pieces) {
-                if (!speak(piece, finer(*at))) return false;
+            for (size_t i = 0; i < pieces.size(); i++) {
+                if (i > 0 && *at == Cut::Sentences) joiner_.sentence_ended();
+                if (!speak(pieces[i], finer(*at))) return false;
             }
             return true;
         }
@@ -239,6 +245,7 @@ private:
 
     speech_model * model_;
     std::vector<RequestOption> options_;
+    Split split_;
     speech_progress_callback on_progress_;
     void * user_data_;
     Cancellation & cancellation_;
@@ -304,9 +311,9 @@ bool speaks_by_sentence(const speech_model_info * info) {
     return longest_request_seconds(info) < kShortRequest;
 }
 
-std::optional<Spoken> speak_text(speech_model * model, const std::string & text, const std::vector<RequestOption> & options,
+std::optional<Spoken> speak_text(speech_model * model, const std::string & text, const std::vector<RequestOption> & options, Split split,
                                  speech_audio_callback on_audio, speech_progress_callback on_progress, void * user_data,
                                  Cancellation & cancellation) {
     const ModelInfo info = model_info(model);
-    return Speaker(model, info.get(), options, on_audio, on_progress, user_data, cancellation).speak_text(text);
+    return Speaker(model, info.get(), options, split, on_audio, on_progress, user_data, cancellation).speak_text(text);
 }

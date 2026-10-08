@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "cancellation.h"
 #include "failure.h"
 #include "request-options.h"
 #include "speech.h"
@@ -68,11 +69,11 @@ public:
     bool take(Job & job);
 
     /**
-     * Marks the job's request as running, `request` being the library's request that a cancel stops (nullptr for a
-     * job without one), or returns false for a job whose request was cancelled while it waited, which has had its
-     * `cancelled`.
+     * Marks the job's request as running, `cancellation` being what a cancel stops, the library's requests the job runs
+     * through it (nullptr for a job without one), or returns false for a job whose request was cancelled while it
+     * waited, which has had its `cancelled`.
      */
-    bool start(const Job & job, speech_request * request);
+    bool start(const Job & job, Cancellation * cancellation);
 
     /** Sends the request's terminal message and forgets the request. */
     void finish(const Job & job, const std::string & line);
@@ -88,8 +89,8 @@ private:
         State state = State::Waiting;
         uint64_t next_seq = 0;
         std::vector<int16_t> pcm;
-        /** The library's request while the request runs, which a cancel stops. */
-        speech_request * running = nullptr;
+        /** What a cancel stops while the request runs. */
+        Cancellation * running = nullptr;
     };
 
     Protocol & protocol_;

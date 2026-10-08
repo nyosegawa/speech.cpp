@@ -225,7 +225,7 @@ int run_tts(const CommandLine & line, FILE * out) {
         Speaking speaking{wav, Clock::now()};
         std::optional<Spoken> spoken;
         try {
-            spoken = speak_text(model.get(), text, line.options, on_audio, nullptr, &speaking, cancellation);
+            spoken = speak_text(model.get(), text, line.options, Split::Sentences, on_audio, nullptr, &speaking, cancellation);
             if (speaking.failed) throw *speaking.failed;
         } catch (const Failure & e) {
             throw Failure(e.code(), e.option(), where + e.what());

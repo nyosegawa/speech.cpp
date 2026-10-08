@@ -7,8 +7,10 @@ reported and repeats it too; cancels while a request waits, while it runs, of an
 a later request then reuses; a second request under an id in flight; each error with its code and option (members the
 message does not have, values of the wrong type, out of range or not taken, a missing text, lines that are not JSON
 objects or have no id or type, the other task's messages); chunks to a synthesis model; add_voice; for
-Irodori-TTS a fixed length and the progress of a long sampler, for Qwen3-TTS max_seconds and the sampling options, and
-an instruction where the model takes one and its refusal where it does not. Writes the first answer to a WAV.
+Irodori-TTS a fixed length, the progress of a long sampler, a paragraph past what one request speaks spoken in one
+synthesize, whose reported seed repeats it, and a run with no place to cut refused, naming it, and for Qwen3-TTS a text
+past its tokens refused, max_seconds and the sampling options, and an instruction where the model takes one and its
+refusal where it does not. Writes the first answer to a WAV.
 
 usage: python3 checks/smoke/worker_smoke.py <out.wav> <speech> <model.gguf> [worker options...]
        A model that takes voice files needs --add-voice NAME=FILE, whose FILE add_voice adds again under another name.
@@ -19,7 +21,7 @@ import sys
 import time
 import wave
 
-from worker_client import Worker, short
+from worker_client import PARAGRAPH, Worker, short, speaks_by_sentence
 
 out_wav, speech, model, *options = sys.argv[1:]
 added = [o.split("=", 1) for i, o in enumerate(options) if i > 0 and options[i - 1] == "--add-voice"]
@@ -134,12 +136,27 @@ expect_error({"type": "synthesize", "id": "e5", "voice": voice}, "invalid_argume
 expect_error({"type": "synthesize", "id": "e6", "text": "", "voice": voice}, "invalid_argument", "text")
 expect_error({"type": "synthesize", "id": "e7", "text": "あ。"}, "invalid_argument", "voice")
 expect_error({"type": "synthesize", "id": "e8", "text": "あ。", "voice": voice, "timestamps": True}, "unsupported", "timestamps")
-too_long, tokens = TEXT, count["tokens"]
-while tokens <= info["max_text_tokens"]:
-    too_long += too_long
-    w.request({"type": "count_tokens", "id": "count-long", "text": too_long})
-    tokens = w.terminal("count-long", "end")["tokens"]
-expect_error({"type": "synthesize", "id": "e9", "text": too_long, "voice": voice}, "out_of_range", "text")
+if speaks_by_sentence(info):
+    # A text the library refuses as too long is spoken in pieces, cut after its sentences, under the seed the first
+    # piece drew; a run with no place to cut is refused, naming it.
+    t0 = time.perf_counter()
+    pcm_p, end_p = speak("paragraph", text="".join(PARAGRAPH))
+    assert end_p["stop"] == "complete", short(end_p)
+    assert speak("paragraph2", text="".join(PARAGRAPH), seed=end_p["seed"])[0] == pcm_p, "the reported seed did not repeat the paragraph"
+    print(f"paragraph: {len(PARAGRAPH)} sentences past one request, {len(pcm_p) // 2 / rate:.2f} s of audio in "
+          f"{time.perf_counter() - t0:.2f} s for two runs, the reported seed repeating it byte for byte")
+    run_text = "あいうえおかきくけこ" * 80
+    w.request({"type": "synthesize", "id": "e9", "text": run_text, "voice": voice})
+    message = w.terminal("e9", "error", "out_of_range", "text")["error"]["message"]
+    assert message.startswith('"' + run_text[:20]), message
+    print(f"e9: a run of {len(run_text)} characters with no place to cut, refused: {message[:100]}")
+else:
+    too_long, tokens = TEXT, count["tokens"]
+    while tokens <= info["max_text_tokens"]:
+        too_long += too_long
+        w.request({"type": "count_tokens", "id": "count-long", "text": too_long})
+        tokens = w.terminal("count-long", "end")["tokens"]
+    expect_error({"type": "synthesize", "id": "e9", "text": too_long, "voice": voice}, "out_of_range", "text")
 expect_error({"type": "pause", "id": "e10"}, "invalid_argument", "type")
 expect_error({"type": "add_voice", "id": "e11", "name": "x"}, "invalid_argument", "path")
 # A member set to null counts as left out, and an option at its neutral value is taken by every model.

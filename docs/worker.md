@@ -114,8 +114,11 @@ out {"type":"cancelled","id":"a"}
 ## What each family does
 
 - **Qwen3-TTS** passes audio as it makes it, from the first 0.08 s, at 24 kHz. A cancel takes effect at the next chunk.
-- **Irodori-TTS** makes a sentence at once and passes it as the codec decodes it, at 48 kHz, so a request should be one
-  sentence. A cancel takes effect at the next sampler step or piece of audio.
+- **Irodori-TTS** makes a request's speech at once and passes it as the codec decodes it, at 48 kHz, so a request should
+  be one sentence: the first audio waits for the whole text. A text it predicts to last over 30 s is cut after its
+  sentences, or after its commas, or at its spaces, and spoken in pieces as `speech tts` speaks it, a sentence's end
+  holding 0.9 s of silence; a text with no place to cut is refused, naming it. A cancel takes effect at the next sampler
+  step or piece of audio.
 - **FastConformer** recognizes a request's audio at once, and loses whole sentences of a stretch that holds several, so
   a request should be one utterance. A cancel takes effect before or after the encoder, or during the decoding.
 - **Qwen3-ASR** recognizes up to 1200 s at once, and longer audio in parts. A cancel takes effect within a fraction of a

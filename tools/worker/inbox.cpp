@@ -91,12 +91,12 @@ bool Inbox::take(Job & job) {
     return true;
 }
 
-bool Inbox::start(const Job & job, speech_request * request) {
+bool Inbox::start(const Job & job, Cancellation * cancellation) {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = pending_.find(job.id);
     if (it == pending_.end() || it->second.serial != job.serial) return false;
     it->second.state = Pending::State::Running;
-    it->second.running = request;
+    it->second.running = cancellation;
     return true;
 }
 
@@ -235,7 +235,7 @@ void Inbox::cancel(const std::string & id) {
     Pending & p = it->second;
     if (p.state == Pending::State::Running) {
         // The run ends with `cancelled`, or with its answer when it was past the point where it could stop.
-        if (p.running) speech_request_cancel(p.running);
+        if (p.running) p.running->cancel();
         return;
     }
     if (p.state == Pending::State::Collecting) dropping_.insert(id);

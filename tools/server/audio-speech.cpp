@@ -72,7 +72,7 @@ int on_progress(double, void * user_data) {
 void synthesize(const std::shared_ptr<SpeechJob> & job, Turns & turns, uint64_t ticket, const std::string & name) {
     run_in_turn(*job, turns, ticket, name, [&] {
         const std::optional<Spoken> spoken =
-            speak_text(job->served->get(), job->text, job->options, on_audio, on_progress, job.get(), job->cancellation);
+            speak_text(job->served->get(), job->text, job->options, Split::Sentences, on_audio, on_progress, job.get(), job->cancellation);
         if (!spoken) return SPEECH_CANCELLED;
         std::lock_guard<std::mutex> lock(job->mutex);
         job->seed = spoken->seed;
