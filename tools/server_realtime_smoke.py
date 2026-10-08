@@ -120,6 +120,8 @@ for item, pcm, (text, languages) in zip(items, pcms, wants):
     mine = [e for e in events if e.get("item_id") == item and e["type"] != "input_audio_buffer.committed"]
     deltas, done = mine[:-1], mine[-1]
     assert all(d["type"].endswith(".delta") and d["delta"] and d["content_index"] == 0 for d in deltas), mine
+    # The deltas join into the final text: here none comes before the commit, so the rest is the whole of it.
+    assert "".join(d["delta"] for d in deltas) == text, mine
     assert done["type"] == "conversation.item.input_audio_transcription.completed" and done["transcript"] == text, done
     assert done["usage"] == {"type": "duration", "seconds": len(pcm) / 2 / 24000} and done["content_index"] == 0, done
     assert [x["code"] for x in done.get("languages", [])] == languages and done["stop"] == "complete", done
@@ -316,6 +318,9 @@ item = events[-1]["item_id"]
 kinds = kinds_of(events, item)
 deltas = [e["delta"] for e in events if e["type"].endswith(".delta")]
 assert kinds.index("committed") > 0 and set(kinds[:kinds.index("committed")]) == {"delta"} and kinds[-1] == "completed" and all(deltas), kinds
+# Where the final text goes on from what the deltas gave while it was said, one more delta gives the rest of it.
+said = "".join(deltas[:kinds.index("committed")])
+assert not events[-1]["transcript"].startswith(said) or "".join(deltas) == events[-1]["transcript"], (deltas, events[-1]["transcript"])
 print(f"realtime: {kinds.index('committed')} deltas of {len(longest) / 48000:.1f} s appended in real time before its commit, "
       f"{''.join(deltas)[:30]!r}, then {events[-1]['transcript'][:30]!r}")
 # A reading under way when its buffer is committed is stopped, and the commit is recognized whole.
