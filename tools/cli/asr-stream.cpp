@@ -330,8 +330,10 @@ int transcribe_stream(const CommandLine & line, FILE * out, speech_model * recog
         while (!failed()) {
             // stdin waits while the audio held is at its bound and recognitions to come will free some of it, so that a fast
             // writer is held back to the recognition's pace; audio the options keep uncommitted is freed only by more audio.
+            // held() is read again once committed() is 0: a recognition that ends between the two reads frees audio, and
+            // only this thread commits more.
             if (assembly.held() >= kHeld) {
-                if (assembly.committed() == 0) throw past_the_bound(assembly, rate);
+                if (assembly.committed() == 0 && assembly.held() >= kHeld) throw past_the_bound(assembly, rate);
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
             }
