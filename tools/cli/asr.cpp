@@ -24,7 +24,7 @@ double seconds_since(Clock::time_point t0) {
     return std::chrono::duration<double>(Clock::now() - t0).count();
 }
 
-/** The flags and defaults of transcription by regions, for the help: "--threshold 0.5, ... and --max-speech-duration-s 15". */
+/** The flags and defaults of transcription by regions, for the help: "--threshold 0.5, ... and --max-speech-duration-s 10". */
 std::string region_defaults() {
     const std::vector<RequestOption> defaults = region_options({});
     std::string out;

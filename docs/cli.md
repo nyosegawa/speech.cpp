@@ -137,7 +137,7 @@ region:
 | `--threshold X` | 0.5 | the speech probability from which audio counts as speech |
 | `--speech-pad-ms N` | 300 | the audio kept before and after each region |
 | `--min-silence-duration-ms N` | 500 | the silence that ends a region |
-| `--max-speech-duration-s S` | 15 | the longest region; a longer one is cut at its longest silence |
+| `--max-speech-duration-s S` | 10 | the longest region; a longer one is cut at its longest silence |
 | `--min-speech-duration-ms N` | 250 | the shortest region kept |
 
 `speech vad --split` with the same flags writes the regions that `speech asr --vad` recognizes.

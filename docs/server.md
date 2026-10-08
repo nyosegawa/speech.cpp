@@ -153,7 +153,7 @@ field per member:
 | `chunking_strategy[prefix_padding_ms]` | 300 | the audio kept before and after each region |
 | `chunking_strategy[silence_duration_ms]` | 500 | the silence that ends a region |
 
-A region is at most 15 s long, cut at its longest silence. A request with `chunking_strategy` to a server without a
+A region is at most 10 s long, cut at its longest silence. A request with `chunking_strategy` to a server without a
 detection model is a 400 that says to give it one: `speech serve reazonspeech-v2 silero-vad`.
 
 ```python
