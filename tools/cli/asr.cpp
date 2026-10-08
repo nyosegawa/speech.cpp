@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -5,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "asr-stream.h"
 #include "commands.h"
 #include "fetch.h"
 #include "json.h"
@@ -14,7 +16,8 @@
 // speech asr: recognizes the speech in WAVE files and writes each file's text to stdout in the order the files are
 // given, as text or as one JSON object per file, and reports on stderr the load and, for each file, its seconds of
 // audio, the time to its text and the real-time factor. With --vad it transcribes each file by the regions where a
-// detection model finds that someone speaks.
+// detection model finds that someone speaks, and PCM from stdin (-) or the microphone (--live) region by region as the
+// audio arrives (asr-stream.h).
 
 namespace {
 
@@ -67,6 +70,23 @@ std::optional<Detection> detection_of(const CommandLine & line, const speech_mod
 int run_asr(const CommandLine & line, FILE * out) {
     const std::string format = line.value("--format").value_or("text");
     if (format != "text" && format != "json") throw UsageError("--format takes text or json, not \"" + format + "\"");
+    const bool live = line.has("--live");
+    const bool piped = std::find(line.args.begin() + 1, line.args.end(), "-") != line.args.end();
+    if (piped && line.args.size() > 2) throw UsageError("- reads 16-bit PCM from stdin, alone; give it without files");
+    if (live && line.args.size() > 1) throw UsageError("--live listens to the microphone and takes no AUDIO; give one or the other");
+    if (!live && line.args.size() < 2) {
+        throw UsageError("give the WAVE files to transcribe, - for 16-bit PCM on stdin, or --live for the microphone");
+    }
+    if (line.has("--rate") && !piped) throw UsageError("--rate is the rate of the PCM that - reads from stdin");
+    if (line.integer("--rate").value_or(1) <= 0) throw UsageError("--rate takes the PCM's rate in Hz");
+    if ((live || piped) && !line.has("--vad")) {
+        throw UsageError(std::string(live ? "--live" : "-") + " writes each utterance as it ends, cut where a detection model finds that "
+                         "someone speaks; give one with --vad, as in --vad silero-vad");
+    }
+    if ((live || piped) && std::any_of(line.options.begin(), line.options.end(), [](const RequestOption & o) { return o.option == SPEECH_OPT_TIMESTAMPS; })) {
+        throw UsageError("--timestamps gives the segments of files; the utterances of " + std::string(live ? "--live" : "-") +
+                         " carry their times in the events of --format json");
+    }
 
     const auto t0 = Clock::now();
     const Model model = load_model(model_file(line.args[0]), line.loading(false));
@@ -74,13 +94,18 @@ int run_asr(const CommandLine & line, FILE * out) {
     const speech_model_info * m = info.get();
     std::vector<RequestOption> options = line.options;
     const std::optional<Detection> detection = detection_of(line, m, options);
-    const std::string by = detection ? ", by the regions of " + std::string(speech_model_info_name(model_info(detection->model.get()).get())) : "";
+    std::string by;
+    if (detection) {
+        const ModelInfo d = model_info(detection->model.get());
+        by = ", by the regions of " + std::string(speech_model_info_name(d.get())) + " on " + speech_model_info_device(d.get());
+    }
     std::fprintf(stderr, "load %.2f s: %s on %s%s\n", seconds_since(t0), speech_model_info_name(m), speech_model_info_device(m), by.c_str());
     if (line.has("-v")) {
         std::string languages;
         for (size_t i = 0; i < speech_model_info_language_count(m); i++) languages += (i ? ", " : "") + std::string(speech_model_info_language(m, i));
         std::fprintf(stderr, "speech.cpp %s, %d Hz, languages: %s\n", speech_version(), speech_model_info_sample_rate(m), languages.c_str());
     }
+    if (live || piped) return transcribe_stream(line, out, model.get(), options, detection->model.get(), detection->options, format == "json");
     const bool timestamps = timestamps_in_effect(m, options);
 
     double audio_total = 0, busy = 0;
@@ -142,8 +167,8 @@ int run_asr(const CommandLine & line, FILE * out) {
 Command asr_command() {
     Command c;
     c.name = "asr";
-    c.usage = "asr MODEL [options] AUDIO.wav...";
-    c.summary = "write the text of WAVE files";
+    c.usage = "asr MODEL [options] AUDIO.wav...|-|--live";
+    c.summary = "write the text of WAVE files, or of speech as it is said";
     c.description =
         "Recognizes each WAVE file (16-, 24- or 32-bit PCM or 32-bit float, any rate, channels averaged) and writes\n"
         "its text to stdout in the order given: with --format text one line per file, or with --timestamps one line\n"
@@ -151,20 +176,27 @@ Command asr_command() {
         "{\"file\", \"text\", \"stop\"}, with \"languages\", the tags of the languages the model heard, where it names\n"
         "any, and \"segments\" and \"tokens\" when --timestamps is given. It exits with 3 when a recognition stopped at\n"
         "the most the model writes, after writing every file's text.\n"
-        "With --vad, a detection model finds where someone speaks in each file, each region is recognized alone and the\n"
-        "texts are joined, the times of the whole file. The detection options are those of speech vad, with OpenAI's\n"
-        "server_vad defaults and a longest region:\n" + region_defaults() + ".\n"
-        "A file in which no one speaks gives an empty text.";
+        "With --vad, a detection model, on the CPU, finds where someone speaks in each file, each region is recognized\n"
+        "alone and the texts are joined, the times of the whole file. The detection options are those of speech vad,\n"
+        "with OpenAI's server_vad defaults and a longest region:\n" + region_defaults() + ".\n"
+        "A file in which no one speaks gives an empty text.\n"
+        "With --vad, - reads 16-bit little-endian mono PCM at --rate from stdin until it ends, and --live the default\n"
+        "microphone until Ctrl-C, and each region is written as it ends: with --format text its text as a line, which\n"
+        "on a terminal shows the text agreed so far while it is said; with --format json OpenAI's Realtime server\n"
+        "events, one per line: input_audio_buffer.speech_started, .speech_stopped and .committed, and\n"
+        "conversation.item.input_audio_transcription.delta, .completed and .failed.";
     c.flags = {
-        {"--format", "text|json", false, "text (the default) or one JSON object per file and line"},
+        {"--format", "text|json", false, "text (the default) or one JSON object per file, or per event, and line"},
         {"--vad", "MODEL", false, "transcribe by the regions where this detection model finds speech"},
-        device_flag("auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists"),
+        {"--live", "", false, "transcribe the default microphone until Ctrl-C, with --vad"},
+        {"--rate", "HZ", false, "the rate of the PCM that - reads from stdin, 16000 unless given"},
+        device_flag("auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists; for MODEL"),
         threads_flag(),
-        verbose_flag("also report the release, the sample rate and the model's languages"),
+        verbose_flag("also report the release, the sample rate and the model's languages, and each utterance as it ends"),
     };
     c.request_options = true;
     c.model = ModelKind::Recognition;
-    c.min_args = 2;
+    c.min_args = 1;
     c.max_args = SIZE_MAX;
     c.run = run_asr;
     return c;

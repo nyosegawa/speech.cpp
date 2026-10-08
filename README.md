@@ -79,7 +79,7 @@ uninstall, and what each platform needs. On an Intel Mac or another system, [bui
 | Subcommand | What it does |
 |---|---|
 | `speech tts` | speaks text into a WAVE file or to stdout |
-| `speech asr` | writes the text of WAVE files |
+| `speech asr` | writes the text of WAVE files, or of the microphone as someone speaks |
 | `speech vad` | writes where someone speaks in WAVE files |
 | `speech voice` | makes an Irodori-TTS voice file from reference recordings |
 | `speech info` | prints what a model file says of its model |
@@ -94,6 +94,7 @@ speech voice irodori-tts-mf me.wav me.voice.gguf
 speech tts irodori-tts-mf --add-voice me=me.voice.gguf --voice me -o - < story.txt | ffplay -nodisp -autoexit -
 speech asr reazonspeech-v2 --timestamps meeting.wav
 speech asr qwen3-asr-1.7b --language ja --prompt "Claude Code、渋谷" meeting.wav
+speech asr reazonspeech-v2 --vad silero-vad --live
 speech vad silero-vad --max-speech-duration-s 10 meeting.wav
 ```
 

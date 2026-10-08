@@ -1,6 +1,5 @@
 #pragma once
 
-#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -15,6 +14,7 @@
 #include "cancellation.h"
 #include "json-reader.h"
 #include "openai-error.h"
+#include "realtime-events.h"
 #include "request-options.h"
 #include "transcript.h"
 
@@ -28,9 +28,6 @@
 // with an error event rather than ignored.
 
 namespace realtime {
-
-/** The sample rate of the audio of a session, the one rate OpenAI's audio/pcm takes. */
-constexpr int kRate = 24000;
 
 /**
  * A commit's place on the recognition model held when the session accepted it: the model, which it keeps until it has
@@ -97,7 +94,7 @@ private:
 
     /** A committed buffer that waits for its transcription, with its place on the model or why it has none. */
     struct Commit {
-        std::string item;
+        uint64_t number = 0;
         std::vector<float> samples;
         Config config;
         std::unique_ptr<Reservation> reservation;
@@ -108,23 +105,15 @@ private:
     void append(const JsonValue & event);
     void commit();
     void clear();
-    /** Sends an event of `type` with `members`, each after a comma, and an event_id of the session's own. */
-    void emit(const std::string & type, const std::string & members);
-    void error(const openai::ApiError & e, const std::string & event_id);
     std::string session_json();
-    std::string new_id(const char * prefix);
     void work();
 
     Recognizer & recognizer_;
-    std::function<void(const std::string &)> send_;
-    std::mutex send_mutex_;
-    std::string id_;
-    std::string unique_;
-    std::atomic<uint64_t> counter_{0};
+    Events events_;
     Config config_;
     /** The audio appended since the last commit or clear, as 16-bit little-endian PCM. */
     std::string buffer_;
-    std::string previous_item_;
+    uint64_t commits_ = 0;
 
     const size_t limit_;
 

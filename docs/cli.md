@@ -5,7 +5,7 @@ This page lists the subcommands of `speech` and their options. `speech <subcomma
 | Subcommand | What it does |
 |---|---|
 | [`speech tts`](#speech-tts) | speaks text into a WAVE file or to stdout |
-| [`speech asr`](#speech-asr) | writes the text of WAVE files |
+| [`speech asr`](#speech-asr) | writes the text of WAVE files, or of the microphone as someone speaks |
 | [`speech vad`](#speech-vad) | writes where someone speaks in WAVE files |
 | [`speech voice`](#speech-voice) | makes an Irodori-TTS voice file from reference recordings |
 | [`speech info`](#speech-info) | prints what a model file says of its model, without loading it |
@@ -39,6 +39,9 @@ speech asr qwen3-asr-1.7b --language ja --prompt "Claude Code、渋谷" meeting.
 
 # The text of a long recording, recognized region by region where someone speaks
 speech asr reazonspeech-v2 --vad silero-vad meeting.wav
+
+# The microphone, each utterance's text as it is said, until Ctrl-C
+speech asr reazonspeech-v2 --vad silero-vad --live
 
 # Where someone speaks in a recording, in regions of 10 s at most, and each region as a WAVE file of its own
 speech vad silero-vad --max-speech-duration-s 10 meeting.wav
@@ -102,11 +105,13 @@ speech tts MODEL -o FILE|- [options] [TEXT]
 ## speech asr
 
 ```
-speech asr MODEL [options] AUDIO.wav...
-  --format text|json       text (the default) or one JSON object per file and line
+speech asr MODEL [options] AUDIO.wav...|-|--live
+  --format text|json       text (the default) or one JSON object per file, or per event, and line
   --vad MODEL              transcribe by the regions where this detection model finds speech
+  --live                   transcribe the default microphone until Ctrl-C, with --vad
+  --rate HZ                the rate of the PCM that - reads from stdin, 16000 unless given
   --device NAME --threads N
-  -v                       also report the release, the sample rate and the model's languages
+  -v                       also report the release, the sample rate and the model's languages, and each utterance
   --language TAG --timestamps --prompt TEXT --decoding beam|greedy ... every request option
 ```
 
@@ -145,6 +150,34 @@ region:
 | `--min-speech-duration-ms N` | 250 | the shortest region kept |
 
 `speech vad --split` with the same flags writes the regions that `speech asr --vad` recognizes.
+
+### Transcribing as someone speaks
+
+With `--vad`, `--live` transcribes the default microphone until Ctrl-C, and `-` reads 16-bit little-endian mono PCM from
+stdin at `--rate` until it ends, for programs that have audio as it is recorded. Each region is written as it ends, so
+the same audio gives the same regions and texts as a file.
+
+```sh
+speech asr reazonspeech-v2 --vad silero-vad --live
+speech asr qwen3-asr-0.6b --vad silero-vad --live --format json > events.jsonl
+```
+
+- `text` writes each utterance's text as a line. On a terminal, the line shows the text as it is said, the beginning that
+  two readings in a row agree on, and the final text replaces it once the utterance ends.
+- `json` writes OpenAI's Realtime server events, one JSON object per line, as `/v1/realtime` sends them
+  ([server.md](server.md#realtime-transcription)): `input_audio_buffer.speech_started` with `audio_start_ms` and the
+  utterance's `item_id`, `input_audio_buffer.speech_stopped` with `audio_end_ms`, `input_audio_buffer.committed`,
+  `conversation.item.input_audio_transcription.delta`, text that adds to the end of what came before, and
+  `conversation.item.input_audio_transcription.completed`, whose `transcript` is the whole text and replaces the deltas.
+- On an Apple M5, speech started comes 0.85 s after the speech begins, the first text with it or soon after, and the final
+  text 0.7 to 1 s after the speech ends.
+- stderr reports the microphone and its rate, and at the end the utterances and the time the detection took; `-v` also
+  reports each utterance as it ends. A recognition that fails ends the run with exit 1, after the `failed` event in JSON.
+- `--timestamps` is refused: the times of an utterance are in its events.
+
+On macOS, a program reaches the microphone through the app it runs in, such as Terminal or iTerm2. The first time,
+macOS asks whether that app may use the microphone; afterwards it is in System Settings, Privacy & Security,
+Microphone. Without it the program hears only silence, and `speech` says so on stderr after 3 s.
 
 ## speech vad
 

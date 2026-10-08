@@ -38,8 +38,10 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   `tools/worker/` and `serve` in `tools/server/`, and what they share in `tools/common/`: the one parser of every
   command line, which makes a flag of each option of the C API's vocabulary, the JSON reader, and the request options
   read from text or JSON and set through the library's setters, transcription by regions, which `asr --vad` and
-  `serve` share, and the synthesis of a text a sentence at a time for a model whose request speaks a short time, which
-  `tts` and `serve` share (`sentences.cpp`). Every subcommand reaches the models only through the
+  `serve` share, the synthesis of a text a sentence at a time for a model whose request speaks a short time, which
+  `tts` and `serve` share (`sentences.cpp`), the assembly of utterances from audio that arrives while someone speaks
+  (`utterances.cpp`), which `asr -` and `asr --live` run, and OpenAI's Realtime server events (`realtime-events.cpp`),
+  which they write as the server's Realtime sessions do. Every subcommand reaches the models only through the
   C API. `tools/models/` names models: the catalog of the release (`catalog.json`, which `update_catalog.py` writes
   from Hugging Face and the build compiles in), the cache folder, and the fetching of a named model with the system's
   curl, which `models`, `pull` and `rm` and every subcommand that takes a model share; the library never reaches the
@@ -86,9 +88,10 @@ another one.
 
 ## Code
 
-- C++17 with ggml as a git submodule and no other dependency, except cpp-httplib's single header, vendored in
-  `vendor/cpp-httplib/` by commit for `speech serve` and compiled into `speech` with it; the library and `libspeech`
-  never include it. `speech` has the library and ggml linked in statically, so that a release is
+- C++17 with ggml as a git submodule and no other dependency, except two single headers vendored by commit and compiled
+  into `speech` alone: cpp-httplib's in `vendor/cpp-httplib/` for `speech serve`, and miniaudio's in `vendor/miniaudio/`
+  for the microphone of `speech asr --live`, which loads the system's audio library only when the microphone opens. The
+  library and `libspeech` never include either. `speech` has the library and ggml linked in statically, so that a release is
   one executable beside the shared library `libspeech`, which exports the C API and nothing else, for bindings and
   other programs.
 - Anything the C API returns is owned by the library, and the header says for how long. A model serves one

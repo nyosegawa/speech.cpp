@@ -17,7 +17,10 @@ stdout, which also carries a program's output: a WAVE file, JSON, the worker's p
   kebab-case, so that an option the library adds is a flag without the parser or a subcommand changing; a boolean flag
   is true alone and takes `=true` or `=false`, since an option true by default could not otherwise be turned off.
   `--add-voice NAME=FILE` adds a voice and `--voice` selects one, as the option does everywhere.
-- **cpp-httplib is compiled into `speech`** and runs only for `serve`; the library and `libspeech` stay free of it.
+- **cpp-httplib is compiled into `speech`** and runs only for `serve`, and **miniaudio** only for the microphone of
+  `asr --live`; the library and `libspeech` stay free of both. miniaudio is one header that captures through each
+  system's own audio API and, but on macOS, loads the system's audio library only when the microphone opens, so that
+  `speech` builds without an audio library's development files and starts on a machine without one.
 - **stdout carries a subcommand's output alone.** `speech` keeps the stdout it was started with for its output and
   points descriptor 1 at stderr before anything else runs, so that whatever other code prints to stdout reaches stderr
   with the logs.
@@ -28,6 +31,10 @@ The alternatives were turned down:
   own way.
 - `speech serve` in an executable of its own, to keep cpp-httplib out of the one the worker runs in. It would bring back
   a second executable with its copy of the library and a second parser.
+- The microphone through SDL2, as whisper.cpp's `whisper-stream` takes it, or PortAudio, as sherpa-onnx does. Each is a
+  library a user installs, or a build adds, beside `speech`.
+- No microphone, with PCM piped into `speech asr -` from another program. The command line would not transcribe speech
+  as it is said without a second program, which differs on every system.
 - Recognition as a mode of `speech tts`. The two share `--device` and `--language` and nothing else: one writes a WAVE
   file from text, the other text from WAVE files.
 - A `--no-<flag>` for each boolean option. It doubles the flags, and the vocabulary's names would no longer be the flags
