@@ -216,16 +216,25 @@ assert ws.event()["type"] == "input_audio_buffer.cleared", "the session did not 
 piece = b"\0" * (1 << 20)
 
 
+def next_error():
+    """The next error event, past the deltas of the readings of the buffer as it grows: a model can read words into
+    silence, as reazonspeech-v2 on Vulkan read 23 MiB of zeros as ピンポン (RTX 2080, 2026-10-08)."""
+    e = ws.event()
+    while e["type"] == "conversation.item.input_audio_transcription.delta":
+        e = ws.event()
+    return e
+
+
 def fill(limit_pieces):
     """Appends pieces of a mebibyte until an append is refused, each followed by an event that is always refused; the
     number of pieces taken, or None when none was refused."""
     for k in range(limit_pieces):
         ws.send({"type": "input_audio_buffer.append", "event_id": f"a{k}", "audio": base64.b64encode(piece).decode()})
         ws.send({"type": "no.such.event", "event_id": f"p{k}"})
-        e = ws.event()
+        e = next_error()
         if e["error"]["event_id"] == f"a{k}":
             assert e["error"]["param"] == "audio" and e["error"]["code"] == "input_audio_buffer_full", e
-            assert ws.event()["error"]["event_id"] == f"p{k}"
+            assert next_error()["error"]["event_id"] == f"p{k}"
             return k
         assert e["error"]["event_id"] == f"p{k}", e
     return None
