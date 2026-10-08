@@ -117,16 +117,16 @@ On a GPU the audio is the same speech rather than the same waveform, since the G
 
 ## Speed
 
-The 20 sentences of speech-bench's `prompts/speak-ja-JP.json` through the worker, in a voice file, one request at a time:
+speech-bench on 2026-10-08: the 20 sentences of its `prompts/speak-ja-JP.json` in a voice file of one reference, seed
+1, one request at a time through the worker, F16. The CER is of the speech as Qwen3-ASR 1.7B hears it.
 
-| Model | Device | Median first audio | p90 first audio | Real-time factor | Memory |
+| Model | Device | Median first audio | p90 first audio | Real-time factor | CER |
 |---|---|---|---|---|---|
-| v4.1-Small-MF F16, 4 steps | Apple M5, Metal | 0.23 s | 0.51 s | 0.17 | 2.2 GB |
-| v4.1-Small-MF Q8_0, 4 steps | Apple M5, Metal | 0.25 s | 0.51 s | 0.18 | 1.5 GB |
-| v4.1-Small F16, 16 steps | Apple M5, Metal | 1.12 s | 3.29 s | 0.34 | 2.2 GB |
-| v4.1-Small F16, 40 steps | Apple M5, Metal | 2.64 s | 8.04 s | 0.64 | 2.2 GB |
-| v4.1-Small-MF F16, 4 steps | RTX 2080, Vulkan | 0.13 s | 0.23 s | 0.10 | 2.1 GB |
-| v4.1-Small-MF Q8_0, 4 steps | RTX 2080, Vulkan | 0.13 s | 0.22 s | 0.07 | 1.5 GB |
-| v4.1-Small F16, 16 steps | RTX 2080, Vulkan | 0.49 s | 1.13 s | 0.14 | 2.2 GB |
+| v4.1-Small-MF, 4 steps | Apple M5, Metal | 0.25 s | 0.52 s | 0.17 | 6.1% |
+| v4.1-Small, 16 steps | Apple M5, Metal | 1.24 s | 3.40 s | 0.34 | 3.2% |
+| v4.1-Small-MF, 4 steps | RTX 2080, Vulkan | 0.12 s | 0.20 s | 0.07 | 7.1% |
+| v4.1-Small, 16 steps | RTX 2080, Vulkan | 0.52 s | 1.12 s | 0.13 | 3.2% |
 
-The first audio waits for the whole sentence's sampling, so it grows with the sentence.
+The first audio waits for the whole sentence's sampling, so it grows with the sentence. v4.1-Small's default of 40
+steps takes about 2.4 times as long as 16. The worker takes 2.2 GB of memory with F16 weights, and 1.5 GB with Q8_0,
+which speaks as fast.
