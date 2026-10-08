@@ -31,12 +31,12 @@
       "repository": "sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF",
       "type": "f16",
       "start": [],
-      "revision": "99e5d77f6d92a70d4b9bff52829ac118fa1bf7d3",
+      "revision": "69d307a472a1708c5637edcfe376d31c2685829d",
       "task": "synthesis",
       "languages": ["ja"],
       "voice_files": true,
       "files": [
-        {"type": "f16", "file": "Irodori-TTS-848M-MF-v4.1-F16.gguf", "size": 1885438016, "sha256": "d59b2fca0b0884f80d02562a58b2f6c344871a92e4cf3607971d78affcc11987"}
+        {"type": "f16", "file": "Irodori-TTS-866M-MF-v4.1-F16.gguf", "size": 1920321792, "sha256": "e237dc3eefe469b8bba87872beacf12fb7fe00dbdf85767edca8ec04ab910d13"}
       ]
     },
     {
@@ -44,12 +44,12 @@
       "repository": "sakasegawa/Irodori-TTS-v4.1-Small-GGUF",
       "type": "f16",
       "start": [],
-      "revision": "ec4559786501eda493300f420655caf431bdda27",
+      "revision": "3ebbd5ad88a3847c52f9e158d9dbe35178de5b98",
       "task": "synthesis",
       "languages": ["ja"],
       "voice_files": true,
       "files": [
-        {"type": "f16", "file": "Irodori-TTS-841M-v4.1-F16.gguf", "size": 1871020064, "sha256": "70ab9f5e0de5269b232468af75cc1b97cdb216009abc6ed41329e7728567202a"}
+        {"type": "f16", "file": "Irodori-TTS-859M-v4.1-F16.gguf", "size": 1905903936, "sha256": "f334932bdf166579bada0a3c8bdabb7199af85682fdcefb6f1cb7e444f5c75b3"}
       ]
     },
     {
