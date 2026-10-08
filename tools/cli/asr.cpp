@@ -46,7 +46,8 @@ struct Detection {
     std::vector<RequestOption> options;
 };
 
-std::optional<Detection> detection_of(const CommandLine & line, const speech_model_info * recognizer, std::vector<RequestOption> & options) {
+/** The file of the detection model --vad names, fetched if it is not there yet; none without --vad. */
+std::optional<std::string> detection_file(const CommandLine & line) {
     const std::optional<std::string> argument = line.value("--vad");
     if (!argument) return std::nullopt;
     const std::string path = model_file(*argument);
@@ -55,8 +56,14 @@ std::optional<Detection> detection_of(const CommandLine & line, const speech_mod
         throw UsageError("--vad takes a model of speech detection, such as silero-vad, and " + *argument + " is a speech " + task_name(task) +
                          " model");
     }
+    return path;
+}
+
+std::optional<Detection> detection_of(const CommandLine & line, const std::optional<std::string> & path, const speech_model_info * recognizer,
+                                      std::vector<RequestOption> & options) {
+    if (!path) return std::nullopt;
     Detection d;
-    d.model = load_model(path, detection_loading(line.loading(false)));
+    d.model = load_model(*path, detection_loading(line.loading(false)));
     const ModelInfo info = model_info(d.model.get());
     std::vector<RequestOption> recognition;
     for (const RequestOption & o : options) {
@@ -93,12 +100,15 @@ int run_asr(const CommandLine & line, FILE * out) {
                          " carry their times in the events of --format json");
     }
 
+    // The models named for the first time are fetched here, before the load is timed.
+    const std::string path = model_file(line.args[0]);
+    const std::optional<std::string> detector = detection_file(line);
     const auto t0 = Clock::now();
-    const Model model = load_model(model_file(line.args[0]), line.loading(false));
+    const Model model = load_model(path, line.loading(false));
     const ModelInfo info = model_info(model.get());
     const speech_model_info * m = info.get();
     std::vector<RequestOption> options = line.options;
-    const std::optional<Detection> detection = detection_of(line, m, options);
+    const std::optional<Detection> detection = detection_of(line, detector, m, options);
     std::string by;
     if (detection) {
         const ModelInfo d = model_info(detection->model.get());

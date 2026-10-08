@@ -198,8 +198,10 @@ int run_tts(const CommandLine & line, FILE * out) {
     const bool verbose = line.has("-v");
     const bool from_stdin = line.args.size() == 1;
 
+    // A model named for the first time is fetched here, before the load is timed.
+    const std::string path = model_file(line.args[0]);
     const auto t0 = Clock::now();
-    const Model model = load_model(model_file(line.args[0]), line.loading(false));
+    const Model model = load_model(path, line.loading(false));
     const ModelInfo info = model_info(model.get());
     const speech_model_info * m = info.get();
     std::fprintf(stderr, "load %.2f s: %s on %s\n", seconds_since(t0), speech_model_info_name(m), speech_model_info_device(m));
