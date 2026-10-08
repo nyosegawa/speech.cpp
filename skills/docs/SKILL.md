@@ -21,7 +21,7 @@ choice are in docs/adr/.
 | a subcommand or its flags | docs/cli.md; README's table if the subcommand is new |
 | a request option, a voice, a model's limits | the family's page in docs/models/; docs/models.md for voices and languages |
 | the catalog (a model, a name, a type) | docs/models.md, the family's page and README's model table |
-| `speech serve`, its page or the HTTP API | docs/server.md |
+| `speech serve`, its page or the HTTP API | docs/server.md; README's screenshots when the page looks different, taken with the release skill's script |
 | the worker protocol | docs/worker.md |
 | `speech.h` | docs/c-api.md |
 | the installers, the release archives, building | docs/install.md and README's Install |

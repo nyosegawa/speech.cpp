@@ -222,6 +222,6 @@ holds steps these rules do not repeat.
 - `docs`: a change that alters what a user does or sees, or writing a page of README.md or `docs/`.
 - `pull-request`: starting a change, committing, opening a pull request, its review and CI, merging, cleaning up, and
   taking back a subagent's branch.
-- `release`: model files and cards on Hugging Face, the catalog, the numbers measured again, raising `VERSION` with the
-  README's screenshot, the tag and checking the release.
+- `release`: model files and cards on Hugging Face, the catalog, the numbers measured again, raising `VERSION`, the
+  README's screenshots of the page, the tag and checking the release.
 - `windows-check`: checking a change on a Windows machine with a Vulkan GPU.
