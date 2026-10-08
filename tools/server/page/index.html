@@ -100,19 +100,11 @@
 
     <section class="panel" id="live" role="tabpanel" aria-labelledby="tab-live" hidden>
       <div class="picker-slot" data-task="recognition"></div>
+      <div class="picker-slot" data-task="detection"></div>
       <form id="live-form" novalidate>
-        <p class="muted">Transcribes the microphone while you speak. Text in grey can still change.</p>
+        <p class="muted">Transcribes the microphone while you speak. The detection model finds where each utterance starts and
+          ends; text in grey is an utterance still being said, replaced by its final text when it ends.</p>
         <div class="fields" id="live-options"></div>
-        <details class="more">
-          <summary>More options</summary>
-          <div class="fields">
-            <div class="field">
-              <label for="live-piece">Pieces of at most</label>
-              <input type="number" id="live-piece" min="5" max="60" step="1" value="20" inputmode="numeric" aria-describedby="live-piece-hint">
-              <p class="hint" id="live-piece-hint">seconds; the text of a piece is final once it ends</p>
-            </div>
-          </div>
-        </details>
         <div class="actions">
           <button type="submit" class="primary" id="live-start" disabled>Start</button>
           <span class="recording-dot" id="live-dot" aria-hidden="true" hidden></span>

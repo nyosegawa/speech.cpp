@@ -23,12 +23,6 @@ const MAX_BYTES = 24e6;
 /** The longest audio transcribed whole, without a detection model. */
 const MAX_WHOLE_SECONDS = 60;
 
-/** The value of a number field, within its bounds, or its default when it holds no number. */
-export function bounded(input) {
-  const value = Number(input.value);
-  return Number.isFinite(value) ? Math.min(Number(input.max), Math.max(Number(input.min), value)) : Number(input.defaultValue);
-}
-
 export class TranscribePanel {
   #held = null;
   #detection = null;
