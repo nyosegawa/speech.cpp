@@ -260,6 +260,7 @@ void Assembly::commit_samples(uint64_t number, uint64_t first, uint64_t last) {
     if (asked_) {
         Final f;
         f.number = number;
+        if (current_ && current_->number == number) f.sent = current_->sent;
         f.asked = *asked_;
         // The recognition takes its place as the utterance is committed, so that it runs before what comes later.
         try {
@@ -350,6 +351,16 @@ void Assembly::work() {
             final_.reset();
             committed_ -= f.length;
             busy_ = false;
+            // The deltas join into the final text wherever it goes on from what they gave, so that a client that builds
+            // the text from them, as OpenAI's guide does, gets it whole; one that differs keeps them as they were.
+            if (e.kind == Event::Kind::Completed && e.transcript.text.size() > f.sent.size() &&
+                e.transcript.text.compare(0, f.sent.size(), f.sent) == 0) {
+                Event rest;
+                rest.kind = Event::Kind::Delta;
+                rest.utterance = f.number;
+                rest.delta = e.transcript.text.substr(f.sent.size());
+                send(rest);
+            }
             if (e.kind == Event::Kind::Completed || e.kind == Event::Kind::Failed) send(e);
             changed_.notify_all();
             continue;

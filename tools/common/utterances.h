@@ -189,6 +189,8 @@ private:
     /** A committed utterance that waits for its recognition, with its place or what refused it one. */
     struct Final {
         uint64_t number = 0;
+        /** What its deltas gave while it was said, which the rest of its final text follows as one more delta. */
+        std::string sent;
         std::vector<float> samples;
         /** The samples' count, which counts toward held() until the recognition has ended. */
         size_t length = 0;
