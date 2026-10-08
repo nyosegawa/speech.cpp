@@ -83,8 +83,11 @@ into its training.
 
 `speech info` shows each option's range. A request whose options contradict each other, or set one that another leaves
 without effect, is refused before any work, naming the option: `seconds` with `duration_scale`, for example, or the
-guidance's settings with both scales at 0. A text of more than 256 tokens is refused, so a request should be one
-sentence.
+guidance's settings with both scales at 0.
+
+A request speaks at most 30 s. A text whose speech the model predicts to last longer is refused with `out_of_range`
+(`text`), with the predicted length in the message, and so is a text of more than 256 tokens. A few sentences can pass
+30 s, so a request should be one sentence. A `speed` above 1 that brings the length within 30 s is followed.
 
 ## Instructions
 

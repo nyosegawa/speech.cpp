@@ -95,14 +95,26 @@ Length DurationPredictor::length(const LengthOptions & o, float predicted_sum) c
         return {(int) ((samples + hop_ - 1) / hop_), samples};
     }
     const float predicted = std::expm1(std::log1p(std::max(predicted_sum, 0.0f)));
-    if (o.duration_scale == 1 && o.speed == 1) {
-        // The bounds are whole frames, so bounding before the rounding gives the frames of the runtime's bounding after it.
-        const int frames = (int) std::nearbyint(std::max((double) min_frames_, std::min((double) max_frames_, (double) predicted)));
-        return {frames, (int64_t) frames * hop_};
-    }
+    const double seconds_per_frame = (double) hop_ / sample_rate_;
+    const bool own_rate = o.duration_scale == 1 && o.speed == 1;
     const double frames = std::nearbyint((double) predicted * (o.duration_scale / o.speed));
+    // The runtime bounds a longer prediction to the longest length, and the speech squeezed into it loses words: in the
+    // voice none, eight short sentences predicted at 30.7 s lost two of them in 30 s, and three times that text,
+    // predicted at 47 s, gave no word a recognizer found (v4.1-Small, 2026-10-08). A speed or a scale that brings the
+    // length within it is the caller's own choice, which loses nothing.
+    if (frames > max_frames_ && std::nearbyint(predicted) > max_frames_) {
+        throw Error(Fault::OutOfRange, "the text's speech is predicted to last " + number(predicted * seconds_per_frame) + " s" +
+                                           (own_rate ? "" : ", " + number(frames * seconds_per_frame) + " s at the speed and duration scale given") +
+                                           ", and Irodori-TTS speaks at most " + number(max_seconds_) +
+                                           " s in a request; split the text into shorter ones, such as its sentences",
+                    "text");
+    }
+    if (own_rate) {
+        // A shorter prediction is raised to the shortest length, as the runtime raises it, which adds silence.
+        const int bounded = (int) std::max((double) min_frames_, frames);
+        return {bounded, (int64_t) bounded * hop_};
+    }
     if (!(frames >= min_frames_ && frames <= max_frames_)) {
-        const double seconds_per_frame = (double) hop_ / sample_rate_;
         throw Error(Fault::OutOfRange, "the predicted length of " + number(predicted * seconds_per_frame) + " s, times the duration scale and over " +
                                            "the speed, is " + number(frames * seconds_per_frame) + " s, outside the " + number(min_seconds_) +
                                            " to " + number(max_seconds_) + " s that Irodori-TTS speaks; ask for a length within them",

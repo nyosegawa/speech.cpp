@@ -1,7 +1,7 @@
 /*
- * The checks of speech-api-check that Irodori-TTS alone takes: the length's rules, the steps and the progress, the
- * options of the official runtime's request, the voice none, instructions, and voice files of several references, of
- * another loudness and of an embedding.
+ * The checks of speech-api-check that Irodori-TTS alone takes: the length's rules and the longest speech, the steps and
+ * the progress, the options of the official runtime's request, the voice none, instructions, and voice files of several
+ * references, of another loudness and of an embedding.
  */
 
 #include <math.h>
@@ -417,7 +417,60 @@ int check_voice_params(const char * model_path, const char * reference, const ch
     return ok ? 0 : 1;
 }
 
+/**
+ * Irodori-TTS's longest speech, in the voice none, whose lengths of these texts are known: a text whose predicted
+ * length passes the longest is refused naming the text before any progress or audio, where the runtime squeezes it
+ * into the longest; a speed that brings it within is followed; and a shorter text is spoken at its predicted length.
+ */
+static int check_irodori_longest(speech_model * model, const speech_model_info * info) {
+    int has_none = 0;
+    for (size_t i = 0; i < speech_model_info_voice_count(info); i++) has_none |= !strcmp(speech_model_info_voice_name(info, i), "none");
+    if (!has_none) {
+        printf("the longest speech is checked in the voice none, which this file does not have\n");
+        return 0;
+    }
+    // In the voice none both v4.1 models predict 28.8 s for the first six sentences and 30.7 s for all eight
+    // (2026-10-08). Bounded to 30 s, the eight lost two whole sentences; spoken one at a time, they take 38.3 s.
+    static const char * const sentences[] = {
+        "今日は朝から雨が降っていました。",
+        "駅までの道は水たまりだらけで、靴がすっかり濡れてしまいました。",
+        "電車はいつもより混んでいて、窓の外はずっと灰色でした。",
+        "会社に着くと、同僚が温かいお茶を入れてくれました。",
+        "午後には雨が上がり、雲の間から青い空が見えてきました。",
+        "帰り道、公園の木々が夕日に照らされて輝いていました。",
+        "小さな子どもたちが水たまりで楽しそうに遊んでいました。",
+        "家に帰ってから、久しぶりにゆっくりと本を読みました。",
+    };
+    char six[1024] = "", eight[1024] = "";
+    for (int i = 0; i < 8; i++) {
+        if (i < 6) strcat(six, sentences[i]);
+        strcat(eight, sentences[i]);
+    }
+    const int rate = speech_model_info_sample_rate(info);
+    const size_t longest = (size_t) 30 * rate;
+    Audio audio = {NULL, 0, 0};
+    Progress progress;
+    memset(&progress, 0, sizeof progress);
+    speech_request * r = new_request(model, eight, "none", 1);
+    speech_request_set_progress(r, record_progress, &progress);
+    int ok = expect(speak(r, &audio, NULL, NULL), SPEECH_ERROR_OUT_OF_RANGE, "text", "eight sentences predicted past 30 s") && audio.n == 0 &&
+             progress.n == 0;
+    audio.n = 0;
+    r = new_request(model, eight, "none", 1);
+    speech_request_set_float(r, SPEECH_OPT_SPEED, 1.5);
+    ok &= expect(speak(r, &audio, NULL, NULL), SPEECH_OK, NULL, "the same at a speed of 1.5") && audio.n > 0 && audio.n <= longest;
+    printf("eight sentences at a speed of 1.5: %.2f s\n", (double) audio.n / rate);
+    audio.n = 0;
+    speech_stop stop = SPEECH_STOP_CANCELLED;
+    ok &= expect(speak(new_request(model, six, "none", 1), &audio, &stop, NULL), SPEECH_OK, NULL, "six sentences predicted within 30 s") &&
+          stop == SPEECH_STOP_COMPLETE && audio.n > 25 * (size_t) rate && audio.n <= longest;
+    printf("six sentences: %.2f s\n", (double) audio.n / rate);
+    free(audio.samples);
+    if (!ok) fprintf(stderr, "FAIL: a text past Irodori-TTS's longest speech is not refused, or one within it is not spoken whole\n");
+    return ok ? 0 : 1;
+}
+
 int check_irodori(speech_model * model, const speech_model_info * info, const char * voice) {
     return check_irodori_tts(model, info, voice) || check_irodori_options(model, info, voice) || check_irodori_without_reference(model, info) ||
-           check_irodori_instructions(model, info, voice);
+           check_irodori_longest(model, info) || check_irodori_instructions(model, info, voice);
 }
