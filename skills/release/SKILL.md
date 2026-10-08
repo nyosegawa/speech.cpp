@@ -1,12 +1,13 @@
 ---
 name: release
-description: Release a new version of speech.cpp. Covers the model files on Hugging Face and their cards, the catalog compiled into speech, the pull request that raises VERSION, the tag that builds and publishes the archives, and checking what was published. Use when asked to release, publish, cut or tag a version, bump VERSION, or upload converted model files for a release (リリース、バージョンを上げる、タグ、公開、HF に上げる). Not for an ordinary pull request (pull-request) or for porting a model (add-model).
+description: Release a new version of speech.cpp. Covers the model files on Hugging Face and their cards, the catalog compiled into speech, re-measuring the numbers the docs give, the pull request that raises VERSION with the README's screenshot, the tag that builds and publishes the archives, and checking what was published. Use when asked to release, publish, cut or tag a version, bump VERSION, upload converted model files, or write a model card (リリース、バージョンを上げる、タグ、公開、HF に上げる、モデルカード). Not for an ordinary pull request (pull-request) or for porting a model (add-model).
 ---
 
 # Releasing speech.cpp
 
 A release is the archives CI builds from a tag, and the model files the catalog in those archives names. The catalog
-is compiled into `speech`, so the files on Hugging Face are settled before the version is raised.
+is compiled into `speech`, so the files on Hugging Face are settled before the version is raised. Releases and tags are
+never deleted or moved: callers such as ASIST pin the archives by SHA-256.
 
 ## 1. Before the release
 
@@ -19,50 +20,76 @@ is compiled into `speech`, so the files on Hugging Face are settled before the v
 A file changes when its family's layout changes, a type is added, or a checkpoint is converted again.
 
 1. Make the files: `reference/<family>/convert.py` writes F32 and `speech quantize F32.gguf OUT --type <type>` the
-   other types; `tools/quantize_compare.py` shows that an unchanged file comes out byte for byte.
-   Check each with the family's stage checks and `speech-api-check`. Before a type is published for the first time,
+   other types; `tools/quantize_compare.py` shows that an unchanged file comes out byte for byte. Check each with the
+   family's stage checks and `speech-api-check`. Before a type is published for the first time,
    `tools/quantize_releases.py` with the previous release's `speech` shows that each file's `speech.requires` names a
    release that reads it.
 2. Write each file's information beside it: `speech info --json <file> > <file>.json`.
-3. **With the maintainer's approval**, upload to the model's repository, replacing the file of the same name or
-   adding the new one: `hf upload sakasegawa/<Upstream>-GGUF <file>` and `<file>.json`. Old files stay in the history.
-4. Update the card: the files, their SHA-256 and size, what reads them (`speech.requires`), and anything the change
-   alters in usage. Lower-bit files go up only with their measured accuracy in the card.
+3. Write the card, as references/model-card.md says.
+4. **Only with the maintainer's approval**, upload the file, its JSON and the card to the model's repository in one
+   commit, deleting a file the new one replaces under another name (a layout that changes the size label changes the
+   name): `hf upload sakasegawa/<Upstream>-GGUF <folder> . --delete "<old file>*"`. The old files stay in the
+   repository's history, at the revisions earlier catalogs pin. Check that the repository lists each file with the
+   SHA-256 you made.
+
+The repositories: one for each upstream repository, named after it with `-GGUF`
+(`sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF` for `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice`), holding one file per
+model and type, the codec inside it, under the name its converter gives it, the licenses of what it holds, and the
+`.json` beside each file. Lower-bit files
+go up only with their measured accuracy in the card, and never as the type a name fetches.
 
 ## 3. The catalog
 
 `python3 tools/models/update_catalog.py` pins every model at its repository's current revision. Review the diff: each
 changed revision must be one you uploaded on purpose. Build, and check that `speech pull` fetches each changed file and
-the model loads.
+the model loads. The catalog's update is a pull request of its own, or part of the version's.
 
-## 4. The version
+## 4. The numbers
+
+The headline numbers of README.md and the family pages are measured again for the release, with speech-bench against
+the build that will be released: `SPEECH_BENCH_SPEECH_CPP=<build dir>` for a local build, `ci:<run id>` for a CI run's
+archive (the Windows machine takes this one). Measure every runtime of a comparison on the same day, with nothing else
+running, and write each number with its model, type and device. A number that moved goes into the pages in the version's
+pull request or before it.
+
+## 5. The version
 
 - The release's number is written in `VERSION` and nowhere else in the code: CMake reads it, and `speech --version`,
   `speech_version()` and the worker's `ready` report it.
 - Versions follow Semantic Versioning. While they are 0.x, a change a caller must adapt to (the worker protocol, the C
   API, the GGUF layout, a voice file's form, the command line's arguments) raises the minor version, and any other
   release raises the patch.
-- A pull request of its own raises `VERSION` just before the tag and carries the catalog's update, with every doc that
-  names the version. Merge it when CI passes (pull-request skill).
-- Releases and tags are never deleted or moved: callers such as ASIST pin the archives by SHA-256.
+- A pull request of its own raises `VERSION` just before the tag, with every doc that names the version and the README's
+  screenshot of the page taken again with the new build:
 
-## 5. Tag and publish
+  ```sh
+  node skills/release/scripts/page-screenshot.mjs build/speech docs/images/page.png qwen3-tts-0.6b qwen3-asr-0.6b \
+      "Hello. It will be sunny in Tokyo tomorrow, with a high of twenty-four degrees." ryan
+  ```
+
+  It starts `speech serve` with the two models and a headless Chrome in English, speaks the text, hands the speech to
+  Transcribe, transcribes it, and saves the page at twice its CSS pixels. Look at the image before committing it.
+- Merge it when CI passes (pull-request skill).
+
+## 6. Tag and publish
 
 ```sh
 git fetch origin && git tag v<version> origin/main && git push origin v<version>
 ```
 
 The tag runs CI's build on every platform and the release job, which checks the tag against `VERSION`, sums the
-archives into `SHA256SUMS` and publishes the GitHub release with them. Watch it with `gh run watch`.
+archives into `SHA256SUMS` and publishes the GitHub release with them. Watch it with `gh run watch`. The archives,
+`speech-<VERSION>-<platform>.zip`, are the ones CI builds and checks on every run; a change to what they hold changes
+the packaging steps of `.github/workflows/build.yml` and docs/install.md's Release archives together.
 
-## 6. Check what was published
+## 7. Check what was published
 
 - `gh release view v<version>` lists the four archives and `SHA256SUMS`.
 - The installer installs it: `curl -fsSL …/install.sh | sh` in a temporary `HOME` on macOS, and `install.ps1` on
   Windows with `LOCALAPPDATA` pointed at a temporary folder and `-NoModifyPath`; `speech --version` names the release.
 - `speech pull <name>` and one synthesis and one recognition by name work from the installed `speech`.
 
-## 7. After it
+## 8. After it
 
 Programs that pin speech.cpp take the release in their own repositories: speech-bench's runtime pin, and ASIST's
 accepted series and the model pins it reads from `speech models --json`. Note them for their maintainers; do not change

@@ -178,29 +178,15 @@ comment.
 - Commit messages and pull request titles are one English sentence in the imperative, without a prefix
   such as `feat:`; the body says what changed, why, and how it was checked.
 - The user merges pull requests, with a squash, once CI passes. An agent merges only when told to.
-- The release's number is written in `VERSION` and nowhere else; CMake reads it, and `speech_version()` and
-  the worker's `ready` report it. Versions follow Semantic Versioning: while they are 0.x, a change a caller
-  notices and must adapt to (the worker protocol, the C API, the GGUF layout, a voice file's form, the command
-  line's arguments) raises the minor version, and anything else that is released raises the patch. The worker's
-  protocol has a version of its own, in `ready`, raised when a caller must change to keep working.
-- `VERSION` is raised by a pull request of its own just before a release ("Raise the version to 0.5.0"), to
-  the number the changes since the last tag call for; a change does not raise it by itself.
-- The tag `v<VERSION>` builds the release in CI, which refuses a tag that differs from `VERSION`. Releases and
-  tags are never deleted or moved: callers such as ASIST pin them by SHA-256.
-- Converted GGUF files go to Hugging Face only with the user's approval, one repository for each upstream
-  repository, named after it with `-GGUF` (sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF for
-  Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice). A repository holds one file per model and type, the codec inside it, under
-  the name its converter gives it (Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf), and the licenses of what it holds;
-  its card says that only speech.cpp reads it. Beside each GGUF file goes the output of `speech info --json` for it,
-  under the file's name with `.json` added. A changed file goes up under the same name, with its JSON made again, and
-  its card's SHA-256 changes with it.
-- The tag's archives, `speech-<VERSION>-<platform>.zip`, are the ones CI builds and checks on every run; a change to
-  what they hold changes the packaging steps of `.github/workflows/build.yml` and `docs/install.md`'s Release archives
-  together.
+- A defect or a small fix found during other work is fixed in the next pull request that touches its place, or in a
+  small one of its own; it is not left for later.
+- The worker's protocol has a version of its own, in `ready`, raised when a caller must change to keep working.
+- Releasing, the version, the tags, the archives and the files on Hugging Face follow the `release` skill. Converted
+  files go to Hugging Face only with the user's approval, and releases and tags are never deleted or moved: callers
+  such as ASIST pin them by SHA-256.
 - When a change alters what a user does or sees (the C API, the command line's arguments, the worker protocol, the
-  HTTP server, the GGUF layout, the models), the same pull request updates the pages that describe it: README.md where
-  it shows the change, and the page of `docs/` that covers it. No test checks the documentation against the code; the
-  pull request keeps it current.
+  HTTP server, the GGUF layout, the models), the same pull request updates the pages that describe it (`docs` skill).
+  No test checks the documentation against the code.
 
 ## Skills
 
@@ -213,5 +199,6 @@ holds steps these rules do not repeat.
 - `docs`: a change that alters what a user does or sees, or writing a page of README.md or `docs/`.
 - `pull-request`: starting a change, committing, opening a pull request, its review and CI, merging, cleaning up, and
   taking back a subagent's branch.
-- `release`: model files and cards on Hugging Face, the catalog, raising `VERSION`, the tag and checking the release.
+- `release`: model files and cards on Hugging Face, the catalog, the numbers measured again, raising `VERSION` with the
+  README's screenshot, the tag and checking the release.
 - `windows-check`: checking a change on a Windows machine with a Vulkan GPU.
