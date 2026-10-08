@@ -22,8 +22,9 @@ them (as JSON, with times where the model takes timestamps), an empty text for a
 model of another task for --vad and of a detection option the model does not take. For a detection model: `speech vad`
 on 32-bit float WAVE files of the dumps of reference/silero-vad/dump.py against the regions in each dump's
 regions.json, the official's, with the flags of each set of options, as text and as JSON; with --split a WAVE file of
-each region holding its samples as 16-bit PCM, named so that they sort in order, and the refusal of two files of one
-name.
+each region holding its samples as 16-bit PCM, named so that they sort in order, and the refusals of two files of one
+name and of a file named as another's region in the folder, left as it was; and `speech asr` of the detection model with
+--vad, refused on a file without speech.
 
 usage: python3 tools/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav]
                                          [--embedding E.speaker.safetensors] [--vad DETECTION.gguf] [-- load options...]
@@ -312,9 +313,12 @@ if info["task"] == "detection":
     flags = [x for k, v in sets[0][next(iter(sets[0]))]["options"].items() for x in (f"--{k.replace('_', '-')}", str(v))]
     got = [json.loads(line) for line in run("vad", model, "--format", "json", "--split", split, *flags, *options, *files).stdout.decode().splitlines()]
     names = sorted(os.listdir(split))
-    want_names = [f"{os.path.splitext(os.path.basename(g['file']))[0]}-{str(k + 1).zfill(len(str(len(g['regions']))))}.wav"
-                  for g in got for k in range(len(g["regions"]))]
-    assert names == sorted(want_names) and [n for n in names] == want_names, (names[:5], want_names[:5])
+    # Each file's regions sort in their order; the files' own names sort as they will.
+    for g in got:
+        stem = os.path.splitext(os.path.basename(g["file"]))[0]
+        want_names = [f"{stem}-{str(k + 1).zfill(len(str(len(g['regions']))))}.wav" for k in range(len(g["regions"]))]
+        assert sorted(want_names) == want_names and all(n in names for n in want_names), (stem, want_names[:3])
+    assert len(names) == sum(len(g["regions"]) for g in got), names[:5]
     for g, d in zip(got, dumps):
         samples = read_npy(os.path.join(d, "audio.npy"))
         stem = os.path.splitext(os.path.basename(g["file"]))[0]
@@ -333,7 +337,29 @@ if info["task"] == "detection":
     shutil.copy(files[0], os.path.join(twin, os.path.basename(files[0])))
     run("vad", model, "--split", split, *options, files[0], os.path.join(twin, os.path.basename(files[0])), code=2)
     shutil.rmtree(twin)
-    print("vad --split with two files of one name: exit 2")
+    # A file named as another's region, in the folder of --split, is refused before it is written over.
+    g = next(g for g in got if g["regions"])
+    alias = os.path.join(work, "speech-cli-smoke-alias")
+    os.makedirs(alias, exist_ok=True)
+    first = os.path.join(alias, "a.wav")
+    second = os.path.join(alias, f"a-{'1'.zfill(len(str(len(g['regions']))))}.wav")
+    shutil.copy(g["file"], first)
+    shutil.copy(g["file"], second)
+    with open(second, "rb") as f:
+        kept = f.read()
+    run("vad", model, "--split", alias, *flags, *options, first, second, code=2)
+    with open(second, "rb") as f:
+        assert f.read() == kept, "vad --split wrote over a file it was given"
+    shutil.rmtree(alias)
+    print("vad --split with two files of one name, and with a file named as another's region in its folder: exit 2")
+    silence = os.path.join(work, "speech-cli-smoke-silence.wav")
+    with open(silence, "wb") as f:
+        data = bytes(4 * rate)
+        f.write(b"RIFF" + struct.pack("<I", 36 + len(data)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 3, 1, rate, rate * 4, 4, 32)
+                + b"data" + struct.pack("<I", len(data)) + data)
+    failure(run("asr", model, "--vad", model, *options, silence, code=1), "unsupported", None)
+    os.remove(silence)
+    print("asr of a detection model with --vad, on a file without speech: exit 1, unsupported")
     failure(run("vad", model, "--threshold", "2", *options, files[0], code=1), "out_of_range", "threshold")
     failure(run("vad", model, "--language", "ja", *options, files[0], code=1), "unsupported", "language")
     failure(run("vad", model, *options, os.path.join(work, "no-such.wav"), code=1), "io", "audio")

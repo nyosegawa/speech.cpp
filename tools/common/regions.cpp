@@ -53,6 +53,13 @@ std::optional<std::vector<Region>> detect_regions(speech_request * detection, Ca
 std::optional<Transcript> transcribe_regions(speech_model * recognizer, const std::vector<float> & samples, int rate,
                                              const std::vector<Region> & regions, const std::vector<RequestOption> & options,
                                              bool timestamps, Cancellation & cancellation) {
+    const ModelInfo info = model_info(recognizer);
+    const speech_task task = speech_model_info_task(info.get());
+    if (task != SPEECH_TASK_RECOGNITION) {
+        throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "",
+                      std::string(speech_model_info_name(info.get())) + " is a model of speech " + task_name(task) +
+                          "; transcription by regions recognizes them with a speech recognition model");
+    }
     apply_options(new_request(recognizer).get(), options);
     Transcript whole;
     for (const Region & region : regions) {

@@ -112,8 +112,19 @@ int run_vad(const CommandLine & line, FILE * out) {
         if (split) {
             const std::string stem = fs::u8path(path).stem().u8string();
             for (size_t k = 0; k < n; k++) {
+                const fs::path to = fs::u8path(*split) / fs::u8path(region_name(stem, k + 1, n));
+                // A region's name can be another file's given here, as foo.wav's first region is foo-1.wav, and writing
+                // it would replace that file, read already or not; equivalent() also sees the same file under another
+                // case or through a link.
+                for (size_t j = 1; j < line.args.size(); j++) {
+                    std::error_code same;
+                    if (fs::equivalent(to, fs::u8path(line.args[j]), same)) {
+                        throw UsageError("--split would write " + to.u8string() + " over " + line.args[j] +
+                                         ", a file given; give --split a folder that holds none of them");
+                    }
+                }
                 const auto [first, last] = region_samples(regions[k], rate, samples.size());
-                write_region(fs::u8path(*split) / fs::u8path(region_name(stem, k + 1, n)), samples.data() + first, last - first, rate);
+                write_region(to, samples.data() + first, last - first, rate);
             }
         }
         std::string json = "{\"file\":" + json_string(path) + ",\"regions\":[";

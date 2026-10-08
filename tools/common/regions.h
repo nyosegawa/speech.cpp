@@ -39,9 +39,9 @@ std::optional<std::vector<Region>> detect_regions(speech_request * detection, Ca
 
 /**
  * Recognizes each region of `samples` alone on `recognizer` with `options`, and joins the results with append_part(),
- * the times of the segments and tokens (with `timestamps`) moved to those of the whole audio. The options are checked
- * against the model before any region, so audio without regions gives "" and still refuses an option the model does not
- * take. It returns nothing once cancelled.
+ * the times of the segments and tokens (with `timestamps`) moved to those of the whole audio. The model's task and the
+ * options are checked before any region, so audio without regions gives "" and still refuses a model that does not
+ * recognize speech or an option it does not take. It returns nothing once cancelled.
  */
 std::optional<Transcript> transcribe_regions(speech_model * recognizer, const std::vector<float> & samples, int rate,
                                              const std::vector<Region> & regions, const std::vector<RequestOption> & options,
