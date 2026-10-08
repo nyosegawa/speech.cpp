@@ -59,27 +59,30 @@ Detector::~Detector() {
     ggml_gallocr_free(allocr_);
 }
 
-std::vector<float> Detector::inputs(const std::vector<float> & samples) const {
-    const int64_t chunk = network_.chunk(), context = network_.context(), width = context + chunk;
-    const int64_t n = ((int64_t) samples.size() + chunk - 1) / chunk;
+int64_t Detector::chunks(const std::vector<float> & samples) const {
+    return ((int64_t) samples.size() + network_.chunk() - 1) / network_.chunk();
+}
+
+std::vector<float> Detector::inputs(const std::vector<float> & samples, int64_t first, int64_t count) const {
+    const int64_t chunk = network_.chunk(), context = network_.context(), width = context + chunk, n = (int64_t) samples.size();
     // The audio after `context` zeros, and zeros after it to the end of the last chunk, as get_speech_timestamps() pads
     // the last chunk and the model starts its context.
-    std::vector<float> padded((size_t) (context + n * chunk), 0.0f);
-    std::copy(samples.begin(), samples.end(), padded.begin() + context);
-    std::vector<float> out((size_t) (n * width));
-    for (int64_t k = 0; k < n; k++) std::copy_n(padded.begin() + k * chunk, width, out.begin() + k * width);
+    std::vector<float> out((size_t) (count * width), 0.0f);
+    for (int64_t k = 0; k < count; k++) {
+        const int64_t start = (first + k) * chunk - context;
+        for (int64_t i = std::max<int64_t>(0, -start); i < width && start + i < n; i++) out[(size_t) (k * width + i)] = samples[(size_t) (start + i)];
+    }
     return out;
 }
 
 std::vector<float> Detector::probabilities(const std::vector<float> & samples, const std::function<bool(double done)> & progress) {
-    const std::vector<float> all = inputs(samples);
-    const int64_t width = network_.context() + network_.chunk(), n = (int64_t) all.size() / width;
+    const int64_t n = chunks(samples);
     std::vector<float> probs, h((size_t) network_.hidden(), 0.0f), c((size_t) network_.hidden(), 0.0f), block;
     probs.reserve((size_t) n);
     for (int64_t first = 0; first < n; first += kBlock) {
         const int64_t count = std::min(kBlock, n - first);
         Graph g;
-        const Block b = build(g, network_, std::vector<float>(all.begin() + first * width, all.begin() + (first + count) * width), count, h, c);
+        const Block b = build(g, network_, inputs(samples, first, count), count, h, c);
         g.compute(backend_, allocr_);
         Graph::read(b.probs, block);
         probs.insert(probs.end(), block.begin(), block.end());

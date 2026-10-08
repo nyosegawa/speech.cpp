@@ -22,6 +22,7 @@
 #include "npy.h"
 #include "reference-dumps.h"
 #include "silero-vad/detector.h"
+#include "silero-vad/regions.h"
 
 using namespace silero_vad;
 
@@ -106,7 +107,7 @@ int main(int argc, char ** argv) {
                 const Npy audio = load(d, "audio"), input = load(d, "input"), probs = load(d, "probs");
                 const int64_t n = probs.shape[0];
                 std::printf("%s (%.2f s, %lld chunks)\n", d.filename().u8string().c_str(), (double) audio.f32.size() / detector.sample_rate(), (long long) n);
-                const std::vector<float> inputs = detector.inputs(audio.f32);
+                const std::vector<float> inputs = detector.inputs(audio.f32, 0, detector.chunks(audio.f32));
                 const bool same_inputs = inputs == input.f32;
                 std::printf("  %-32s %s\n", "inputs", same_inputs ? "equal" : "DIFFER");
                 ok = ok && same_inputs;

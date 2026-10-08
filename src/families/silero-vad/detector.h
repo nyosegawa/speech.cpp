@@ -6,13 +6,12 @@
 
 #include "model-file.h"
 #include "network.h"
-#include "regions.h"
 
 namespace silero_vad {
 
 /**
- * A Silero VAD model on one backend, from audio to the speech probability of each chunk and to the regions where
- * someone speaks, as silero-vad's get_speech_timestamps() runs it: the audio cut into chunks, the last padded with zeros,
+ * A Silero VAD model on one backend, from audio to the speech probability of each chunk, which speech_regions() turns
+ * into regions, as silero-vad's get_speech_timestamps() runs it: the audio cut into chunks, the last padded with zeros,
  * each given the samples before it as context, zeros before the first, and the LSTM cell's state from zeros.
  */
 class Detector {
@@ -23,23 +22,21 @@ public:
     Detector(const Detector &) = delete;
     Detector & operator=(const Detector &) = delete;
 
-    /**
-     * Each chunk's input: the context before it and the chunk, [context + chunk, n] in ggml order, for the mono samples
-     * at sample_rate(), of at least one sample.
-     */
-    std::vector<float> inputs(const std::vector<float> & samples) const;
+    /** The chunks the mono samples at sample_rate() make, the last padded with zeros. */
+    int64_t chunks(const std::vector<float> & samples) const;
 
     /**
-     * The speech probability of each chunk of the samples, the chunks computed in blocks of kBlock, after each of which
-     * `progress` is told the share done; it returns early, with the probabilities computed so far, once `progress`
-     * returns false.
+     * The input of `count` chunks from chunk `first` on: the context before each and the chunk, [context + chunk, count]
+     * in ggml order, zeros before the samples and after them.
+     */
+    std::vector<float> inputs(const std::vector<float> & samples, int64_t first, int64_t count) const;
+
+    /**
+     * The speech probability of each chunk of the samples, the chunks computed in blocks of kBlock, each cut from the
+     * samples as it is computed, after each of which `progress` is told the share done; it returns early, with the
+     * probabilities computed so far, once `progress` returns false.
      */
     std::vector<float> probabilities(const std::vector<float> & samples, const std::function<bool(double done)> & progress = {});
-
-    /** The regions of the samples by `rule`, in samples. */
-    std::vector<Region> regions(const std::vector<float> & samples, const RegionRule & rule) {
-        return speech_regions(probabilities(samples), (int64_t) samples.size(), sample_rate_, network_.chunk(), rule);
-    }
 
     int sample_rate() const { return sample_rate_; }
     const ModelFile & model() const { return model_; }

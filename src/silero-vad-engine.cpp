@@ -3,6 +3,7 @@
 
 #include "engine.h"
 #include "silero-vad/detector.h"
+#include "silero-vad/regions.h"
 
 namespace {
 
