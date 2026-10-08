@@ -37,8 +37,9 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   `asr`, `vad`, `voice`, `info`, `devices` and `quantize` in `tools/cli/` (with `main.cpp`, which dispatches them), `worker` in
   `tools/worker/` and `serve` in `tools/server/`, and what they share in `tools/common/`: the one parser of every
   command line, which makes a flag of each option of the C API's vocabulary, the JSON reader, and the request options
-  read from text or JSON and set through the library's setters, and transcription by regions, which `asr --vad` and
-  `serve` share. Every subcommand reaches the models only through the
+  read from text or JSON and set through the library's setters, transcription by regions, which `asr --vad` and
+  `serve` share, and the synthesis of a text a sentence at a time for a model whose request speaks a short time, which
+  `tts` and `serve` share (`sentences.cpp`). Every subcommand reaches the models only through the
   C API. `tools/models/` names models: the catalog of the release (`catalog.json`, which `update_catalog.py` writes
   from Hugging Face and the build compiles in), the cache folder, and the fetching of a named model with the system's
   curl, which `models`, `pull` and `rm` and every subcommand that takes a model share; the library never reaches the
@@ -57,6 +58,7 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   OpenAI's audio API (`POST /v1/audio/speech`, `POST /v1/audio/transcriptions`, `GET /v1/models`, `GET /health`)
   and OpenAI's Realtime transcription over a WebSocket at `/v1/realtime`, for programs that speak HTTP. Like the worker
   it reaches the models only through the C API; `openai-api.cpp` reads OpenAI's requests and writes its stream events,
+  `audio-speech.cpp` serves `/v1/audio/speech` as it streams,
   `tools/common/openai-error.cpp` OpenAI's error object, mapped from the library's categories alone,
   `tools/common/realtime-session.cpp` a Realtime session, whose messages `realtime.cpp` carries over the WebSocket,
   `jobs.h` runs one request at a time in arrival order and cancels the request of a client that goes away, and
