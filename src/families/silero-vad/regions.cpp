@@ -26,92 +26,128 @@ RegionRule default_rule(const ModelFile & m) {
     return r;
 }
 
-std::vector<Region> speech_regions(const std::vector<float> & probs, int64_t samples, int sample_rate, int chunk, const RegionRule & rule) {
-    // Python's int * int / 1000 divides the exact product; the double product is exact up to 2^53, past which a duration
-    // is longer than any audio either way.
-    const double rate = sample_rate;
-    const double min_speech = rate * (double) rule.min_speech_duration_ms / 1000;
-    const double pad = rate * (double) rule.speech_pad_ms / 1000;
-    const double max_speech = rate * rule.max_speech_duration_s - chunk - 2 * pad;
-    const double min_silence = rate * (double) rule.min_silence_duration_ms / 1000;
-    const double min_silence_at_max_speech = rate * (double) rule.min_silence_at_max_speech_ms / 1000;
-    const double neg_threshold = std::max(rule.threshold - rule.neg_threshold_offset, rule.neg_threshold_floor);
+// Python's int * int / 1000 divides the exact product; the double product is exact up to 2^53, past which a duration is
+// longer than any audio either way.
+RegionStream::RegionStream(const RegionRule & rule, int sample_rate, int chunk)
+    : threshold_(rule.threshold),
+      neg_threshold_(std::max(rule.threshold - rule.neg_threshold_offset, rule.neg_threshold_floor)),
+      min_speech_((double) sample_rate * (double) rule.min_speech_duration_ms / 1000),
+      pad_((double) sample_rate * (double) rule.speech_pad_ms / 1000),
+      max_speech_((double) sample_rate * rule.max_speech_duration_s - chunk - 2 * pad_),
+      min_silence_((double) sample_rate * (double) rule.min_silence_duration_ms / 1000),
+      min_silence_at_max_speech_((double) sample_rate * (double) rule.min_silence_at_max_speech_ms / 1000),
+      chunk_(chunk) {}
 
-    std::vector<Region> speeches;
-    bool triggered = false;
-    // The start of the region under way while triggered, and where its probability first fell below neg_threshold, 0
-    // while it has not, as the official's temp_end.
-    int64_t start = 0, temp_end = 0;
-    // Each silence within the region under way that lasted longer than min_silence_at_max_speech: where it began and
-    // its length.
-    std::vector<std::pair<int64_t, int64_t>> possible_ends;
-    for (size_t i = 0; i < probs.size(); i++) {
-        const double p = probs[i];
-        const int64_t cur = (int64_t) chunk * (int64_t) i;
-        if (p >= rule.threshold && temp_end != 0) {
-            const int64_t silence = cur - temp_end;
-            if ((double) silence > min_silence_at_max_speech) possible_ends.push_back({temp_end, silence});
-            temp_end = 0;
-        }
-        if (p >= rule.threshold && !triggered) {
-            triggered = true;
-            start = cur;
-            continue;
-        }
-        if (triggered && (double) (cur - start) > max_speech) {
-            if (!possible_ends.empty()) {
-                // Python's max() gives the first of equal silences.
-                std::pair<int64_t, int64_t> longest = possible_ends.front();
-                for (const auto & e : possible_ends) {
-                    if (e.second > longest.second) longest = e;
-                }
-                speeches.push_back({start, longest.first});
-                const int64_t next_start = longest.first + longest.second;
-                // The official's comparison as it writes it, which holds unless the silence is as long as the audio
-                // before this chunk.
-                if (next_start < longest.first + cur) start = next_start;
-                else triggered = false;
-                temp_end = 0;
-                possible_ends.clear();
-            } else {
-                speeches.push_back({start, cur});
-                temp_end = 0;
-                triggered = false;
-                possible_ends.clear();
-                continue;
-            }
-        }
-        if (p < neg_threshold && triggered) {
-            if (temp_end == 0) temp_end = cur;
-            if ((double) (cur - temp_end) < min_silence) continue;
-            if ((double) (temp_end - start) > min_speech) speeches.push_back({start, temp_end});
-            temp_end = 0;
-            triggered = false;
-            possible_ends.clear();
-            continue;
-        }
+void RegionStream::add(double p) {
+    const int64_t cur = (int64_t) chunk_ * chunks_++;
+    if (p >= threshold_ && temp_end_ != 0) {
+        const int64_t silence = cur - temp_end_;
+        if ((double) silence > min_silence_at_max_speech_) possible_ends_.push_back({temp_end_, silence});
+        temp_end_ = 0;
     }
-    if (triggered && (double) (samples - start) > min_speech) speeches.push_back({start, samples});
-
-    // The padding: Python's int() of a float rounds toward zero, as the casts do.
-    for (size_t i = 0; i < speeches.size(); i++) {
-        Region & s = speeches[i];
-        if (i == 0) s.start = (int64_t) std::max(0.0, (double) s.start - pad);
-        if (i + 1 != speeches.size()) {
-            Region & next = speeches[i + 1];
-            const int64_t silence = next.start - s.end;
-            if ((double) silence < 2 * pad) {
-                s.end += floor_half(silence);
-                next.start = std::max<int64_t>(0, next.start - floor_half(silence));
-            } else {
-                s.end = (int64_t) std::min((double) samples, (double) s.end + pad);
-                next.start = (int64_t) std::max(0.0, (double) next.start - pad);
+    if (p >= threshold_ && !triggered_) {
+        triggered_ = true;
+        start_ = cur;
+        return;
+    }
+    if (triggered_ && (double) (cur - start_) > max_speech_) {
+        if (!possible_ends_.empty()) {
+            // Python's max() gives the first of equal silences.
+            std::pair<int64_t, int64_t> longest = possible_ends_.front();
+            for (const auto & e : possible_ends_) {
+                if (e.second > longest.second) longest = e;
             }
+            append({start_, longest.first});
+            const int64_t next_start = longest.first + longest.second;
+            // The official's comparison as it writes it, which holds unless the silence is as long as the audio before
+            // this chunk.
+            if (next_start < longest.first + cur) start_ = next_start;
+            else triggered_ = false;
+            temp_end_ = 0;
+            possible_ends_.clear();
         } else {
-            s.end = (int64_t) std::min((double) samples, (double) s.end + pad);
+            append({start_, cur});
+            temp_end_ = 0;
+            triggered_ = false;
+            possible_ends_.clear();
+            return;
         }
     }
-    return speeches;
+    if (p < neg_threshold_ && triggered_) {
+        if (temp_end_ == 0) temp_end_ = cur;
+        if ((double) (cur - temp_end_) < min_silence_) return;
+        if ((double) (temp_end_ - start_) > min_speech_) append({start_, temp_end_});
+        temp_end_ = 0;
+        triggered_ = false;
+        possible_ends_.clear();
+    }
+}
+
+void RegionStream::settle(int64_t heard) {
+    if (!pending_) return;
+    const int64_t end = pending_->end, next_chunk = (int64_t) chunk_ * chunks_;
+    // Every region still to come starts at the region under way's start or, with none under way, at a chunk not yet taken.
+    // Where it starts twice the padding or more after the pending region's end, the pending region is padded by the
+    // padding, which ends within the audio heard: before that start, or within `heard` as the last test asks.
+    if (triggered_) {
+        // The region under way is kept, as it is cut at max_speech or ends longer than min_speech: no end it can take is
+        // earlier than its pending silence's start, or than the next chunk or the end of the audio.
+        const int64_t earliest_end = temp_end_ != 0 ? temp_end_ : std::min(next_chunk, heard);
+        if ((double) (earliest_end - start_) > min_speech_) give_pending(start_, (double) heard);
+        else if ((double) (start_ - end) >= 2 * pad_) give_pending(std::nullopt, (double) heard);
+    } else if ((double) (next_chunk - end) >= 2 * pad_ && (double) end + pad_ <= (double) heard) {
+        give_pending(std::nullopt, (double) heard);
+    }
+}
+
+void RegionStream::end(int64_t samples) {
+    if (triggered_ && (double) (samples - start_) > min_speech_) append({start_, samples});
+    triggered_ = false;
+    if (pending_) give_pending(std::nullopt, (double) samples);
+}
+
+std::optional<int64_t> RegionStream::open() const {
+    if (pending_) return pending_->start;
+    if (triggered_) return padded_start(start_);
+    return std::nullopt;
+}
+
+void RegionStream::append(Region raw) {
+    const int64_t start = padded_start(raw.start);
+    // A region found ends before the chunk under way, which lies within the audio.
+    if (pending_) give_pending(raw.start, (double) raw.start);
+    pending_ = Region{start, raw.end};
+    last_end_ = raw.end;
+}
+
+// The padding: Python's int() of a float rounds toward zero, as the casts do.
+int64_t RegionStream::padded_start(int64_t start) const {
+    if (last_end_) {
+        const int64_t silence = start - *last_end_;
+        if ((double) silence < 2 * pad_) return std::max<int64_t>(0, start - floor_half(silence));
+    }
+    return (int64_t) std::max(0.0, (double) start - pad_);
+}
+
+int64_t RegionStream::padded_end(std::optional<int64_t> next, double length) const {
+    const int64_t end = pending_->end;
+    if (next) {
+        const int64_t silence = *next - end;
+        if ((double) silence < 2 * pad_) return end + floor_half(silence);
+    }
+    return (int64_t) std::min(length, (double) end + pad_);
+}
+
+void RegionStream::give_pending(std::optional<int64_t> next, double length) {
+    given_.push_back({pending_->start, padded_end(next, length)});
+    pending_.reset();
+}
+
+std::vector<Region> speech_regions(const std::vector<float> & probs, int64_t samples, int sample_rate, int chunk, const RegionRule & rule) {
+    RegionStream regions(rule, sample_rate, chunk);
+    for (const float p : probs) regions.add(p);
+    regions.end(samples);
+    return regions.regions();
 }
 
 }  // namespace silero_vad

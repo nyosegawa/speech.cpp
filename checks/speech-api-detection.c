@@ -5,7 +5,8 @@
  * reference/silero-vad/dump.py with every set of options in its regions.json and compares them with the official's
  * sample for sample, finds regions in audio at three times the model's rate, refuses what a detection cannot take and
  * runs a request it refused before its work again, reports and stops on progress, and cancels a request from another
- * thread while it runs, its result then without regions.
+ * thread while it runs, its result then without regions. Then the detections of audio given a piece at a time,
+ * speech-api-detection-stream.c.
  */
 
 #include <math.h>
@@ -250,6 +251,7 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
     printf("the same audio at %d Hz: %d regions, the first from %.3f s to %.3f s\n", 3 * rate, count, (double) starts[0] / rate, (double) ends[0] / rate);
     free(tripled);
     if (check_refusals(model, model_path, audio[with_speech], n, rate) != 0) return 1;
+    if (check_detection_stream(model, audio, lengths, dumps, n_dumps) != 0) return 1;
 
     Progress stopping;
     memset(&stopping, 0, sizeof stopping);

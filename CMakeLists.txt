@@ -135,8 +135,8 @@ target_link_libraries(silerovad PUBLIC speechcommon)
 # The C API, include/speech.h, twice: static for the executables, so that each stays one file, and shared as
 # libspeech for bindings and other programs. On Windows the two would both write speech.lib, the static one as
 # the library and the shared one as its import library, hence speech-static.
-set(SPEECH_SOURCES src/speech.cpp src/info.cpp src/request.cpp src/voice.cpp src/qwen3-tts-engine.cpp src/irodori-tts-engine.cpp
-    src/fastconformer-engine.cpp src/qwen3-asr-engine.cpp src/silero-vad-engine.cpp)
+set(SPEECH_SOURCES src/speech.cpp src/info.cpp src/request.cpp src/detection.cpp src/voice.cpp src/qwen3-tts-engine.cpp
+    src/irodori-tts-engine.cpp src/fastconformer-engine.cpp src/qwen3-asr-engine.cpp src/silero-vad-engine.cpp)
 
 add_library(speech-static STATIC ${SPEECH_SOURCES})
 target_include_directories(speech-static PUBLIC include)
@@ -286,7 +286,7 @@ add_executable(quantize-check checks/quantize-check.cpp)
 target_link_libraries(quantize-check PRIVATE speechcommon)
 
 add_executable(speech-api-check checks/speech-api-check.c checks/speech-api-irodori.c checks/speech-api-recognition.c checks/speech-api-detection.c
-               checks/speech-api-common.c checks/speech-api-platform.c)
+               checks/speech-api-detection-stream.c checks/speech-api-common.c checks/speech-api-platform.c)
 target_link_libraries(speech-api-check PRIVATE speech)
 # The check compares the version the library reports with the one it was built against.
 target_compile_definitions(speech-api-check PRIVATE SPEECH_EXPECTED_VERSION="${PROJECT_VERSION}")

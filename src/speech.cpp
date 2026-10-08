@@ -146,6 +146,10 @@ std::vector<TimedText> Engine::detect(const std::vector<float> &, const RequestV
     throw std::logic_error("the family's engine does not detect speech, though the table of families says it does");
 }
 
+std::unique_ptr<DetectionStream> Engine::start_detection(const RequestValues &) {
+    throw std::logic_error("the family's engine does not detect speech, though the table of families says it does");
+}
+
 void Engine::add_voice(const std::string &, const std::string &) {
     throw std::logic_error("the family's engine takes no voice files, though the table of families says it does");
 }

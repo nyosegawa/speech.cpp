@@ -1,5 +1,8 @@
 #pragma once
 
+#include <atomic>
+#include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -107,6 +110,40 @@ private:
     std::vector<VoiceInfo> added_;
 };
 
+struct speech_result {
+    speech_task task = SPEECH_TASK_SYNTHESIS;
+    speech_stop stop = SPEECH_STOP_COMPLETE;
+    int64_t seed = -1;
+    uint64_t samples = 0;
+    std::string text;
+    std::vector<TimedText> segments, tokens;
+    std::vector<std::string> languages;
+};
+
+struct speech_request {
+    speech_model * model = nullptr;
+    std::optional<std::string> text;
+    std::vector<float> audio;
+    int sample_rate = 0;
+    /** The options set, each checked as it was set. */
+    std::map<speech_option, OptionValue> values;
+    speech_progress_callback on_progress = nullptr;
+    void * progress_data = nullptr;
+    std::atomic<bool> cancelled{false};
+    /**
+     * Whether a run has started its work, which a request allows once. A run that the request's checks refuse before
+     * any work leaves the request to be fixed and run again.
+     */
+    bool ran = false;
+    std::unique_ptr<speech_result> result;
+};
+
+/**
+ * The request's options as its run takes them: those it set, the defaults, and a seed drawn where it took one. A
+ * required option left out throws, naming it.
+ */
+RequestValues run_values(const speech_request & request);
+
 /** A refusal of the C API itself: its status, its message, and the input it concerns, or none. */
 class ApiError : public std::runtime_error {
 public:
@@ -162,6 +199,16 @@ inline const char * task_name(speech_task task) {
         case SPEECH_TASK_SYNTHESIS: return "synthesis";
         case SPEECH_TASK_RECOGNITION: return "recognition";
         case SPEECH_TASK_DETECTION: return "detection";
+    }
+    throw std::logic_error("a task the library does not know");
+}
+
+/** The call that runs a request of a model of `task`, for a message that names it. */
+inline const char * call_of(speech_task task) {
+    switch (task) {
+        case SPEECH_TASK_SYNTHESIS: return "speech_synthesize() to speak with it";
+        case SPEECH_TASK_RECOGNITION: return "speech_transcribe() to recognize speech with it";
+        case SPEECH_TASK_DETECTION: return "speech_detect() to find where someone speaks";
     }
     throw std::logic_error("a task the library does not know");
 }

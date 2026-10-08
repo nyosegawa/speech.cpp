@@ -14,6 +14,7 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "args.h"
@@ -73,6 +74,52 @@ RegionRule rule_of(const ModelFile & m, const JsonValue & options) {
         else throw std::runtime_error("regions.json sets " + name + ", which the check does not know");
     }
     return r;
+}
+
+bool same_region(const Region & a, const Region & b) {
+    return a.start == b.start && a.end == b.end;
+}
+
+/**
+ * What is wrong with the regions that RegionStream gives as the chunks come, settled after each whole chunk: a region
+ * must not be given before the rule decided at the end gives it alike whether 1000 chunks of silence (probability 0) or
+ * of speech (1) follow, and without max_speech_duration_s it must be given at the first chunk after which they do, which
+ * then makes it certain; a limit cuts a region at its longest silence, which audio between the two can lengthen. Once the
+ * audio has ended the regions must be the whole audio's. Empty when nothing is.
+ */
+std::string as_chunks_come(const std::vector<float> & probs, int64_t samples, int rate, int chunk, const RegionRule & rule) {
+    RegionStream settled(rule, rate, chunk), walked(rule, rate, chunk);
+    const int64_t n = (int64_t) probs.size();
+    // The last chunk may be partial and the audio ends after it, which no continuation follows.
+    for (int64_t k = 0; k + 1 < n; k++) {
+        settled.add(probs[(size_t) k]);
+        walked.add(probs[(size_t) k]);
+        settled.settle((k + 1) * chunk);
+        const auto followed = [&](float p) {
+            RegionStream s = walked;
+            for (int i = 0; i < 1000; i++) s.add(p);
+            s.end((k + 1001) * chunk);
+            return s.regions();
+        };
+        const std::vector<Region> silence = followed(0.0f), speech = followed(1.0f);
+        const auto certain = [&](size_t i) { return i < silence.size() && i < speech.size() && same_region(silence[i], speech[i]); };
+        const std::vector<Region> & given = settled.regions();
+        for (size_t i = 0; i < given.size(); i++) {
+            if (!certain(i) || !same_region(given[i], silence[i])) return "region " + std::to_string(i) + " is given at chunk " + std::to_string(k) + " before it is certain";
+        }
+        if (std::isinf(rule.max_speech_duration_s) && certain(given.size())) {
+            return "region " + std::to_string(given.size()) + " is certain at chunk " + std::to_string(k) + " but not given";
+        }
+    }
+    if (n > 0) {
+        settled.add(probs.back());
+        walked.add(probs.back());
+    }
+    settled.end(samples);
+    walked.end(samples);
+    const std::vector<Region> & a = settled.regions(), & b = walked.regions();
+    if (a.size() != b.size() || !std::equal(a.begin(), a.end(), b.begin(), same_region)) return "the regions given as the chunks came differ from the whole's";
+    return "";
 }
 
 std::string regions_text(const std::vector<Region> & regions) {
@@ -229,6 +276,29 @@ int main(int argc, char ** argv) {
                     }
                     ok = ok && same(official) && (same(own) || near);
                 }
+
+                // The regions of the official probabilities as the chunks come, with each set of options of the dump and
+                // with sets whose regions' ends wait on what follows them.
+                std::vector<std::pair<std::string, RegionRule>> rules;
+                for (const auto & [name, set] : sets.members) rules.push_back({name, rule_of(model, *set.member("options"))});
+                for (const auto & [name, pad, silence, speech, max] : std::vector<std::tuple<std::string, int64_t, int64_t, int64_t, double>>{
+                         {"pad100-silence0", 100, 0, -1, INFINITY}, {"pad200-silence50-speech0", 200, 50, 0, INFINITY}, {"pad100-silence0-max2", 100, 0, -1, 2.0}}) {
+                    RegionRule r = default_rule(model);
+                    r.speech_pad_ms = pad;
+                    r.min_silence_duration_ms = silence;
+                    if (speech >= 0) r.min_speech_duration_ms = speech;
+                    r.max_speech_duration_s = max;
+                    rules.push_back({name, r});
+                }
+                std::string wrong;
+                for (const auto & [name, rule] : rules) {
+                    if (!wrong.empty()) break;
+                    wrong = as_chunks_come(probs.f32, (int64_t) audio.f32.size(), detector.sample_rate(), net.chunk(), rule);
+                    if (!wrong.empty()) wrong = name + ": " + wrong;
+                }
+                std::printf("  %-32s %s\n", "regions as the chunks come", wrong.empty() ? ("each given once certain, " + std::to_string(rules.size()) + " sets").c_str()
+                                                                                       : ("WRONG: " + wrong).c_str());
+                ok = ok && wrong.empty();
             }
             ggml_gallocr_free(allocr);
         }
