@@ -84,7 +84,10 @@ public:
  */
 class Detection {
 public:
-    /** Starts a detection of audio at `rate` with `options`, which the library checks; its refusal throws a Failure. */
+    /**
+     * Starts a detection of audio at `rate` with `options`, which the library checks; its refusal throws a Failure, and so
+     * does a rate below 8000 Hz, whose resampler holds back more audio than the assembly keeps for a region to come.
+     */
     Detection(speech_model * model, std::shared_ptr<const void> keep, std::vector<RequestOption> options, int rate);
 
     int rate() const { return rate_; }

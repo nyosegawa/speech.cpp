@@ -50,7 +50,8 @@ on the CPU with one thread, 0.17 s with the performance cores and 0.52 s on Meta
 - **The assembly holds the buffer and the utterances committed and not yet recognized**, which a host bounds; a reading
   hands its copy of the buffer to the library's request and holds none of its own. With a detection, the buffer keeps
   only what a region may still need: from the start of the region under way, or without one the last `speech_pad_ms`
-  and 0.1 s, so that silence does not pile up.
+  and 0.1 s, a chunk and the resampler's delay, so that silence does not pile up. The resampler holds back more as the
+  rate falls, 0.68 s at 100 Hz, so a detection takes audio at 8000 Hz or more, telephony's rate, which it covers.
 - **Speech started is given once the detection says the region under way is kept**, certain to be given: with the
   defaults 0.26 s after the speech begins. The utterance's deltas wait for it, so every speech started is followed by its
   speech stopped and its commit, and the utterances are the regions.

@@ -18,9 +18,14 @@ constexpr double kReadAgainAfter = 0.2;
 
 /**
  * How far before the audio heard a region not yet begun may begin, beyond its padding: it begins at a chunk the detection
- * has not yet taken, within a chunk of Silero VAD's 32 ms and the 4.3 ms the resampler holds back, rounded up.
+ * has not yet taken, within a chunk of Silero VAD's 32 ms and what the resampler holds back, rounded up. The resampler
+ * holds back 64 / (0.9476 · the lower rate) seconds, which grows as the rate falls: 4.2 ms from 16 kHz up, 8.4 ms from
+ * kLowestRate, and 0.68 s from 100 Hz, which would leave a region's start among the audio dropped.
  */
 constexpr double kReachMargin = 0.1;
+
+/** The lowest rate a detection of the assembly takes, telephony's, whose resampler's delay kReachMargin covers. */
+constexpr int kLowestRate = 8000;
 
 double seconds_since(std::chrono::steady_clock::time_point t0) {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
@@ -30,6 +35,11 @@ double seconds_since(std::chrono::steady_clock::time_point t0) {
 
 Detection::Detection(speech_model * model, std::shared_ptr<const void> keep, std::vector<RequestOption> options, int rate)
     : model_(model), keep_(std::move(keep)), options_(std::move(options)), rate_(rate) {
+    if (rate < kLowestRate) {
+        throw Failure(speech_status_name(SPEECH_ERROR_INVALID_ARGUMENT), "audio",
+                      "audio at " + std::to_string(rate) + " Hz is below the " + std::to_string(kLowestRate) +
+                          " Hz that detecting speech as it arrives takes; resample it to " + std::to_string(kLowestRate) + " Hz or more");
+    }
     start();
     const ModelInfo info = model_info(model_);
     const auto milliseconds = [&](speech_option option) {
@@ -273,6 +283,7 @@ void Assembly::commit_samples(uint64_t number, uint64_t first, uint64_t last) {
 }
 
 void Assembly::keep_from(uint64_t sample) {
+    if (sample < buffer_) throw std::logic_error("a region begins in audio the assembly has dropped");
     audio_.erase(audio_.begin(), audio_.begin() + (long) (sample - buffer_));
     buffer_ = sample;
 }

@@ -154,7 +154,7 @@ region:
 ### Transcribing as someone speaks
 
 With `--vad`, `--live` transcribes the default microphone until Ctrl-C, and `-` reads 16-bit little-endian mono PCM from
-stdin at `--rate` until it ends, for programs that have audio as it is recorded. Each region is written as it ends, so
+stdin at `--rate`, 8000 Hz or more, until it ends, for programs that have audio as it is recorded. Each region is written as it ends, so
 the same audio gives the same regions and texts as a file.
 
 ```sh
