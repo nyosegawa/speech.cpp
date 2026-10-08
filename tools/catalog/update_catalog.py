@@ -1,4 +1,4 @@
-"""Writes tools/models/catalog.json again, pinning each model at its Hugging Face repository's current revision.
+"""Writes tools/catalog/catalog.json again, pinning each model at its Hugging Face repository's current revision.
 
 What a person chose stays as catalog.json has it: each model's name, its repository, the type of the file its name
 alone names, and the languages it is the model to start with. The rest is read from Hugging Face: the repository's
@@ -11,7 +11,7 @@ the model does not take or that two models of a task claim, and a file whose JSO
 
 To add a model, add its name, repository, type and start to catalog.json and run this.
 
-usage: python3 tools/models/update_catalog.py
+usage: python3 tools/catalog/update_catalog.py
 """
 
 import json

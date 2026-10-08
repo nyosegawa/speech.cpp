@@ -4,7 +4,7 @@ on it, and fails where a release at or after the file's speech.requires refuses 
 releases are `speech` built from their tags (git archive v0.7.1, with the submodule's ggml); a release reads a file when
 its `speech info` takes it.
 
-usage: python3 tools/quantize_releases.py <speech> <work dir> <F32.gguf>... --release <speech of an earlier release>...
+usage: python3 checks/compare/quantize_releases.py <speech> <work dir> <F32.gguf>... --release <speech of an earlier release>...
 """
 
 import json

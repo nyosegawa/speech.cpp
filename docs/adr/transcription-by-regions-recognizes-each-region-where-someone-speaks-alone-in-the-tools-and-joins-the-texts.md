@@ -46,12 +46,12 @@ without a separator, as qwen-asr does.
 - **`speech vad --split DIR` writes each region as a 16-bit WAVE file**, cut as transcription by regions cuts it, so that
   the regions it recognizes can be heard and given to other programs.
 
-`tools/region_cap_compare.py` measured each longest region on 105.6 minutes of recordings joined from public test clips
-(Apple M5, Metal, 2026-10-08): FLEURS ja_jp test, one reading of each of its 321 sentences, in 21 recordings, and the
-first 600 clips of Common Voice 8.0 ja test in 15, each clip cut to its speech and brought to -23 dBFS, a pause of 0.3 to
-1.0 s between two clips and a silence of 2 to 8 s between one in four, filled with noise at -60 dBFS; Japanese forced;
-the CER without punctuation or spaces after NFKC; a sentence counted dropped when half its characters or more are
-deleted. "Whole" recognizes each recording without regions. The cells are FLEURS / Common Voice.
+`measure/region_cap_compare.py` measured each longest region on 105.6 minutes of recordings joined from public test
+clips (Apple M5, Metal, 2026-10-08): FLEURS ja_jp test, one reading of each of its 321 sentences, in 21 recordings, and
+the first 600 clips of Common Voice 8.0 ja test in 15, each clip cut to its speech and brought to -23 dBFS, a pause of
+0.3 to 1.0 s between two clips and a silence of 2 to 8 s between one in four, filled with noise at -60 dBFS; Japanese
+forced; the CER without punctuation or spaces after NFKC; a sentence counted dropped when half its characters or more
+are deleted. "Whole" recognizes each recording without regions. The cells are FLEURS / Common Voice.
 
 | Longest region | Regions | reazonspeech-v2 CER | dropped | parakeet-tdt_ctc-0.6b-ja CER | dropped | qwen3-asr-0.6b CER | dropped |
 |---|---|---|---|---|---|---|---|

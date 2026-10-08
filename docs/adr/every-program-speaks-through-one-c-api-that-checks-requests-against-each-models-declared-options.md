@@ -29,7 +29,7 @@ bind their imports up front.
   alike, and a request is made, set, cancelled and freed alike, `speech_synthesize()`, `speech_transcribe()` or
   `speech_detect()` running it. A detection of audio given a piece at a time is an object made from a request's
   options ([its record](a-detection-of-audio-given-a-piece-at-a-time-gives-speech-detects-regions-each-once-it-is-certain.md)).
-  The call of another task is `unsupported`. The families are one table in `src/speech.cpp`, with each
+  The call of another task is `unsupported`. The families are one table in `src/api/speech.cpp`, with each
   family's task, layout, information, engine and maker of voice files.
 - **One vocabulary, declared per family.** Every request option is a value of `speech_option` with a fixed snake_case
   name, which the worker, the server and the command line use as it is. Each family declares in one table which options

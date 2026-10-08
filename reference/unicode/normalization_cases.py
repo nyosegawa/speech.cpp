@@ -1,4 +1,4 @@
-"""Writes <out dir>/normalization-cases.tsv, the cases checks/unicode-check compares src/common/unicode.cpp's
+"""Writes <out dir>/normalization-cases.tsv, the cases checks/common/unicode-check compares src/common/unicode.cpp's
 normalization with: one line per text, its UTF-8 in hex, then, each after a tab and in hex, its NFC and NFKC by the
 tokenizers library (Unicode 9.0) and its NFC and NFKC by this Python's unicodedata (Unicode 13.0).
 

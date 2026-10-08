@@ -8,7 +8,7 @@
 // samples are not the file's). The audio is
 // 16-bit WAVE made of the dumps of reference/fastconformer/dump.py or reference/qwen3-asr/dump.py. Chrome is the one at
 // $CHROME, or macOS's; the server and Chrome are stopped however the script ends.
-// usage: node tools/server_page_browser_smoke.mjs <speech> <work dir> <recognition model> <detection model's catalog name> <dump folder>...
+// usage: node checks/smoke/server_page_browser_smoke.mjs <speech> <work dir> <recognition model> <detection model's catalog name> <dump folder>...
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -17,7 +17,7 @@ import path from 'node:path';
 
 const [speech, work, recognition, detection, ...dumps] = process.argv.slice(2);
 if (!dumps.length) {
-  console.error('usage: node tools/server_page_browser_smoke.mjs <speech> <work dir> <recognition model> <detection model\'s catalog name> <dump folder>...');
+  console.error('usage: node checks/smoke/server_page_browser_smoke.mjs <speech> <work dir> <recognition model> <detection model\'s catalog name> <dump folder>...');
   process.exit(2);
 }
 const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';

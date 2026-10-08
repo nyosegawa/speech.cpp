@@ -35,10 +35,10 @@ endpoints answer that the server holds no model of their task.
 The audio goes as 16-bit samples, which move the near-silent input of reference/qwen3-asr/dump.py far enough to change
 the text a forced language makes of it; leave that dump out.
 
-A synthesis model refuses /v1/realtime, whose sessions tools/server_realtime_smoke.py checks.
+A synthesis model refuses /v1/realtime, whose sessions checks/smoke/server_realtime_smoke.py checks.
 
-usage: python3 tools/server_smoke.py <speech> <model.gguf> [dump folder...] [--vad DETECTION.gguf] [--asr RECOGNITION.gguf]
-                                     [-- serve options...]
+usage: python3 checks/smoke/server_smoke.py <speech> <model.gguf> [dump folder...] [--vad DETECTION.gguf] [--asr RECOGNITION.gguf]
+                                            [-- serve options...]
 """
 
 import array
@@ -357,8 +357,8 @@ else:
                      "chunking_strategy without a detection model")
     else:
         # The dumps' audio joined with a second of silence after each, which the detection cuts into regions again; the
-        # server's answers are speech asr --vad's for the same audio and options, which tools/speech_cli_smoke.py checks
-        # against the worker.
+        # server's answers are speech asr --vad's for the same audio and options, which checks/smoke/speech_cli_smoke.py
+        # checks against the worker.
         joined = array.array("f", [x for d in dumps for x in list(read_npy(os.path.join(d, "audio.npy"))) + [0.0] * rate])
         long, silence = wav_file(joined, rate), wav_file([0.0] * (6 * rate), rate)
         with tempfile.TemporaryDirectory() as work:

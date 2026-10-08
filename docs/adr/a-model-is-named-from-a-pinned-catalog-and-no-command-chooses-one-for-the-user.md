@@ -27,9 +27,9 @@ languages or Irodori-TTS's Japanese.
   version. A name holds no `:` or `/`, which a model argument uses.
 - **A released name keeps naming its model.** A later version of a model line gets a name of its own (`irodori-tts-v5`)
   rather than taking over an old one, since a name that moved would change what a script gets.
-- **The catalog is one file, `tools/models/catalog.json`, built into `speech`.** For each model it holds what a person
+- **The catalog is one file, `tools/catalog/catalog.json`, built into `speech`.** For each model it holds what a person
   writes, the name, the repository, the type a name alone means and the languages it is the model to start with, and
-  what `tools/models/update_catalog.py` writes from Hugging Face's API: the repository's commit, each GGUF file at it
+  what `tools/catalog/update_catalog.py` writes from Hugging Face's API: the repository's commit, each GGUF file at it
   with its size and SHA-256, and the task, the languages and whether the model takes voice files, from the
   `speech info --json` output beside each file. A release lists the files it was checked with; a pull request that
   changes files on Hugging Face runs the script, and the diff shows what moved. The script refuses a type the

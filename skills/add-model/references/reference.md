@@ -37,6 +37,6 @@ reproducible, and to write the GGUF file the C++ reads.
 - `speech.layout` names the layout's version and `speech.requires` the release that first reads it; the converter keeps
   a table of both.
 - Write F32 alone. F16, Q8_0 and lower types are made with `speech quantize`, which follows the family's `layout.cpp`
-  table; `tools/quantize_compare.py` shows that a file made again equals the released one byte for byte.
+  table; `checks/compare/quantize_compare.py` shows that a file made again equals the released one byte for byte.
 
 Run the conversion twice and compare the bytes: a converter that is not deterministic cannot be pinned.

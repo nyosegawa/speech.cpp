@@ -191,14 +191,14 @@ jobs:
         run: |
           cmake -B build $CMAKE_OPTIONS -DSPEECH_INSTALLED_GGML=ON "-DCMAKE_PREFIX_PATH=$PWD/ggml-install"
           cmake --build build -j "$(nproc)"
-      # libspeech.so exports the C API alone (src/speech.map). Both files need no glibc newer than the floor and
+      # libspeech.so exports the C API alone (src/api/speech.map). Both files need no glibc newer than the floor and
       # no shared library but glibc's and, in the Vulkan build, the Vulkan loader.
       - name: Check the exports and the libraries needed
         run: |
           status=0
           exported=$(nm -D --defined-only build/libspeech.so | awk '{print $3}' | grep -v '^speech_' || true)
           if [ -n "$exported" ]; then
-            echo "::error::libspeech.so exports symbols outside the C API: $(echo $exported). Hide them through src/speech.map."
+            echo "::error::libspeech.so exports symbols outside the C API: $(echo $exported). Hide them through src/api/speech.map."
             status=1
           fi
           allowed='libc.so.6 libm.so.6 ld-linux-x86-64.so.2'

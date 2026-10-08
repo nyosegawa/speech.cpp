@@ -3,7 +3,7 @@ speech-bench prompts file one request at a time after the worker is ready, in on
 then with each caption given. For each, the median and the 90th percentile of the first audio, the time from the request
 to its first chunk, and the real-time factor, the request's time over its audio's. It prints one JSON object per line.
 
-usage: python3 checks/irodori-caption-timing.py <speech> <model.gguf> <prompts.json> <voice NAME=FILE> [--steps N]
+usage: python3 measure/irodori-caption-timing.py <speech> <model.gguf> <prompts.json> <voice NAME=FILE> [--steps N]
                                                  [--caption TEXT]... [-- worker options...]
 """
 
@@ -13,7 +13,7 @@ import statistics
 import sys
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "checks", "smoke"))
 from worker_client import Worker  # noqa: E402
 
 # A caption of the length people write, the one the estimate of the cost was made for.

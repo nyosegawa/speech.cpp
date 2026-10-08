@@ -32,6 +32,6 @@ The alternatives were turned down:
 
 ## Consequences
 
-`tools/server_page_browser_smoke.mjs` drives the page in a headless Chrome: the pickers in the tabs, a short file whole
-with the API's text, a long file refused, the detection model chosen in its picker, and the long file then transcribed
-with the text of `chunking_strategy` "auto".
+`checks/smoke/server_page_browser_smoke.mjs` drives the page in a headless Chrome: the pickers in the tabs, a short file
+whole with the API's text, a long file refused, the detection model chosen in its picker, and the long file then
+transcribed with the text of `chunking_strategy` "auto".

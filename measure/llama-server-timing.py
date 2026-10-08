@@ -5,7 +5,7 @@ each, the median over the runs of the request's time and of what the server repo
 the encoder's, and the decoding's, with its steps per second, a step being a token fed back to the decoder. One request
 of the first dump goes first, untimed. It prints one JSON object per line, as qwen3-asr-timing does for speech.cpp.
 
-usage: python3 checks/llama-server-timing.py <llama-server> <model.gguf> <mmproj.gguf> <device> <runs> <dump dir>...
+usage: python3 measure/llama-server-timing.py <llama-server> <model.gguf> <mmproj.gguf> <device> <runs> <dump dir>...
 (the device as llama-server names it: MTL0 on a Mac, Vulkan0 on Windows)
 """
 

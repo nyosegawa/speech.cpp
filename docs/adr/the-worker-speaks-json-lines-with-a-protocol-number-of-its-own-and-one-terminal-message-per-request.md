@@ -65,4 +65,4 @@ The alternatives were turned down:
 ## Consequences
 
 A caller allows for the longest single step of its model as silence. docs/worker.md gives the messages, and
-`tools/worker_client.py` is a client that checks every line and one terminal message per request.
+`checks/smoke/worker_client.py` is a client that checks every line and one terminal message per request.
