@@ -9,9 +9,10 @@
 #include "catalog.h"
 
 // The folder the catalog's files are fetched into, the system's cache folder unless SPEECH_MODEL_DIR names another:
-// <folder>/<owner>--<name>/<revision>/<file>, with <file>.part while it is fetched and <file>.lock, which a process
-// holds while it fetches or removes the file. Nothing in it is removed but on request: a file no entry of this
-// release's catalog names is old, and `speech rm --old` removes it.
+// <folder>/<owner>--<name>/<sha256>/<file>, with <file>.part while it is fetched and <file>.lock, which a process
+// holds while it fetches or removes the file. A file is kept by its content, so a catalog that pins its repository at
+// a later commit with the same file finds it where it is. Nothing in the folder is removed but on request: a file no
+// entry of this release's catalog names is old, and `speech rm --old` removes it.
 
 /** The folder: SPEECH_MODEL_DIR, an absolute path, or speech.cpp/models in the system's cache folder. */
 std::filesystem::path model_dir();
