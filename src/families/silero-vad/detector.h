@@ -59,8 +59,9 @@ public:
 
     /**
      * The chunks one graph computes, 16 s, in a graph of under 8000 nodes, most of them the LSTM cell's steps. On an Apple
-     * M5 a minute of audio took 40 to 48 ms with blocks of 128 to 2048 chunks, on the CPU and on Metal alike
-     * (2026-10-08), so the block bounds the graph's size and how long a cancel waits, not the speed.
+     * M5 a minute of audio took 33 to 44 ms on the CPU and 61 to 70 ms on Metal with blocks of 128, 512 or 2048 chunks, the
+     * least of eight runs while other work loaded the machine (2026-10-08), so the block bounds the graph's size and how
+     * long a cancel waits, not the speed.
      */
     static constexpr int64_t kBlock = 512;
 
