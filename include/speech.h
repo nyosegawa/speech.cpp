@@ -851,8 +851,8 @@ SPEECH_API speech_status speech_voice_make_from(const char * model_path, const s
  * option's is SPEECH_ERROR_INVALID_ARGUMENT. A refused value leaves the request as it was, and setting an option
  * again replaces its value. An option the request does not set takes the model's default. What only the whole request
  * shows (a required option left out, two options that cannot go together, a text longer than the model takes) is
- * refused when the request runs, before any work, and the error names the option or input; such a request is left as
- * it was, to be fixed and run again. A request that has started its work runs once.
+ * refused when the request runs, before any audio, result or progress, and the error names the option or input; such
+ * a request is left as it was, to be fixed and run again. A request that has started its work runs once.
  */
 typedef struct speech_request speech_request;
 
@@ -920,11 +920,12 @@ typedef int (*speech_audio_callback)(const float * samples, size_t n_samples, vo
 /**
  * Speaks a request, passing its audio to `on_audio` with `user_data`. It returns SPEECH_OK once the speech has ended
  * or has been stopped by a limit, with the reason in the result; SPEECH_CANCELLED once it was cancelled; or an error,
- * after which no more audio comes. The request is checked as a whole before any work starts. Speech that comes out not
- * finite, as from a guidance scale that a float32 holds but whose products it does not, is never passed on: the request
- * fails with SPEECH_ERROR_OUT_OF_RANGE naming no option, since each value was within its range and none is known to be
- * at fault, and the caller makes a new request with smaller values. A recognition or detection model is
- * SPEECH_ERROR_UNSUPPORTED.
+ * after which no more audio comes. The request is checked as a whole before any audio or progress: a model that
+ * predicts the speech's length, as Irodori-TTS does, refuses a length it cannot make once it has predicted it. Speech
+ * that comes out not finite, as from a guidance scale that a float32 holds but whose products it does not, is never
+ * passed on: the request fails with SPEECH_ERROR_OUT_OF_RANGE naming no option, since each value was within its range
+ * and none is known to be at fault, and the caller makes a new request with smaller values. A recognition or detection
+ * model is SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_synthesize(speech_request * request, speech_audio_callback on_audio, void * user_data);
 
