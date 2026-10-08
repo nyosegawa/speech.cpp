@@ -7,9 +7,9 @@ folder of the script's own (SPEECH_MODEL_DIR), so that loading one by its name f
 - a server given no model and no --open, and --open on another address than a loopback one: exit 2;
 - the page: GET / with its Content-Security-Policy, every file it and its modules name, a file it does not have, and a
   Host that is not 127.0.0.1, localhost or [::1] with the server's port, refused;
-- the token: GET /speech/models, POST /speech/load and POST /speech/voices without it (401), with a wrong one (403),
-  and with it but from a foreign Origin or for a foreign Host (403); with it, the catalog as `speech models --json`
-  gives it and the models held, from the server's own origin as well as from none;
+- the page's endpoints, GET /speech/models, POST /speech/load and POST /speech/voices, from a foreign Origin or for a
+  foreign Host (403); the catalog as `speech models --json` gives it and the models held, from the server's own origin
+  as well as from none, with no token;
 - every endpoint refusing a foreign Origin, the OpenAI ones included, preflights too, while a request without one (curl,
   scripts) and one from --cors-origin's origin pass;
 - the OpenAI endpoints with the two models: /v1/models lists both, speech and a transcription of that speech, and a
@@ -97,10 +97,9 @@ assert r.returncode == 2, r.stderr
 print("no model and no --open, and --open on 0.0.0.0: exit 2")
 
 server = Server(speech, [synthesis["path"], recognition["path"], "--cors-origin", ALLOWED], env)
-call, post_json, port, token = server.call, server.post_json, server.port, server.token
+call, post_json, port = server.call, server.post_json, server.port
 own = f"http://127.0.0.1:{port}"
-assert server.page == f"{own}/#token={token}", server.page
-auth = {"Authorization": f"Bearer {token}"}
+assert server.page == f"{own}/", server.page
 
 status, headers, page = call("GET", "/")
 assert status == 200 and headers["content-type"].startswith("text/html"), (status, headers)
@@ -118,15 +117,11 @@ for host in ("evil.example", f"evil.example:{port}", f"127.0.0.1:{port + 1}"):
 print(f"the page and the {len(seen)} files it and its modules name")
 
 for method, path in (("GET", "/speech/models"), ("POST", "/speech/load"), ("POST", "/speech/voices")):
-    status, headers, body = call(method, path)
-    expect_error((status, headers, body), 401, "missing_token", None, f"{method} {path} without the token")
-    assert headers.get("www-authenticate") == "Bearer", headers
-    expect_error(call(method, path, headers={"Authorization": "Bearer " + "0" * 32}), 403, "invalid_token", None, f"{method} {path}, a wrong token")
-    expect_error(call(method, path, headers={**auth, "Origin": FOREIGN}), 403, "origin_not_allowed", None, f"{method} {path} from {FOREIGN}")
-    expect_error(call(method, path, headers={**auth, "Host": f"evil.example:{port}"}), 403, "host_not_allowed", None,
+    expect_error(call(method, path, headers={"Origin": FOREIGN}), 403, "origin_not_allowed", None, f"{method} {path} from {FOREIGN}")
+    expect_error(call(method, path, headers={"Host": f"evil.example:{port}"}), 403, "host_not_allowed", None,
                  f"{method} {path} for a foreign Host")
 for origin in (None, own, f"http://localhost:{port}"):
-    status, _, body = call("GET", "/speech/models", headers={**auth, **({"Origin": origin} if origin else {})})
+    status, _, body = call("GET", "/speech/models", headers={"Origin": origin} if origin else {})
     assert status == 200, (origin, body)
 state = json.loads(body)
 assert state["catalog"]["models"] == json.loads(subprocess.run([speech, "models", "--json"], env=env, capture_output=True).stdout)["models"]
@@ -134,7 +129,7 @@ for g in (synthesis, recognition):
     held = state[g["task"]]
     assert held["replacing"] is None and held["held"]["name"] is None and held["held"]["path"] == g["path"], held
 assert state["detection"] == {"held": None, "replacing": None}, state["detection"]
-print("the token, the Host and the Origin of /speech/: refused without, wrong, foreign; the catalog and the two models given")
+print("the Host and the Origin of /speech/: foreign ones refused; the catalog and the two models given, with no token")
 
 expect_error(call("GET", "/health", headers={"Origin": FOREIGN}), 403, "origin_not_allowed", None, "GET /health from a foreign origin")
 expect_error(call("OPTIONS", "/v1/audio/speech", headers={"Origin": FOREIGN, "Access-Control-Request-Method": "POST"}), 403,
@@ -178,7 +173,7 @@ def check_voice(wav):
     boundary = uuid.uuid4().hex
     form = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nsmoke\r\n--{boundary}\r\nContent-Disposition: form-data; "
             f"name=\"file\"; filename=\"x.wav\"\r\n\r\n").encode() + wav + f"\r\n--{boundary}--\r\n".encode()
-    got = call("POST", "/speech/voices", form, {**auth, "Content-Type": f"multipart/form-data; boundary={boundary}"})
+    got = call("POST", "/speech/voices", form, {"Content-Type": f"multipart/form-data; boundary={boundary}"})
     if info["synthesis"]["voice_files"]:
         assert got[0] == 200 and "smoke" in [v["name"] for v in json.loads(got[2])["held"]["model"]["voices"]], got[2][:300]
         info["synthesis"] = json.loads(got[2])["held"]["model"]
@@ -193,34 +188,34 @@ expect_error(post_json("/v1/audio/speech", {"model": info["recognition"]["name"]
              "speech naming the recognition model")
 print(f"two models: /v1/models lists both, speech of {len(wav) - 44} bytes and its text {text!r}, from no origin and --cors-origin's")
 
-expect_error(post_json("/speech/load", {"model": "no-such-model"}, auth), 404, "model_not_found", "model", "a load outside the catalog")
-expect_error(post_json("/speech/load", {"model": f"{recognition['name'].split(':')[0]}:q9_9"}, auth), 404, "model_not_found", "model",
+expect_error(post_json("/speech/load", {"model": "no-such-model"}), 404, "model_not_found", "model", "a load outside the catalog")
+expect_error(post_json("/speech/load", {"model": f"{recognition['name'].split(':')[0]}:q9_9"}), 404, "model_not_found", "model",
              "a load of a type the catalog does not hold")
-expect_error(post_json("/speech/load", {"model": "/tmp/x.gguf"}, auth), 400, "invalid_value", "model", "a load of a model file")
-expect_error(call("POST", "/speech/load", b"{not json", auth), 400, "invalid_value", "model", "a load that is not JSON")
-expect_error(post_json("/speech/load", {"model": third["name"], "path": "/tmp"}, auth), 400, "invalid_value", "model", "a load with another member")
+expect_error(post_json("/speech/load", {"model": "/tmp/x.gguf"}), 400, "invalid_value", "model", "a load of a model file")
+expect_error(call("POST", "/speech/load", b"{not json"), 400, "invalid_value", "model", "a load that is not JSON")
+expect_error(post_json("/speech/load", {"model": third["name"], "path": "/tmp"}), 400, "invalid_value", "model", "a load with another member")
 
 
 def load(name, task):
-    r = call("POST", "/speech/load", json.dumps({"model": name}).encode(), {**auth, "Content-Type": "application/json"}, stream=True)
+    r = call("POST", "/speech/load", json.dumps({"model": name}).encode(), {"Content-Type": "application/json"}, stream=True)
     assert r.status == 200 and r.getheader("Content-Type") == "text/event-stream", r.status
-    expect_error(post_json("/speech/load", {"model": name}, auth), 409, "model_loading", "model", f"a second load of {task} meanwhile")
+    expect_error(post_json("/speech/load", {"model": name}), 409, "model_loading", "model", f"a second load of {task} meanwhile")
     events = [json.loads(block[6:]) for block in r.read().decode().split("\n\n") if block]
     assert [e["type"] for e in events][-2:] == ["load", "loaded"], events
     held = events[-1]["held"]
     assert events[-1]["task"] == task and held["name"] == name and held["model"]["task"] == task, events[-1]
-    state = json.loads(call("GET", "/speech/models", headers=auth)[2])
+    state = json.loads(call("GET", "/speech/models")[2])
     assert state[task]["held"]["name"] == name and state[task]["replacing"] is None, state[task]
     return held
 
 
 task, other = third["task"], "recognition" if third["task"] == "synthesis" else "synthesis"
-before = json.loads(call("GET", "/speech/models", headers=auth)[2])[other]["held"]
+before = json.loads(call("GET", "/speech/models")[2])[other]["held"]
 held = load(third["name"], task)
 info[task] = held["model"]
 if task == "synthesis":
     check_voice(wav)
-state = json.loads(call("GET", "/speech/models", headers=auth)[2])
+state = json.loads(call("GET", "/speech/models")[2])
 assert state[other]["held"] == before, "the model of the other task changed"
 status, _, body = call("GET", "/v1/models")
 assert {m["id"] for m in json.loads(body)["data"]} == {info["synthesis"]["name"], info["recognition"]["name"]}, body
@@ -264,7 +259,7 @@ if task == "recognition":
     busy = threading.Thread(target=lambda: transcribe(long))
     busy.start()
     time.sleep(0.5)
-    r = call("POST", "/speech/load", json.dumps({"model": third["name"]}).encode(), {**auth, "Content-Type": "application/json"}, stream=True)
+    r = call("POST", "/speech/load", json.dumps({"model": third["name"]}).encode(), {"Content-Type": "application/json"}, stream=True)
     buffer = b""
     while b'"type":"load"' not in buffer:
         chunk = r.read1(4096)
@@ -298,9 +293,9 @@ if detection:
           f"refused before and answered after: {json.loads(body)['text']!r}")
 
 absent = next(m for m in catalog["models"] if all(m["name"] != g["name"].split(":")[0] for g in given))
-held_before = json.loads(call("GET", "/speech/models", headers=auth)[2])[absent["task"]]["held"]
+held_before = json.loads(call("GET", "/speech/models")[2])[absent["task"]]["held"]
 connection = http.client.HTTPConnection("127.0.0.1", port, timeout=600)
-connection.request("POST", "/speech/load", json.dumps({"model": absent["name"]}).encode(), {**auth, "Content-Type": "application/json"})
+connection.request("POST", "/speech/load", json.dumps({"model": absent["name"]}).encode(), {"Content-Type": "application/json"})
 r = connection.getresponse()
 assert r.status == 200, r.status
 buffer = b""
@@ -310,7 +305,7 @@ while not re.search(rb'"type":"fetch","done":[1-9]', buffer):
     buffer += chunk
 connection.close()
 for _ in range(100):
-    state = json.loads(call("GET", "/speech/models", headers=auth)[2])
+    state = json.loads(call("GET", "/speech/models")[2])
     if state[absent["task"]]["replacing"] is None:
         break
     time.sleep(0.1)
@@ -333,9 +328,9 @@ if os.name == "nt":
 else:
     import fcntl
     fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
-held_before = json.loads(call("GET", "/speech/models", headers=auth)[2])[third["task"]]["held"]
+held_before = json.loads(call("GET", "/speech/models")[2])[third["task"]]["held"]
 connection = http.client.HTTPConnection("127.0.0.1", port, timeout=600)
-connection.request("POST", "/speech/load", json.dumps({"model": third["name"]}).encode(), {**auth, "Content-Type": "application/json"})
+connection.request("POST", "/speech/load", json.dumps({"model": third["name"]}).encode(), {"Content-Type": "application/json"})
 r = connection.getresponse()
 buffer = b""
 while b'"type":"note"' not in buffer:
@@ -352,7 +347,7 @@ else:
     fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
 holder.close()
 for _ in range(300):
-    state = json.loads(call("GET", "/speech/models", headers=auth)[2])
+    state = json.loads(call("GET", "/speech/models")[2])
     if state[third["task"]]["replacing"] is None:
         break
     time.sleep(0.1)

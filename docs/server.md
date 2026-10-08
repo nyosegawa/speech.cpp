@@ -265,8 +265,8 @@ the client reads as a broken transfer, and an SSE stream with `{"type":"error","
   pause. The texts of the pieces are joined.
 - The page is built into `speech` and needs nothing from the network.
 
-The server prints the page's address, `http://127.0.0.1:8080/#token=…`, with a token that changes each time it starts;
-the page opens only through that address, so that other web pages cannot use it. It is served while the server listens
-on 127.0.0.1, `::1` or `localhost`. To use it from another machine, forward the port with SSH, the same number at both
+The server prints the page's address, `http://127.0.0.1:8080/`. Other web pages cannot use it: the server refuses a
+request from another origin than its own, and a Host other than 127.0.0.1, `localhost` or `[::1]` with its port. It is
+served while the server listens on 127.0.0.1, `::1` or `localhost`. To use it from another machine, forward the port with SSH, the same number at both
 ends (`ssh -L 8080:127.0.0.1:8080 host`), and open the printed address in your browser. The page loads only models of the catalog,
 and removes none; `speech rm` does.

@@ -64,22 +64,18 @@ class Server:
 
     @property
     def page(self):
-        """The page's address with its token as the server printed it before it listened, or None where it has no page."""
+        """The page's address as the server printed it before it listened, or None where it has no page."""
         for _ in range(50):
             for line in self.lines:
-                found = re.search(r"(http://\S+/#token=([0-9a-f]+))", line)
+                found = re.search(r"the page, which fetches and loads models, is at (http://\S+/)", line)
                 if found:
                     return found.group(1)
             if any("listening on" in line for line in self.lines):
                 time.sleep(0.1)
-                if not any("#token=" in line for line in self.lines):
+                if not any("the page, which" in line for line in self.lines):
                     return None
             time.sleep(0.1)
         return None
-
-    @property
-    def token(self):
-        return self.page.rsplit("=", 1)[1]
 
     def call(self, method, path, body=None, headers=None, stream=False):
         """The status, the headers by lower-case name and the body, or the open response of a stream."""

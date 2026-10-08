@@ -6,7 +6,7 @@ A page or a program that both speaks and transcribes needs a model of each task,
 someone speaks needs a detection model beside the recognizer
 ([the record of transcription by regions](transcription-by-regions-recognizes-each-region-where-someone-speaks-alone-in-the-tools-and-joins-the-texts.md)),
 and the page of `speech serve --open`
-([the page's record](speech-serve-has-a-page-guarded-by-a-token-a-loopback-host-and-the-origin.md)) lets a user pick
+([the page's record](speech-serve-has-a-page-guarded-by-a-loopback-host-and-the-origin.md)) lets a user pick
 models of the catalog and switch between them without restarting the server. A model takes 0.8 to 8 GB of memory, and
 the machines speech.cpp runs on include laptops with 8 GB; Silero VAD takes 1.2 MB.
 

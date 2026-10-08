@@ -47,7 +47,7 @@ Turn detection (`server_vad`) needs a detection that takes audio a piece at a ti
   since a text cut at the model's limit reads like one that ended.
 - **The WebSocket keeps the server's guards**: the Origin rule of every endpoint, which is what keeps other web pages out
   of a WebSocket, and while the server listens on a loopback address the Host rule of the page
-  ([the page's record](speech-serve-has-a-page-guarded-by-a-token-a-loopback-host-and-the-origin.md)).
+  ([the page's record](speech-serve-has-a-page-guarded-by-a-loopback-host-and-the-origin.md)).
 - **A replacement of the recognition model by the page reaches a session as it reaches a request**
   ([the record of a model of each task](speech-serve-holds-a-model-of-each-task-and-replaces-one-only-after-its-requests-end.md)):
   a commit keeps the model it was accepted on until it ends, a commit while the new model loads fails with
