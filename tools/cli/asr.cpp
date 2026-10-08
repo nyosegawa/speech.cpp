@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "asr-stream.h"
+#include "catalog.h"
 #include "commands.h"
 #include "fetch.h"
 #include "json.h"
@@ -75,6 +76,10 @@ int run_asr(const CommandLine & line, FILE * out) {
     if (piped && line.args.size() > 2) throw UsageError("- reads 16-bit PCM from stdin, alone; give it without files");
     if (live && line.args.size() > 1) throw UsageError("--live listens to the microphone and takes no AUDIO; give one or the other");
     if (!live && line.args.size() < 2) {
+        // Without --live, AUDIO follows MODEL, and a command line short of it is answered as the parser answers one short
+        // of its arguments: a lone argument that names no model, such as a WAVE file, is told what MODEL is and which
+        // model to start with.
+        if (!names_a_model(line.args[0])) throw UsageError(no_model_message(line.command().usage, *line.command().model));
         throw UsageError("give the WAVE files to transcribe, - for 16-bit PCM on stdin, or --live for the microphone");
     }
     if (line.has("--rate") && !piped) throw UsageError("--rate is the rate of the PCM that - reads from stdin");
