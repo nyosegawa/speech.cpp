@@ -6,7 +6,7 @@ import { decode, Recorder, RecordingFile } from './audio.js';
 import { PieceCutter } from './pieces.js';
 import { floats, pcmLayout, wavFile } from './wav.js';
 
-/** How often a recording shows its length and hands its new samples on. */
+/** How often a recording shows its length and keeps its new samples. */
 const TICK_MS = 200;
 
 function seconds(value) {
@@ -19,17 +19,11 @@ export class AudioInput {
   #recorded = null;
   #recorder = null;
   #recording = null;
-  #listener;
-  #listening = false;
   #ticking = 0;
   #preview = null;
 
-  /**
-   * Fills `slot` from the page's audio-input template; `changed` is called whenever the audio given changes.
-   * `listener`, when given, hears a recording as it is made: `started(rate)` returns whether it wants the samples,
-   * `samples(samples)` gets them as they come, and `stopped()` follows the last of them.
-   */
-  constructor(slot, changed = () => {}, listener = null) {
+  /** Fills `slot` from the page's audio-input template; `changed` is called whenever the audio given changes. */
+  constructor(slot, changed = () => {}) {
     slot.append(document.querySelector('#audio-input').content.cloneNode(true));
     const $ = (selector) => slot.querySelector(selector);
     this.drop = $('.drop');
@@ -45,7 +39,6 @@ export class AudioInput {
     this.audio = $('.audio-preview');
     this.error = $('.error');
     this.changed = changed;
-    this.#listener = listener;
 
     this.choose.addEventListener('click', () => this.input.click());
     this.input.addEventListener('change', () => {
@@ -174,13 +167,12 @@ export class AudioInput {
     }
     this.#recorder = recorder;
     this.#recording = new RecordingFile(recorder.rate);
-    this.#listening = this.#listener?.started(recorder.rate) ?? false;
     this.record.setAttribute('aria-pressed', 'true');
     this.record.textContent = 'Stop recording';
     this.#show('recording');
     this.changed();
     const tick = () => {
-      this.#hand(recorder.take());
+      this.#recording.append(recorder.take());
       this.recordingTime.textContent = `Recording, ${seconds(this.#recording.seconds)}`;
     };
     tick();
@@ -193,19 +185,10 @@ export class AudioInput {
     this.#recorder = null;
     this.record.setAttribute('aria-pressed', 'false');
     this.record.textContent = 'Record';
-    this.#hand(await recorder.stop());
-    if (this.#listening) this.#listener.stopped();
-    this.#listening = false;
+    this.#recording.append(await recorder.stop());
     const recording = this.#recording;
     this.#recording = null;
     this.#recorded = { rate: recording.rate, channels: 1, offset: 44, count: recording.count };
     this.#take(recording.blob(), 'Recording');
-  }
-
-  /** Keeps new samples of the recording, and hands them to the listener when it wants them. */
-  #hand(samples) {
-    if (!samples.length) return;
-    this.#recording.append(samples);
-    if (this.#listening) this.#listener.samples(samples);
   }
 }

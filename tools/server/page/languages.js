@@ -1,9 +1,10 @@
-// Languages as people read them: the names of BCP 47 tags in the browser's own language, a long list as a count whose
-// names open on request, and the language a text is written in where its script tells it.
+// Languages as people read them: the names of BCP 47 tags in English, the language of the rest of the page, whatever
+// the browser's own language is; a long list as a count whose names open on request; and the language a text is written
+// in where its script tells it.
 
-const names = new Intl.DisplayNames([...navigator.languages, 'en'], { type: 'language' });
+const names = new Intl.DisplayNames(['en'], { type: 'language' });
 
-/** The name of the language of a tag in the browser's language, or the tag where the browser has none. */
+/** The English name of the language of a tag, or the tag where the browser has none. */
 export function languageName(tag) {
   try {
     return names.of(tag) ?? tag;
@@ -12,9 +13,9 @@ export function languageName(tag) {
   }
 }
 
-/** The names of tags, in the order of the browser's language. */
+/** The names of tags, in alphabetical order. */
 export function languageNames(tags) {
-  return tags.map(languageName).sort((a, b) => a.localeCompare(b));
+  return tags.map(languageName).sort((a, b) => a.localeCompare(b, 'en'));
 }
 
 /** How many names a list shows whole before it shows a count. */

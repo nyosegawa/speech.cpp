@@ -17,115 +17,119 @@
   <main>
     <p class="notice" id="page-error" role="alert" hidden></p>
 
-    <div class="panels">
-      <section class="panel" id="speak" aria-labelledby="speak-heading">
-        <h2 id="speak-heading">Speak</h2>
-        <div class="picker-slot" data-task="synthesis"></div>
-        <form id="speak-form" novalidate hidden>
-          <div class="field">
-            <label for="speak-text">Text</label>
-            <textarea id="speak-text" rows="4" required aria-describedby="speak-text-hint speak-text-error"></textarea>
-            <p class="hint" id="speak-text-hint">Ctrl+Enter or ⌘+Enter speaks it.</p>
-            <p class="error" id="speak-text-error" hidden></p>
-          </div>
-          <div class="fields" id="speak-options"></div>
-          <details class="more">
-            <summary>More options</summary>
-            <div class="fields" id="speak-more"></div>
-          </details>
-          <div class="actions">
-            <button type="submit" class="primary" id="speak-start">Speak</button>
-            <button type="button" id="speak-stop" hidden>Stop</button>
-            <p class="status" id="speak-status" role="status"></p>
-          </div>
-          <p class="error" id="speak-error" role="alert" hidden></p>
-        </form>
-        <div class="result speech-result" id="speech-result" hidden>
-          <div class="player">
-            <button type="button" class="icon-button" id="speech-play" aria-label="Play">
-              <svg class="icon-play" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg>
-              <svg class="icon-pause" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/></svg>
-            </button>
-            <div class="wave">
-              <canvas id="speech-wave" aria-hidden="true"></canvas>
-              <input type="range" id="speech-seek" min="0" max="1" step="0.001" value="0" aria-label="Position in the speech">
-            </div>
-            <span class="time" id="speech-time">0:00</span>
-          </div>
-          <div class="result-actions">
-            <button type="button" id="speech-save">Save WAVE</button>
-            <button type="button" id="speech-transcribe">Transcribe this</button>
-          </div>
-          <p class="meta" id="speech-meta"></p>
-        </div>
-        <details class="voice-maker" id="voice-maker" hidden>
-          <summary>Make a voice from a recording</summary>
-          <form id="voice-form" novalidate>
-            <p class="muted">A few seconds of one speaker, without music or noise. The voice lasts while the model stays
-              loaded.</p>
-            <div class="audio-slot" id="voice-audio"></div>
-            <div class="field">
-              <label for="voice-name">Name of the voice</label>
-              <input id="voice-name" required autocomplete="off" spellcheck="false" aria-describedby="voice-error">
-            </div>
-            <div class="actions">
-              <button type="submit" class="primary" id="voice-add">Add the voice</button>
-              <p class="status" id="voice-status" role="status"></p>
-            </div>
-            <p class="error" id="voice-error" role="alert" hidden></p>
-          </form>
-        </details>
-      </section>
+    <div class="tabs" id="tabs" role="tablist" aria-label="What to do">
+      <button type="button" role="tab" id="tab-speak" aria-controls="speak">Speak</button>
+      <button type="button" role="tab" id="tab-transcribe" aria-controls="transcribe">Transcribe</button>
+      <button type="button" role="tab" id="tab-live" aria-controls="live">Live</button>
+    </div>
 
-      <section class="panel" id="transcribe" aria-labelledby="transcribe-heading">
-        <h2 id="transcribe-heading">Transcribe</h2>
-        <div class="picker-slot" data-task="recognition"></div>
-        <form id="transcribe-form" novalidate>
-          <div class="audio-slot" id="transcribe-audio"></div>
+    <section class="panel" id="speak" role="tabpanel" aria-labelledby="tab-speak">
+      <div class="picker-slot" data-task="synthesis"></div>
+      <form id="speak-form" novalidate hidden>
+        <div class="field">
+          <label for="speak-text">Text</label>
+          <textarea id="speak-text" rows="4" required aria-describedby="speak-text-hint speak-text-error"></textarea>
+          <p class="hint" id="speak-text-hint">Ctrl+Enter or ⌘+Enter speaks it.</p>
+          <p class="error" id="speak-text-error" hidden></p>
+        </div>
+        <div class="fields" id="speak-options"></div>
+        <details class="more">
+          <summary>More options</summary>
+          <div class="fields" id="speak-more"></div>
+        </details>
+        <div class="actions">
+          <button type="submit" class="primary" id="speak-start">Speak</button>
+          <button type="button" id="speak-stop" hidden>Stop</button>
+          <p class="status" id="speak-status" role="status"></p>
+        </div>
+        <p class="error" id="speak-error" role="alert" hidden></p>
+      </form>
+      <div class="result speech-result" id="speech-result" hidden>
+        <div class="player">
+          <button type="button" class="icon-button" id="speech-play" aria-label="Play">
+            <svg class="icon-play" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg>
+            <svg class="icon-pause" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/></svg>
+          </button>
+          <div class="wave">
+            <canvas id="speech-wave" aria-hidden="true"></canvas>
+            <input type="range" id="speech-seek" min="0" max="1" step="0.001" value="0" aria-label="Position in the speech">
+          </div>
+          <span class="time" id="speech-time">0:00</span>
+        </div>
+        <div class="result-actions">
+          <button type="button" id="speech-save">Save WAVE</button>
+          <button type="button" id="speech-transcribe">Transcribe this</button>
+        </div>
+        <p class="meta" id="speech-meta"></p>
+      </div>
+      <details class="voice-maker" id="voice-maker" hidden>
+        <summary>Make a voice from a recording</summary>
+        <form id="voice-form" novalidate>
+          <p class="muted">A few seconds of one speaker, without music or noise. The voice lasts while the model stays
+            loaded.</p>
+          <div class="audio-slot" id="voice-audio"></div>
+          <div class="field">
+            <label for="voice-name">Name of the voice</label>
+            <input id="voice-name" required autocomplete="off" spellcheck="false" aria-describedby="voice-error">
+          </div>
+          <div class="actions">
+            <button type="submit" class="primary" id="voice-add">Add the voice</button>
+            <p class="status" id="voice-status" role="status"></p>
+          </div>
+          <p class="error" id="voice-error" role="alert" hidden></p>
+        </form>
+      </details>
+    </section>
+
+    <section class="panel" id="transcribe" role="tabpanel" aria-labelledby="tab-transcribe" hidden>
+      <div class="picker-slot" data-task="recognition"></div>
+      <form id="transcribe-form" novalidate>
+        <div class="audio-slot" id="transcribe-audio"></div>
+        <div class="fields" id="transcribe-options"></div>
+        <details class="more">
+          <summary>More options</summary>
           <div class="fields">
-            <div class="field">
-              <label for="transcribe-when">Transcribe a recording</label>
-              <select id="transcribe-when">
-                <option value="after">After it stops</option>
-                <option value="live">Live</option>
-              </select>
-            </div>
-            <div class="field" id="transcribe-every-field">
-              <label for="transcribe-every">Update every</label>
-              <input type="number" id="transcribe-every" min="0.5" max="10" step="0.5" value="1" inputmode="decimal" aria-describedby="transcribe-every-hint">
-              <p class="hint" id="transcribe-every-hint">seconds, longer while the model takes longer</p>
-            </div>
             <div class="field">
               <label for="transcribe-piece">Pieces of at most</label>
               <input type="number" id="transcribe-piece" min="5" max="60" step="1" value="20" inputmode="numeric" aria-describedby="transcribe-piece-hint">
               <p class="hint" id="transcribe-piece-hint">seconds; audio goes to the model in pieces, cut at a pause</p>
             </div>
           </div>
-          <div class="fields" id="transcribe-options"></div>
-          <div class="actions">
-            <button type="submit" class="primary" id="transcribe-start" disabled>Transcribe</button>
-            <button type="button" id="transcribe-stop" hidden>Stop</button>
-            <p class="status" id="transcribe-status" role="status"></p>
+        </details>
+        <div class="actions">
+          <button type="submit" class="primary" id="transcribe-start" disabled>Transcribe</button>
+          <button type="button" id="transcribe-stop" hidden>Stop</button>
+          <p class="status" id="transcribe-status" role="status"></p>
+        </div>
+        <p class="error" id="transcribe-error" role="alert" hidden></p>
+      </form>
+      <div id="transcribe-transcript"></div>
+    </section>
+
+    <section class="panel" id="live" role="tabpanel" aria-labelledby="tab-live" hidden>
+      <div class="picker-slot" data-task="recognition"></div>
+      <form id="live-form" novalidate>
+        <p class="muted">Transcribes the microphone while you speak. Text in grey can still change.</p>
+        <div class="fields" id="live-options"></div>
+        <details class="more">
+          <summary>More options</summary>
+          <div class="fields">
+            <div class="field">
+              <label for="live-piece">Pieces of at most</label>
+              <input type="number" id="live-piece" min="5" max="60" step="1" value="20" inputmode="numeric" aria-describedby="live-piece-hint">
+              <p class="hint" id="live-piece-hint">seconds; the text of a piece is final once it ends</p>
+            </div>
           </div>
-          <p class="error" id="transcribe-error" role="alert" hidden></p>
-        </form>
-        <section class="result transcript" id="transcript" aria-labelledby="transcript-heading" hidden>
-          <div class="transcript-head">
-            <h3 id="transcript-heading">Text</h3>
-            <button type="button" id="transcript-copy">Copy</button>
-          </div>
-          <p class="transcript-text" id="transcript-text"></p>
-          <p class="meta" id="transcript-meta"></p>
-          <details class="segments" id="segments" hidden>
-            <summary></summary>
-            <table>
-              <thead><tr><th scope="col">Start</th><th scope="col">End</th><th scope="col">Text</th></tr></thead>
-              <tbody></tbody>
-            </table>
-          </details>
-        </section>
-      </section>
-    </div>
+        </details>
+        <div class="actions">
+          <button type="submit" class="primary" id="live-start" disabled>Start</button>
+          <span class="recording-dot" id="live-dot" aria-hidden="true" hidden></span>
+          <p class="status" id="live-status" role="status"></p>
+        </div>
+        <p class="error" id="live-error" role="alert" hidden></p>
+      </form>
+      <div id="live-transcript"></div>
+    </section>
   </main>
 
   <template id="picker">
@@ -152,6 +156,24 @@
         <p class="dialog-foot muted"></p>
       </dialog>
     </div>
+  </template>
+
+  <template id="transcript-view">
+    <section class="result transcript" hidden>
+      <div class="transcript-head">
+        <h3>Text</h3>
+        <button type="button" class="transcript-copy">Copy</button>
+      </div>
+      <p class="transcript-text"></p>
+      <p class="meta"></p>
+      <details class="segments" hidden>
+        <summary></summary>
+        <table>
+          <thead><tr><th scope="col">Start</th><th scope="col">End</th><th scope="col">Text</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </details>
+    </section>
   </template>
 
   <template id="model-item">

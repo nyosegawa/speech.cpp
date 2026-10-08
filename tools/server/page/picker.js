@@ -34,15 +34,16 @@ export class ModelPicker {
   #loading = null;
 
   /**
-   * Fills `slot` from the page's picker template for `task`; `loaded(held)` is called when the page has loaded a model
-   * in place of the task's, and `changed()` when what is fetched may have changed.
+   * Builds the picker of `task` from the page's picker template as `element`, which the slot of the panel in view takes;
+   * `loaded(held)` is called when the page has loaded a model in place of the task's, and `changed()` when what is
+   * fetched may have changed.
    */
-  constructor(slot, task, loaded, changed) {
+  constructor(task, loaded, changed) {
     this.#task = task;
     this.loaded = loaded;
     this.changed = changed;
-    slot.append(document.querySelector('#picker').content.cloneNode(true));
-    const $ = (selector) => slot.querySelector(selector);
+    this.element = document.querySelector('#picker').content.firstElementChild.cloneNode(true);
+    const $ = (selector) => this.element.querySelector(selector);
     this.button = $('.picker-button');
     this.name = $('.picker-name');
     this.size = $('.picker-size');

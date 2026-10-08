@@ -1,125 +1,159 @@
-// Transcribes a recording while it is made. The recording is cut into pieces as it grows; each finished piece is
-// transcribed once, and the piece still being recorded is transcribed again every few seconds, its text shown as
-// provisional until its piece is finished. The server holds no state of it: every request is a WAVE file of one piece.
+// The live panel: transcribes the microphone while the user speaks, the text that can still change shown in the muted
+// colour until it is final, and the whole text once the user stops.
 
-import * as api from './api.js';
-import { PieceCutter, Transcript } from './pieces.js';
-import { wavFile } from './wav.js';
+import { Recorder } from './audio.js';
+import { LiveTranscription } from './live-transcription.js';
+import { OptionForm } from './options.js';
+import { Transcript } from './pieces.js';
+import { bounded, FORM_OPTIONS } from './transcribe.js';
+import { length, TranscriptView } from './transcript.js';
 
-/** The shortest unfinished piece worth transcribing; Qwen3-ASR pads anything shorter with silence. */
-const MIN_PENDING_SECONDS = 0.5;
+const $ = (id) => document.getElementById(id);
 
-export class LiveTranscription {
-  #rate;
-  #cutter;
-  #every;
-  #fields;
-  #show;
-  #transcript = new Transcript();
-  #finished = [];
-  #stopped = false;
-  #controller = new AbortController();
-  /** The request for the unfinished piece, which the end of the recording makes pointless. */
-  #provisional = null;
-  #wake = null;
-  #lastStart = -Infinity;
-  #lastTook = 0;
+/** How often the samples recorded go to the transcription and the time listened shows. */
+const TICK_MS = 200;
+const SETTINGS_KEY = 'speech.cpp live settings';
 
-  /**
-   * `pieceSeconds` bounds each piece and `everySeconds` the time between two transcriptions of the unfinished one,
-   * which is at least twice the time the last request took. `fields()` gives the form's fields when a request is
-   * sent, and `show(transcript, provisional)` shows the text so far.
-   */
-  constructor(rate, { pieceSeconds, everySeconds, fields, show }) {
-    this.#rate = rate;
-    this.#cutter = new PieceCutter(rate, pieceSeconds);
-    this.#every = everySeconds;
-    this.#fields = fields;
-    this.#show = show;
-  }
+export class LivePanel {
+  #held = null;
+  #options = null;
+  #recorder = null;
+  #live = null;
+  #ticking = 0;
+  #busy;
+  #view = new TranscriptView($('live-transcript'));
 
-  /** Adds the samples just recorded. */
-  push(samples) {
-    const finished = this.#cutter.push(samples);
-    if (!finished.length) return;
-    this.#finished.push(...finished);
-    this.#wakeUp();
-  }
-
-  /** The recording has ended; the last piece is transcribed and the run ends. */
-  stop() {
-    this.#stopped = true;
-    this.#provisional?.abort();
-    this.#wakeUp();
-  }
-
-  /** Stops every request; the run ends with an AbortError. */
-  abort() {
-    this.#controller.abort();
-    this.#stopped = true;
-    this.#wakeUp();
-  }
-
-  /** Transcribes until the recording ends and returns the transcript, or throws the first failure. */
-  async run() {
-    for (;;) {
-      this.#controller.signal.throwIfAborted();
-      if (this.#finished.length) {
-        const piece = this.#finished.shift();
-        const { result, stop } = await this.#transcribe(piece.samples, this.#controller.signal);
-        this.#transcript.add(result, stop, piece.start);
-        this.#show(this.#transcript, '');
-        continue;
-      }
-      if (this.#stopped) {
-        const last = this.#cutter.finish();
-        if (!last) return this.#transcript;
-        this.#finished.push(last);
-        continue;
-      }
-      const wait = this.#lastStart + 1000 * Math.max(this.#every, 2 * this.#lastTook) - performance.now();
-      if (wait > 0 || this.#cutter.pendingSeconds < MIN_PENDING_SECONDS) {
-        await this.#sleep(Math.max(wait, 100));
-        continue;
-      }
-      await this.#transcribePending();
-    }
-  }
-
-  async #transcribePending() {
-    this.#provisional = new AbortController();
-    const signal = AbortSignal.any([this.#controller.signal, this.#provisional.signal]);
+  /** `busy(running)` follows the start and the end of each run, which the panel's tab shows. */
+  constructor(busy) {
+    this.#busy = busy;
+    $('live-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (this.#recorder) this.#stop();
+      else this.#start();
+    });
     try {
-      const { result } = await this.#transcribe(this.#cutter.pending.samples, signal);
-      // A piece finished meanwhile holds what this text was of; the next one replaces it.
-      if (!this.#finished.length && !this.#stopped) this.#show(this.#transcript, result.text);
-    } catch (e) {
-      if (!(e.name === 'AbortError' && !this.#controller.signal.aborted)) throw e;
-    } finally {
-      this.#provisional = null;
+      const kept = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}');
+      if (Number.isFinite(kept.piece)) $('live-piece').value = kept.piece;
+    } catch {
+      // Storage the browser refuses, or a value of another shape, leaves the setting as the page gives it.
     }
-  }
-
-  async #transcribe(samples, signal) {
-    this.#lastStart = performance.now();
-    const answer = await api.transcribe(wavFile(samples, this.#rate), this.#fields(), signal);
-    this.#lastTook = (performance.now() - this.#lastStart) / 1000;
-    return answer;
-  }
-
-  #sleep(ms) {
-    return new Promise((resolve) => {
-      const done = () => {
-        clearTimeout(timer);
-        this.#wake = null;
-        resolve();
-      };
-      const timer = setTimeout(done, ms);
-      this.#wake = done;
+    $('live-piece').addEventListener('change', () => {
+      try {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify({ piece: bounded($('live-piece')) }));
+      } catch {
+        // Without storage the setting lasts as long as the page.
+      }
     });
   }
 
-  #wakeUp() {
-    this.#wake?.();
+  /** Shows the recognition model held, `held` of GET /speech/models, or that there is none; a run going on ends. */
+  show(held) {
+    if (this.#live) this.#abort();
+    this.#held = held;
+    if (held) {
+      const kept = this.#options?.values() ?? {};
+      this.#options = new OptionForm(held.model, $('live-options'), null, FORM_OPTIONS);
+      this.#options.restore(kept);
+    } else {
+      $('live-options').replaceChildren();
+      this.#options = null;
+    }
+    this.#ready();
+  }
+
+  /** The button starts once there is a model, stops while listening, and waits while the last words are transcribed. */
+  #ready() {
+    const button = $('live-start');
+    button.textContent = this.#recorder ? 'Stop' : 'Start';
+    button.classList.toggle('primary', !this.#recorder);
+    button.classList.toggle('stop', this.#recorder !== null);
+    button.disabled = !this.#held || (this.#live !== null && !this.#recorder);
+    button.title = this.#held ? '' : 'Choose a model first';
+    $('live-dot').hidden = !this.#recorder;
+  }
+
+  #status(text) {
+    $('live-status').textContent = text;
+  }
+
+  /** Shows a failure next to its cause: an option's field, or below the form. */
+  #fail(e) {
+    if (e.name === 'AbortError') return;
+    if (!(e.param && this.#options?.showError(e.param, e.message))) {
+      $('live-error').textContent = e.message;
+      $('live-error').hidden = false;
+    }
+  }
+
+  async #start() {
+    if (this.#live || !this.#held) return;
+    $('live-error').hidden = true;
+    this.#options.clearErrors();
+    const recorder = new Recorder();
+    // A second press while the browser asks for the microphone would start a second recorder.
+    $('live-start').disabled = true;
+    try {
+      await recorder.start();
+    } catch (e) {
+      this.#fail(e.name === 'NotAllowedError' ? new Error('The browser was not allowed to use the microphone.') : e);
+      this.#ready();
+      return;
+    }
+    const model = this.#held.model;
+    const live = new LiveTranscription(recorder.rate, {
+      pieceSeconds: bounded($('live-piece')),
+      fields: () => this.#options.values(),
+      show: (transcript, provisional) => this.#view.render(transcript, model, { provisional, done: false }),
+    });
+    this.#recorder = recorder;
+    this.#live = live;
+    this.#busy(true);
+    this.#ready();
+    this.#view.render(new Transcript(), model, { done: false });
+    let heard = 0;
+    const tick = () => {
+      const samples = recorder.take();
+      heard += samples.length;
+      live.push(samples);
+      this.#status(`Listening, ${length(heard / recorder.rate)}`);
+    };
+    tick();
+    this.#ticking = setInterval(tick, TICK_MS);
+    try {
+      this.#view.render(await live.run(), model, { live: true });
+    } catch (e) {
+      this.#fail(e);
+    } finally {
+      // A run that failed while listening lets go of the microphone too.
+      if (this.#recorder === recorder) await this.#release();
+      if (this.#live === live) this.#live = null;
+      this.#status('');
+      this.#busy(false);
+      this.#ready();
+    }
+  }
+
+  /** Ends the recording; the run transcribes the last words and ends. */
+  async #stop() {
+    const live = this.#live;
+    live.push(await this.#release());
+    live.stop();
+    this.#status('Transcribing the last words');
+    this.#ready();
+  }
+
+  /** Ends the run without the last words. */
+  #abort() {
+    this.#live.abort();
+    this.#live = null;
+    if (this.#recorder) this.#release();
+  }
+
+  /** Turns the microphone off, and returns the samples recorded since the last tick. */
+  async #release() {
+    clearInterval(this.#ticking);
+    const recorder = this.#recorder;
+    this.#recorder = null;
+    return recorder.stop();
   }
 }
