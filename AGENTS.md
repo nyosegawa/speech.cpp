@@ -4,7 +4,7 @@
 
 speech.cpp runs speech models in C++ on [ggml](https://github.com/ggml-org/ggml), on macOS arm64 with Metal,
 Windows x64 with Vulkan and Linux x64 with Vulkan or the CPU alone, as a library with one C API,
-`include/speech.h`, for any program that speaks text or recognizes speech: ASIST's worker, other tools, bindings
+`include/speech.h`, for any program that speaks text, recognizes speech or detects it: ASIST's worker, other tools, bindings
 and other people's applications. Each model's official
 implementation is the reference: every stage of a port is checked against tensors dumped from it.
 README.md and `docs/` are the documentation for users; what a developer needs is in the code, this file and
@@ -22,19 +22,19 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   the interface of one family behind it, with one engine per family (`src/<family>-engine.cpp`). An engine declares
   in one table the request options its family takes, with their defaults and ranges read from the model file, and
   turns a request checked against that table into the family's; the setters, the model information and its JSON read
-  the table and nothing else. One table in `src/speech.cpp` lists the families: their task (synthesis or
-  recognition), the layout their reader takes, which names the `general.architecture` of their files, their engine
+  the table and nothing else. One table in `src/speech.cpp` lists the families: their task (synthesis,
+  recognition or detection), the layout their reader takes, which names the `general.architecture` of their files, their engine
   and, for a family that takes voice files, how it makes one. `speech_model_load()` and `speech_model_info_open()` choose the family from
   the table, and adding a family is adding its line.
 - `src/families/<family>/` holds the code of one architecture, whichever weights it is given: `qwen3-tts/`
   runs Qwen3-TTS 0.6B and 1.7B. A family reads its model's one GGUF file, its codec included, and turns text into
-  audio or audio into text; it knows nothing of the C API, the worker protocol or the command line. Its
+  audio, or audio into text or into the regions where someone speaks; it knows nothing of the C API, the worker protocol or the command line. Its
   `layout.cpp` says what its reader takes: the architecture, the layout version, every key with its type, and the
   tensors the keys call for.
 - `src/common/` holds what two families use in the same role. Code moves there when a second family needs
   it, not before, and never as a framework for families that do not exist yet.
 - `tools/` holds `speech`, the one executable for users, with a subcommand per program: `tts`,
-  `asr`, `voice`, `info`, `devices` and `quantize` in `tools/cli/` (with `main.cpp`, which dispatches them), `worker` in
+  `asr`, `vad`, `voice`, `info`, `devices` and `quantize` in `tools/cli/` (with `main.cpp`, which dispatches them), `worker` in
   `tools/worker/` and `serve` in `tools/server/`, and what they share in `tools/common/`: the one parser of every
   command line, which makes a flag of each option of the C API's vocabulary, the JSON reader, and the request options
   read from text or JSON and set through the library's setters. Every subcommand reaches the models only through the
@@ -47,8 +47,8 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   carries the protocol's version, the release and the model's information.
 - `checks/` holds one check per ported stage (`*-check.cpp`) that compares the stage with the reference
   dumps, and `speech-api-check`, which runs the C API through the shared library with a synthesis model, Irodori-TTS's
-  own rules and voice files in `speech-api-irodori.c`, and, with `transcribe`, with a recognition model
-  (`speech-api-recognition.c`), what they share in `speech-api-common.c` and what differs by the operating system in
+  own rules and voice files in `speech-api-irodori.c`, with `transcribe`, with a recognition model
+  (`speech-api-recognition.c`), and with `detect`, with a detection model (`speech-api-detection.c`), what they share in `speech-api-common.c` and what differs by the operating system in
   `speech-api-platform.c`. Checks reach into
   `src/` for the stage they check; they are built but not released.
 - `tools/server/` holds `speech serve`, which serves a synthesis model and a recognition model over HTTP with
@@ -170,7 +170,8 @@ comment.
 - Build with `cmake -B build && cmake --build build -j`, and run the checks the change touches before
   committing code. A change to the C API or the worker also runs `speech-api-check` and
   `tools/worker_smoke.py` for both synthesis families, and `speech-api-check transcribe` and
-  `tools/worker_recognition_smoke.py` for both recognition families; a change to the server runs
+  `tools/worker_recognition_smoke.py` for both recognition families, and `speech-api-check detect` with Silero VAD; a
+  change to the server runs
   `tools/server_smoke.py` and `tools/server_page_smoke.py`, one to the command line or the parser
   `tools/speech_cli_smoke.py`, with a model of each family, and one to `tools/models/` `tools/models_smoke.py`.
 - Never commit on main. Every change reaches main through a pull request, one coherent unit each: a

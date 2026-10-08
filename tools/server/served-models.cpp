@@ -38,6 +38,10 @@ ServedModels::ServedModels(Loading loading) : loading_(std::move(loading)) {
 }
 
 void ServedModels::load_given(const std::string & path, const std::string & catalog_name) {
+    if (speech_model_info_task(file_info(path).get()) == SPEECH_TASK_DETECTION) {
+        throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "",
+                      path + " is a model of speech detection, which speech serve does not serve; give it a synthesis model and a recognition model");
+    }
     auto served = std::make_shared<Served>(load_model(path, loading_), path, catalog_name);
     const speech_task task = speech_model_info_task(served->info().get());
     std::lock_guard<std::mutex> lock(mutex_);

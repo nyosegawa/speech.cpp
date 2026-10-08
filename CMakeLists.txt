@@ -199,6 +199,7 @@ add_executable(speech-cli
     tools/cli/main.cpp
     tools/cli/tts.cpp
     tools/cli/asr.cpp
+    tools/cli/vad.cpp
     tools/cli/model.cpp
     tools/cli/models.cpp
     tools/cli/quantize.cpp

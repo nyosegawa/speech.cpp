@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -65,9 +66,14 @@ inline Request new_request(speech_model * model) {
     return Request(raw, speech_request_free);
 }
 
-/** "synthesis" or "recognition". */
+/** "synthesis", "recognition" or "detection". */
 inline const char * task_name(speech_task task) {
-    return task == SPEECH_TASK_SYNTHESIS ? "synthesis" : "recognition";
+    switch (task) {
+        case SPEECH_TASK_SYNTHESIS: return "synthesis";
+        case SPEECH_TASK_RECOGNITION: return "recognition";
+        case SPEECH_TASK_DETECTION: return "detection";
+    }
+    throw std::logic_error("a task speech.h does not have");
 }
 
 /** The kind of a device as the subcommands write it: "cpu", "gpu" or "igpu". */

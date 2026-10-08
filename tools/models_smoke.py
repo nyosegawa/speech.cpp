@@ -1,9 +1,9 @@
 """Checks models by name: the catalog built into `speech` against tools/models/catalog.json, `speech models` in text
 and JSON, `speech pull`, `speech rm` and a subcommand given a name, in a model folder of its own (SPEECH_MODEL_DIR).
 
-It refuses what it should: a subcommand given no model (exit 2, naming the models to start with of its task), a name
-and a type the catalog does not hold (exit 2, listing what it holds), a model file as the argument of pull, and rm of
-a model that is not fetched (exit 1). A path to a .gguf file stays a path, and one that is missing is the library's io
+It refuses what it should: a subcommand given no model (exit 2, naming the models to start with of its task, and for
+`speech vad` every detection model), a name and a type the catalog does not hold (exit 2, listing what it holds), a
+model file as the argument of pull, and rm of a model that is not fetched (exit 1). A path to a .gguf file stays a path, and one that is missing is the library's io
 failure, with nothing fetched. It fetches through curl from Hugging Face no more than a mebibyte, from a local copy of
 one of the catalog's files, given as LOCAL.gguf and found by its size and SHA-256:
 
@@ -114,6 +114,11 @@ for command, task in [(["asr"], "recognition"), (["asr", "a.wav"], "recognition"
     assert all(n in message for n in starting(task)) and not any(n in message for n in starting(other)), message
 message = run("worker", code=2).stderr.decode()
 assert all(n in message for n in starting("synthesis") | starting("recognition")), message
+# A detection model takes no language, and speech vad given no model names every one of the catalog.
+detecting = {m["name"] for m in listing["models"] if m["task"] == "detection"}
+for command in (["vad"], ["vad", "a.wav"]):
+    message = run(*command, code=2).stderr.decode()
+    assert all(n in message for n in detecting) and not any(n in message for n in starting("synthesis") | starting("recognition")), message
 message = run("asr", "no-such-model", "a.wav", code=2).stderr.decode()
 assert all(m["name"] in message for m in listing["models"]), message
 some = listing["models"][0]

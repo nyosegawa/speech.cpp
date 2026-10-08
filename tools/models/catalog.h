@@ -26,7 +26,7 @@ struct CatalogModel {
     std::string repository;
     /** The repository's commit that the files are pinned at. */
     std::string revision;
-    /** "synthesis" or "recognition", as the model information names it. */
+    /** "synthesis", "recognition" or "detection", as the model information names it. */
     std::string task;
     /** The languages the model takes, as its file's general.languages names them. */
     std::vector<std::string> languages;
@@ -46,7 +46,7 @@ struct CatalogChoice {
 };
 
 /** Which models fit the first argument of a subcommand. */
-enum class ModelKind { Any, Synthesis, Recognition, VoiceFiles };
+enum class ModelKind { Any, Synthesis, Recognition, Detection, VoiceFiles };
 
 /** The catalog of this release, in the order of catalog.json. */
 const std::vector<CatalogModel> & catalog();

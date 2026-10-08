@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <stdexcept>
 #include <thread>
 
 #ifdef _WIN32
@@ -63,7 +64,10 @@ void send_file(const PageFile & file, httplib::Response & res) {
 }
 
 speech_task task_of(const CatalogModel & model) {
-    return model.task == "synthesis" ? SPEECH_TASK_SYNTHESIS : SPEECH_TASK_RECOGNITION;
+    for (speech_task task : {SPEECH_TASK_SYNTHESIS, SPEECH_TASK_RECOGNITION, SPEECH_TASK_DETECTION}) {
+        if (model.task == task_name(task)) return task;
+    }
+    throw std::logic_error("the catalog gives " + model.name + " the task " + model.task + ", which speech.h does not have");
 }
 
 std::string error_event(const ApiError & e) {
@@ -201,6 +205,11 @@ void Page::load(const httplib::Request & req, httplib::Response & res) {
         return;
     }
     const speech_task task = task_of(*choice.model);
+    if (task == SPEECH_TASK_DETECTION) {
+        send_error(res, {400, choice.model->name + " is a model of speech detection; the page loads a synthesis model and a recognition model.", "model",
+                         "invalid_value"});
+        return;
+    }
     if (!models_.begin_replacing(task, choice_name(choice))) {
         send_error(res, {409, "The speech " + std::string(task_name(task)) + " model is being replaced by " + models_.replacing(task) +
                               "; wait until it is in place.", "model", "model_loading"});

@@ -6,6 +6,7 @@
 
 Command tts_command();
 Command asr_command();
+Command vad_command();
 Command voice_command();
 Command info_command();
 Command devices_command();

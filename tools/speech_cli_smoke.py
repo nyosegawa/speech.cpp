@@ -2,7 +2,7 @@
 check, and checks what every subcommand shares: --version, --help, the exit codes and the form of a failure.
 
 For every model: `speech info` in text, in JSON equal to the model information of the worker's ready (without the
-device and the threads) and with --meta, the identity in both as the general keys of --meta give it; `speech devices` in text and JSON; usage errors (exit 2) and a library error
+device and the threads), or for a detection model the worker's refusal, and with --meta, the identity in both as the general keys of --meta give it; `speech devices` in text and JSON; usage errors (exit 2) and a library error
 (exit 1, "speech: <code> (<option>): <message>"). For a synthesis model: `speech tts`'s WAVE byte for byte against the
 worker's audio of the same lines and seed, into a file, into a regular file through stdout, and appended to a file with
 content and through a pipe into cat, where the header cannot be written again in place and keeps its sizes at
@@ -15,7 +15,9 @@ reference/qwen3-asr/dump.py against the worker's text of the same samples, as te
 languages, the one qwen-asr parsed or none, and where the model takes timestamps as text with --timestamps one line per
 segment and as JSON with them, the segments and tokens the worker's; and for a dump that holds requests with a forced
 language and a prompt, or with a decoding other than the default, `speech asr --language --prompt` or `speech asr
---decoding` against the worker's text of the same request, and as JSON its languages.
+--decoding` against the worker's text of the same request, and as JSON its languages. For a detection model: `speech
+vad` on 32-bit float WAVE files of the dumps of reference/silero-vad/dump.py against the regions in each dump's
+regions.json, the official's, with the flags of each set of options, as text and as JSON.
 
 usage: python3 tools/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav]
                                          [--embedding E.speaker.safetensors] [-- load options...]
@@ -51,7 +53,7 @@ if "--embedding" in args:
 speech, work, model, *dumps = args
 os.makedirs(work, exist_ok=True)
 added = [o.split("=", 1)[0] for i, o in enumerate(options) if i > 0 and options[i - 1] == "--add-voice"]
-SUBCOMMANDS = ["tts", "asr", "voice", "info", "devices", "models", "pull", "rm", "quantize", "serve", "worker"]
+SUBCOMMANDS = ["tts", "asr", "vad", "voice", "info", "devices", "models", "pull", "rm", "quantize", "serve", "worker"]
 
 
 def run(*command, input=None, stdout=subprocess.PIPE, code=0):
@@ -80,11 +82,12 @@ for s in SUBCOMMANDS:
     assert run(s, "--help").stdout.decode().startswith(f"usage: speech {s} "), s
 print(f"{version.strip()}; --help lists the subcommands and each has its own; no or an unknown subcommand exits with 2")
 
-bare = Worker(speech, model, ["--no-warmup"] + [o for i, o in enumerate(options) if o == "--device" or (i and options[i - 1] == "--device")])
-loaded = bare.ready["model"]
-bare.close()
 info = json.loads(run("info", model, "--json").stdout)
-assert info == {k: v for k, v in loaded.items() if k not in ("device", "threads")}, "speech info --json differs from the worker's ready"
+if info["task"] != "detection":
+    bare = Worker(speech, model, ["--no-warmup"] + [o for i, o in enumerate(options) if o == "--device" or (i and options[i - 1] == "--device")])
+    loaded = bare.ready["model"]
+    bare.close()
+    assert info == {k: v for k, v in loaded.items() if k not in ("device", "threads")}, "speech info --json differs from the worker's ready"
 meta = json.loads(run("info", model, "--json", "--meta").stdout)
 assert {k: v for k, v in meta.items() if k != "meta"} == info and meta["meta"]["general.architecture"] == info["architecture"], meta.keys()
 assert meta["meta"]["speech.layout"] == info["layout"] and meta["meta"]["general.name"] == info["name"]
@@ -104,7 +107,7 @@ if len(longest) > 8:
 devices = json.loads(run("devices", "--json").stdout)["devices"]
 listed = [line.split()[0] for line in run("devices").stdout.decode().splitlines()]
 assert [d["name"] for d in devices] == listed and all(d["kind"] in ("cpu", "gpu", "igpu") for d in devices), devices
-print(f"info: the worker's model information without device and threads, with --meta {len(meta['meta'])} entries, the identity "
+print(f"info: {'the model information' if info['task'] == 'detection' else 'the worker' + chr(39) + 's model information without device and threads'}, with --meta {len(meta['meta'])} entries, the identity "
       f"{', '.join(str(v) for v in shown)} as the general keys give it; devices: {listed}")
 
 for command in [["tts", model, "-o", "x.wav", "--steps", "4x", "あ"], ["tts", model, "あ"], ["tts", model, "-o", "x.wav", "--bogus", "あ"],
@@ -120,9 +123,11 @@ fatal = json.loads(r.stdout)
 assert fatal["type"] == "fatal" and fatal["error"]["code"] == "invalid_argument", fatal
 r = run("worker", model, "--device", "no-such-device", code=1)
 fatal = json.loads(r.stdout)
-assert fatal["type"] == "fatal" and fatal["error"]["code"] == "device" and fatal["error"]["option"] == "device", fatal
-failure(r, "device", "device")
-print("the worker's usage error and its device error: fatal on stdout, exit 2 and 1")
+# The worker refuses a detection model, which protocol 2 has no messages for, before it touches a device.
+refused = ("unsupported", None) if info["task"] == "detection" else ("device", "device")
+assert fatal["type"] == "fatal" and (fatal["error"]["code"], fatal["error"]["option"]) == refused, fatal
+failure(r, *refused)
+print(f"the worker's usage error and its {refused[0]} error: fatal on stdout, exit 2 and 1")
 
 if info["task"] == "synthesis":
     w = Worker(speech, model, options)
@@ -265,6 +270,36 @@ else:
         return values
 
     rate = info["sample_rate"]
+
+if info["task"] == "detection":
+    # 32-bit float WAVE files hold the dumps' samples as they are, which the official's regions were found in.
+    files, sets = [], []
+    for d in dumps:
+        data = read_npy(os.path.join(d, "audio.npy")).tobytes()
+        path = os.path.join(work, os.path.basename(os.path.normpath(d)) + ".wav")
+        with open(path, "wb") as f:
+            f.write(b"RIFF" + struct.pack("<I", 36 + len(data)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 3, 1, rate, rate * 4, 4, 32)
+                    + b"data" + struct.pack("<I", len(data)) + data)
+        files.append(path)
+        with open(os.path.join(d, "regions.json"), encoding="utf-8") as f:
+            sets.append(json.load(f))
+    for name in sets[0]:
+        options_of = sets[0][name]["options"]
+        flags = [x for k, v in options_of.items() for x in (f"--{k.replace('_', '-')}", str(v))]
+        lines = [line.split("\t") for line in run("vad", model, *flags, *options, *files).stdout.decode().splitlines()]
+        want = [[f, f"{start / rate:.3f}", f"{end / rate:.3f}"] for f, s in zip(files, sets) for start, end in s[name]["regions"]]
+        assert lines == want, (name, lines[:3], want[:3])
+        got = [json.loads(line) for line in run("vad", model, "--format", "json", *flags, *options, *files).stdout.decode().splitlines()]
+        assert [g["file"] for g in got] == files, got
+        assert all([[round(r["start"] * rate), round(r["end"] * rate)] for r in g["regions"]] == s[name]["regions"] for g, s in zip(got, sets)), name
+    print(f"vad: {len(files)} files with {len(sets[0])} sets of options, the official's regions as text and as JSON")
+    failure(run("vad", model, "--threshold", "2", *options, files[0], code=1), "out_of_range", "threshold")
+    failure(run("vad", model, "--language", "ja", *options, files[0], code=1), "unsupported", "language")
+    failure(run("vad", model, *options, os.path.join(work, "no-such.wav"), code=1), "io", "audio")
+    print("a threshold above 1, a language and a file that is not there: exit 1 with the library's form")
+    for path in files:
+        os.remove(path)
+elif info["task"] == "recognition":
     files, pcms = [], []
     for d in dumps:
         samples = read_npy(os.path.join(d, "audio.npy"))
