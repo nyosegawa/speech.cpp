@@ -126,7 +126,7 @@ void Page::route(httplib::Server & http) {
                             "text/html; charset=utf-8");
             return;
         }
-        if (!admits(req, res, false)) return;
+        if (!admits(req, res)) return;
         send_file(*page_file("index.html"), res);
         res.set_header("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
                                                   "img-src 'self' data:; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; "
@@ -135,7 +135,7 @@ void Page::route(httplib::Server & http) {
     });
     http.Get("/page/([a-z0-9-]+\\.(?:js|css))", [this](const httplib::Request & req, httplib::Response & res) {
         const PageFile * file = page_file(req.matches[1]);
-        if (!admits(req, res, false)) return;
+        if (!admits(req, res)) return;
         if (!file) {
             send_error(res, {404, "The page has no file " + json_string(req.matches[1]) + ".", "", ""});
             return;
@@ -143,25 +143,23 @@ void Page::route(httplib::Server & http) {
         send_file(*file, res);
     });
     http.Get("/speech/models", [this](const httplib::Request & req, httplib::Response & res) {
-        if (admits(req, res, true)) models(res);
+        if (admits(req, res)) models(res);
     });
     http.Post("/speech/load", [this](const httplib::Request & req, httplib::Response & res) {
-        if (admits(req, res, true)) load(req, res);
+        if (admits(req, res)) load(req, res);
     });
     http.Post("/speech/voices", [this](const httplib::Request & req, httplib::Response & res) {
-        if (admits(req, res, true)) add_voice(req, res);
+        if (admits(req, res)) add_voice(req, res);
     });
 }
 
-bool Page::admits(const httplib::Request & req, httplib::Response & res, bool token) const {
+bool Page::admits(const httplib::Request & req, httplib::Response & res) const {
     if (!access_.loopback()) {
         send_error(res, {404, kOff, "", "page_off"});
         return false;
     }
-    std::optional<ApiError> refusal = access_.host_refusal(req);
-    if (!refusal && token) refusal = access_.token_refusal(req);
+    const std::optional<ApiError> refusal = access_.host_refusal(req);
     if (!refusal) return true;
-    if (refusal->status == 401) res.set_header("WWW-Authenticate", "Bearer");
     send_error(res, *refusal);
     return false;
 }

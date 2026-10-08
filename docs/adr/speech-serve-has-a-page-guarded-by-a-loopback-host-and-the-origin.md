@@ -1,4 +1,4 @@
-# speech serve has a page, guarded by a token, a loopback Host and the Origin
+# speech serve has a page, guarded by a loopback Host and the Origin
 
 ## Context
 
@@ -22,10 +22,6 @@ reachable that way.
   in place of its task's
   ([the record of a model of each task](speech-serve-holds-a-model-of-each-task-and-replaces-one-only-after-its-requests-end.md))
   with the fetch's progress as server-sent events, and add a voice made from a recording through `speech_voice_add()`.
-- **A token guards the page's endpoints.** The server makes 128 random bits at each start and prints the page's address
-  with them after `#`, which `--open` opens; the fragment reaches no server log and no referrer. The page moves the token
-  into the tab's session storage, takes it out of the address, and sends it as `Authorization: Bearer`. A request
-  without it is a 401, and one with another a 403.
 - **The page and its endpoints answer only a Host of 127.0.0.1, localhost or [::1] with the server's port**, against DNS
   rebinding, **and exist only while the server listens on 127.0.0.1, ::1 or localhost.** On another address they answer
   how to reach the page through an SSH tunnel, and `--open` there is a usage error.
@@ -38,12 +34,17 @@ The alternatives were turned down:
 
 - A framework (Svelte with Tailwind), which needs Node and a build step for every change, and whose output is harder to
   read in the repository than the files it serves.
-- The token in a query string or a cookie. A query string reaches logs and referrers; a cookie goes with every request,
-  a cross-site one included.
+- A token in the page's address, as Jupyter has, which the page had until 2026-10-08: 128 random bits made at each start,
+  printed after `#` and sent as `Authorization: Bearer`. With the Origin and the Host rules, no web page reaches the
+  page's endpoints, and what the token added was a guard against other users and programs of the same machine, which
+  reach 127.0.0.1 as well. They could fetch catalog models into the cache and replace the models held, but not read a
+  file or run code. Ollama guards its API with the Origin and the Host alone, and llama.cpp's server, its page included,
+  with nothing unless given `--api-key`. The token made every opening of the page go through the address the server
+  printed, and the user decided that it is not worth that.
 - Answering foreign origins without CORS headers. A simple request still arrives and runs: a page could make the server
   speak or load a model without reading the answer.
-- The page on any address with the token alone. A token printed on one machine and typed on another travels in clear
-  over HTTP; an SSH tunnel gives the same page with the server on 127.0.0.1.
+- The page on any address. Its requests would travel in clear over HTTP from another machine; an SSH tunnel gives the
+  same page with the server on 127.0.0.1.
 
 ## Consequences
 

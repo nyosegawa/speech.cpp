@@ -51,7 +51,7 @@ try {
   const address = await racing(new Promise((resolve) => {
     const read = (chunk) => {
       log += chunk;
-      const m = /(http:\/\/127\.0\.0\.1:\d+\/#token=[0-9a-f]+)/.exec(log);
+      const m = /is at (http:\/\/127\.0\.0\.1:\d+\/)/.exec(log);
       if (m) resolve(m[1]);
     };
     server.child.stdout.on('data', read);
@@ -59,7 +59,7 @@ try {
   }), [server], 120000, 'speech serve to listen').catch((e) => {
     throw new Error(`${e.message}\n${log}`);
   });
-  console.log('server', address.replace(/token=.*/, 'token=…'));
+  console.log('server', address);
 
   const chrome = start(CHROME, [
     '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run',

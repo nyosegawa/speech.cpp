@@ -62,7 +62,7 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   `jobs.h` runs one request at a time in arrival order and cancels the request of a client that goes away, and
   `served-models.cpp` holds one model of each task and replaces it once its requests have ended. `page/` is the page
   of `speech serve --open`, plain HTML, CSS and JavaScript modules compiled into `speech`, which `page.cpp` serves
-  with the endpoints that fetch and load models; `access.cpp` guards them with the token, the Host and the Origin.
+  with the endpoints that fetch and load models; `access.cpp` guards them with the Host and the Origin.
 - The smoke scripts in `tools/` drive each entry point as its caller does and fail on a defect:
   `worker_smoke.py` and `worker_recognition_smoke.py` the worker protocol through `worker_client.py`, which checks
   every line and one terminal message per request, `server_smoke.py` every HTTP endpoint and the mapping of errors,

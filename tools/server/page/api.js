@@ -1,25 +1,6 @@
-// The server's endpoints as the page calls them: its own under /speech/, which want the token that speech serve put
-// after "#" in the page's address, and OpenAI's audio endpoints, which any client calls. Every failure is thrown as a
-// ServerError carrying OpenAI's error object, so that the page shows the server's own words next to their cause.
-
-const TOKEN_KEY = 'speech.cpp token';
-let token = null;
-
-/**
- * Takes the token from the address into this tab's storage and out of the address, so that a reload keeps it and a
- * copied address or a bookmark does not carry it. Returns null when the page was opened without one.
- */
-export function takeToken() {
-  const given = /^#token=([0-9a-f]+)$/.exec(location.hash);
-  try {
-    if (given) sessionStorage.setItem(TOKEN_KEY, given[1]);
-    token = given ? given[1] : sessionStorage.getItem(TOKEN_KEY);
-  } catch {
-    token = given ? given[1] : null;
-  }
-  if (given) history.replaceState(null, '', location.pathname);
-  return token;
-}
+// The server's endpoints as the page calls them: its own under /speech/, and OpenAI's audio endpoints, which any client
+// calls. Every failure is thrown as a ServerError carrying OpenAI's error object, so that the page shows the server's own
+// words next to their cause.
 
 /** A failure the server answered: OpenAI's error object, whose param names the input at fault. */
 export class ServerError extends Error {
@@ -42,10 +23,8 @@ async function failure(response) {
   return new ServerError(response.status, error);
 }
 
-async function call(path, init = {}, ownEndpoint = false) {
-  const headers = new Headers(init.headers);
-  if (ownEndpoint) headers.set('Authorization', `Bearer ${token}`);
-  const response = await fetch(path, { ...init, headers });
+async function call(path, init = {}) {
+  const response = await fetch(path, init);
   if (!response.ok) throw await failure(response);
   return response;
 }
@@ -68,7 +47,7 @@ async function* events(response) {
 
 /** The catalog, where each of its files is and how much of it is there, and the model held for each task. */
 export async function models() {
-  return (await call('/speech/models', {}, true)).json();
+  return (await call('/speech/models')).json();
 }
 
 /**
@@ -82,7 +61,7 @@ export async function* load(name, signal) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: name }),
     signal,
-  }, true);
+  });
   for await (const event of events(response)) {
     if (event.type === 'error') throw new ServerError(500, event.error);
     yield event;
@@ -94,7 +73,7 @@ export async function addVoice(name, recording) {
   const form = new FormData();
   form.append('name', name);
   form.append('file', recording, 'recording.wav');
-  return (await (await call('/speech/voices', { method: 'POST', body: form }, true)).json()).held;
+  return (await (await call('/speech/voices', { method: 'POST', body: form })).json()).held;
 }
 
 /**

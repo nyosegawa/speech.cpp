@@ -491,8 +491,8 @@ Command serve_command() {
         "detection model finds speech, GET /v1/models, GET /health, and OpenAI's Realtime transcription over a WebSocket at\n"
         "/v1/realtime, which transcribes each buffer the client commits. It has no authentication and no TLS, and refuses a\n"
         "request that a web page at another origin than --cors-origin's sends. On 127.0.0.1, ::1 or localhost it also\n"
-        "serves a page on which to pick models of the catalog, fetch them and try them, at the address with a token\n"
-        "that it prints; --open opens it, and starts the server without a model if none is given.";
+        "serves a page on which to pick models of the catalog, fetch them and try them, at the address it prints;\n"
+        "--open opens it, and starts the server without a model if none is given.";
     c.flags = {
         {"--host", "ADDRESS", false, "the address to listen on, 127.0.0.1 unless given"},
         {"--port", "N", false, "the port, 8080 unless given; 0 for any free one"},

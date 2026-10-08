@@ -105,7 +105,7 @@ try {
   const address = await racing(new Promise((resolve) => {
     const read = (chunk) => {
       log += chunk;
-      const m = /(http:\/\/127\.0\.0\.1:\d+\/#token=[0-9a-f]+)/.exec(log);
+      const m = /is at (http:\/\/127\.0\.0\.1:\d+\/)/.exec(log);
       if (m) resolve(m[1]);
     };
     server.child.stdout.on('data', read);

@@ -23,8 +23,8 @@ public:
     void route(httplib::Server & http);
 
 private:
-    /** Whether the request may reach the page's files, or for an endpoint with `token` its endpoints; otherwise answers. */
-    bool admits(const httplib::Request & req, httplib::Response & res, bool token) const;
+    /** Whether the request may reach the page and its endpoints; otherwise answers why not. */
+    bool admits(const httplib::Request & req, httplib::Response & res) const;
 
     /** GET /speech/models: the catalog, where each file is and how much of it is there, and the models held. */
     void models(httplib::Response & res) const;

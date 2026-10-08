@@ -1,7 +1,7 @@
-// The page of speech serve: takes the token from its address, asks the server for the catalog and the models it holds,
-// and shows a tab for each panel. A task has one model picker, which moves to the panel in view, so that the
-// transcribe and live panels show the same recognition model and the same progress of a load. The transcribe panel
-// also shows the detection model, which finds the regions it transcribes.
+// The page of speech serve: asks the server for the catalog and the models it holds, and shows a tab for each panel. A
+// task has one model picker, which moves to the panel in view, so that the transcribe and live panels show the same
+// recognition model and the same progress of a load. The transcribe panel also shows the detection model, which finds
+// the regions it transcribes.
 
 import * as api from './api.js';
 import { LivePanel } from './live.js';
@@ -65,14 +65,4 @@ async function refresh() {
   if (TASKS.some((task) => state[task].replacing !== null && !pickers[task].busy)) watching = setTimeout(refresh, WATCH_MS);
 }
 
-function start() {
-  if (api.takeToken()) {
-    refresh();
-  } else {
-    fail('Open this page from the address that speech serve printed when it started, which ends in #token=…; the page needs that token to fetch and load models.');
-  }
-}
-
-// An address with a new token, typed into this tab, changes only its fragment, which does not load the page again.
-addEventListener('hashchange', start);
-start();
+refresh();
