@@ -59,7 +59,7 @@ int run_vad(const CommandLine & line, FILE * out) {
         }
         if (format == "json") std::fprintf(out, "%s]}\n", json.c_str());
         std::fflush(out);
-        std::fprintf(stderr, "%s: %.2f s of audio in %.3f s, RTF %.4f, %zu regions\n", path.c_str(), audio, took, took / audio, n);
+        std::fprintf(stderr, "%s: %.2f s of audio in %.3f s, RTF %.4f, %zu region%s\n", path.c_str(), audio, took, took / audio, n, n == 1 ? "" : "s");
         audio_total += audio;
         busy += took;
     }
