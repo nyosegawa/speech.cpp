@@ -407,6 +407,7 @@ static int check_model(speech_model * model, const char * model_path, const char
     r = new_request(model, NULL, voice, 13);
     ok &= expect(speech_request_set_audio(r, audio.samples, audio.n, rate), SPEECH_ERROR_UNSUPPORTED, "audio", "audio for a synthesis");
     ok &= expect(speech_transcribe(r), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_transcribe() of a synthesis model");
+    ok &= expect(speech_detect(r), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_detect() of a synthesis model");
     speech_detection * detection = NULL;
     ok &= expect(speech_detection_start(r, rate, &detection), SPEECH_ERROR_UNSUPPORTED, NULL, "a detection of a synthesis model") &&
           detection == NULL;

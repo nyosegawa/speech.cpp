@@ -266,6 +266,7 @@ static int check_refusals(speech_model * model, const char * model_path, const f
     ok &= expect(speech_synthesize(r, NULL, NULL), SPEECH_ERROR_INVALID_ARGUMENT, NULL, "speech_synthesize() without a callback");
     ok &= expect(speech_synthesize(r, ignore_audio, NULL), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_synthesize() of a recognition model");
     ok &= expect(speech_transcribe(r), SPEECH_ERROR_INVALID_ARGUMENT, "audio", "a recognition without audio");
+    ok &= expect(speech_detect(r), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_detect() of a recognition model");
     speech_detection * detection = NULL;
     ok &= expect(speech_detection_start(r, rate, &detection), SPEECH_ERROR_UNSUPPORTED, NULL, "a detection of a recognition model") &&
           detection == NULL;
