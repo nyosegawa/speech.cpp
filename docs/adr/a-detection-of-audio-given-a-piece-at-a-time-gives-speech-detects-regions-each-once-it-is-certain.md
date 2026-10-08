@@ -25,7 +25,7 @@ with the number of chunks its graph held (Apple M5, 2026-10-08).
 
 - **A detection is an object of its own**, `speech_detection`, started from a request's options and the rate of the
   audio to come, given samples in any amounts, and ended. It gives the regions found so far, which never change once
-  given, and whether a region has begun that is not given yet, with the start it will have.
+  given, and whether a region has begun that is not given yet, with the start it will have and whether it is kept.
 - **Its regions are `speech_detect()`'s.** Once the audio has ended they are the regions `speech_detect()` gives for
   all of it, sample for sample, at any rate and however it was cut into pieces. Each stage gives the same numbers in
   pieces as whole: the resampler computes an output sample through the same sum once its input has arrived; a chunk is
@@ -39,6 +39,13 @@ with the number of chunks its graph held (Apple M5, 2026-10-08).
   end, and a region that `max_speech_duration_s` cuts at an earlier silence is given at the cut at the earliest.
 - **What has begun and is not given yet is said oldest first**: a region whose end waits on what follows before the
   region under way, so that a caller that announces a start and an end for each region announces them in order.
+- **The region begun is said to be kept once it can no longer be dropped**, as shorter than `min_speech_duration_ms`:
+  a region whose end waits is kept, and the region under way once no end it can still take, where its probability fell
+  below the threshold less 0.15 without rising above the threshold since, or else the next chunk or the end of the audio
+  heard, leaves it that short. With the defaults that is 250 ms after its speech began, where its region is given only
+  after the silence that ends it, so that a caller can say someone speaks long before it can give the utterance, and
+  never for a noise it then drops. `speech_detection_speaking()` gives it beside the start, in one call that reads one
+  region: whether a region has begun, its start, and whether it is kept.
 - **The library resamples the pieces** with the filter of the whole audio
   ([the record of resampling](the-library-resamples-input-audio-with-torchaudios-kaiser-best-filter.md)), which holds
   back the half of the filter after the last sample until more arrives: 4.2 to 4.3 ms from 24, 32, 44.1 or 48 kHz to
@@ -59,6 +66,13 @@ The alternatives were turned down:
   a chunk.
 - Products of many columns, with the regions allowed to differ near a threshold. A region would move by a chunk or
   more wherever a probability lies within Metal's error of a threshold, and the contract would hold on the CPU alone.
+- The region under way said without whether it is kept, which a caller would guess from the time it has lasted. Its
+  probability may fall below the lower threshold and stay between the two thresholds for any time, keeping the region
+  open without lengthening its speech, and it is dropped once a chunk falls below again; a guess from elapsed time
+  announces it, and waiting out `min_speech_duration_ms` and `min_silence_duration_ms` instead cost 0.6 s.
+- Whether it is kept as a function of its own beside `speech_detection_speaking()`, or as a third return value. A
+  second call would have to name the same region again, and a value of 2 reads less plainly than an output named for
+  what it says.
 
 ## Consequences
 

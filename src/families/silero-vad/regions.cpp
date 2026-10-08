@@ -83,17 +83,20 @@ void RegionStream::add(double p) {
     }
 }
 
+int64_t RegionStream::earliest_end() const {
+    return temp_end_ != 0 ? temp_end_ : std::min((int64_t) chunk_ * chunks_, heard_);
+}
+
 void RegionStream::settle(int64_t heard) {
+    heard_ = heard;
     if (!pending_) return;
     const int64_t end = pending_->end, next_chunk = (int64_t) chunk_ * chunks_;
     // Every region still to come starts at the region under way's start or, with none under way, at a chunk not yet taken.
     // Where it starts twice the padding or more after the pending region's end, the pending region is padded by the
     // padding, which ends within the audio heard: before that start, or within `heard` as the last test asks.
     if (triggered_) {
-        // The region under way is kept, as it is cut at max_speech or ends longer than min_speech: no end it can take is
-        // earlier than its pending silence's start, or than the next chunk or the end of the audio.
-        const int64_t earliest_end = temp_end_ != 0 ? temp_end_ : std::min(next_chunk, heard);
-        if ((double) (earliest_end - start_) > min_speech_) give_pending(start_, (double) heard);
+        // The region under way is kept, as it is cut at max_speech or ends longer than min_speech.
+        if ((double) (earliest_end() - start_) > min_speech_) give_pending(start_, (double) heard);
         else if ((double) (start_ - end) >= 2 * pad_) give_pending(std::nullopt, (double) heard);
     } else if ((double) (next_chunk - end) >= 2 * pad_ && (double) end + pad_ <= (double) heard) {
         give_pending(std::nullopt, (double) heard);
@@ -101,14 +104,15 @@ void RegionStream::settle(int64_t heard) {
 }
 
 void RegionStream::end(int64_t samples) {
+    heard_ = samples;
     if (triggered_ && (double) (samples - start_) > min_speech_) append({start_, samples});
     triggered_ = false;
     if (pending_) give_pending(std::nullopt, (double) samples);
 }
 
-std::optional<int64_t> RegionStream::open() const {
-    if (pending_) return pending_->start;
-    if (triggered_) return padded_start(start_);
+std::optional<Begun> RegionStream::open() const {
+    if (pending_) return Begun{pending_->start, true};
+    if (triggered_) return Begun{padded_start(start_), (double) (earliest_end() - start_) > min_speech_};
     return std::nullopt;
 }
 

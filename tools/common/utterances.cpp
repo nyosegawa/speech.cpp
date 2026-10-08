@@ -83,7 +83,7 @@ std::pair<double, double> Detection::region(size_t index) const {
 
 std::optional<double> Detection::speaking() const {
     double start = 0;
-    if (!speech_detection_speaking(detection_.get(), &start)) return std::nullopt;
+    if (!speech_detection_speaking(detection_.get(), &start, nullptr)) return std::nullopt;
     return start;
 }
 

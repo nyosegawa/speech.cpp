@@ -1004,13 +1004,16 @@ SPEECH_API size_t speech_detection_region_count(const speech_detection * detecti
 SPEECH_API speech_status speech_detection_region(const speech_detection * detection, size_t index, double * start, double * end);
 
 /**
- * Whether a region has begun that is not given yet (1), with the start it will have in `*start` unless that is NULL:
- * a region that has ended and whose end waits on what follows, as with min_silence_duration_ms below twice speech_pad_ms
- * or after a cut at max_speech_duration_s, or else the region under way, where someone speaks at the end of the audio
- * heard. A region under way that ends no longer than min_speech_duration_ms is dropped, and none is then given from that
- * start. 0 when neither, and after speech_detection_end(). Added in 3.1.
+ * Whether a region has begun that is not given yet (1), with the start it will have in `*start` and in `*kept` whether it
+ * is certain to be given, each unless NULL: a region that has ended and whose end waits on what follows, as with
+ * min_silence_duration_ms below twice speech_pad_ms or after a cut at max_speech_duration_s, which is kept, or else the
+ * region under way, where someone speaks at the end of the audio heard. A region under way is kept once no end it can
+ * still take leaves it as short as min_speech_duration_ms: its speech has lasted longer than that, to the audio heard or,
+ * where its probability has fallen below the threshold less 0.15 (0.01 at least) and not risen above the threshold
+ * since, to where it fell. Until then it is dropped, and no region is given from its start, if its speech ends that
+ * soon. 0 when neither, and after speech_detection_end(). Added in 3.1.
  */
-SPEECH_API int speech_detection_speaking(const speech_detection * detection, double * start);
+SPEECH_API int speech_detection_speaking(const speech_detection * detection, double * start, int * kept);
 
 /** Why a request ended. */
 typedef enum speech_stop {

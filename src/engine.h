@@ -185,11 +185,18 @@ public:
 
     virtual const std::vector<TimedText> & regions() const = 0;
 
+    /** A region begun and not given yet: its start in seconds, and whether it is certain to be given. */
+    struct Begun {
+        double start;
+        bool kept;
+    };
+
     /**
-     * The start, in seconds, of the earliest region begun but not given yet: one that has ended whose end waits on what
-     * follows, or else the one under way at the end of the audio heard, if it is kept; none when there is neither.
+     * The earliest region begun but not given yet: one that has ended whose end waits on what follows, or else the one
+     * under way at the end of the audio heard, kept once it can no longer be dropped as too short; none when there is
+     * neither.
      */
-    virtual std::optional<double> open() const = 0;
+    virtual std::optional<Begun> open() const = 0;
 };
 
 /**

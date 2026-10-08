@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -84,12 +85,16 @@ bool same_region(const Region & a, const Region & b) {
  * What is wrong with the regions that RegionStream gives as the chunks come, settled after each whole chunk: a region
  * must not be given before the rule decided at the end gives it alike whether 1000 chunks of silence (probability 0) or
  * of speech (1) follow, and without max_speech_duration_s it must be given at the first chunk after which they do, which
- * then makes it certain; a limit cuts a region at its longest silence, which audio between the two can lengthen. Once the
- * audio has ended the regions must be the whole audio's. Empty when nothing is.
+ * then makes it certain; a limit cuts a region at its longest silence, which audio between the two can lengthen. The
+ * region begun and not given must be reported kept exactly from the chunk after which the rule gives a region from its
+ * start whether silence follows or the audio ends there, the chunk where its speech passes min_speech_duration_ms, and a
+ * region so reported must be given in the end. Once the audio has ended the regions must be the whole audio's. Empty when
+ * nothing is.
  */
 std::string as_chunks_come(const std::vector<float> & probs, int64_t samples, int rate, int chunk, const RegionRule & rule) {
     RegionStream settled(rule, rate, chunk), walked(rule, rate, chunk);
     const int64_t n = (int64_t) probs.size();
+    std::vector<int64_t> kept;
     // The last chunk may be partial and the audio ends after it, which no continuation follows.
     for (int64_t k = 0; k + 1 < n; k++) {
         settled.add(probs[(size_t) k]);
@@ -110,6 +115,19 @@ std::string as_chunks_come(const std::vector<float> & probs, int64_t samples, in
         if (std::isinf(rule.max_speech_duration_s) && certain(given.size())) {
             return "region " + std::to_string(given.size()) + " is certain at chunk " + std::to_string(k) + " but not given";
         }
+        if (const std::optional<Begun> begun = settled.open()) {
+            RegionStream ended = walked;
+            ended.end((k + 1) * chunk);
+            const auto from_start = [&](const std::vector<Region> & regions) {
+                return std::any_of(regions.begin(), regions.end(), [&](const Region & r) { return r.start == begun->start; });
+            };
+            const bool rule_keeps = from_start(silence) && from_start(ended.regions());
+            if (begun->kept != rule_keeps) {
+                return "the region from sample " + std::to_string(begun->start) + " is reported " + (begun->kept ? "kept" : "not kept") + " at chunk " +
+                       std::to_string(k) + ", where the rule " + (rule_keeps ? "keeps it whatever follows" : "may still drop it");
+            }
+            if (begun->kept) kept.push_back(begun->start);
+        }
     }
     if (n > 0) {
         settled.add(probs.back());
@@ -119,6 +137,11 @@ std::string as_chunks_come(const std::vector<float> & probs, int64_t samples, in
     walked.end(samples);
     const std::vector<Region> & a = settled.regions(), & b = walked.regions();
     if (a.size() != b.size() || !std::equal(a.begin(), a.end(), b.begin(), same_region)) return "the regions given as the chunks came differ from the whole's";
+    for (const int64_t start : kept) {
+        if (std::none_of(a.begin(), a.end(), [&](const Region & r) { return r.start == start; })) {
+            return "the region from sample " + std::to_string(start) + " was reported kept and not given";
+        }
+    }
     return "";
 }
 
@@ -296,10 +319,27 @@ int main(int argc, char ** argv) {
                     wrong = as_chunks_come(probs.f32, (int64_t) audio.f32.size(), detector.sample_rate(), net.chunk(), rule);
                     if (!wrong.empty()) wrong = name + ": " + wrong;
                 }
-                std::printf("  %-32s %s\n", "regions as the chunks come", wrong.empty() ? ("each given once certain, " + std::to_string(rules.size()) + " sets").c_str()
+                std::printf("  %-32s %s\n", "regions as the chunks come", wrong.empty() ? ("each given once certain and kept once its speech is long enough, " + std::to_string(rules.size()) + " sets").c_str()
                                                                                        : ("WRONG: " + wrong).c_str());
                 ok = ok && wrong.empty();
             }
+
+            // A burst shorter than min_speech_duration_ms, a chunk below the threshold less 0.15, probabilities between the
+            // two thresholds, which keep the region open for two seconds without lengthening its speech, and a chunk below
+            // again, which drops it: the region must never be said to be kept.
+            std::vector<float> burst(20, 0.0f);
+            burst.insert(burst.end(), 3, 0.9f);
+            burst.push_back(0.2f);
+            burst.insert(burst.end(), 60, 0.4f);
+            burst.push_back(0.1f);
+            burst.insert(burst.end(), 20, 0.0f);
+            const RegionRule rule = default_rule(model);
+            std::string wrong = as_chunks_come(burst, (int64_t) burst.size() * net.chunk(), detector.sample_rate(), net.chunk(), rule);
+            if (wrong.empty() && !speech_regions(burst, (int64_t) burst.size() * net.chunk(), detector.sample_rate(), net.chunk(), rule).empty()) {
+                wrong = "a region was given";
+            }
+            std::printf("%-34s %s\n", "a short burst held open", wrong.empty() ? "never kept, and dropped" : ("WRONG: " + wrong).c_str());
+            ok = ok && wrong.empty();
             ggml_gallocr_free(allocr);
         }
         ggml_backend_free(backend);
