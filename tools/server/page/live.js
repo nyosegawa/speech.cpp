@@ -18,6 +18,8 @@ export class LivePanel {
   #held = null;
   #options = null;
   #recorder = null;
+  /** The recorder of a run whose microphone the browser has not yet given; a change of model ends it. */
+  #starting = null;
   #live = null;
   #ticking = 0;
   #busy;
@@ -48,6 +50,7 @@ export class LivePanel {
 
   /** Shows the recognition model held, `held` of GET /speech/models, or that there is none; a run going on ends. */
   show(held) {
+    this.#starting = null;
     if (this.#live) this.#abort();
     this.#held = held;
     if (held) {
@@ -67,7 +70,7 @@ export class LivePanel {
     button.textContent = this.#recorder ? 'Stop' : 'Start';
     button.classList.toggle('primary', !this.#recorder);
     button.classList.toggle('stop', this.#recorder !== null);
-    button.disabled = !this.#held || (this.#live !== null && !this.#recorder);
+    button.disabled = !this.#held || this.#starting !== null || (this.#live !== null && !this.#recorder);
     button.title = this.#held ? '' : 'Choose a model first';
     $('live-dot').hidden = !this.#recorder;
   }
@@ -86,19 +89,26 @@ export class LivePanel {
   }
 
   async #start() {
-    if (this.#live || !this.#held) return;
+    if (this.#live || this.#starting || !this.#held) return;
     $('live-error').hidden = true;
     this.#options.clearErrors();
     const recorder = new Recorder();
-    // A second press while the browser asks for the microphone would start a second recorder.
-    $('live-start').disabled = true;
+    this.#starting = recorder;
+    this.#ready();
     try {
       await recorder.start();
     } catch (e) {
+      if (this.#starting !== recorder) return;
+      this.#starting = null;
       this.#fail(e.name === 'NotAllowedError' ? new Error('The browser was not allowed to use the microphone.') : e);
       this.#ready();
       return;
     }
+    if (this.#starting !== recorder) {
+      await recorder.stop();
+      return;
+    }
+    this.#starting = null;
     const model = this.#held.model;
     const live = new LiveTranscription(recorder.rate, {
       pieceSeconds: bounded($('live-piece')),
