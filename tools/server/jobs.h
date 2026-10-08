@@ -1,8 +1,6 @@
 #pragma once
 
-#include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
@@ -26,15 +24,6 @@ namespace server {
 class Served;
 
 using Clock = std::chrono::steady_clock;
-
-/** The audio of a request as the worker sends it: 16-bit little-endian samples, clamped to [-1, 1] and rounded. */
-inline void append_pcm(std::string & out, const float * s, size_t n) {
-    for (size_t i = 0; i < n; i++) {
-        const int16_t v = (int16_t) std::lround(std::max(-1.0f, std::min(1.0f, s[i])) * 32767.0f);
-        out += (char) (v & 0xFF);
-        out += (char) ((uint16_t) v >> 8);
-    }
-}
 
 /**
  * Lets requests take the model in the order they arrive. The library serializes concurrent calls by itself, but in
@@ -107,9 +96,15 @@ private:
 struct Job {
     /** The model the request runs on, which the server keeps until the request has ended and been freed. */
     std::shared_ptr<Served> served;
-    /** The request as its handler set it up, which the run spends and a client that goes away cancels. */
+    /**
+     * The request as its handler set it up, where the run makes one alone, which the run spends and a client that goes
+     * away cancels.
+     */
     Request request{nullptr, speech_request_free};
-    /** Stops the library requests the run makes, its request's or those of the regions of a transcription. */
+    /**
+     * Stops the library requests the run makes: its request's, those of the regions of a transcription, or those of the
+     * sentences of a speech.
+     */
     Cancellation cancellation;
     std::mutex mutex;
     std::condition_variable changed;
@@ -127,20 +122,6 @@ struct Job {
         abandoned = true;
         cancellation.cancel();
     }
-};
-
-/** One request's synthesis, which hands its audio to the HTTP handler as it is made. */
-struct SpeechJob : Job {
-    /** The model's sample rate, which the log gives the length in. */
-    int sample_rate = 0;
-    /** The PCM made and not yet sent. */
-    std::string pending;
-    /** A callback has been called, so the library has accepted the request and its work has begun. */
-    bool accepted = false;
-    uint64_t samples = 0;
-    int64_t seed = -1;
-    speech_stop stop = SPEECH_STOP_COMPLETE;
-    Clock::time_point first_audio;
 };
 
 /**
@@ -164,24 +145,23 @@ struct TranscriptionJob : Job {
     Transcript transcript;
 };
 
-inline int on_audio(const float * s, size_t n, void * user_data) {
-    SpeechJob & job = *static_cast<SpeechJob *>(user_data);
-    std::lock_guard<std::mutex> lock(job.mutex);
-    job.accepted = true;
-    if (job.samples == 0) job.first_audio = Clock::now();
-    append_pcm(job.pending, s, n);
-    job.samples += n;
-    job.changed.notify_all();
-    return 0;
-}
+/** The interval at which a waiting handler looks whether its client is still there. */
+constexpr auto POLL = std::chrono::milliseconds(50);
 
-/** The library reports progress once it has checked the request, so a request that reports any is accepted. */
-inline int on_progress(double, void * user_data) {
-    SpeechJob & job = *static_cast<SpeechJob *>(user_data);
-    std::lock_guard<std::mutex> lock(job.mutex);
-    job.accepted = true;
-    job.changed.notify_all();
-    return 0;
+/**
+ * Waits, holding `lock` on the job's mutex, until the job has finished or `until` says so; returns false for a client
+ * that went away meanwhile, as `gone` tells, whose request it then cancels.
+ */
+template <typename Until, typename Gone>
+bool wait_for(Job & job, std::unique_lock<std::mutex> & lock, Until until, Gone gone) {
+    while (!job.finished && !until()) {
+        if (job.changed.wait_for(lock, POLL) == std::cv_status::timeout && gone()) {
+            lock.unlock();
+            job.abandon();
+            return false;
+        }
+    }
+    return true;
 }
 
 inline double seconds_between(Clock::time_point t0, Clock::time_point t1) {
@@ -237,26 +217,6 @@ void run_in_turn(Job & job, Turns & turns, uint64_t ticket, const std::string & 
         std::fprintf(stderr, "%s\n", log.c_str());
     }
     turns.pass();
-}
-
-inline void synthesize(const std::shared_ptr<SpeechJob> & job, Turns & turns, uint64_t ticket, const std::string & name) {
-    run_in_turn(*job, turns, ticket, name, [&] {
-        speech_request * r = job->request.get();
-        const speech_status s = check(job->cancellation.run(r, [&] { return speech_synthesize(r, on_audio, job.get()); }));
-        if (s == SPEECH_OK) {
-            const speech_result * result = speech_request_result(r);
-            std::lock_guard<std::mutex> lock(job->mutex);
-            job->seed = speech_result_seed(result);
-            job->stop = speech_result_stop(result);
-        }
-        return s;
-    }, [&](Clock::time_point started) {
-        if (!job->samples) return std::string();
-        char line[256];
-        std::snprintf(line, sizeof line, ", first audio after %.3f s, %.2f s of audio", seconds_between(started, job->first_audio),
-                      (double) job->samples / job->sample_rate);
-        return std::string(line);
-    });
 }
 
 /** Runs a transcription, by the regions of its detection request where it has one, and keeps its recognition in the job. */

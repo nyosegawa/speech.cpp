@@ -1,14 +1,16 @@
 """A client of the worker protocol for the smoke scripts. It starts `speech worker`, checks that ready names the protocol
 it speaks, and on every line it reads it checks that the line is one JSON object with a string "type", that a chunk,
 progress or terminal message belongs to a request in flight, and that a request gets exactly one terminal message (end, error or cancelled) and
-nothing for its id after it. It also compares the model information of ready with `speech info --json`, and reads the
-requests a recognition model's reference dumped.
+nothing for its id after it. It also compares the model information of ready with `speech info --json`, reads the
+requests a recognition model's reference dumped, and holds the paragraph and the character error rate with which the
+smoke scripts check a long text spoken a sentence at a time.
 """
 
 import json
 import os
 import subprocess
 import time
+import unicodedata
 
 TERMINAL = {"end", "error", "cancelled"}
 # The protocol this client speaks; a worker that says another in ready is one its callers must change for.
@@ -238,6 +240,61 @@ def joined_transcript(parts, timestamps):
     if not timestamps:
         del whole["segments"], whole["tokens"]
     return whole
+
+
+# Thirty short Japanese sentences: 276 tokens of Irodori-TTS, past the 256 it takes in a request, which it speaks in 137
+# to 154 s, more than four times the 30 s of a request.
+PARAGRAPH = [
+    "今日は朝から雨が降っていました。", "駅までの道は水たまりだらけで、靴がすっかり濡れてしまいました。",
+    "電車はいつもより混んでいて、窓の外はずっと灰色でした。", "会社に着くと、同僚が温かいお茶を入れてくれました。",
+    "午後には雨が上がり、雲の間から青い空が見えてきました。", "帰り道、公園の木々が夕日に照らされて輝いていました。",
+    "小さな子どもたちが水たまりで楽しそうに遊んでいました。", "家に帰ってから、久しぶりにゆっくりと本を読みました。",
+    "夕方になると、風が少し冷たくなってきました。", "近くの店でパンと牛乳を買いました。",
+    "友達から久しぶりに電話がかかってきました。", "来週の日曜日に一緒に山へ行く約束をしました。",
+    "天気が良ければ、頂上から海が見えるそうです。", "お弁当を作って持っていくことにしました。",
+    "窓の外では、虫の声が静かに聞こえていました。", "夜は早めに寝て、明日に備えることにしました。",
+    "朝起きると、空はすっかり晴れていました。", "台所からは味噌汁のいい香りがしていました。",
+    "妹はまだ眠そうな顔で新聞を読んでいました。", "庭の花に水をやってから、駅へ向かいました。",
+    "途中の橋の上で、川の流れをしばらく眺めました。", "魚が跳ねて、小さな波が広がっていきました。",
+    "会社の近くに新しい喫茶店ができていました。", "今度の休みに、家族を連れて行ってみようと思います。",
+    "昼休みには、同僚と一緒に近くの公園を歩きました。", "池のそばのベンチで、鳥が羽を休めていました。",
+    "午後の会議は思ったより早く終わりました。", "帰りの電車では、窓の外の景色をぼんやりと眺めていました。",
+    "家の前まで来ると、隣の犬がしっぽを振って迎えてくれました。", "明日もきっと、いい一日になると思います。",
+]
+# The most character error rate the paragraph's speech may have as the recognizer hears it. Qwen3-ASR 0.6B heard 13
+# syntheses of it by both Irodori-TTS v4.1 models, in the voice none and in a voice of a reference, at 0.47% to 1.25%
+# (Apple M5, Metal, 2026-10-08), and its shortest sentence is 2.3% of it, so a sentence lost at a join fails.
+MOST_CER = 0.02
+
+
+def speaks_by_sentence(info):
+    """Whether a synthesis model speaks a text a sentence at a time, as speech tts and speech serve speak it: one whose
+    request speaks less than 60 s, by the upper bound of its option seconds or max_seconds."""
+    longest = [o["maximum"] for o in info["options"] if o["name"] in ("seconds", "max_seconds")]
+    return bool(longest) and min(longest) < 60
+
+
+def cer(reference, hypothesis):
+    """The character error rate of `hypothesis` against `reference`, both in NFKC without punctuation, symbols or spaces."""
+    def plain(text):
+        return [c for c in unicodedata.normalize("NFKC", text) if unicodedata.category(c)[0] not in "PSZ" and not c.isspace()]
+
+    r, h = plain(reference), plain(hypothesis)
+    previous = list(range(len(h) + 1))
+    for i, a in enumerate(r, 1):
+        current = [i] + [0] * len(h)
+        for j, b in enumerate(h, 1):
+            current[j] = min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a != b))
+        previous = current
+    return previous[-1] / len(r)
+
+
+def heard(speech, recognizer, wav_path, load_options):
+    """The text `speech asr` writes of a WAVE file with the recognition model `recognizer`."""
+    r = subprocess.run([speech, "asr", recognizer, *load_options, wav_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if r.returncode != 0:
+        raise SystemExit(f"speech asr {recognizer} exited with {r.returncode}: {r.stderr.decode()[-600:]}")
+    return r.stdout.decode().strip()
 
 
 def short(m):

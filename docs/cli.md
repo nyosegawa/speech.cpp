@@ -82,19 +82,22 @@ speech tts MODEL -o FILE|- [options] [TEXT]
   --voice NAME --language TAG --seed N ... every request option
 ```
 
-- Speaks TEXT, or without it each non-empty line of stdin as one request, into one 16-bit mono WAVE at the model's rate.
-  `-o -` writes it to stdout.
+- Speaks TEXT, or without it each non-empty line of stdin as a text of its own, into one 16-bit mono WAVE at the model's
+  rate. `-o -` writes it to stdout.
+- Irodori-TTS, which speaks at most 30 s at a time, speaks a text of several sentences one sentence at a time, with a
+  pause of 0.9 s between them; a sentence too long for it is cut at its commas, or at its spaces. A run of text with
+  neither that is too long fails. Qwen3-TTS speaks a text whole, up to 24565 tokens.
 - `--voice` is required. Qwen3-TTS has named speakers; Irodori-TTS takes voices added with `--add-voice`
   ([models.md](models.md#voices)).
-- `--seed` applies to every line. Without it, each request draws its own seed, which `-v` reports; the same seed gives
-  the same audio on the same device.
+- `--seed` applies to every text and every sentence. Without it, each text draws its own seed, which `-v` reports; the
+  same seed gives the same audio on the same device.
 - A request that stops at `--max-seconds`, or at the longest speech the model makes (655 s for Qwen3-TTS), is reported on
   stderr whatever `-v` says.
 - The WAVE is written as the audio is made, so a player that reads stdout starts on the first audio. A run that fails
   removes the WAVE file it was writing.
 - Text on stdin is UTF-8.
-- stderr reports the load time and, for each request, its seconds of audio, the time to its first audio and to its end,
-  and the real-time factor.
+- stderr reports the load time and, for each text, its seconds of audio, how many requests it took when more than one,
+  the time to its first audio and to its end, and the real-time factor.
 
 ## speech asr
 

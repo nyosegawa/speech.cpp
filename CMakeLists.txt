@@ -215,10 +215,12 @@ add_executable(speech-cli
     tools/common/openai-error.cpp
     tools/common/realtime-session.cpp
     tools/common/regions.cpp
+    tools/common/sentences.cpp
     tools/common/transcript.cpp
     tools/worker/worker.cpp
     tools/worker/inbox.cpp
     tools/server/server.cpp
+    tools/server/audio-speech.cpp
     tools/server/openai-api.cpp
     tools/server/served-models.cpp
     tools/server/access.cpp

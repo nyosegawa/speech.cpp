@@ -26,13 +26,14 @@
 #include "commands.h"
 #include "fetch.h"
 #include "ggml.h"
+#include "sentences.h"
 
-// speech tts: speaks the text, or each non-empty line of stdin as a request of its own, into one 16-bit mono WAVE at
-// the model's rate, written as the audio is made so that a player reading stdout starts before the rest is made. In a
-// regular file that the WAVE starts at the beginning of, its RIFF and data sizes are set once the audio is complete;
-// anywhere else (a pipe, a console, a file appended to) they stay 0xFFFFFFFF, as ffmpeg writes them to a pipe. It
-// reports on stderr where the time went: the load, and for each request the first audio, the whole and the real-time
-// factor.
+// speech tts: speaks the text, or each non-empty line of stdin as a text of its own, into one 16-bit mono WAVE at the
+// model's rate, written as the audio is made so that a player reading stdout starts before the rest is made; a model
+// whose request speaks only a short time speaks a text a sentence at a time (sentences.h). In a regular file that the
+// WAVE starts at the beginning of, its RIFF and data sizes are set once the audio is complete; anywhere else (a pipe, a
+// console, a file appended to) they stay 0xFFFFFFFF, as ffmpeg writes them to a pipe. It reports on stderr where the
+// time went: the load, and for each text the first audio, the whole and the real-time factor.
 
 namespace {
 
@@ -153,7 +154,7 @@ private:
     bool kept_ = false;
 };
 
-/** What the audio callback needs of one request, and the failure to write that stopped it. */
+/** What the audio callback needs of one text, and the failure to write that stopped it. */
 struct Speaking {
     WavWriter & wav;
     Clock::time_point start;
@@ -216,27 +217,26 @@ int run_tts(const CommandLine & line, FILE * out) {
     int count = 0;
     uint64_t samples = 0;
     double busy = 0;
+    // Nothing cancels a run of the command line; a write that fails stops it through the audio callback.
+    Cancellation cancellation;
     while (from_stdin ? next_line(text, first_line) : count == 0) {
         count++;
         const std::string where = from_stdin ? "line " + std::to_string(count) + ": " : std::string();
         Speaking speaking{wav, Clock::now()};
-        const Request request = new_request(model.get());
-        speech_request * r = request.get();
+        std::optional<Spoken> spoken;
         try {
-            check(speech_request_set_text(r, text.c_str()));
-            apply_options(r, line.options);
-            check(speech_synthesize(r, on_audio, &speaking));
+            spoken = speak_text(model.get(), text, line.options, on_audio, nullptr, &speaking, cancellation);
             if (speaking.failed) throw *speaking.failed;
         } catch (const Failure & e) {
             throw Failure(e.code(), e.option(), where + e.what());
         }
-        const speech_result * result = speech_request_result(r);
-        const uint64_t made = speech_result_samples(result);
+        const uint64_t made = spoken->samples;
         const double total = seconds_since(speaking.start), audio = (double) made / rate;
-        const speech_stop stop = speech_result_stop(result);
-        std::fprintf(stderr, "%s%.2f s of audio: first audio %.3f s, total %.3f s, RTF %.3f", where.c_str(), audio, speaking.first_audio, total,
-                     total / audio);
-        if (verbose) std::fprintf(stderr, ", seed %lld, %s", (long long) speech_result_seed(result), speech_stop_name(stop));
+        const speech_stop stop = spoken->stop;
+        const std::string requests = spoken->requests > 1 ? " in " + std::to_string(spoken->requests) + " requests" : "";
+        std::fprintf(stderr, "%s%.2f s of audio%s: first audio %.3f s, total %.3f s, RTF %.3f", where.c_str(), audio, requests.c_str(),
+                     speaking.first_audio, total, total / audio);
+        if (verbose) std::fprintf(stderr, ", seed %lld, %s", (long long) spoken->seed, speech_stop_name(stop));
         std::fprintf(stderr, "\n");
         if (stop == SPEECH_STOP_MAX_SECONDS) {
             std::fprintf(stderr, "%sthe speech reached --max-seconds and was stopped there\n", where.c_str());
@@ -264,16 +264,18 @@ Command tts_command() {
     c.usage = "tts MODEL -o FILE|- [options] [TEXT]";
     c.summary = "speak text into a WAVE file";
     c.description =
-        "Speaks TEXT, or without it each non-empty line of stdin as one request, into one 16-bit mono WAVE at the\n"
-        "model's rate, written as the audio comes; -o - writes it to stdout. A seed applies to every request, and\n"
-        "without one each request draws its own. A text that begins with - follows --. Exits with 3 when a request\n"
-        "stopped at the longest speech the model makes.";
+        "Speaks TEXT, or without it each non-empty line of stdin as a text of its own, into one 16-bit mono WAVE at\n"
+        "the model's rate, written as the audio comes; -o - writes it to stdout. A model whose request speaks less than\n"
+        "a minute, such as Irodori-TTS, speaks a text of several sentences a sentence at a time, and a sentence it\n"
+        "cannot speak at once at its commas or spaces. A seed applies to every text, and without one each text draws\n"
+        "its own. A text that begins with - follows --. Exits with 3 when a text stopped at the longest speech the\n"
+        "model makes.";
     c.flags = {
         {"-o", "FILE", false, "the WAVE file to write, or - for stdout"},
         add_voice_flag(),
         device_flag("auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists"),
         threads_flag(),
-        verbose_flag("also report the model, and each request's seed and stop reason"),
+        verbose_flag("also report the model, and each text's seed and stop reason"),
     };
     c.request_options = true;
     c.model = ModelKind::Synthesis;
