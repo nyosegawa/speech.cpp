@@ -11,7 +11,6 @@
  * refuses.
  */
 
-#include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,7 +21,7 @@
 #define MAX_REGIONS 256
 #define MAX_SAID 4096
 
-/** A set of options; NAN or a negative number leaves an option at the model's default. */
+/** A set of options; a negative number leaves an option at the model's default. */
 typedef struct {
     const char * name;
     double threshold;
@@ -32,14 +31,14 @@ typedef struct {
 
 /** Sets of dump.py's, and sets whose regions' ends wait on what follows them. */
 static const Options SETS[] = {
-    {"default", NAN, -1, -1, -1, NAN},
-    {"strict", 0.7, 500, 300, 100, NAN},
-    {"loose", 0.3, 0, 0, 0, NAN},
-    {"max3", NAN, -1, -1, -1, 3},
-    {"max10-silence1000", NAN, -1, 1000, -1, 10},
-    {"pad100-silence0", NAN, -1, 0, 100, NAN},
-    {"pad200-silence50-speech0", NAN, 0, 50, 200, NAN},
-    {"pad100-silence0-max2", NAN, -1, 0, 100, 2},
+    {"default", -1, -1, -1, -1, -1},
+    {"strict", 0.7, 500, 300, 100, -1},
+    {"loose", 0.3, 0, 0, 0, -1},
+    {"max3", -1, -1, -1, -1, 3},
+    {"max10-silence1000", -1, -1, 1000, -1, 10},
+    {"pad100-silence0", -1, -1, 0, 100, -1},
+    {"pad200-silence50-speech0", -1, 0, 50, 200, -1},
+    {"pad100-silence0-max2", -1, -1, 0, 100, 2},
 };
 #define N_SETS (int) (sizeof SETS / sizeof SETS[0])
 
@@ -61,11 +60,11 @@ static size_t piece(int kind, int rate, uint32_t * seed) {
 
 static speech_status set_options(speech_request * r, const Options * o) {
     speech_status s = SPEECH_OK;
-    if (!isnan(o->threshold)) s = speech_request_set_float(r, SPEECH_OPT_THRESHOLD, o->threshold);
+    if (o->threshold >= 0) s = speech_request_set_float(r, SPEECH_OPT_THRESHOLD, o->threshold);
     if (s == SPEECH_OK && o->min_speech_duration_ms >= 0) s = speech_request_set_int(r, SPEECH_OPT_MIN_SPEECH_DURATION_MS, o->min_speech_duration_ms);
     if (s == SPEECH_OK && o->min_silence_duration_ms >= 0) s = speech_request_set_int(r, SPEECH_OPT_MIN_SILENCE_DURATION_MS, o->min_silence_duration_ms);
     if (s == SPEECH_OK && o->speech_pad_ms >= 0) s = speech_request_set_int(r, SPEECH_OPT_SPEECH_PAD_MS, o->speech_pad_ms);
-    if (s == SPEECH_OK && !isnan(o->max_speech_duration_s)) s = speech_request_set_float(r, SPEECH_OPT_MAX_SPEECH_DURATION_S, o->max_speech_duration_s);
+    if (s == SPEECH_OK && o->max_speech_duration_s >= 0) s = speech_request_set_float(r, SPEECH_OPT_MAX_SPEECH_DURATION_S, o->max_speech_duration_s);
     return s;
 }
 
@@ -325,7 +324,7 @@ int check_detection_stream(speech_model * model, float * const * audio, const si
                     if (!stream(model, x, n, rates[k], set, kind, &got)) return 1;
                     streams++;
                     const int same = same_regions(&want, &got.regions);
-                    const int said = said_well(&got, n, min_speech == 0, kind == 0 && min_silence >= 2 * pad && isnan(set->max_speech_duration_s));
+                    const int said = said_well(&got, n, min_speech == 0, kind == 0 && min_silence >= 2 * pad && set->max_speech_duration_s < 0);
                     if (!same || !said) {
                         fprintf(stderr, "FAIL: %s at %d Hz, %s, pieces of %s: %s\n", names[d], rates[k], set->name, PIECES[kind],
                                 same ? "what it said disagrees with its regions" : "the regions differ from speech_detect()'s");

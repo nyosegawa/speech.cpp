@@ -65,10 +65,10 @@ The same minute given a piece at a time, as audio arrives:
 
 | Pieces | CPU | CPU, one thread | Metal |
 |---|---|---|---|
-| 20 ms | 0.20 s | 0.12 s | 0.67 s |
+| 20 ms | 0.20 s | 0.12 s | 0.7 s |
 | 100 ms | 0.08 s | 0.10 s | 0.25 s |
 | 1 s | 0.04 s | 0.08 s | 0.08 s |
 
 A piece computes the chunks it completes in a graph of their own, and a small graph's time is mostly what the device
 takes to start computing. For audio that arrives as it is said, load the model on the CPU, with one thread for pieces of
-20 ms: a push then takes about 0.1 ms, and the GPU is left to the recognizer.
+20 ms: a push then takes 0.04 ms on average and 0.2 ms at most, and the GPU is left to the recognizer.
