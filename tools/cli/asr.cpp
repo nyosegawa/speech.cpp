@@ -52,7 +52,7 @@ std::optional<Detection> detection_of(const CommandLine & line, const speech_mod
                          " model");
     }
     Detection d;
-    d.model = load_model(path, line.loading(false));
+    d.model = load_model(path, detection_loading(line.loading(false)));
     const ModelInfo info = model_info(d.model.get());
     std::vector<RequestOption> recognition;
     for (const RequestOption & o : options) {

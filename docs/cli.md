@@ -124,9 +124,10 @@ speech asr MODEL [options] AUDIO.wav...
 
 ### Transcribing by regions
 
-`--vad MODEL` names a detection model ([models/silero-vad.md](models/silero-vad.md)). It finds where someone speaks in
-each file, each region is recognized alone, and the texts are joined in order: with a space between two regions, unless
-either side is Japanese or Chinese text or already has one. Segments and tokens have the times of the whole file, and
+`--vad MODEL` names a detection model ([models/silero-vad.md](models/silero-vad.md)), which runs on the CPU with one
+thread whatever `--device` and `--threads` say. It finds where someone speaks in each file, each region is recognized
+alone, and the texts are joined in order: with a space between two regions, unless either side is Japanese or Chinese
+text or already has one. Segments and tokens have the times of the whole file, and
 `languages` lists the languages heard in order. A file in which no one speaks gives an empty text.
 
 A recognizer given a long stretch with several sentences can drop whole sentences, and can write words for audio in

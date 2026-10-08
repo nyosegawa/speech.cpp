@@ -26,6 +26,20 @@ struct Loading {
     std::vector<std::pair<std::string, std::string>> voices;
 };
 
+/**
+ * How a detection model loads beside the models `loading` loads: on the CPU with one thread. Silero VAD's graphs are
+ * small enough that a GPU takes longer to start one than the CPU to compute it, and a thread pool longer to wake than one
+ * thread: on an Apple M5 (2026-10-08) a minute in pieces of 20 ms took 0.12 s on one thread, 0.17 s on the performance
+ * cores and 0.52 s on Metal, and a minute whole 0.087 s, 0.042 s and 0.11 s. One device for every detection also cuts a
+ * file and the same audio streamed into the same regions, which another device's arithmetic could move where a
+ * probability lies near a threshold.
+ */
+inline Loading detection_loading(Loading loading) {
+    loading.device = std::string("cpu");
+    loading.threads = 1;
+    return loading;
+}
+
 inline LoadParams load_params(const Loading & loading) {
     speech_load_params * raw = nullptr;
     check(speech_load_params_new(&raw));

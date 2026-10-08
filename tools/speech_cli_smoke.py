@@ -480,7 +480,8 @@ elif info["task"] == "recognition":
         detection = ["--threshold", "0.5", "--speech-pad-ms", "300", "--min-silence-duration-ms", "500", "--max-speech-duration-s", "8"]
         split = os.path.join(work, "speech-cli-smoke-split")
         shutil.rmtree(split, ignore_errors=True)
-        regions = json.loads(run("vad", vad, "--format", "json", "--split", split, *detection, long).stdout)["regions"]
+        # speech asr runs its detection on the CPU, and speech vad there gives the same regions.
+        regions = json.loads(run("vad", vad, "--format", "json", "--split", split, "--device", "cpu", *detection, long).stdout)["regions"]
         names = sorted(os.listdir(split))
         assert len(names) == len(regions) > len(pcms), (names, regions)
         w = Worker(speech, model, options)

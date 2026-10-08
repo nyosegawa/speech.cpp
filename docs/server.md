@@ -25,7 +25,7 @@ transcriptions with `chunking_strategy` use. It loads the models given, listens 
 | `--open` | open the page in the browser once the server listens; without a MODEL the server starts with none |
 | `--cors-origin ORIGIN` | an origin a web page may call the server from, such as `http://localhost:5173`, or `*` for any; repeatable. A web page of any other origin is refused (403 `origin_not_allowed`); curl and scripts send no origin and are not |
 | `--add-voice NAME=FILE` | add a voice to the synthesis model |
-| `--device`, `--threads`, `--no-warmup` | as for the worker, for every model the server loads, the page's included |
+| `--device`, `--threads`, `--no-warmup` | as for the worker, for the synthesis and recognition models the server loads, the page's included. A detection model runs on the CPU with one thread |
 
 ## Endpoints
 

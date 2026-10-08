@@ -338,7 +338,8 @@ Command serve_command() {
         {"--open", "", false, "open the page in the browser once the server listens"},
         {"--cors-origin", "ORIGIN|*", true, "an origin a web page may call the server from, or * for any"},
         add_voice_flag(),
-        device_flag("auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists"),
+        device_flag("auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists; a detection model "
+                    "runs on the CPU"),
         threads_flag(),
         no_warmup_flag(),
     };

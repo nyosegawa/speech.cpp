@@ -217,6 +217,7 @@ add_executable(speech-cli
     tools/common/regions.cpp
     tools/common/sentences.cpp
     tools/common/transcript.cpp
+    tools/common/utterances.cpp
     tools/worker/worker.cpp
     tools/worker/inbox.cpp
     tools/server/server.cpp

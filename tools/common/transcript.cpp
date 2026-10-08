@@ -38,6 +38,17 @@ bool unspaced(uint32_t cp) {
            (cp >= 0xFF00 && cp <= 0xFFEF) || (cp >= 0x1AFF0 && cp <= 0x1B16F) || (cp >= 0x20000 && cp <= 0x323AF);
 }
 
+/** Whether `cp` is a mark that ends a sentence or a phrase: . , ; : ? ! … and their Japanese, Chinese and full-width forms. */
+bool closing_mark(uint32_t cp) {
+    switch (cp) {
+        case '.': case ',': case ';': case ':': case '?': case '!': case 0x2026: case 0x3001: case 0x3002:
+        case 0xFF01: case 0xFF0C: case 0xFF0E: case 0xFF1A: case 0xFF1B: case 0xFF1F:
+            return true;
+        default:
+            return false;
+    }
+}
+
 /** The text a join puts between `before` and `after`: a space, unless either is written without spaces or has one there. */
 std::string separator(const std::string & before, const std::string & after) {
     const std::optional<uint32_t> a = code_point(before, true), b = code_point(after, false);
@@ -94,6 +105,37 @@ void append_part(Transcript & whole, const Transcript & part, double offset) {
             into->push_back({t.start + offset, t.end + offset, (i == 0 ? space : "") + t.text});
         }
     }
+}
+
+std::string agreed_beginning(const std::string & earlier, const std::string & later) {
+    size_t n = 0;
+    while (n < earlier.size()) {
+        const unsigned char lead = (unsigned char) earlier[n];
+        const size_t length = lead < 0x80 ? 1 : lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : 2;
+        if (n + length > earlier.size() || n + length > later.size() || earlier.compare(n, length, later, n, length) != 0) break;
+        n += length;
+    }
+    // Steps back over the code point before n while `drop` takes it.
+    const auto back = [&](auto drop) {
+        while (n > 0 && drop(code_point(earlier.substr(0, n), true))) {
+            n--;
+            while (n > 0 && ((unsigned char) earlier[n] & 0xC0) == 0x80) n--;
+        }
+    };
+    const auto in_word = [](std::optional<uint32_t> cp) { return cp && !python_space(*cp) && !unspaced(*cp); };
+    const bool ends_here = n == later.size();
+    if (in_word(code_point(earlier.substr(0, n), true)) &&
+        (in_word(code_point(earlier.substr(n), false)) || in_word(code_point(later.substr(n), false)))) {
+        back(in_word);
+    }
+    // The end of the later reading is the end of its audio, which closes whatever was said last, and two readings that
+    // end alike have most often heard a pause or a noise; what they agree on counts up to the mark or space before it.
+    if (ends_here) {
+        const auto closing = [](std::optional<uint32_t> cp) { return cp && (python_space(*cp) || closing_mark(*cp)); };
+        back(closing);
+        back([&](std::optional<uint32_t> cp) { return cp && !closing(cp); });
+    }
+    return earlier.substr(0, n);
 }
 
 std::string recognition_members(const Transcript & t, bool timestamps) {
