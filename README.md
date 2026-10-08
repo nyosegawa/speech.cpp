@@ -39,6 +39,19 @@ OpenAI client works by changing its base URL.
 **Checked against the official implementations.** Every stage of every model is compared with the model's official
 implementation, from the same inputs.
 
+<p align="center">
+  <img src="docs/images/page-speak.png" alt="The page of speech serve on its Speak tab: a sentence spoken by Qwen3-TTS 0.6B, with its waveform and the time to its first audio" width="720">
+  <br>
+  <sub>The page of <code>speech serve --open</code>: pick a model of the catalog, fetch it and try it.</sub>
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/page-transcribe.png" alt="The Transcribe tab: the same speech written by Qwen3-ASR 0.6B, a region at a time where Silero VAD finds speech"><br><sub>Transcribe writes a file or a recording, a region at a time where someone speaks.</sub></td>
+    <td width="50%"><img src="docs/images/page-live.png" alt="The Live tab while someone speaks: the first sentence final and the next one in grey as it is said"><br><sub>Live writes the microphone as you speak; the grey text is the utterance still being said.</sub></td>
+  </tr>
+</table>
+
 ## Models
 
 | Task | Name | Languages | Good at |

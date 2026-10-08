@@ -60,15 +60,18 @@ pull request or before it.
   API, the GGUF layout, a voice file's form, the command line's arguments) raises the minor version, and any other
   release raises the patch.
 - A pull request of its own raises `VERSION` just before the tag, with every doc that names the version and the README's
-  screenshot of the page taken again with the new build:
+  screenshots of the page taken again with the new build:
 
   ```sh
-  node skills/release/scripts/page-screenshot.mjs build/speech docs/images/page.png qwen3-tts-0.6b qwen3-asr-0.6b \
-      "Hello. It will be sunny in Tokyo tomorrow, with a high of twenty-four degrees." ryan
+  node skills/release/scripts/page-screenshot.mjs build/speech docs/images/page qwen3-tts-0.6b qwen3-asr-0.6b silero-vad \
+      "Hello. It will be sunny in Tokyo tomorrow, with a high of twenty-four degrees." ryan 6368195046531003
   ```
 
-  It starts `speech serve` with the two models and a headless Chrome in English, speaks the text, hands the speech to
-  Transcribe, transcribes it, and saves the page at twice its CSS pixels. Look at the image before committing it.
+  It starts `speech serve` with the three models on port 8080 and a headless Chrome in English, speaks the text with
+  the seed (`page-speak.png`), hands the speech to Transcribe and transcribes it (`page-transcribe.png`), and transcribes
+  a microphone that says the text a sentence at a time (`page-live.png`), taken while the first sentence is final and as
+  much of the next as possible is grey. Look at each image, the transcripts the script prints included, before committing
+  them; a model that samples can say the text badly with a seed that once read well, and another seed is the fix.
 - Merge it when CI passes (pull-request skill).
 
 ## 6. Tag and publish
