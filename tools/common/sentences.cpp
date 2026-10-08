@@ -5,6 +5,8 @@
 #include <iterator>
 #include <utility>
 
+#include "unicode.h"
+
 namespace {
 
 /**
@@ -39,10 +41,6 @@ std::pair<uint32_t, size_t> code_point(const std::string & text, size_t at) {
     return {c, n};
 }
 
-bool is_space(uint32_t c) {
-    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v' || c == 0x3000;
-}
-
 /** A closing bracket or quotation mark, which stays with the sentence or the clause before it. */
 bool closes(uint32_t c) {
     static const uint32_t marks[] = {0x300D, 0x300F, 0xFF09, 0x3011, 0x3015, 0x3009, 0x300B, 0xFF3D, 0xFF5D, 0xFF63,
@@ -64,13 +62,13 @@ bool ends_before_space(uint32_t c, Cut cut) {
 std::string trimmed(const std::string & text, size_t begin, size_t end) {
     while (begin < end) {
         const auto [c, n] = code_point(text, begin);
-        if (!is_space(c)) break;
+        if (!python_space(c)) break;
         begin += n;
     }
     while (end > begin) {
         size_t start = end - 1;
         while (start > begin && ((unsigned char) text[start] >> 6) == 2) start--;
-        if (!is_space(code_point(text, start).first)) break;
+        if (!python_space(code_point(text, start).first)) break;
         end = start;
     }
     return text.substr(begin, end - begin);
@@ -263,7 +261,7 @@ std::vector<std::string> cut_text(const std::string & text, Cut cut) {
         const auto [c, n] = code_point(text, at);
         size_t end = 0;
         if (cut == Cut::Words) {
-            if (is_space(c)) end = at + n;
+            if (python_space(c)) end = at + n;
         } else if (cut == Cut::Sentences && (c == '\n' || c == '\r')) {
             end = at + n;
         } else if (ends_anywhere(c, cut) || ends_before_space(c, cut)) {
@@ -275,7 +273,7 @@ std::vector<std::string> cut_text(const std::string & text, Cut cut) {
                 anywhere |= ends_anywhere(d, cut);
                 after += m;
             }
-            if (anywhere || after == text.size() || is_space(code_point(text, after).first)) end = after;
+            if (anywhere || after == text.size() || python_space(code_point(text, after).first)) end = after;
             else at = after;
             if (!end) continue;
         }

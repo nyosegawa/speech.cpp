@@ -282,6 +282,9 @@ if info["task"] == "synthesis":
         message = failure(run("tts", model, "-o", path, "--voice", voice, *options, run_text, code=1), "out_of_range", "text")
         assert message.startswith('"' + run_text[:20]) and not os.path.exists(path), message
         print(f"a run of {len(run_text)} characters with no place to cut: exit 1, {message[:100]}")
+        # A line of a space that Unicode names whitespace alone, here a no-break space, is no sentence of its own.
+        run("tts", model, "-o", path, "--voice", voice, *options, "今日は晴れです。\n\u00a0\n明日も晴れです。")
+        print("two sentences around a line of a no-break space: spoken")
     if reference:
         made = os.path.join(work, "speech-cli-smoke.voice.gguf")
         run("voice", model, reference, made)
