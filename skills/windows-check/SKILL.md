@@ -39,7 +39,7 @@ reaches through whatever remote shell it has.
 | Stage checks | `<family>-<stage>-check.exe <model> <dump> … gpu` | within the bounds the check prints |
 | Window or chunk independence | the family's codec check with its forced patterns | every pattern gives the whole decode's samples |
 | Unchanged behaviour | `python same_audio.py <old speech.dll> <model> <new speech.dll> <model> <prompts.json> --voice … --seeds 1,2,3` | the same audio, bit for bit |
-| Entry points | `worker_smoke.py`, `server_smoke.py`, `speech_cli_smoke.py` with a model of each family | ok |
+| Entry points | `worker_smoke.py`, `server_smoke.py`, `server_realtime_smoke.py`, `speech_cli_smoke.py` with a model of each family | ok |
 | Installer | `$env:LOCALAPPDATA` set to a folder in the temporary one, then `install.ps1 -NoModifyPath`: a first install, a second run, `-Version` of the previous release and back | each step says what it did; the user PATH is unchanged |
 
 A fast GPU may never take the path a slow machine takes (smaller windows, for example); force it with the check's

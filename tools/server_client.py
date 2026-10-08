@@ -3,6 +3,8 @@ the script ends, however it ends, so that a failed check leaves no server behind
 WebSocket (RFC 6455), with the standard library alone.
 """
 
+import array
+import ast
 import atexit
 import base64
 import hashlib
@@ -15,6 +17,19 @@ import struct
 import subprocess
 import threading
 import time
+import uuid
+
+
+def read_npy(path):
+    """The float32 samples of a dump's .npy file."""
+    with open(path, "rb") as f:
+        data = f.read()
+    header_length = struct.unpack("<H", data[8:10])[0]
+    header = ast.literal_eval(data[10:10 + header_length].decode())
+    values = array.array("f")
+    values.frombytes(data[10 + header_length:])
+    assert header["descr"] == "<f4"
+    return values
 
 
 def free_port():
@@ -83,6 +98,18 @@ class Server:
 
     def post_json(self, path, member, headers=None):
         return self.call("POST", path, json.dumps(member, ensure_ascii=False).encode(), {"Content-Type": "application/json", **(headers or {})})
+
+    def transcribe(self, fields, files):
+        """POST /v1/audio/transcriptions with the form's fields, (name, value), and files, (name, filename, content)."""
+        boundary = uuid.uuid4().hex
+        body = b""
+        for name, value in fields:
+            body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode()
+        for name, filename, content in files:
+            body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\n"
+                     f"Content-Type: audio/wav\r\n\r\n").encode() + content + b"\r\n"
+        body += f"--{boundary}--\r\n".encode()
+        return self.call("POST", "/v1/audio/transcriptions", body, {"Content-Type": f"multipart/form-data; boundary={boundary}"})
 
     def stop(self):
         """Stops the server and returns what it wrote on stdout."""
