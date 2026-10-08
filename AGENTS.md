@@ -68,7 +68,8 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   every line and one terminal message per request, `server_smoke.py` every HTTP endpoint and the mapping of errors,
   `server_realtime_smoke.py` the Realtime sessions of `/v1/realtime` and `server_page_smoke.py` the page's endpoints and
   every guard, all through `server_client.py`, which stops the
-  server however the script ends, `server_openai_smoke.py` the server through the official openai-python client,
+  server however the script ends, `server_page_browser_smoke.mjs` the page itself in a headless Chrome, as a person uses
+  it, `server_openai_smoke.py` the server through the official openai-python client,
   `speech_cli_smoke.py` the command line against the worker, and `models_smoke.py` the naming, fetching and removing of
   models against a temporary model folder. A script that needs packages outside the standard library is a uv script
   with its dependencies pinned in the script and in a lock file beside it.
@@ -179,8 +180,8 @@ comment.
   `tools/worker_smoke.py` for both synthesis families, and `speech-api-check transcribe` and
   `tools/worker_recognition_smoke.py` for both recognition families, and `speech-api-check detect` with Silero VAD; a
   change to the server runs
-  `tools/server_smoke.py`, `tools/server_realtime_smoke.py` and `tools/server_page_smoke.py`, one to the command line or
-  the parser
+  `tools/server_smoke.py`, `tools/server_realtime_smoke.py` and `tools/server_page_smoke.py`, one to the page
+  `tools/server_page_browser_smoke.mjs`, one to the command line or the parser
   `tools/speech_cli_smoke.py`, with a model of each family, and one to `tools/models/` `tools/models_smoke.py`.
 - Never commit on main. Every change reaches main through a pull request, one coherent unit each: a
   model's stage, a fix, a refactor or a documentation change.

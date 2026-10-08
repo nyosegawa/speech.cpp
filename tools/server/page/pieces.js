@@ -1,6 +1,6 @@
-// Long audio goes to the server in pieces, so that a request's size, the model's memory and the time of each request
-// stay the same however long the audio is: a piece ends at the quietest tenth of a second of its last few seconds, where
-// a cut is least likely to split a word, and the texts of the pieces are joined in order.
+// Long audio goes to the server in pieces, each within what one request may carry: a piece ends at the quietest tenth
+// of a second of its last few seconds, where a cut is least likely to split a word, and the texts of the pieces are
+// joined in order. The live panel cuts what it records the same way.
 
 /** The stretch at the end of a full piece in which it is cut, and the stretch whose loudness is compared. */
 const WINDOW_SECONDS = 8;

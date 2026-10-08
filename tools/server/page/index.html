@@ -83,19 +83,11 @@
 
     <section class="panel" id="transcribe" role="tabpanel" aria-labelledby="tab-transcribe" hidden>
       <div class="picker-slot" data-task="recognition"></div>
+      <div class="picker-slot" data-task="detection"></div>
+      <p class="hint" id="transcribe-detection-hint"></p>
       <form id="transcribe-form" novalidate>
         <div class="audio-slot" id="transcribe-audio"></div>
         <div class="fields" id="transcribe-options"></div>
-        <details class="more">
-          <summary>More options</summary>
-          <div class="fields">
-            <div class="field">
-              <label for="transcribe-piece">Pieces of at most</label>
-              <input type="number" id="transcribe-piece" min="5" max="60" step="1" value="20" inputmode="numeric" aria-describedby="transcribe-piece-hint">
-              <p class="hint" id="transcribe-piece-hint">seconds; audio goes to the model in pieces, cut at a pause</p>
-            </div>
-          </div>
-        </details>
         <div class="actions">
           <button type="submit" class="primary" id="transcribe-start" disabled>Transcribe</button>
           <button type="button" id="transcribe-stop" hidden>Stop</button>
@@ -134,6 +126,7 @@
 
   <template id="picker">
     <div class="picker">
+      <p class="picker-role"></p>
       <button type="button" class="picker-button" aria-haspopup="dialog">
         <span class="picker-name"></span>
         <span class="picker-size"></span>
