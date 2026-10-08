@@ -69,3 +69,7 @@ request at a time through the worker, Q8_0. The CER is of the speech as Qwen3-AS
 | 1.7B | RTX 2080, Vulkan | 0.039 s | 0.052 s | 0.32 | 2.8% |
 
 On the RTX 2080 the 0.6B model takes 1.6 GB of video memory and the 1.7B 2.7 GB.
+
+The first audio is the first chunk. The 0.6B model often begins its speech with silence, so the voice is heard later:
+on the M5, half a second after the request in the median, from 0.24 s to 0.48 s by speaker and up to 1.9 s. The official
+implementation does the same, 0.89 s in the median over 20 takes of `ono_anna`. The 1.7B model begins with 0.10 s.
