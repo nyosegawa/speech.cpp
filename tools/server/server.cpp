@@ -452,14 +452,16 @@ int run_serve(const CommandLine & line, FILE *) {
     httplib::Server http;
     // Nagle's algorithm would hold a small chunk of a stream until the client acknowledges the previous one.
     http.set_tcp_nodelay(true);
-    // A file to recognize, or a recording to make a voice of, may take OpenAI's limit for an upload, 25 MB.
-    http.set_payload_max_length(25 << 20);
+    // A file to recognize, or a recording to make a voice of, may take OpenAI's limit for an upload, 25 MB, and a
+    // Realtime session may hold as much audio not yet transcribed, 546 s of its 16-bit PCM at 24000 Hz.
+    constexpr size_t kUpload = 25 << 20;
+    http.set_payload_max_length(kUpload);
     const int bound = port == 0 ? http.bind_to_any_port(host) : (http.bind_to_port(host, port) ? port : -1);
     if (bound < 0) {
         throw Failure(speech_status_name(SPEECH_ERROR_IO), "", "cannot listen on " + host + ":" + std::to_string(port) + "; choose another --port or --host");
     }
     const Access access(host, bound, line.values("--cors-origin"));
-    Realtime realtime(models, access);
+    Realtime realtime(models, access, kUpload);
     Server server(models, access, realtime);
     server.route(http);
     realtime.route(http);

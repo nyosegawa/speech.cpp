@@ -25,7 +25,8 @@ folder of the script's own (SPEECH_MODEL_DIR), so that loading one by its name f
 - a voice added to a model that takes voice files, or refused by one that does not;
 - with a recognition model as the third, two Realtime sessions at /v1/realtime through the page's replacement of the
   recognition model: a commit while the new model loads fails with model_loading, a session that names no model goes on
-  with the new one, and one that named the old model fails with model_not_found;
+  with the new one, and one that named the old model, in session.update or in the address's query, fails with
+  model_not_found;
 - with a detection model, the place of detection, empty until the page loads that model into it by its catalog name,
   a transcription with chunking_strategy refused before and answered after, and /v1/models listing it third;
 - a server on 0.0.0.0, which has no page and answers its endpoints with how to reach them (on Windows its firewall may
@@ -46,6 +47,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import threading
 import time
 import uuid
 
@@ -250,9 +252,18 @@ if task == "recognition":
 
     audio = pcm24(wav)
     named, free = server.websocket("/v1/realtime"), server.websocket("/v1/realtime")
-    assert named.event()["type"] == free.event()["type"] == "session.created"
+    queried = server.websocket(f"/v1/realtime?model={info['recognition']['name']}")
+    assert named.event()["type"] == free.event()["type"] == queried.event()["type"] == "session.created"
     named.send({"type": "session.update", "session": {"type": "transcription", "audio": {"input": {"transcription": {"model": info["recognition"]["name"]}}}}})
     assert named.event()["type"] == "session.updated"
+    # A long transcription keeps the old model busy, so that the new one is loaded only once it ends and the commit below
+    # falls while the new model loads, however fast that load is.
+    channels, at = struct.unpack("<HI", wav[22:28])
+    data = wav[44:] * max(1, 300 * at * 2 // len(wav[44:]))
+    long = wav[:4] + struct.pack("<I", 36 + len(data)) + wav[8:40] + struct.pack("<I", len(data)) + data
+    busy = threading.Thread(target=lambda: transcribe(long))
+    busy.start()
+    time.sleep(0.5)
     r = call("POST", "/speech/load", json.dumps({"model": third["name"]}).encode(), {**auth, "Content-Type": "application/json"}, stream=True)
     buffer = b""
     while b'"type":"load"' not in buffer:
@@ -263,15 +274,18 @@ if task == "recognition":
     failed = commit(free, audio)
     assert failed["type"].endswith(".failed") and failed["error"]["code"] == "model_loading", failed
     assert json.loads((buffer + r.read()).decode().strip().split("\n\n")[-1][6:])["type"] == "loaded"
+    busy.join()
     completed = commit(free, audio)
     assert completed["type"].endswith(".completed") and completed["transcript"], completed
-    failed = commit(named, audio)
-    assert failed["type"].endswith(".failed") and failed["error"]["code"] == "model_not_found", failed
-    named.close()
+    for how, session in (("in session.update", named), ("in the address", queried)):
+        failed = commit(session, audio)
+        assert failed["type"].endswith(".failed") and failed["error"]["code"] == "model_not_found", (how, failed)
+        session.close()
     free.close()
     info["recognition"] = load(recognition["name"], "recognition")["model"]
     print(f"realtime through a replacement: a commit while {third['name']} loads fails with model_loading, a session without a model "
-          f"goes on with it ({completed['transcript'][:20]!r}), and one that named {recognition['name']} fails with model_not_found")
+          f"goes on with it ({completed['transcript'][:20]!r}), and one that named {recognition['name']}, in session.update or in "
+          f"the address, fails with model_not_found")
 
 if detection:
     expect_error(transcribe(wav, chunking=True), 400, "unsupported_parameter", "chunking_strategy", "chunking_strategy without a detection model")

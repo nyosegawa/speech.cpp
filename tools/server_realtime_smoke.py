@@ -3,8 +3,9 @@ API does, with the standard library alone: the session.created and session.updat
 commits of 24000 Hz PCM appended in pieces, each committed in order and transcribed into the deltas and the completed of
 the text, the languages and the duration of the same samples sent as a WAV file of that rate, a cleared buffer, a commit
 with transcription null left untranscribed, an error event for each member and value it does not take with the client's
-event_id, a client gone while its commit is transcribed, and the refusals of the upgrade: another model, another query
-member, another Origin and another Host.
+event_id, a session.update that changes only the members it gives, the bound on the audio a session holds before it is
+transcribed, two commits and an HTTP request run in the order they arrived, a client gone while its commit is
+transcribed, and the refusals of the upgrade: another model, another query member, another Origin and another Host.
 
 usage: python3 tools/server_realtime_smoke.py <speech> <recognition.gguf> <dump folder>... [-- serve options...]
 """
@@ -15,6 +16,7 @@ import json
 import os
 import struct
 import sys
+import time
 
 from server_client import Server, expect_error, read_npy
 
@@ -118,6 +120,14 @@ assert ws.event()["type"] == "input_audio_buffer.cleared", "a session with trans
 ws.send(session({"model": name, "language": info["languages"][0]}))
 assert ws.event()["session"]["audio"]["input"]["transcription"]["language"] == info["languages"][0]
 print("realtime: a cleared buffer, and a commit with transcription null, which is committed and not transcribed")
+# A session.update changes only the members it gives, and a member given as null takes its value away.
+ws.send({"type": "session.update", "session": {"type": "transcription", "audio": {"input": {"transcription": {"model": name}}}}})
+kept = ws.event()["session"]["audio"]["input"]["transcription"]
+assert kept == {"model": name, "language": info["languages"][0]}, kept
+ws.send({"type": "session.update", "session": {"type": "transcription", "audio": {"input": {"transcription": {"language": None}}}}})
+kept = ws.event()["session"]["audio"]["input"]["transcription"]
+assert kept == {"model": name, "language": None}, kept
+print("realtime: a session.update of the model alone keeps the language, and a language of null takes it away")
 for event, code, param, what in (
         (session({"model": name}) | {"session": {"type": "realtime"}}, "unsupported_value", "session.type", "a conversation session"),
         (session({"model": name}, {"type": "server_vad", "silence_duration_ms": 500}), "unsupported_value",
@@ -154,10 +164,79 @@ ws.send_binary(b"\0\0")
 realtime_error(ws, "invalid_value", None, "a binary message")
 ws.send({"type": "input_audio_buffer.clear"})
 assert ws.event()["type"] == "input_audio_buffer.cleared", "the session did not go on after its errors"
-# A client that goes away while its commit is transcribed stops the transcription, and the model serves the next.
-appended(ws, pcms[0])
+# The audio a session holds before it is transcribed, buffered or committed, is bounded: an append past the bound is an
+# error event and keeps nothing of itself, the buffer before it stays whole, and a commit that waits or runs counts until
+# its transcription ends.
+piece = b"\0" * (1 << 20)
+
+
+def fill(limit_pieces):
+    """Appends pieces of a mebibyte until an append is refused, each followed by an event that is always refused; the
+    number of pieces taken, or None when none was refused."""
+    for k in range(limit_pieces):
+        ws.send({"type": "input_audio_buffer.append", "event_id": f"a{k}", "audio": base64.b64encode(piece).decode()})
+        ws.send({"type": "no.such.event", "event_id": f"p{k}"})
+        e = ws.event()
+        if e["error"]["event_id"] == f"a{k}":
+            assert e["error"]["param"] == "audio" and e["error"]["code"] == "input_audio_buffer_full", e
+            assert ws.event()["error"]["event_id"] == f"p{k}"
+            return k
+        assert e["error"]["event_id"] == f"p{k}", e
+    return None
+
+
+taken = fill(512)
+assert taken, "512 MiB of audio appended without a commit were all taken"
 ws.send({"type": "input_audio_buffer.commit"})
 assert ws.event()["type"] == "input_audio_buffer.committed"
+done = ws.event()
+while not done["type"].endswith((".completed", ".failed")):
+    done = ws.event()
+assert done["type"].endswith(".completed") and done["usage"]["seconds"] == taken * (1 << 20) / 2 / 24000, done
+ws.send({"type": "input_audio_buffer.clear"})
+assert ws.event()["type"] == "input_audio_buffer.cleared"
+appended(ws, piece * (taken * 3 // 5), 1 << 20)
+ws.send({"type": "input_audio_buffer.commit"})
+assert ws.event()["type"] == "input_audio_buffer.committed"
+assert fill(taken) == taken - taken * 3 // 5, "a commit that waits or runs did not count toward the bound"
+while not ws.event()["type"].endswith(".completed"):
+    pass
+ws.send({"type": "input_audio_buffer.clear"})
+assert ws.event()["type"] == "input_audio_buffer.cleared"
+print(f"realtime: {taken} MiB of audio held, the next append refused and the buffer committed whole; a commit that waits "
+      f"or runs counts until it is transcribed")
+# A commit takes its turn on the model when it is accepted, so an HTTP request that arrives after two commits runs
+# after both, as the server runs every request in the order it arrives.
+appended(ws, pcms[0] * 4)
+ws.send({"type": "input_audio_buffer.commit"})
+appended(ws, pcms[1])
+ws.send({"type": "input_audio_buffer.commit"})
+first, second = ws.event(), ws.event()
+assert first["type"] == second["type"] == "input_audio_buffer.committed", (first, second)
+assert transcribe([], [("file", "x.wav", wav24(pcms[1]))])[0] == 200
+done = []
+while len(done) < 2:
+    e = ws.event()
+    if e["type"].endswith((".completed", ".failed")):
+        done.append(e)
+assert [(e["type"], e["item_id"]) for e in done] == [("conversation.item.input_audio_transcription.completed", item) for item in
+                                                    (first["item_id"], second["item_id"])], done
+http = f"transcription: {len(pcms[1]) / 2 / 24000:.2f} s of audio at 24000 Hz"
+for _ in range(50):
+    lines = list(server.lines)
+    order = [k for k, line in enumerate(lines) if line.startswith((f"realtime {first['item_id']}:", f"realtime {second['item_id']}:", http))]
+    if len(order) >= 3:
+        break
+    time.sleep(0.1)
+ran = [lines[k].split(":")[0] for k in order][-3:]
+assert ran == [f"realtime {first['item_id']}", f"realtime {second['item_id']}", "transcription"], ran
+print("realtime: two commits and then an HTTP transcription run in that order")
+# A client that goes away while its commit is transcribed stops the transcription, gives up the turn of the commit
+# that waits, and the model serves the next request.
+for _ in range(2):
+    appended(ws, pcms[0])
+    ws.send({"type": "input_audio_buffer.commit"})
+    assert ws.event()["type"] == "input_audio_buffer.committed"
 ws.sock.close()
 status, _, body = transcribe([], [("file", "x.wav", wav24(pcms[0]))])
 assert status == 200 and json.loads(body)["text"] == wants[0][0], body

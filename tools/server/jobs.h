@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -52,14 +53,54 @@ public:
     }
     void pass() {
         std::lock_guard<std::mutex> lock(mutex_);
-        serving_++;
-        changed_.notify_all();
+        advance();
+    }
+    /** Gives up a ticket that will not run, which the turns then skip, now or once the tickets before it have passed. */
+    void give_up(uint64_t ticket) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        given_up_.insert(ticket);
+        if (ticket == serving_) {
+            given_up_.erase(ticket);
+            advance();
+        }
     }
 
 private:
+    void advance() {
+        serving_++;
+        while (given_up_.erase(serving_)) serving_++;
+        changed_.notify_all();
+    }
+
     std::mutex mutex_;
     std::condition_variable changed_;
     uint64_t next_ = 0, serving_ = 0;
+    std::set<uint64_t> given_up_;
+};
+
+/**
+ * A turn on a model, taken when the request is accepted, so that requests run in the order they arrived whatever thread
+ * runs them and when: wait() waits for it, and letting it go passes it once waited for, or gives it up otherwise.
+ */
+class Turn {
+public:
+    explicit Turn(Turns & turns) : turns_(turns), ticket_(turns.take()) {}
+    ~Turn() {
+        if (waited_) turns_.pass();
+        else turns_.give_up(ticket_);
+    }
+    Turn(const Turn &) = delete;
+    Turn & operator=(const Turn &) = delete;
+
+    void wait() {
+        turns_.wait(ticket_);
+        waited_ = true;
+    }
+
+private:
+    Turns & turns_;
+    uint64_t ticket_;
+    bool waited_ = false;
 };
 
 /** What every request's run shares: the library's request, its state, which the HTTP handler waits on, and its client's departure. */

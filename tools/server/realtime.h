@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <optional>
 
 #include "httplib.h"
@@ -17,7 +18,8 @@ namespace server {
 
 class Realtime {
 public:
-    Realtime(ServedModels & models, const Access & access) : models_(models), access_(access) {}
+    /** `limit` bounds the bytes of 16-bit PCM a session holds before they are transcribed. */
+    Realtime(ServedModels & models, const Access & access, size_t limit) : models_(models), access_(access), limit_(limit) {}
 
     /**
      * The refusal of a request for /v1/realtime before it is upgraded, as an HTTP error: a Host other than the server's
@@ -31,6 +33,7 @@ public:
 private:
     ServedModels & models_;
     const Access & access_;
+    size_t limit_;
 };
 
 }  // namespace server

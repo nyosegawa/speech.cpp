@@ -27,24 +27,32 @@ Turn detection (`server_vad`) needs a detection that takes audio a piece at a ti
   JSON. `tools/server` carries its messages over cpp-httplib's WebSocket and gives it the recognition model held, so that
   the worker can carry the same session.
 - **A session is a transcription session of 16-bit PCM at 24000 Hz whose client commits each utterance.** A commit is
-  transcribed whole on the recognition model held, in its turn among the HTTP requests on that model, its audio
-  resampled by the library as a file's is. Everything else the reference defines is answered with an `error` event that
+  transcribed whole on the recognition model held when it is accepted, which it keeps, and in the turn it takes then
+  among the requests on that model, so that a request that arrives after it runs after it, its audio resampled by the
+  library as a file's is. A turn whose commit never runs, because the session ended, is given up, so that the requests
+  behind it go on.
+- **A session holds at most 25 MB of audio not yet transcribed**, appended or committed together: 546 s of its PCM, the
+  limit of a file sent over HTTP. An append past it is an `error` event and adds nothing, so that one connection cannot
+  take the server's memory; OpenAI's reference bounds an append at 15 MiB and says nothing of a total.
+- **A `session.update` changes the members it gives**, as OpenAI's reference has it: a member of the transcription left
+  out keeps its value, and one given as null takes it away. A session starts with the model the address names, so that
+  naming it there or in `session.update` is the same. Everything else the reference defines is answered with an `error` event that
   names it, never ignored: a conversation session, `turn_detection` (`server_vad` too, until the detection that takes
   audio in pieces is in the library), `noise_reduction`, the G.711 formats and other rates, `include`, `keywords`,
   `delay`, more than one language, and every other client event. A connection is refused before the upgrade, as an HTTP
   error, for another model or another query member.
 - **A commit's text goes as one delta, then the completed event**, since the library gives it when the recognition ends,
-  and a client that builds the text from the deltas gets it whole. The completed event carries the usage in seconds of audio, the languages
-  the model names (Qwen3-ASR) as OpenAI's `gpt-transcribe` gives them, and `stop`, speech.cpp's own, since a text cut at
-  the model's limit reads like one that ended.
+  and a client that builds the text from the deltas gets it whole. The completed event carries the usage in seconds of
+  audio, the languages the model names (Qwen3-ASR) as OpenAI's `gpt-transcribe` gives them, and `stop`, speech.cpp's own,
+  since a text cut at the model's limit reads like one that ended.
 - **The WebSocket keeps the server's guards**: the Origin rule of every endpoint, which is what keeps other web pages out
   of a WebSocket, and while the server listens on a loopback address the Host rule of the page
   ([the page's record](speech-serve-has-a-page-guarded-by-a-token-a-loopback-host-and-the-origin.md)).
 - **A replacement of the recognition model by the page reaches a session as it reaches a request**
   ([the record of a model of each task](speech-serve-holds-a-model-of-each-task-and-replaces-one-only-after-its-requests-end.md)):
-  a commit keeps the model it runs on until it ends, a commit while the new model loads fails with `model_loading`, and
-  afterwards a session that named no model goes on with the new one while one that named the old fails with
-  `model_not_found`.
+  a commit keeps the model it was accepted on until it ends, a commit while the new model loads fails with
+  `model_loading`, and afterwards a session that named no model goes on with the new one while one that named the old, in
+  the address or in `session.update`, fails with `model_not_found`.
 
 The alternatives were turned down:
 

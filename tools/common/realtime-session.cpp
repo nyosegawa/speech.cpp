@@ -81,7 +81,9 @@ std::vector<RequestOption> Session::Config::options() const {
     return out;
 }
 
-Session::Session(Recognizer & recognizer, std::function<void(const std::string &)> send) : recognizer_(recognizer), send_(std::move(send)) {
+Session::Session(Recognizer & recognizer, std::function<void(const std::string &)> send, size_t limit, const std::string & model)
+    : recognizer_(recognizer), send_(std::move(send)), limit_(limit) {
+    if (!model.empty()) config_.model = model;
     std::random_device device;
     char unique[17];
     std::snprintf(unique, sizeof unique, "%08x%08x", (unsigned) device(), (unsigned) device());
@@ -221,9 +223,6 @@ void Session::update(const JsonValue & event) {
         }
         if (const JsonValue * transcription = input->member("transcription")) {
             next.transcribe = transcription->kind != JsonValue::Kind::Null;
-            next.model.reset();
-            next.language.reset();
-            next.prompt.reset();
             if (next.transcribe) {
                 object_at(*transcription, kTranscription);
                 const std::string at = kTranscription;
@@ -234,20 +233,29 @@ void Session::update(const JsonValue & event) {
                     }
                 }
                 only(*transcription, at, {"model", "language", "languages", "prompt", "keywords", "delay"});
-                if (const JsonValue * model = given(*transcription, "model")) next.model = string_at(*model, at + ".model");
-                if (const JsonValue * language = given(*transcription, "language")) next.language = string_at(*language, at + ".language");
-                if (const JsonValue * languages = given(*transcription, "languages")) {
-                    if (next.language) throw refusal("invalid_value", at + ".languages", "Give the language or the languages, not both.");
-                    if (languages->kind != JsonValue::Kind::Array || languages->items.empty()) {
-                        throw refusal("invalid_type", at + ".languages", at + ".languages is " + json_excerpt(*languages) + "; give an array of one tag.");
+                // A member given sets its value, null taking it away, and one left out keeps it, as OpenAI's
+                // session.update changes only the members it holds.
+                const auto text = [&](const char * name, std::optional<std::string> & into) {
+                    const JsonValue * value = transcription->member(name);
+                    if (value) into = value->kind == JsonValue::Kind::Null ? std::nullopt : std::optional<std::string>(string_at(*value, at + "." + name));
+                };
+                text("model", next.model);
+                text("language", next.language);
+                text("prompt", next.prompt);
+                if (const JsonValue * languages = transcription->member("languages")) {
+                    if (transcription->member("language")) throw refusal("invalid_value", at + ".languages", "Give the language or the languages, not both.");
+                    next.language.reset();
+                    if (languages->kind != JsonValue::Kind::Null) {
+                        if (languages->kind != JsonValue::Kind::Array || languages->items.empty()) {
+                            throw refusal("invalid_type", at + ".languages", at + ".languages is " + json_excerpt(*languages) + "; give an array of one tag.");
+                        }
+                        if (languages->items.size() > 1) {
+                            throw refusal("unsupported_value", at + ".languages",
+                                          "A recognition takes one language or leaves it to the model; give one language, or none for the model to tell.");
+                        }
+                        next.language = string_at(languages->items[0], at + ".languages");
                     }
-                    if (languages->items.size() > 1) {
-                        throw refusal("unsupported_value", at + ".languages",
-                                      "A recognition takes one language or leaves it to the model; give one language, or none for the model to tell.");
-                    }
-                    next.language = string_at(languages->items[0], at + ".languages");
                 }
-                if (const JsonValue * prompt = given(*transcription, "prompt")) next.prompt = string_at(*prompt, at + ".prompt");
             }
         }
         if (given(*input, "noise_reduction")) {
@@ -289,6 +297,19 @@ void Session::append(const JsonValue & event) {
     if (pcm.size() % 2) {
         throw refusal("invalid_value", "audio", "The audio has " + std::to_string(pcm.size()) + " bytes, and 16-bit PCM has two for each sample.");
     }
+    size_t held = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        held = buffer_.size() + committed_;
+    }
+    if (held + pcm.size() > limit_) {
+        char message[320];
+        std::snprintf(message, sizeof message,
+                      "The session holds %.1f s of audio not yet transcribed, and this append would take it past the %.1f s this server "
+                      "holds; commit shorter utterances, wait for their transcriptions, or clear the buffer.",
+                      (double) held / 2 / kRate, (double) limit_ / 2 / kRate);
+        throw refusal("input_audio_buffer_full", "audio", message);
+    }
     buffer_ += pcm;
 }
 
@@ -296,13 +317,24 @@ void Session::commit() {
     if (buffer_.empty()) {
         throw refusal("input_audio_buffer_commit_empty", "", "The input audio buffer is empty; append audio before committing it.");
     }
-    Commit c{new_id("item_"), samples_of(buffer_), config_};
+    Commit c{new_id("item_"), samples_of(buffer_), config_, nullptr, std::nullopt};
+    const size_t bytes = buffer_.size();
     buffer_.clear();
+    // The commit takes its place on the model as it is accepted, so that it runs before any request that arrives later.
+    if (c.config.transcribe) {
+        try {
+            c.reservation = recognizer_.reserve(c.config.model.value_or(""));
+        } catch (const ApiError & e) {
+            c.refused = e;
+            c.samples.clear();
+        }
+    }
     emit("input_audio_buffer.committed",
          ",\"previous_item_id\":" + (previous_item_.empty() ? std::string("null") : json_string(previous_item_)) + ",\"item_id\":" + json_string(c.item));
     previous_item_ = c.item;
     if (!c.config.transcribe) return;
     std::lock_guard<std::mutex> lock(mutex_);
+    if (c.reservation) committed_ += bytes;
     waiting_.push_back(std::move(c));
     changed_.notify_all();
 }
@@ -326,7 +358,10 @@ void Session::work() {
         }
         const std::string item = ",\"item_id\":" + json_string(c.item) + ",\"content_index\":0";
         try {
-            const std::optional<Transcript> t = recognizer_.transcribe(c.config.model.value_or(""), c.samples, c.config.options(), *cancellation, c.item);
+            if (c.refused) throw *c.refused;
+            const std::optional<Transcript> t = recognizer_.transcribe(*c.reservation, c.samples, c.config.options(), *cancellation, c.item);
+            // The model's turn passes as soon as the recognition has ended.
+            c.reservation.reset();
             if (t) {
                 // The library gives the text once the recognition has ended, so the one delta carries all of it, for a
                 // client that builds the text from the deltas.
@@ -346,7 +381,9 @@ void Session::work() {
             emit("conversation.item.input_audio_transcription.failed",
                  item + ",\"error\":" + openai::error_object({500, e.what(), "", speech_status_name(SPEECH_ERROR_INTERNAL)}));
         }
+        c.reservation.reset();
         std::lock_guard<std::mutex> lock(mutex_);
+        committed_ -= c.samples.size() * 2;
         running_.reset();
     }
 }

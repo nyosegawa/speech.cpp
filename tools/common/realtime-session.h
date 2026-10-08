@@ -32,6 +32,15 @@ namespace realtime {
 /** The sample rate of the audio of a session, the one rate OpenAI's audio/pcm takes. */
 constexpr int kRate = 24000;
 
+/**
+ * A commit's place on the recognition model held when the session accepted it: the model, which it keeps until it has
+ * run, and its turn among the requests on that model, given up if it never runs.
+ */
+class Reservation {
+public:
+    virtual ~Reservation() = default;
+};
+
 /** The recognition model a session transcribes with, as its host holds it. */
 class Recognizer {
 public:
@@ -43,19 +52,26 @@ public:
      * ApiError, and an option the model does not take the library's Failure.
      */
     virtual void check(const std::string & model, const std::vector<RequestOption> & options) = 0;
+    /** Takes a place on the model held, named `model` unless that is "", for a commit; it throws as check() does. */
+    virtual std::unique_ptr<Reservation> reserve(const std::string & model) = 0;
     /**
-     * Recognizes `samples` at kRate on the model held, named `model` unless that is "", with `options`, and returns the
-     * recognition, or nothing once `cancellation` stops it; it throws as check() does. `item` names the item for a log.
+     * Recognizes `samples` at kRate in `reservation`'s turn on its model, with `options`, and returns the recognition, or
+     * nothing once `cancellation` stops it; an option the model does not take throws the library's Failure. `item` names
+     * the item for a log.
      */
-    virtual std::optional<Transcript> transcribe(const std::string & model, const std::vector<float> & samples,
+    virtual std::optional<Transcript> transcribe(Reservation & reservation, const std::vector<float> & samples,
                                                  const std::vector<RequestOption> & options, Cancellation & cancellation,
                                                  const std::string & item) = 0;
 };
 
 class Session {
 public:
-    /** `send` takes each server event as one JSON text, one at a time, from the thread that calls the session or its own. */
-    Session(Recognizer & recognizer, std::function<void(const std::string &)> send);
+    /**
+     * `send` takes each server event as one JSON text, one at a time, from the thread that calls the session or its own.
+     * `limit` bounds the bytes of 16-bit PCM the session holds before they are transcribed, appended or committed, and
+     * `model` names the recognition model the session starts with, or is "" for the one held.
+     */
+    Session(Recognizer & recognizer, std::function<void(const std::string &)> send, size_t limit, const std::string & model);
     /** Stops the transcription under way and drops those that wait. */
     ~Session();
     Session(const Session &) = delete;
@@ -79,11 +95,13 @@ private:
         std::vector<RequestOption> options() const;
     };
 
-    /** A committed buffer that waits for its transcription. */
+    /** A committed buffer that waits for its transcription, with its place on the model or why it has none. */
     struct Commit {
         std::string item;
         std::vector<float> samples;
         Config config;
+        std::unique_ptr<Reservation> reservation;
+        std::optional<openai::ApiError> refused;
     };
 
     void update(const JsonValue & event);
@@ -108,9 +126,13 @@ private:
     std::string buffer_;
     std::string previous_item_;
 
+    const size_t limit_;
+
     std::mutex mutex_;
     std::condition_variable changed_;
     std::deque<Commit> waiting_;
+    /** The bytes of 16-bit PCM of the commits that wait or run. */
+    size_t committed_ = 0;
     bool closing_ = false;
     std::shared_ptr<Cancellation> running_;
     std::thread worker_;

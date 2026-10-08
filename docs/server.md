@@ -193,7 +193,7 @@ session transcribes with the recognition model held; the client commits each utt
 
 | Client event | What it does |
 |---|---|
-| `session.update` | sets `session.audio.input.transcription`: `model` (the recognition model's `id`), `language`, or `languages` with one tag, and `prompt`; or `null`, after which commits are not transcribed. `session.type` is `"transcription"`, the format `{"type": "audio/pcm", "rate": 24000}`, and `turn_detection` and `noise_reduction` `null` |
+| `session.update` | sets `session.audio.input.transcription`: `model` (the recognition model's `id`), `language`, or `languages` with one tag, and `prompt`, each left as it was when left out and taken away by `null`; or `null`, after which commits are not transcribed. `session.type` is `"transcription"`, the format `{"type": "audio/pcm", "rate": 24000}`, and `turn_detection` and `noise_reduction` `null` |
 | `input_audio_buffer.append` | adds `audio`, base64 of 16-bit little-endian mono PCM at 24000 Hz |
 | `input_audio_buffer.commit` | transcribes what was appended since the last commit or clear |
 | `input_audio_buffer.clear` | drops what was appended |
@@ -208,7 +208,9 @@ session transcribes with the recognition model held; the client commits each utt
 | `conversation.item.input_audio_transcription.failed` | a commit the model could not transcribe, with OpenAI's error object |
 | `error` | an event the server does not take, with OpenAI's error object and the client's `event_id` |
 
-Commits are transcribed one after another, in their turn among the server's other transcriptions. A member or a value
+Commits are transcribed one after another, each in its turn among the server's other transcriptions, taken when the
+commit is accepted. A session holds at most 25 MB of audio not yet transcribed, appended or committed, which is 546 s;
+an append past that is an `error` event (`input_audio_buffer_full`) and adds nothing. A member or a value
 speech.cpp does not take is an `error` event rather than ignored: a conversation session (`session.type: "realtime"`),
 `turn_detection` (`server_vad` and `semantic_vad`; commit each utterance instead), `noise_reduction`, the formats
 `audio/pcmu` and `audio/pcma` and rates other than 24000, `include` (log probabilities), `keywords`, `delay`, more than
@@ -219,8 +221,8 @@ model (404, or 503 while the page loads one), a model other than the recognition
 than `model` (400), a web page of an origin `--cors-origin` does not allow (403),
 and, while the server listens on 127.0.0.1, `::1` or `localhost`, a Host other than those names with the server's port
 (403), as for the page. While the page loads another recognition model, a commit fails with `model_loading`; once it is
-loaded, a session that named no model goes on with it, and one that named the previous model fails with
-`model_not_found`.
+loaded, a session that named no model goes on with it, and one that named the previous model, in the address or in
+`session.update`, fails with `model_not_found`.
 
 ## Errors
 
