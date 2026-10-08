@@ -37,7 +37,7 @@ home() {
 while [ $# -gt 0 ]; do
     case "$1" in
         --version)
-            [ $# -ge 2 ] || fail "--version needs a release, such as 0.8.1"
+            [ $# -ge 2 ] || fail "--version needs a release, such as 0.8.2"
             version=$2
             shift 2
             ;;
@@ -123,7 +123,7 @@ if [ -z "$version" ]; then
 fi
 case "$version" in
     [0-9]*.[0-9]*.[0-9]*) ;;
-    *) fail "\"$version\" is not a release's version, such as 0.8.1" ;;
+    *) fail "\"$version\" is not a release's version, such as 0.8.2" ;;
 esac
 
 root=$HOME/.local/share/speech.cpp

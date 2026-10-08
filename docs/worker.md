@@ -28,7 +28,7 @@ stdout, in UTF-8.
 ## Start
 
 ```
-out {"type":"ready","protocol":3,"version":"0.8.1","model":{...model information...}}
+out {"type":"ready","protocol":3,"version":"0.8.2","model":{...model information...}}
 out {"type":"fatal","error":{"code":"model_file","option":null,"message":"..."}}
 ```
 
