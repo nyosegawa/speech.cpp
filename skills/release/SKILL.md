@@ -1,6 +1,6 @@
 ---
 name: release
-description: Release a new version of speech.cpp. Covers the model files on Hugging Face and their cards, the catalog compiled into speech, re-measuring the numbers the docs give, the pull request that raises VERSION with the README's screenshot, the tag that builds and publishes the archives, and checking what was published. Use when asked to release, publish, cut or tag a version, bump VERSION, upload converted model files, or write a model card (リリース、バージョンを上げる、タグ、公開、HF に上げる、モデルカード). Not for an ordinary pull request (pull-request) or for porting a model (add-model).
+description: Release a new version of speech.cpp. Covers the model files on Hugging Face and their cards, the catalog compiled into speech, re-measuring the numbers the docs give, the pull request that raises VERSION, the README's screenshots of the page, the tag that builds and publishes the archives, and checking what was published. Use when asked to release, publish, cut or tag a version, bump VERSION, upload converted model files, or write a model card (リリース、バージョンを上げる、タグ、公開、HF に上げる、モデルカード). Not for an ordinary pull request (pull-request) or for porting a model (add-model).
 ---
 
 # Releasing speech.cpp
@@ -59,8 +59,11 @@ pull request or before it.
 - Versions follow Semantic Versioning. While they are 0.x, a change a caller must adapt to (the worker protocol, the C
   API, the GGUF layout, a voice file's form, the command line's arguments) raises the minor version, and any other
   release raises the patch.
-- A pull request of its own raises `VERSION` just before the tag, with every doc that names the version and the README's
-  screenshots of the page taken again with the new build:
+- A pull request of its own raises `VERSION` just before the tag, with every doc that names the version.
+- Merge it when CI passes (pull-request skill).
+
+The README's screenshots of the page show no version, so the version's pull request leaves them as they are. The pull
+request that changes how the page looks takes them again (docs skill), with its build:
 
   ```sh
   node skills/release/scripts/page-screenshot.mjs build/speech docs/images/page qwen3-tts-0.6b qwen3-asr-0.6b silero-vad \
@@ -72,7 +75,6 @@ pull request or before it.
   a microphone that says the text a sentence at a time (`page-live.png`), taken while the first sentence is final and as
   much of the next as possible is grey. Look at each image, the transcripts the script prints included, before committing
   them; a model that samples can say the text badly with a seed that once read well, and another seed is the fix.
-- Merge it when CI passes (pull-request skill).
 
 ## 6. Tag and publish
 

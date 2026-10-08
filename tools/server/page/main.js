@@ -58,7 +58,10 @@ async function refresh() {
     return;
   }
   fail('');
-  $('about').textContent = `${state.catalog.version}, on ${location.host}`;
+  // The release goes in the tab's title, not the header, so that the README's screenshots of the page hold from one
+  // release to the next.
+  document.title = `speech.cpp ${state.catalog.version}`;
+  $('about').textContent = `on ${location.host}`;
   for (const task of TASKS) {
     pickers[task].show(state);
     showHeld(task, state[task].held);
