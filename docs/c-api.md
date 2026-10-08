@@ -1,8 +1,7 @@
 # C API
 
-This page describes the C API, `include/speech.h`, through which every program reaches the models
-([ADR 0005](adr/0005-every-program-speaks-through-one-c-api.md)). The header documents each function; this page shows
-the shape of a program and the rules that hold across functions.
+This page describes the C API, `include/speech.h`, through which every program reaches the models. The header
+documents each function; this page shows the shape of a program and the rules that hold across functions.
 
 ## A program
 
@@ -70,10 +69,9 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
 
 ## Functions
 
-- **Loading.** `speech_model_load()` loads a model from its one GGUF file, which holds its codec, and chooses the family
-  from the file's `general.architecture`. A file of a layout this library does not read is refused with a message that
-  names the release that reads it ([gguf.md](gguf.md)). Its parameters, from `speech_load_params_new()` or NULL for the
-  defaults, are the same for every family:
+- **Loading.** `speech_model_load()` loads a model from its one GGUF file, which holds its codec. A file made for a
+  later release is refused with a message that names the release that reads it. Its parameters, from
+  `speech_load_params_new()` or NULL for the defaults, are the same for every family:
   - the device: `auto` (the default: the first GPU, or the CPU when there is none), `gpu`, `cpu`, or a device's name,
     compared without case. A device asked for by `gpu` or by name that is not there or does not start is an error, and
     no other device takes its place.
@@ -88,9 +86,8 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
   voices added. `speech_model_info_text_tokens()` counts a text's tokens as a synthesis counts them against the longest
   text, so that a caller can split a long text first. `speech_model_info_json()` writes the whole as one JSON object
   (below).
-- **Quantizing.** `speech_quantize()` (added in 3.1) writes a model file of F32 weights in F16, Q8_0, Q6_K, Q5_K or Q4_K,
-  each tensor in the type its family's layout gives it in a file of that type ([gguf.md](gguf.md#weight-types)), on the
-  CPU. It refuses a file whose weights are not F32, naming `model_path`, and an unknown type, naming `type`.
+- **Quantizing.** `speech_quantize()` writes a model file of F32 weights in F16, Q8_0, Q6_K, Q5_K or Q4_K, on the CPU,
+  as `speech quantize` does ([cli.md](cli.md#speech-quantize)).
 - **Voices.** `speech_voice_add()` adds a voice to a loaded model from a voice file or a reference WAVE file at any rate.
   `speech_voice_make()` writes a voice file from a reference, reading only the codec's encoder from the model file.
   `speech_voice_make_from()` writes one from the parameters `speech_voice_params_new()` makes: several references
@@ -111,36 +108,27 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
   FastConformer, and none for a cancelled request. The seed is the request's, or one the library drew
   from 0 to 2^53 - 1, with which the same request repeats its audio on the same device.
 - **Devices.** `speech_device_count()`, `speech_device_name()`, `speech_device_description()`,
-  `speech_device_get_kind()` and `speech_device_memory()` list the CPU and the GPUs a model can run on, in ggml's order.
-  An accelerator that ggml runs beside the CPU, such as BLAS, is not listed.
+  `speech_device_get_kind()` and `speech_device_memory()` list the CPU and the GPUs a model can run on.
 - **Logs.** `speech_log_set()` sends the library's messages and ggml's to a callback. Until it is called, warnings and
   errors go to stderr and the rest is dropped.
-
-On macOS, the library turns off Metal 4's tensor API for its own ggml: it sets `GGML_METAL_TENSOR_DISABLE` while ggml
-first lists its devices, and then restores it, so a host's own ggml keeps the tensor API. ggml's matrix kernel with that
-API wrote past its output on the M5 ([ADR 0003](adr/0003-metal-runs-without-the-tensor-api.md)).
 
 ## Requests
 
 - Each value is checked against what the model declares as it is set, and the request as a whole when it runs, before
-  any work ([ADR 0014](adr/0014-the-c-api-checks-requests-against-the-options-each-model-declares.md)). A refused value
-  or request is left as it was, to be fixed and run again. A request that has started its work runs once.
-- Audio may be at any rate. The library resamples a recording to recognize, and a reference recording of a voice, to the
-  model's rate (`speech_model_info_sample_rate()`), and never the audio it makes. It uses the method of torchaudio's
-  `functional.resample()` with the parameters of librosa's `kaiser_best`. Audio at the model's rate passes unchanged. Two
-  rates whose ratio in lowest terms has a term above 4096 (44101 and 16000 Hz) are refused.
-- Text is normalized as each model's reference normalizes it: NFKC of Unicode 13.0 for Irodori-TTS, and NFC of Unicode
-  9.0 for Qwen3-TTS and Qwen3-ASR. Text that is not in NFC, such as Japanese copied from a macOS file name, gets the
-  tokens of its NFC.
+  any work. A refused value or request is left as it was, to be fixed and run again. A request that has started its work
+  runs once.
+- Audio may be at any common rate. The library resamples a recording to recognize, and a reference recording of a voice,
+  to the model's rate (`speech_model_info_sample_rate()`); the audio it makes is at the model's rate.
+- Text is normalized as each model's official code normalizes it, so Japanese copied from a macOS file name gets the
+  same tokens as typed text.
 - A text longer than `speech_model_info_max_text_tokens()` is `out_of_range`, option `text`.
 - Audio shorter than two of the model's mel frames (20 ms for FastConformer) is `out_of_range`, option `audio`. Qwen3-ASR
   pads audio under 0.5 s and takes any.
 - A recognition stops at `model_limit` when it reaches the most tokens the model writes (4096 for Qwen3-ASR), with the
   text written up to there.
-- Audio that comes out not finite is never passed on: the request ends with `out_of_range` naming no option
-  ([ADR 0032](adr/0032-no-synthesis-passes-audio-that-is-not-finite.md)).
-- Nothing is cut short or moved to another device behind the caller's back, and the library checks what it is given
-  before ggml sees it.
+- Audio that comes out not finite, as from extreme option values, is never passed on: the request ends with
+  `out_of_range` naming no option.
+- Nothing is cut short or moved to another device behind the caller's back.
 
 ## Errors
 
@@ -167,11 +155,12 @@ it concerns (an option's name, `text`, `audio`, `device`, `threads`, `name`, `pa
 - **Ownership.** Every object the library returns is freed only through the function named for it. Every string it
   returns lives as long as the object it was read from: an information's until `speech_model_info_free()`, a result's
   until `speech_request_free()`, the version, a device's and a name's (`speech_option_name()`, `speech_status_name()`,
-  `speech_stop_name()`) as long as the process, and the error message until the next call on the thread. Nothing the caller passes is kept after the call.
+  `speech_stop_name()`) as long as the process, and the error message until the next call on the thread. Nothing the
+  caller passes is kept after the call.
 - **Threads.** A model serves one request at a time; requests that several threads run on the same model wait for each
   other. A request is used by one thread at a time, but `speech_request_cancel()` may be called from any thread.
   Information never changes once made and may be read from any thread. Separate models are independent.
-- **Versions.** `speech_version()` gives the release the library was built from (`"0.7.1"`). `SPEECH_API_VERSION_MAJOR`
+- **Versions.** `speech_version()` gives the release the library was built from (`"0.8.0"`). `SPEECH_API_VERSION_MAJOR`
   and `SPEECH_API_VERSION_MINOR`, and `speech_api_version_major()` and `speech_api_version_minor()` for a caller that
   loads the library at run time, give the API's version, 3.1. The major rises when a declaration changes in a way an
   existing caller notices, and the minor when a function, an option or an enum value is added. A program built against
@@ -183,8 +172,7 @@ it concerns (an option's name, `text`, `audio`, `device`, `threads`, `name`, `pa
 What a request may ask of a model is one vocabulary of options (`speech_option`), each with a name in snake_case
 (`speech_option_name()`, `speech_option_from_name()`) and one type. Every entry point uses the same name: a member of the
 worker's messages and the server's speech request, and a flag in kebab-case on the command line (`--duration-scale`).
-Each family declares the options it takes in one table in its engine (`src/<family>-engine.cpp`), with ranges and
-defaults from its model file. `speech info MODEL` lists them for a model.
+Each model takes some of them, with ranges and defaults from its file, and `speech info MODEL` lists them.
 
 | Option | Type | Neutral | Taken by |
 |---|---|---|---|
@@ -193,12 +181,12 @@ defaults from its model file. `speech info MODEL` lists them for a model.
 | `seed` | int | none | Qwen3-TTS, Irodori-TTS |
 | `speed`, `seconds`, `duration_scale`, `steps` | float, float, float, int | 1, none, 1, none | Irodori-TTS |
 | `max_seconds` | float | none | Qwen3-TTS |
-| `timestamps` | bool | false | [FastConformer](models/fastconformer.md#use) |
+| `timestamps` | bool | false | [FastConformer](models/fastconformer.md#options) |
 | `prompt` | string | `""` | [Qwen3-ASR](models/qwen3-asr.md#options) |
 | `decoding` | string | none | reazonspeech-nemo-v2 |
 | `do_sample`, `top_k`, `top_p`, `temperature`, `repetition_penalty` | bool, int, float, float, float | none | Qwen3-TTS |
 | `code_predictor_do_sample`, `code_predictor_top_k`, `code_predictor_top_p`, `code_predictor_temperature` | bool, int, float, float | none | Qwen3-TTS |
-| `instructions` | string | `""` | Qwen3-TTS 1.7B, Irodori-TTS files of layout 2 |
+| `instructions` | string | `""` | Qwen3-TTS 1.7B, Irodori-TTS |
 | `cfg_scale_text`, `cfg_scale_speaker`, `cfg_guidance_mode`, `cfg_min_t`, `cfg_max_t`, `truncation_factor`, `rescale_k`, `rescale_sigma`, `speaker_uncond_mode`, `sway_coeff`, `speaker_kv_scale`, `speaker_kv_min_t`, `speaker_kv_max_layers`, `cfg_scale_instructions` | float, but `cfg_guidance_mode` and `speaker_uncond_mode` string and `speaker_kv_max_layers` int | none | Irodori-TTS v4.1-Small (RF) |
 | `keep_tail`, `tail_window_size`, `tail_std_threshold`, `tail_mean_threshold` | bool, int, float, float | none | Irodori-TTS |
 
@@ -253,11 +241,11 @@ loaded on Metal, with two of its nine voices and four of its options shown:
 }
 ```
 
-- `organization` to `weight_type` are the model's identity, from the general keys of its file ([gguf.md](gguf.md)).
+- `organization` to `weight_type` are the model's identity, from the general keys of its file.
   `finetune` and `version` are left out for a model whose name has none. `source` is the repository the file was
   converted from and the revision. `weight_type` is the type that holds most of the weights: `F32`, `F16`, `Q8_0`, `Q6_K`, `Q5_K` or `Q4_K`.
-- `architecture` is the family ([models.md](models.md#families)), and `layout` is the version of the family's layout
-  that the file has.
+- `architecture` is the family: `qwen3-tts`, `irodori-tts`, `fastconformer` or `qwen3-asr`. `layout` is the version of
+  the family's file layout.
 - `incremental` is true for a model that passes audio while it still makes the rest (Qwen3-TTS), so that its first
   audio does not wait on the length of the text, and false for one that makes a request's whole speech before it decodes
   it (Irodori-TTS).

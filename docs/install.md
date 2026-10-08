@@ -1,6 +1,6 @@
 # Install
 
-This page installs the `speech` command, updates it and removes it.
+This page installs the `speech` command, updates it and removes it, and builds it from source.
 
 ## One line
 
@@ -58,9 +58,8 @@ curl -fsSL https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.s
 
 ## Update
 
-Run the installer again. It installs the latest release and removes the version it replaces. On Linux it also replaces
-the CPU build with the Vulkan build of the same version once the Vulkan loader is installed, and the other way round
-once it is removed.
+Run the installer again. It installs the latest release and removes the version it replaces. On Linux it also switches
+between the CPU and the Vulkan build when the Vulkan loader has been installed or removed.
 
 ## Uninstall
 
@@ -80,11 +79,25 @@ On Windows, remove the program and the models, and take `%LOCALAPPDATA%\Programs
 Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Programs\speech.cpp", "$env:LOCALAPPDATA\speech.cpp"
 ```
 
+## Requirements
+
+- **macOS**: Apple silicon. On an Intel Mac, [build from source](#build-from-source).
+- **Windows**: x64 and the Vulkan loader of a GPU driver.
+- **Linux**: x86-64 with AVX2, FMA and F16C (Intel Haswell, AMD Excavator or later), and glibc 2.34 or later: Ubuntu
+  22.04, Debian 12, Fedora 35, RHEL 9 and the releases after them.
+  - The Vulkan build also needs the Vulkan loader (`libvulkan1` on Debian and Ubuntu, `vulkan-loader` on Fedora), without
+    which it does not start, and the GPU's Vulkan driver (Mesa for AMD and Intel, NVIDIA's own for NVIDIA). With the
+    loader but no GPU driver it runs on the CPU.
+  - The CPU build needs neither, for a machine without a GPU.
+
+On the first run with a GPU, the driver compiles the shaders or kernels, which takes seconds (16 s for Irodori-TTS on an
+Apple M5) and is kept for the runs after.
+
 ## Release archives
 
 Each [release](https://github.com/nyosegawa/speech.cpp/releases) has one archive per platform,
-`speech-<version>-<platform>.zip`, and their SHA-256 sums in `SHA256SUMS`. The installer uses them, and you can also
-unpack one by hand.
+`speech-<version>-<platform>.zip`, and their SHA-256 sums in `SHA256SUMS`. The installer uses them, and a program that
+links the library takes them by hand.
 
 | Platform | Runs on |
 |---|---|
@@ -99,21 +112,33 @@ unpack one by hand.
 | `libspeech.3.dylib` and the link `libspeech.dylib`, `libspeech.so.3` and the link `libspeech.so`, or `speech.dll` and its import library `speech.lib` | the shared library, which exports the C API and nothing else; 3 is the C API's major version |
 | `speech.h` | the C API ([c-api.md](c-api.md)) |
 
-## Requirements
+## Build from source
 
-- **macOS**: Apple silicon. On an Intel Mac, [build from source](build.md).
-- **Windows**: x64 and the Vulkan loader of a GPU driver. No particular driver version is needed.
-- **Linux**: x86-64 with AVX2, FMA and F16C (Intel Haswell, AMD Excavator or later), and glibc 2.34 or later: Ubuntu
-  22.04, Debian 12, Fedora 35, RHEL 9 and the releases after them. No other shared library is needed; the C++ runtime is
-  linked in ([ADR 0010](adr/0010-linux-releases-run-on-glibc-2.34-in-a-vulkan-and-a-cpu-build.md)).
-  - The Vulkan build also needs the Vulkan loader (`libvulkan1` on Debian and Ubuntu, `vulkan-loader` on Fedora), without
-    which it does not start, and the GPU's Vulkan driver (Mesa for AMD and Intel, NVIDIA's own for NVIDIA). With the
-    loader but no GPU driver it runs on the CPU.
-  - The CPU build needs neither, for a machine without a GPU.
-  - A Vulkan driver that runs on the CPU, such as Mesa's llvmpipe, is not offered as a device.
+The build needs CMake 3.20 or later and a C++17 compiler.
 
-## The first run
+```sh
+git clone --recurse-submodules https://github.com/nyosegawa/speech.cpp.git
+cd speech.cpp
+cmake -B build                  # Metal on macOS, the CPU elsewhere
+cmake --build build --config Release -j
+```
 
-On the first run with Vulkan, the GPU driver compiles the shaders. This takes seconds, and the driver keeps them until it
-is updated. Metal compiles its kernels on the first run as well: 16 s for an Irodori-TTS worker on an Apple M5, and 1.5 s
-on the runs after.
+It makes `build/speech` and the shared library beside it. A build from source is tuned to the CPU it is built on.
+
+| Backend | Configure with | Notes |
+|---|---|---|
+| Metal | `cmake -B build` on macOS | checked and released |
+| CPU | `cmake -B build` elsewhere | checked and released for Linux |
+| Vulkan | `cmake -B build -DGGML_VULKAN=ON` | checked on NVIDIA and released for Windows and Linux; needs the Vulkan SDK to build |
+| CUDA | `cmake -B build -DGGML_CUDA=ON` | builds, but is not checked or released |
+
+On Linux, the [Vulkan SDK](https://vulkan.lunarg.com/sdk/home#linux) brings everything the Vulkan build needs in one
+archive:
+
+```sh
+curl -LO https://sdk.lunarg.com/sdk/download/1.4.357.0/linux/vulkansdk-linux-x86_64-1.4.357.0.tar.xz
+tar -xJf vulkansdk-linux-x86_64-1.4.357.0.tar.xz
+source 1.4.357.0/setup-env.sh
+cmake -B build -DGGML_VULKAN=ON
+cmake --build build -j
+```

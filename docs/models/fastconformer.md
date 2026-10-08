@@ -16,59 +16,36 @@ parakeet-tdt-0.6b-v3's languages are those of its model card: `bg` `cs` `da` `de
 speech asr parakeet-tdt_ctc-0.6b-ja utterance.wav                  # the text on stdout
 speech asr parakeet-tdt-0.6b-v3 --timestamps utterance.wav         # with the times of its segments
 speech asr reazonspeech-v2 meeting.wav                             # a recording of minutes, whole
-speech asr reazonspeech-v2 --decoding greedy meeting.wav           # the same with greedy decoding
+speech asr reazonspeech-v2 --decoding greedy meeting.wav           # faster, with greedy decoding
 speech worker parakeet-tdt_ctc-0.6b-ja                             # a recognition worker
 speech serve parakeet-tdt-0.6b-v3                                  # POST /v1/audio/transcriptions
 ```
 
-## What is implemented
+## What it does
 
-Each model decodes as NeMo's `transcribe()` decodes it by default
-([ADR 0009](../adr/0009-speech-recognition-runs-through-a-fastconformer-port.md),
-[ADR 0012](../adr/0012-the-recognizer-decodes-with-the-models-default-decoder.md)).
+- Each model writes the text NeMo's `transcribe()` writes by default: ReazonSpeech with a beam search, the parakeet models
+  with greedy decoding.
+- A recording is recognized whole, however long. ReazonSpeech's time and memory grow with the length. The parakeet
+  models attend over the whole recording, so theirs grow with its square, and a request to them should be one
+  utterance. For a long recording, use `reazonspeech-v2`.
+- parakeet-v3 finds the language of the audio itself. None of the models takes a language: a request's `language` is only
+  checked against the model's languages.
+- With `timestamps`, the result also has the tokens and segments with their times in seconds. A segment ends at a full
+  stop, a question mark or an exclamation mark.
 
-- The frontend as NeMo runs it in evaluation (pre-emphasis, a centred STFT, the checkpoint's 80 or 128 mel filters, the
-  log, and each mel bin normalized over the recording), on the host in double precision.
-- The subsampling by 8 and the 24 conformer layers on ggml. The parakeet models attend over the whole recording.
-  ReazonSpeech attends locally, as Longformer does in NeMo: over the 128 frames (10.24 s) on either side of each frame,
-  and one global token, the first frame.
-- The parakeet models' TDT decoder with NeMo's greedy decoding, the model's durations (0 to 4 frames) and at most 10
-  tokens on one frame.
-- ReazonSpeech's RNN-T decoder with the beam search its checkpoint configures, NeMo's `alsd` with a beam of 4; or, when a
-  request sets `decoding` to `greedy`, NeMo's greedy decoding (`greedy_batch`, at most 10 tokens on one frame)
-  ([ADR 0021](../adr/0021-an-rnnt-model-decodes-greedily-when-a-request-asks.md)).
-- The text written as NeMo's decoding writes it, without the space before each punctuation mark of the vocabulary, and
-  the times of the tokens and segments.
+Not supported: the CTC head of parakeet-tdt_ctc-0.6b-ja, which NeMo does not decode with by default.
 
-Not implemented: the CTC head of parakeet-tdt_ctc-0.6b-ja, which NeMo does not decode with by default and which writes a
-different text on some utterances.
-
-## Use
-
-- The models recognize 16 kHz mono audio. The library resamples audio at another rate.
-- None of the models has an input for a language: parakeet-v3 finds the language of the audio itself. A request's
-  `language` is only checked against the model's languages and changes nothing in the text.
-- A recording goes through the encoder whole, however long, as `transcribe()` runs it; speech.cpp does not cut it.
-  ReazonSpeech's time and memory grow with the length of the recording. The parakeet models attend over all of it, and
-  theirs grow with its square, so a request to them should be one utterance
-  ([ADR 0013](../adr/0013-local-attention-recognizes-long-audio-whole-as-transcribe-does.md)). For a long recording,
-  use `reazonspeech-v2`.
-- The reazonspeech package pads the audio with 0.5 s of silence on either side before it calls `transcribe()`; speech.cpp
-  does not, so its text is NeMo's for the audio as given.
-- A request with `timestamps` also gets the tokens and segments with their times in seconds, from the frames the
-  decoding emitted them on. A segment ends where NeMo ends one, at `.`, `?` or `!` at the end of a word, and, for the
-  Japanese models, whose text has no spaces, after `。`, `？`, `！`, `?` and `!` wherever they stand.
+## Options
 
 | Option | Default | Notes |
 |---|---|---|
 | `language` | `auto` | one of the model's languages; only checked |
 | `timestamps` | false | add the times of the tokens and segments |
-| `decoding` | `beam` | reazonspeech-v2 only: `beam` or `greedy`. Greedy computes a fifth of the beam search's graphs and can write another text, often with fewer commas and full stops |
+| `decoding` | `beam` | reazonspeech-v2 only: `beam` or `greedy`. Greedy is faster and can write another text, often with fewer commas and full stops |
 
 ## Accuracy
 
-Every stage is checked against NeMo's tensors on utterances of FLEURS' test split, on an Apple M5
-([checks](../development/checks.md#fastconformer)):
+Every stage is checked against NeMo's tensors on utterances of FLEURS' test split, on an Apple M5:
 
 | Model | Inputs | Text from the audio, CPU F32, CPU F16 and Metal |
 |---|---|---|
@@ -76,10 +53,7 @@ Every stage is checked against NeMo's tensors on utterances of FLEURS' test spli
 | parakeet-tdt-0.6b-v3 | 12 utterances of en_us, de_de, fr_fr and es_419, 6 to 23 s | NeMo's text on all twelve |
 | reazonspeech-nemo-v2 | 8 ja_jp utterances and 2 joined inputs of 65 s and 311 s | NeMo's text on all ten, with beam search and with greedy decoding |
 
-The times of tokens and segments are NeMo's exactly on every dump of the three models, from the dump's encoder output.
-In Q8_0 and the smaller types that `speech quantize` makes, the texts begin to part from NeMo's: reazonspeech-nemo-v2
-writes 0.9% of its characters otherwise in Q8_0 and 1.5% to 3.5% in Q6_K to Q4_K
-([checks](../development/checks.md#lower-bit-widths)).
+The times of tokens and segments are NeMo's exactly.
 
 ## Speed
 

@@ -16,7 +16,7 @@ implementation.
 | Task | Name | Languages | Good at |
 |---|---|---|---|
 | Synthesis | [`qwen3-tts-0.6b`](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF), [`qwen3-tts-1.7b`](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF) | de en es fr it ja ko pt ru zh | nine named speakers; audio that streams from its first frame of 0.08 s; the 1.7B model follows an instruction of how to speak |
-| Synthesis | [`irodori-tts-mf`](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF), [`irodori-tts`](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) | ja | Japanese in the voice of a reference recording |
+| Synthesis | [`irodori-tts-mf`](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF), [`irodori-tts`](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) | ja | Japanese in the voice of a reference recording, or in a voice described in words |
 | Recognition | [`qwen3-asr-0.6b`](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF), [`qwen3-asr-1.7b`](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF) | 30 languages | finds the language itself, takes a prompt of names and terms, and up to 20 minutes at once |
 | Recognition | [`reazonspeech-v2`](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) | ja | Japanese with punctuation, in recordings of many minutes |
 | Recognition | [`parakeet-tdt_ctc-0.6b-ja`](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | ja | short Japanese utterances, fast, with times |
@@ -44,7 +44,7 @@ irm https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.ps1 | ie
 The installer checks the release's archive against its SHA-256, puts `speech` under your home folder, and adds it to
 `PATH`. Run it again to update. On Linux it installs the Vulkan build when the Vulkan loader is installed, and the CPU
 build otherwise; the Linux builds need glibc 2.34 or later. [docs/install.md](docs/install.md) has the options, how to
-uninstall, and what each platform needs. On an Intel Mac or another system, [build from source](docs/build.md).
+uninstall, and what each platform needs. On an Intel Mac or another system, [build from source](docs/install.md#build-from-source).
 
 ## Quick start
 
@@ -108,8 +108,8 @@ curl http://127.0.0.1:8080/v1/audio/speech -H 'Content-Type: application/json' \
 curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@hello.wav
 ```
 
-It listens on 127.0.0.1 and has no authentication. On 127.0.0.1 it also serves the page, guarded by a token.
-[docs/server.md](docs/server.md) has the endpoints, the formats and the errors.
+It listens on 127.0.0.1 and has no authentication. [docs/server.md](docs/server.md) has the endpoints, the formats, the
+errors and the page.
 
 ## Using the library
 
@@ -146,24 +146,19 @@ official text on every check input in F32 and F16.
 | reazonspeech-nemo-v2, F16 | Apple M5, Metal | 4.9 s for 311 s of audio |
 | Qwen3-ASR 0.6B, Q8_0 | Apple M5, Metal | 0.87 s for 25.5 s of audio |
 
-Each model's page has its accuracy and speed, and [docs/development/checks.md](docs/development/checks.md) has every
-check.
+Each model's page has its accuracy and speed.
 
 ## Documentation
 
 | Page | What it covers |
 |---|---|
-| [Install](docs/install.md) | installers, updating, uninstalling, release archives and requirements |
+| [Install](docs/install.md) | installers, updating, uninstalling, requirements, release archives and building from source |
 | [Command line](docs/cli.md) | every subcommand and option |
 | [Models](docs/models.md) | the catalog, names, where models are kept, voices and languages |
 | [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md), [FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md) | each family: what it does, its options, accuracy and speed |
 | [Server and page](docs/server.md) | `speech serve` and OpenAI's audio API |
 | [Worker protocol](docs/worker.md) | `speech worker` for programs |
 | [C API](docs/c-api.md) | `speech.h` |
-| [GGUF files](docs/gguf.md) | converting models and the layout of the files |
-| [Build from source](docs/build.md) | building, backends and CI artifacts |
-| [Development](docs/README.md#development) | checks, adding a model, releasing |
-| [Decisions](docs/adr/) | the records of decisions the code cannot show |
 
 ## License
 
@@ -172,9 +167,8 @@ MIT, see [LICENSE](LICENSE). The model weights are their authors':
 - Qwen3-TTS and Qwen3-ASR are the Qwen team's, under the Apache License 2.0.
 - Irodori-TTS v4.1-Small and v4.1-Small-MF are Aratako's, under the MIT License with the ethical restrictions of their
   model cards: no voice cloning without consent, no deepfakes or misinformation.
-- Semantic-DACVAE-Japanese-32dim is Aratako's and MIT on its card. It derives from Meta's facebook/dacvae-watermarked,
-  which is under the Apache License 2.0. That card's text also names the SAM License, a sentence left from the README of
-  facebookresearch/dacvae, which Meta corrected to Apache-2.0 on 2025-12-19; the repository's LICENSE has been
-  Apache-2.0 from its first commit.
+- Semantic-DACVAE-Japanese-32dim, the codec in the Irodori-TTS files, is Aratako's under the MIT License. It derives
+  from Meta's facebook/dacvae-watermarked, under the Apache License 2.0; the SAM License that its card's text also
+  names was corrected to Apache-2.0 in facebookresearch/dacvae on 2025-12-19.
 - The parakeet models are NVIDIA's, under CC-BY-4.0, and reazonspeech-nemo-v2 is reazon-research's, under the Apache
   License 2.0.

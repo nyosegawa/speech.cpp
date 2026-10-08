@@ -18,8 +18,8 @@ is compiled into `speech`, so the files on Hugging Face are settled before the v
 
 A file changes when its family's layout changes, a type is added, or a checkpoint is converted again.
 
-1. Make the files: `convert.py` writes F32 and `speech quantize F32.gguf OUT --type <type>` the other types
-   (docs/gguf.md, Convert a model); `tools/quantize_compare.py` shows that an unchanged file comes out byte for byte.
+1. Make the files: `reference/<family>/convert.py` writes F32 and `speech quantize F32.gguf OUT --type <type>` the
+   other types; `tools/quantize_compare.py` shows that an unchanged file comes out byte for byte.
    Check each with the family's stage checks and `speech-api-check`. Before a type is published for the first time,
    `tools/quantize_releases.py` with the previous release's `speech` shows that each file's `speech.requires` names a
    release that reads it.
@@ -37,8 +37,14 @@ the model loads.
 
 ## 4. The version
 
-A pull request that raises `VERSION` to the new number and carries the catalog's update, with every doc that names the
-version. Merge it when CI passes (pull-request skill).
+- The release's number is written in `VERSION` and nowhere else in the code: CMake reads it, and `speech --version`,
+  `speech_version()` and the worker's `ready` report it.
+- Versions follow Semantic Versioning. While they are 0.x, a change a caller must adapt to (the worker protocol, the C
+  API, the GGUF layout, a voice file's form, the command line's arguments) raises the minor version, and any other
+  release raises the patch.
+- A pull request of its own raises `VERSION` just before the tag and carries the catalog's update, with every doc that
+  names the version. Merge it when CI passes (pull-request skill).
+- Releases and tags are never deleted or moved: callers such as ASIST pin the archives by SHA-256.
 
 ## 5. Tag and publish
 

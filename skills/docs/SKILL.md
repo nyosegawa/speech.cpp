@@ -1,13 +1,18 @@
 ---
 name: docs
-description: Keep speech.cpp's README.md and docs/ current, short and plain. Covers which page describes what, when a change must update a page, how to write a page, and what to check before committing. Use when a change alters what a user does or sees (a command, an option, an endpoint, a model, a file layout, a number), when writing or rewriting a page, or when asked to update, fix, shorten or check the documentation (ドキュメントを更新、README を直す、docs に書く、説明を短く). Not for decision records (docs/adr/, which the change's ADR covers) or code comments.
+description: Keep speech.cpp's README.md and docs/ current, short and plain, for the people who use speech.cpp. Covers which page describes what, when a change must update a page, what a page holds and leaves out, and what to check before committing. Use when a change alters what a user does or sees (a command, an option, an endpoint, a model, a number), when writing or rewriting a page, or when asked to update, fix, shorten or check the documentation (ドキュメントを更新、README を直す、docs に書く、説明を短く). Not for decision records (docs/adr/), code comments, or what only a developer needs, which goes into the code, AGENTS.md or a skill.
 ---
 
 # The documentation
 
-README.md is the shortest path from install to speech, about 200 lines. `docs/` has one page per topic and
-`docs/development/` the pages for people who change speech.cpp. `docs/README.md` is the index. A page a user cannot
-find from the README or the index does not exist for them.
+The documentation is for the people who use speech.cpp: from the command line, over HTTP, as a worker or through the
+C API. README.md is the shortest path from install to speech, about 200 lines, and its Documentation table is the
+index. `docs/` has one page per topic, and `docs/models/` one page per family. A page that the README does not link
+does not exist for a reader.
+
+What a developer needs lives elsewhere, where it changes with the work: in the code (each check, converter and dump
+script prints its usage), AGENTS.md, and the skills (add-model, release, windows-check, pull-request). The reasons for a
+choice are in docs/adr/.
 
 ## Which page
 
@@ -15,29 +20,36 @@ find from the README or the index does not exist for them.
 |---|---|
 | a subcommand or its flags | docs/cli.md; README's table if the subcommand is new |
 | a request option, a voice, a model's limits | the family's page in docs/models/; docs/models.md for voices and languages |
-| the catalog (a model, a name, a type) | docs/models.md and README's model table |
+| the catalog (a model, a name, a type) | docs/models.md, the family's page and README's model table |
 | `speech serve`, its page or the HTTP API | docs/server.md |
 | the worker protocol | docs/worker.md |
 | `speech.h` | docs/c-api.md |
-| a GGUF layout, a key, a converter | docs/gguf.md, in the same commit as the reader (AGENTS.md) |
-| building, CI, release archives | docs/build.md, docs/install.md |
-| the installers | docs/install.md and README's Install |
-| a stage check, a measurement | docs/development/checks.md; the family page's short table if a headline number moves |
-| the release steps | docs/development/releasing.md |
+| the installers, the release archives, building | docs/install.md and README's Install |
+| a headline accuracy or speed | the family's page; README's table if it lists the model |
 
 The pull request that changes the behaviour updates its pages. Nothing checks the docs against the code by test, and
-none may be added: a test of wording fails on a deliberate rewording and points to no defect. Docs stay current
-because the change's author reads the pages above and edits them.
+none may be added: a test of wording fails on a deliberate rewording and points to no defect. The docs stay current
+because they are short, hold few facts that can go stale, and the change's author reads the pages above and edits them.
+
+## What a page holds
+
+- What a user does and needs to know: what a command or model does, how to run it, its options and what they change,
+  the limits a user meets, the errors they see, and the headline accuracy and speed.
+- The current release alone. No page says what earlier releases did, or that something is new; a page reads as if
+  speech.cpp had always been as it is.
+- Not how it is implemented, which names of the official code it follows, the rule behind each refusal, how a guard
+  works inside, how it was checked step by step, or why it was chosen. Those are the code's, the skills' and the ADRs'.
+- No links to docs/adr/: a decision record is rewritten as decisions change, and a page must not depend on it.
+- A value the program already prints (`speech info` for options and ranges, `speech models` for the catalog,
+  `--help` for flags) is written only where the reader needs it before running anything.
 
 ## Writing
 
 - English, plain and concrete: short sentences, common words, commands a reader can copy and run.
 - Each page opens with one sentence saying what it is for.
 - A small table or a code block beats a paragraph. A paragraph that only introduces the next one is cut.
-- Keep pages short. A fact may appear in the README and a page both; brevity matters more than one place per fact.
-- Numbers carry their conditions: the model, the type, the device, and the date only where it matters.
-- Measured detail, check tables and the evidence for bounds go to docs/development/checks.md; the reasons for a choice
-  go to an ADR. A user's page links to them instead of repeating them.
+- A fact may appear in the README and a page both; brevity matters more than one place per fact.
+- Numbers carry their conditions: the model, the type and the device.
 - No marketing words ("blazing", "seamless", "robust", "powerful") and no filler ("Let's dive in", "In this page we
   will").
 

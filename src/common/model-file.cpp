@@ -57,7 +57,7 @@ std::string joined(const std::vector<std::string> & items, size_t at_most) {
     return out;
 }
 
-/** A shape as docs/gguf.md writes it, "[2048, 1024]", without the axes of 1 past the last other one. */
+/** A shape as messages write it, "[2048, 1024]", without the axes of 1 past the last other one. */
 std::string shape_text(const int64_t * ne) {
     int axes = GGML_MAX_DIMS;
     while (axes > 1 && ne[axes - 1] == 1) axes--;

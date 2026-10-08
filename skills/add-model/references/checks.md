@@ -29,7 +29,7 @@ Lower a bound for one case only with evidence that the gap is rounding and not a
 4. **The meaning is kept:** a recognizer writes the same text for the official audio and for the backend's.
 
 Never lower a bound for every case to let one pass, and never change a bound to make a quantized file pass: record its
-numbers instead.
+numbers in the pull request's description instead.
 
 ## Bit-for-bit claims
 
