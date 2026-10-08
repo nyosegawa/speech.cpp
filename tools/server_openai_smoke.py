@@ -9,8 +9,11 @@ It lists the models; transcribes the first dump's audio with chunking_strategy "
 the client sends them, against the same requests sent by hand; and opens a Realtime transcription session with
 client.realtime.connect(model=...), whose events the client parses into its own types: session.created, a
 session.update of a transcription session answered by session.updated, PCM appended in pieces and committed, answered
-by input_audio_buffer.committed, the delta and the completed of the text that the same samples give as a 24000 Hz WAV
-file, an error event for turn_detection server_vad, and input_audio_buffer.cleared.
+by input_audio_buffer.committed, deltas and the completed of the text that the same samples give as a 24000 Hz WAV
+file; a session.update to turn_detection server_vad, after which the same PCM followed by silence, appended in pieces of
+20 ms, gives input_audio_buffer.speech_started, .speech_stopped and .committed and the completed of each region where
+speech vad finds speech, joined into the text of chunking_strategy "auto"; an error event for semantic_vad; and
+input_audio_buffer.cleared.
 
 usage: uv run --script tools/server_openai_smoke.py <speech> <recognition.gguf> <detection.gguf> <dump folder>
 """
@@ -20,9 +23,12 @@ import ast
 import base64
 import io
 import json
+import math
 import os
 import struct
+import subprocess
 import sys
+import tempfile
 import uuid
 
 import openai
@@ -30,6 +36,7 @@ from openai import OpenAI
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from server_client import Server  # noqa: E402
+from worker_client import joined_transcript  # noqa: E402
 
 if len(sys.argv) != 5:
     raise SystemExit("usage:" + __doc__.split("usage:")[1].rstrip())
@@ -100,18 +107,49 @@ with client.realtime.connect(model=name) as connection:
     while events[-1].type != "conversation.item.input_audio_transcription.completed":
         events.append(connection.recv())
     kinds = [type(e).__name__ for e in events]
-    assert kinds == ["InputAudioBufferCommittedEvent", "ConversationItemInputAudioTranscriptionDeltaEvent",
-                     "ConversationItemInputAudioTranscriptionCompletedEvent"], kinds
-    committed, delta, completed = events
-    assert delta.item_id == completed.item_id == committed.item_id and delta.delta == completed.transcript == want, (delta, completed, want)
+    assert kinds[0] == "InputAudioBufferCommittedEvent" and set(kinds[1:-1]) <= {"ConversationItemInputAudioTranscriptionDeltaEvent"}, kinds
+    committed, completed = events[0], events[-1]
+    assert all(e.item_id == committed.item_id for e in events) and all(e.delta for e in events[1:-1]) and completed.transcript == want, (events, want)
     assert completed.usage.type == "duration" and completed.usage.seconds == len(pcm24) / 2 / 24000, completed.usage
-    connection.session.update(session={"type": "transcription", "audio": {"input": {"turn_detection": {"type": "server_vad"}}}})
+    # server_vad: the same samples and 1.5 s of silence, appended in pieces of 20 ms, cut into the regions speech vad finds
+    # in them on the CPU, where the server's detection runs.
+    connection.session.update(session={"type": "transcription", "audio": {"input": {"turn_detection": {"type": "server_vad",
+                                                                                                        "silence_duration_ms": 500}}}})
+    updated = connection.recv()
+    assert type(updated).__name__ == "SessionUpdatedEvent" and updated.session.audio.input.turn_detection.type == "server_vad", updated
+    spoken = pcm24 + b"\0" * 72000
+    folder = tempfile.mkdtemp()
+    path = os.path.join(folder, "spoken.wav")
+    with open(path, "wb") as f:
+        f.write(wav(spoken, 24000))
+    regions = json.loads(subprocess.run([speech, "vad", vad, "--device", "cpu", "--threads", "1", "--format", "json", "--speech-pad-ms", "300",
+                                         "--min-silence-duration-ms", "500", "--max-speech-duration-s", "10", path],
+                                        capture_output=True, check=True).stdout)["regions"]
+    os.remove(path)
+    os.rmdir(folder)
+    for start in range(0, len(spoken), 960):
+        connection.input_audio_buffer.append(audio=base64.b64encode(spoken[start:start + 960]).decode())
+    detected = []
+    while sum(type(e).__name__ == "ConversationItemInputAudioTranscriptionCompletedEvent" for e in detected) < len(regions):
+        detected.append(connection.recv())
+    first = [type(e).__name__ for e in detected if e.item_id == detected[0].item_id and not e.type.endswith(".delta")]
+    assert first == ["InputAudioBufferSpeechStartedEvent", "InputAudioBufferSpeechStoppedEvent", "InputAudioBufferCommittedEvent",
+                     "ConversationItemInputAudioTranscriptionCompletedEvent"], first
+    # The times count from the start of the session's audio, the commit's before the detection's.
+    origin = len(pcm24) // 2
+    ms = [math.floor((origin + round(regions[0][k] * 24000)) / 24 + 0.5) for k in ("start", "end")]
+    assert [detected[0].audio_start_ms, detected[1].audio_end_ms] == ms, (detected[:2], ms)
+    done = [e for e in detected if e.type.endswith(".completed")]
+    parts = [(0, {"text": e.transcript, "stop": "complete"}) for e in done]
+    assert joined_transcript(parts, False)["text"] == by_hand([("chunking_strategy", "auto")], wav(spoken, 24000)), (done, regions)
+    connection.session.update(session={"type": "transcription", "audio": {"input": {"turn_detection": {"type": "semantic_vad"}}}})
     refused = connection.recv()
-    assert type(refused).__name__ == "RealtimeErrorEvent" and refused.error.param == "session.audio.input.turn_detection", refused
+    assert type(refused).__name__ == "RealtimeErrorEvent" and refused.error.param == "session.audio.input.turn_detection.type", refused
     connection.input_audio_buffer.clear()
     assert type(connection.recv()).__name__ == "InputAudioBufferClearedEvent"
-print(f"realtime.connect(): {', '.join(kinds)} and RealtimeErrorEvent for server_vad, parsed by the client; the transcript of the "
-      f"same samples as a 24000 Hz file: {want[:30]!r}")
+print(f"realtime.connect(): {', '.join(kinds)} for a commit, the transcript of the same samples as a 24000 Hz file: {want[:30]!r}; with "
+      f"server_vad {', '.join(dict.fromkeys(type(e).__name__ for e in detected))} for {len(regions)} regions, joined into chunking_strategy's "
+      f"text; and RealtimeErrorEvent for semantic_vad, parsed by the client")
 out = server.stop()
 assert out == b"", out[:200]
 print("ok")

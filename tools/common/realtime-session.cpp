@@ -7,6 +7,7 @@
 
 #include "base64.h"
 #include "json.h"
+#include "regions.h"
 
 namespace realtime {
 
@@ -51,6 +52,49 @@ const JsonValue * given(const JsonValue & object, const char * name) {
     return value && value->kind != JsonValue::Kind::Null ? value : nullptr;
 }
 
+const char * const kTurns = "session.audio.input.turn_detection";
+
+/** Whether two lists of options set the same values in the same order. */
+bool same(const std::vector<RequestOption> & a, const std::vector<RequestOption> & b) {
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(),
+                      [](const RequestOption & x, const RequestOption & y) { return x.option == y.option && x.value == y.value; });
+}
+
+/**
+ * The detection options of a turn_detection that is not null, server_vad's members given; its other members and
+ * semantic_vad are refused, since a transcription session creates no response for them to steer.
+ */
+std::vector<RequestOption> server_vad(const JsonValue & turns) {
+    object_at(turns, kTurns);
+    const std::string at = kTurns;
+    const JsonValue * type = turns.member("type");
+    if (!type) throw refusal("missing_required_parameter", at + ".type", "turn_detection needs its type; give \"server_vad\", or null for commits alone.");
+    if (string_at(*type, at + ".type") == "semantic_vad") {
+        throw refusal("unsupported_value", at + ".type",
+                      "semantic_vad is not supported; speech.cpp detects turns with server_vad, by the regions where its detection model finds speech.");
+    }
+    if (type->text != "server_vad") throw refusal("invalid_value", at + ".type", "turn_detection's type is " + json_string(type->text) + "; give \"server_vad\".");
+    for (const char * own : {"create_response", "interrupt_response", "idle_timeout_ms"}) {
+        if (given(turns, own)) {
+            throw refusal("unsupported_parameter", at + "." + own,
+                          at + "." + own + " is not supported: a transcription session creates no response. Leave it out.");
+        }
+    }
+    only(turns, at, {"type", "threshold", "prefix_padding_ms", "silence_duration_ms", "create_response", "interrupt_response", "idle_timeout_ms"});
+    std::vector<RequestOption> out;
+    for (const VadMember & m : kServerVad) {
+        const JsonValue * value = given(turns, m.name);
+        if (!value) continue;
+        try {
+            out.push_back({m.option, option_from_json(m.option, *value)});
+        } catch (const std::invalid_argument &) {
+            throw refusal("invalid_type", at + "." + m.name, at + "." + m.name + " is " + json_excerpt(*value) + "; it takes " +
+                                                               (speech_option_type(m.option) == SPEECH_TYPE_INT ? "an integer." : "a number."));
+        }
+    }
+    return out;
+}
+
 /** 16-bit little-endian PCM as the library takes samples, each scaled as a 16-bit WAVE file is read. */
 std::vector<float> samples_of(const std::string & pcm) {
     std::vector<float> out(pcm.size() / 2);
@@ -69,21 +113,27 @@ std::vector<RequestOption> Session::Config::options() const {
     return out;
 }
 
-Session::Session(Recognizer & recognizer, std::function<void(const std::string &)> send, size_t limit, const std::string & model)
-    : recognizer_(recognizer), events_(std::move(send)), limit_(limit) {
-    if (!model.empty()) config_.model = model;
-    worker_ = std::thread([this] { work(); });
+std::optional<utterances::Asked> Session::Config::asked() const {
+    if (!transcribe) return std::nullopt;
+    return utterances::Asked{model.value_or(""), options()};
 }
 
-Session::~Session() {
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        closing_ = true;
-        waiting_.clear();
-        if (running_) running_->cancel();
-    }
-    changed_.notify_all();
-    worker_.join();
+std::unique_ptr<utterances::Reservation> Session::Reader::reserve(const utterances::Asked & asked) {
+    return models_.reserve(asked.model);
+}
+
+std::optional<Transcript> Session::Reader::transcribe(utterances::Reservation & reservation, const utterances::Asked & asked,
+                                                      std::vector<float> samples, int, Cancellation & cancellation, uint64_t utterance,
+                                                      bool provisional) {
+    // A reading of an utterance that is not yet announced, which the detection may still drop, takes no item.
+    return models_.transcribe(reservation, std::move(samples), asked.options, cancellation, provisional ? "" : events_.item(utterance), provisional);
+}
+
+Session::Session(Models & models, std::function<void(const std::string &)> send, size_t limit, const std::string & model)
+    : models_(models), events_(std::move(send)), reader_(models_, events_), limit_(limit),
+      assembly_(reader_, kRate, [this](const utterances::Event & e) { events_.utterance(e); }) {
+    if (!model.empty()) config_.model = model;
+    assembly_.ask(config_.asked());
 }
 
 void Session::open() {
@@ -93,14 +143,45 @@ void Session::open() {
 std::string Session::session_json() {
     std::string transcription = "null";
     if (config_.transcribe) {
-        const std::string model = config_.model.value_or(recognizer_.held());
+        const std::string model = config_.model.value_or(models_.held());
         transcription = "{" + (model.empty() ? "" : "\"model\":" + json_string(model) + ",") +
                         "\"language\":" + (config_.language ? json_string(*config_.language) : "null") +
                         (config_.prompt ? ",\"prompt\":" + json_string(*config_.prompt) : "") + "}";
     }
+    std::string turns = "null";
+    if (config_.turns) {
+        turns = "{\"type\":\"server_vad\"";
+        for (const RequestOption & o : region_options(*config_.turns)) {
+            const std::string member = server_vad_member(speech_option_name(o.option));
+            if (member.empty()) continue;
+            const OptionValue & v = o.value;
+            turns += ",\"" + member + "\":" + (v.index() == 1 ? std::to_string(std::get<int64_t>(v)) : json_number(std::get<double>(v)));
+        }
+        turns += "}";
+    }
     return "{\"type\":\"transcription\",\"id\":\"" + events_.session_id() + "\",\"object\":\"realtime.transcription_session\",\"audio\":{\"input\":{\"format\":"
            "{\"type\":\"audio/pcm\",\"rate\":" + std::to_string(kRate) + "},\"transcription\":" + transcription +
-           ",\"noise_reduction\":null,\"turn_detection\":null}},\"include\":null}";
+           ",\"noise_reduction\":null,\"turn_detection\":" + turns + "}},\"include\":null}";
+}
+
+void Session::tick() {
+    if (!config_.turns) return;
+    const utterances::Detection * detection = assembly_.detection();
+    if (detection && models_.holds(*detection)) return;
+    try {
+        if (detection) assembly_.detect(nullptr);
+        assembly_.detect(models_.detect(region_options(*config_.turns)));
+        told_no_detection_ = false;
+    } catch (...) {
+        // While the page loads another detection model, turn detection waits for it; without one, or with one that
+        // refuses the options, the session says so once and goes on with commits alone until one is held.
+        ApiError e = error_of(std::current_exception());
+        if (e.code != "model_loading" && !told_no_detection_) {
+            if (e.param.empty()) e.param = kTurns;
+            events_.error(e, "");
+            told_no_detection_ = true;
+        }
+    }
 }
 
 void Session::receive(const std::string & message, bool text) {
@@ -137,7 +218,7 @@ void Session::receive(const std::string & message, bool text) {
         }
     } catch (const ApiError & e) {
         events_.error(e, event_id);
-    } catch (const Failure &) {
+    } catch (const std::exception &) {
         events_.error(error_of(std::current_exception()), event_id);
     }
 }
@@ -228,25 +309,44 @@ void Session::update(const JsonValue & event) {
             throw refusal("unsupported_parameter", "session.audio.input.noise_reduction",
                           "Noise reduction is not supported; give session.audio.input.noise_reduction null or leave it out.");
         }
-        if (const JsonValue * turns = given(*input, "turn_detection")) {
-            object_at(*turns, "session.audio.input.turn_detection");
-            const JsonValue * kind = turns->member("type");
-            const std::string what = kind && kind->kind == JsonValue::Kind::String ? kind->text : "";
-            throw refusal(what == "server_vad" || what == "semantic_vad" ? "unsupported_value" : "invalid_value", "session.audio.input.turn_detection",
-                          "turn_detection " + (what.empty() ? json_excerpt(*turns) : json_string(what)) +
-                              " is not supported; speech.cpp transcribes what the client commits. Give session.audio.input.turn_detection null and "
-                              "send input_audio_buffer.commit at the end of each utterance.");
+        if (const JsonValue * turns = input->member("turn_detection")) {
+            next.turns = turns->kind == JsonValue::Kind::Null ? std::nullopt : std::optional<std::vector<RequestOption>>(server_vad(*turns));
         }
     }
     if (next.transcribe) {
         try {
-            recognizer_.check(next.model.value_or(""), next.options());
+            models_.check(next.model.value_or(""), next.options());
         } catch (ApiError & e) {
             if (e.param.empty()) e.param = std::string(kTranscription) + ".model";
             throw;
         }
     }
+    // A detection starts on the options given, which the library checks, before anything changes; the same options keep
+    // the detection under way and the utterance it is cutting.
+    std::unique_ptr<utterances::Detection> detection;
+    const bool restart = next.turns && (!config_.turns || !same(*next.turns, *config_.turns) || !assembly_.detection());
+    if (restart) {
+        try {
+            detection = models_.detect(region_options(*next.turns));
+        } catch (ApiError & e) {
+            e.param = kTurns;
+            throw;
+        } catch (const Failure & failure) {
+            ApiError e = openai::library_error(failure);
+            e.param = std::string(kTurns) + "." + server_vad_member(failure.option());
+            throw e;
+        }
+    }
+    const bool asked_otherwise = next.transcribe != config_.transcribe || next.model != config_.model || next.language != config_.language ||
+                                 next.prompt != config_.prompt;
+    const bool manual = config_.turns && !next.turns;
     config_ = next;
+    if (asked_otherwise) assembly_.ask(config_.asked());
+    if (restart) {
+        assembly_.detect(std::move(detection));
+        told_no_detection_ = false;
+    }
+    if (manual) assembly_.manual();
     events_.emit("session.updated", ",\"session\":" + session_json());
 }
 
@@ -263,11 +363,7 @@ void Session::append(const JsonValue & event) {
     if (pcm.size() % 2) {
         throw refusal("invalid_value", "audio", "The audio has " + std::to_string(pcm.size()) + " bytes, and 16-bit PCM has two for each sample.");
     }
-    size_t held = 0;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        held = buffer_.size() + committed_;
-    }
+    const size_t held = assembly_.held() * 2;
     if (held + pcm.size() > limit_) {
         char message[320];
         std::snprintf(message, sizeof message,
@@ -276,85 +372,19 @@ void Session::append(const JsonValue & event) {
                       (double) held / 2 / kRate, (double) limit_ / 2 / kRate);
         throw refusal("input_audio_buffer_full", "audio", message);
     }
-    buffer_ += pcm;
+    const std::vector<float> samples = samples_of(pcm);
+    assembly_.push(samples.data(), samples.size());
 }
 
 void Session::commit() {
-    if (buffer_.empty()) {
+    if (!assembly_.commit()) {
         throw refusal("input_audio_buffer_commit_empty", "", "The input audio buffer is empty; append audio before committing it.");
     }
-    Commit c{commits_++, samples_of(buffer_), config_, nullptr, std::nullopt};
-    const size_t bytes = buffer_.size();
-    buffer_.clear();
-    // The commit takes its place on the model as it is accepted, so that it runs before any request that arrives later.
-    if (c.config.transcribe) {
-        try {
-            c.reservation = recognizer_.reserve(c.config.model.value_or(""));
-        } catch (const ApiError & e) {
-            c.refused = e;
-            c.samples.clear();
-        }
-    }
-    utterances::Event committed;
-    committed.kind = utterances::Event::Kind::Committed;
-    committed.utterance = c.number;
-    committed.recognized = c.config.transcribe;
-    events_.utterance(committed);
-    if (!c.config.transcribe) return;
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (c.reservation) committed_ += bytes;
-    waiting_.push_back(std::move(c));
-    changed_.notify_all();
 }
 
 void Session::clear() {
-    buffer_.clear();
+    assembly_.clear();
     events_.emit("input_audio_buffer.cleared", "");
-}
-
-void Session::work() {
-    for (;;) {
-        Commit c;
-        std::shared_ptr<Cancellation> cancellation;
-        {
-            std::unique_lock<std::mutex> lock(mutex_);
-            changed_.wait(lock, [&] { return closing_ || !waiting_.empty(); });
-            if (closing_) return;
-            c = std::move(waiting_.front());
-            waiting_.pop_front();
-            running_ = cancellation = std::make_shared<Cancellation>();
-        }
-        utterances::Event e;
-        e.utterance = c.number;
-        try {
-            if (c.refused) throw *c.refused;
-            std::optional<Transcript> t =
-                recognizer_.transcribe(*c.reservation, c.samples, c.config.options(), *cancellation, events_.item(c.number));
-            // The model's turn passes as soon as the recognition has ended.
-            c.reservation.reset();
-            if (t) {
-                // The library gives the text once the recognition has ended, so the one delta carries all of it, for a
-                // client that builds the text from the deltas.
-                if (!t->text.empty()) {
-                    e.kind = utterances::Event::Kind::Delta;
-                    e.delta = t->text;
-                    events_.utterance(e);
-                }
-                e.kind = utterances::Event::Kind::Completed;
-                e.transcript = std::move(*t);
-                e.duration = (double) c.samples.size() / kRate;
-                events_.utterance(e);
-            }
-        } catch (...) {
-            e.kind = utterances::Event::Kind::Failed;
-            e.failure = std::current_exception();
-            events_.utterance(e);
-        }
-        c.reservation.reset();
-        std::lock_guard<std::mutex> lock(mutex_);
-        committed_ -= c.samples.size() * 2;
-        running_.reset();
-    }
 }
 
 }  // namespace realtime

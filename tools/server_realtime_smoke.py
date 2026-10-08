@@ -1,34 +1,57 @@
 """Speaks OpenAI's Realtime transcription to `speech serve` over the WebSocket at /v1/realtime, the way a client of OpenAI's
 API does, with the standard library alone: the session.created and session.updated of a transcription session, two
-commits of 24000 Hz PCM appended in pieces, each committed in order and transcribed into the deltas and the completed of
-the text, the languages and the duration of the same samples sent as a WAV file of that rate, a cleared buffer, a commit
-with transcription null left untranscribed, an error event for each member and value it does not take with the client's
-event_id, a session.update that changes only the members it gives, the bound on the audio a session holds before it is
-transcribed, two commits and an HTTP request run in the order they arrived, a client gone while its commit is
-transcribed, and the refusals of the upgrade: another model, another query member, another Origin and another Host.
+commits of 24000 Hz PCM appended in pieces, each committed in order and transcribed into deltas that only add text and
+the completed of the text, the languages and the duration of the same samples sent as a WAV file of that rate, a
+cleared buffer, a commit with transcription null left untranscribed, an error event for each member and value it does
+not take with the client's event_id, a session.update that changes only the members it gives, the bound on the audio a
+session holds before it is transcribed, two commits and an HTTP request run in the order they arrived, a client gone
+while its commit is transcribed, and the refusals of the upgrade: another model, another query member, another Origin
+and another Host. As someone speaks: deltas of a commit appended in real time before it is committed, and a reading
+under way stopped by the commit; with turn_detection server_vad, the dumps joined with silences and appended in pieces
+of 20 ms cut into the regions that speech vad finds on the CPU, each with its speech_started and speech_stopped at the
+region's bounds, its commit and its completed with the text of the region's samples sent as a WAV file, all of them
+joined into the text of chunking_strategy with the same values; deltas of an utterance appended in real time before its
+commit; a commit and a clear while speech is under way; minutes of silence held within the bound; and server_vad's
+refusals, on a server without a detection model too.
 
-usage: python3 tools/server_realtime_smoke.py <speech> <recognition.gguf> <dump folder>... [-- serve options...]
+usage: python3 tools/server_realtime_smoke.py <speech> <recognition.gguf> <detection.gguf> <dump folder>... [-- serve options...]
 """
 
 import array
 import base64
 import json
+import math
 import os
+import shutil
 import struct
+import subprocess
 import sys
+import tempfile
 import time
 
 from server_client import Server, expect_error, read_npy
+from worker_client import joined_transcript
 
 args = sys.argv[1:]
 options = args[args.index("--") + 1:] if "--" in args else []
 args = args[:args.index("--")] if "--" in args else args
-if len(args) < 3:
+if len(args) < 4:
     raise SystemExit("usage:" + __doc__.split("usage:")[1].rstrip())
-speech, model, *dumps = args
+speech, model, vad, *dumps = args
 ORIGIN = "http://localhost:5173"
 
-server = Server(speech, [model, "--cors-origin", ORIGIN, *options])
+# A server without a detection model refuses server_vad, saying to give it one.
+alone = Server(speech, [model, *options])
+ws = alone.websocket("/v1/realtime")
+assert ws.event()["type"] == "session.created"
+ws.send({"type": "session.update", "event_id": "vad", "session": {"type": "transcription", "audio": {"input": {"turn_detection": {"type": "server_vad"}}}}})
+refused = ws.event()
+assert refused["type"] == "error" and refused["error"]["param"] == "session.audio.input.turn_detection" and "silero-vad" in refused["error"]["message"], refused
+ws.close()
+assert alone.stop() == b""
+print(f"realtime server_vad on a server without a detection model: error {refused['error']['code']}: {refused['error']['message'][:80]}")
+
+server = Server(speech, [model, vad, "--cors-origin", ORIGIN, *options])
 transcribe = server.transcribe
 info = json.loads(server.call("GET", "/v1/models")[2])["data"][0]["speech"]
 assert info["task"] == "recognition", info["task"]
@@ -96,7 +119,7 @@ assert [e["previous_item_id"] for e in committed] == [None, items[0]] and len(se
 for item, pcm, (text, languages) in zip(items, pcms, wants):
     mine = [e for e in events if e.get("item_id") == item and e["type"] != "input_audio_buffer.committed"]
     deltas, done = mine[:-1], mine[-1]
-    assert "".join(d["delta"] for d in deltas) == text and all(d["type"].endswith(".delta") and d["content_index"] == 0 for d in deltas), mine
+    assert all(d["type"].endswith(".delta") and d["delta"] and d["content_index"] == 0 for d in deltas), mine
     assert done["type"] == "conversation.item.input_audio_transcription.completed" and done["transcript"] == text, done
     assert done["usage"] == {"type": "duration", "seconds": len(pcm) / 2 / 24000} and done["content_index"] == 0, done
     assert [x["code"] for x in done.get("languages", [])] == languages and done["stop"] == "complete", done
@@ -130,9 +153,25 @@ assert kept == {"model": name, "language": None}, kept
 print("realtime: a session.update of the model alone keeps the language, and a language of null takes it away")
 for event, code, param, what in (
         (session({"model": name}) | {"session": {"type": "realtime"}}, "unsupported_value", "session.type", "a conversation session"),
-        (session({"model": name}, {"type": "server_vad", "silence_duration_ms": 500}), "unsupported_value",
-         "session.audio.input.turn_detection", "turn_detection server_vad"),
-        (session({"model": name}, {"type": "semantic_vad"}), "unsupported_value", "session.audio.input.turn_detection", "semantic_vad"),
+        (session({"model": name}, {"type": "semantic_vad"}), "unsupported_value", "session.audio.input.turn_detection.type", "semantic_vad"),
+        (session({"model": name}, {"threshold": 0.5}), "missing_required_parameter", "session.audio.input.turn_detection.type",
+         "turn_detection without its type"),
+        (session({"model": name}, {"type": "server_vad", "create_response": True}), "unsupported_parameter",
+         "session.audio.input.turn_detection.create_response", "create_response"),
+        (session({"model": name}, {"type": "server_vad", "interrupt_response": False}), "unsupported_parameter",
+         "session.audio.input.turn_detection.interrupt_response", "interrupt_response"),
+        (session({"model": name}, {"type": "server_vad", "idle_timeout_ms": 6000}), "unsupported_parameter",
+         "session.audio.input.turn_detection.idle_timeout_ms", "idle_timeout_ms"),
+        (session({"model": name}, {"type": "server_vad", "eagerness": "low"}), "unknown_parameter",
+         "session.audio.input.turn_detection.eagerness", "a member of semantic_vad"),
+        (session({"model": name}, {"type": "server_vad", "threshold": "high"}), "invalid_type", "session.audio.input.turn_detection.threshold",
+         "a threshold that is no number"),
+        (session({"model": name}, {"type": "server_vad", "threshold": 2}), "unsupported_value", "session.audio.input.turn_detection.threshold",
+         "a threshold above 1"),
+        (session({"model": name}, {"type": "server_vad", "silence_duration_ms": 0.5}), "invalid_type",
+         "session.audio.input.turn_detection.silence_duration_ms", "a silence with a fraction"),
+        (session({"model": name}, {"type": "server_vad", "prefix_padding_ms": -1}), "unsupported_value",
+         "session.audio.input.turn_detection.prefix_padding_ms", "a negative padding"),
         (session({"model": "gpt-4o-transcribe"}), "model_not_found", "session.audio.input.transcription.model", "another model"),
         (session({"model": name, "language": "zz"}), "unsupported_value", "session.audio.input.transcription.language", "a language"),
         (session({"model": name, "languages": ["ja", "en"]}), "unsupported_value", "session.audio.input.transcription.languages",
@@ -231,6 +270,158 @@ for _ in range(50):
 ran = [lines[k].split(":")[0] for k in order][-3:]
 assert ran == [f"realtime {first['item_id']}", f"realtime {second['item_id']}", "transcription"], ran
 print("realtime: two commits and then an HTTP transcription run in that order")
+
+
+def paced(ws, pcm):
+    """Appends 24000 Hz PCM in pieces of 20 ms as fast as it is said."""
+    started = time.perf_counter()
+    for k, at in enumerate(range(0, len(pcm), 960)):
+        time.sleep(max(0.0, started + k * 0.02 - time.perf_counter()))
+        ws.send({"type": "input_audio_buffer.append", "audio": base64.b64encode(pcm[at:at + 960]).decode()})
+
+
+def until_done(ws, count=1):
+    """The events up to the count-th completed or failed."""
+    events = []
+    while sum(e["type"].endswith((".completed", ".failed")) for e in events) < count:
+        events.append(ws.event())
+    return events
+
+
+def settle(ws):
+    """The events of the audio appended so far: those that come before the answer to an event that is always refused,
+    since a commit's goes out as its audio is taken, and then each commit's completed or failed."""
+    ws.send({"type": "no.such.event", "event_id": "settle"})
+    events = []
+    while True:
+        e = ws.event()
+        if e["type"] == "error" and e["error"]["event_id"] == "settle":
+            break
+        events.append(e)
+    while sum(e["type"] == "input_audio_buffer.committed" for e in events) > sum(e["type"].endswith((".completed", ".failed")) for e in events):
+        events.append(ws.event())
+    return events
+
+
+def kinds_of(events, item):
+    return [e["type"].rsplit(".", 1)[1] for e in events if e.get("item_id") == item]
+
+
+# As someone speaks, a buffer appended in real time is read again for deltas, which only add text, before its commit.
+longest = max(pcms, key=len)
+paced(ws, longest)
+ws.send({"type": "input_audio_buffer.commit"})
+events = until_done(ws)
+item = events[-1]["item_id"]
+kinds = kinds_of(events, item)
+deltas = [e["delta"] for e in events if e["type"].endswith(".delta")]
+assert kinds.index("committed") > 0 and set(kinds[:kinds.index("committed")]) == {"delta"} and kinds[-1] == "completed" and all(deltas), kinds
+print(f"realtime: {kinds.index('committed')} deltas of {len(longest) / 48000:.1f} s appended in real time before its commit, "
+      f"{''.join(deltas)[:30]!r}, then {events[-1]['transcript'][:30]!r}")
+# A reading under way when its buffer is committed is stopped, and the commit is recognized whole.
+ws.send({"type": "input_audio_buffer.append", "audio": base64.b64encode(pcms[0] * 6).decode()})
+time.sleep(0.05)
+ws.send({"type": "input_audio_buffer.commit"})
+events = until_done(ws)
+assert events[-1]["type"].endswith(".completed") and events[-1]["usage"]["seconds"] == len(pcms[0]) * 6 / 48000, events[-1]
+for _ in range(50):
+    if any(line.startswith("realtime a reading:") and "stopped: its utterance ended" in line for line in list(server.lines)):
+        break
+    time.sleep(0.1)
+else:
+    raise SystemExit("no reading stopped when its buffer was committed: " + "".join(list(server.lines)[-5:]))
+print("realtime: a reading under way when its buffer was committed stopped, and the commit was recognized whole")
+
+# server_vad: the dumps joined with silences of 1.5 s, appended in pieces of 20 ms, are cut into the regions speech vad
+# finds in the same samples on the CPU, which the server's detection runs on too; each region is committed and
+# recognized as its samples sent as a WAV file, and their texts join into what chunking_strategy gives the whole.
+alls = [pcm24(read_npy(os.path.join(d, "audio.npy"))) for d in dumps]
+silence = b"\0" * 2 * 36000
+joined = b"".join(p + silence for p in alls)
+folder = tempfile.mkdtemp()
+path = os.path.join(folder, "joined.wav")
+with open(path, "wb") as f:
+    f.write(wav24(joined))
+detection = ["--threshold", "0.5", "--speech-pad-ms", "300", "--min-silence-duration-ms", "500", "--max-speech-duration-s", "10"]
+regions = json.loads(subprocess.run([speech, "vad", vad, "--device", "cpu", "--threads", "1", "--format", "json", *detection, path],
+                                    capture_output=True, check=True).stdout)["regions"]
+shutil.rmtree(folder)
+assert len(regions) >= len(alls), regions
+vws = server.websocket("/v1/realtime")
+assert vws.event()["type"] == "session.created"
+vws.send(session({"model": name}, {"type": "server_vad"}))
+updated = vws.event()
+assert updated["session"]["audio"]["input"]["turn_detection"] == {"type": "server_vad", "threshold": 0.5, "prefix_padding_ms": 300,
+                                                                 "silence_duration_ms": 500}, updated
+appended(vws, joined, 960)
+events = settle(vws)
+items = list(dict.fromkeys(e["item_id"] for e in events))
+assert len(items) == len(regions), (len(items), regions)
+
+
+def milliseconds(seconds):
+    """Milliseconds rounded half away from zero, as C's llround() rounds them."""
+    whole = math.floor(seconds * 1000)
+    return whole + (1 if seconds * 1000 - whole >= 0.5 else 0)
+
+
+parts = []
+for k, (item, region) in enumerate(zip(items, regions)):
+    mine = [e for e in events if e["item_id"] == item]
+    kinds = [e["type"].rsplit(".", 1)[1] for e in mine if not e["type"].endswith(".delta")]
+    assert kinds == ["speech_started", "speech_stopped", "committed", "completed"], kinds
+    first, last = round(region["start"] * 24000), round(region["end"] * 24000)
+    assert mine[0]["audio_start_ms"] == milliseconds(first / 24000) and mine[1]["audio_end_ms"] == milliseconds(last / 24000), (mine[:2], region)
+    done = mine[-1]
+    status, _, body = transcribe([("response_format", "verbose_json")], [("file", "x.wav", wav24(joined[2 * first:2 * last]))])
+    verbose = json.loads(body)
+    assert done["transcript"] == verbose["text"] and done["usage"]["seconds"] == (last - first) / 24000, (done, verbose["text"])
+    parts.append((first / 24000, {"text": done["transcript"], "stop": done["stop"], **({"languages": [x["code"] for x in done["languages"]]}
+                                                                                       if "languages" in done else {})}))
+assert [e["previous_item_id"] for e in events if e["type"] == "input_audio_buffer.committed"] == [None] + items[:-1], events
+status, _, body = transcribe([("chunking_strategy", "auto")], [("file", "x.wav", wav24(joined))])
+assert status == 200 and json.loads(body)["text"] == joined_transcript(parts, False)["text"], (body, parts)
+print(f"realtime server_vad: {len(items)} utterances of {len(joined) / 48000:.1f} s appended in pieces of 20 ms, each at the bounds of "
+      f"speech vad's region and completed with the text of its samples as a file, joined into chunking_strategy's text")
+# Appended as fast as it is said, an utterance gets deltas after its speech started and before its commit.
+paced(vws, longest + silence)
+events = settle(vws)
+kinds = kinds_of(events, events[0]["item_id"])
+assert kinds[0] == "speech_started" and "delta" in kinds[:kinds.index("speech_stopped")] and kinds[-1] == "completed", kinds
+print(f"realtime server_vad: {kinds[:kinds.index('committed')].count('delta')} deltas of an utterance appended in real time before its commit")
+# A commit while speech is under way commits the buffer as the item its speech_started named, without speech_stopped,
+# and the detection begins again on the audio that follows; a clear drops the utterance under way. The longest region
+# cut at its middle is speech under way that has lasted long enough to be certain.
+widest = max(regions, key=lambda r: r["end"] - r["start"])
+under_way = joined[2 * round(widest["start"] * 24000):2 * round((widest["start"] + widest["end"]) / 2 * 24000)]
+appended(vws, under_way, 960)
+vws.send({"type": "input_audio_buffer.commit"})
+events = settle(vws)
+started = [e for e in events if e["type"] == "input_audio_buffer.speech_started"]
+committed = [e for e in events if e["type"] == "input_audio_buffer.committed"]
+assert len(started) == len(committed) == 1 and started[0]["item_id"] == committed[0]["item_id"] == events[-1]["item_id"], events
+assert not any(e["type"] == "input_audio_buffer.speech_stopped" for e in events) and events[-1]["type"].endswith(".completed"), events
+appended(vws, silence, 960)
+assert settle(vws) == [], "the detection did not begin again after the commit"
+appended(vws, under_way, 960)
+vws.send({"type": "input_audio_buffer.clear"})
+events = [vws.event()]
+while events[-1]["type"] != "input_audio_buffer.cleared":
+    events.append(vws.event())
+assert [e["type"].rsplit(".", 1)[1] for e in events if not e["type"].endswith(".delta")] == ["speech_started", "cleared"], events
+appended(vws, silence, 960)
+assert settle(vws) == [], "a cleared utterance went on"
+print("realtime server_vad: a commit while speech was under way committed the item speech_started named; a clear dropped it")
+# Silence is not held: 30 MiB of it, past the bound of what a session holds, are taken, and a commit after it holds
+# only what the detection keeps for a region still to come.
+for _ in range(30):
+    vws.send({"type": "input_audio_buffer.append", "audio": base64.b64encode(piece).decode()})
+assert settle(vws) == [], "silence past the bound was refused or cut into utterances"
+vws.send({"type": "input_audio_buffer.commit"})
+events = settle(vws)
+assert events[-1]["type"].endswith(".completed") and events[-1]["usage"]["seconds"] <= 0.5, events[-1]
+vws.close()
+print(f"realtime server_vad: 30 MiB of silence taken within the bound, and a commit after it of {events[-1]['usage']['seconds']} s")
 # A client that goes away while its commit is transcribed stops the transcription, gives up the turn of the commit
 # that waits, and the model serves the next request.
 for _ in range(2):

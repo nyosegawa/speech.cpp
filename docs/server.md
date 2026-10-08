@@ -16,7 +16,7 @@ speech serve irodori-tts-mf --add-voice me=me.voice.gguf --cors-origin http://lo
 ```
 
 The server holds at most one model of each task: synthesis, recognition and detection (Silero VAD), whose model
-transcriptions with `chunking_strategy` use. It loads the models given, listens once they are ready, and logs to stderr.
+transcriptions with `chunking_strategy` and Realtime sessions with `server_vad` use. It loads the models given, listens once they are ready, and logs to stderr.
 
 | Option | Meaning |
 |---|---|
@@ -174,8 +174,8 @@ with open("meeting.wav", "rb") as f:
 ## Realtime transcription
 
 `/v1/realtime` speaks OpenAI's Realtime API over a WebSocket, for a transcription session: the client appends audio as
-it records it and commits each utterance, and the server answers with its text. OpenAI's client connects to it by its
-base URL alone:
+it records it, and the server answers with the text of each utterance, which the client commits itself, or which, with
+`turn_detection` `server_vad`, the detection model finds. OpenAI's client connects to it by its base URL alone:
 
 ```python
 import base64
@@ -195,32 +195,59 @@ with client.realtime.connect(model="reazonspeech-nemo-v2") as connection:
 ```
 
 The address is `ws://127.0.0.1:8080/v1/realtime`, with `?model=` the recognition model's `id` or nothing. The
-session transcribes with the recognition model held; the client commits each utterance itself.
+session transcribes with the recognition model held, and starts with `turn_detection` `null`: the client commits each
+utterance.
 
 | Client event | What it does |
 |---|---|
-| `session.update` | sets `session.audio.input.transcription`: `model` (the recognition model's `id`), `language`, or `languages` with one tag, and `prompt`, each left as it was when left out and taken away by `null`; or `null`, after which commits are not transcribed. `session.type` is `"transcription"`, the format `{"type": "audio/pcm", "rate": 24000}`, and `turn_detection` and `noise_reduction` `null` |
+| `session.update` | sets `session.audio.input.transcription`: `model` (the recognition model's `id`), `language`, or `languages` with one tag, and `prompt`, each left as it was when left out and taken away by `null`; or `null`, after which commits are not transcribed. Sets `turn_detection`: `null`, or `{"type": "server_vad"}` with `threshold`, `prefix_padding_ms` and `silence_duration_ms` (below). `session.type` is `"transcription"`, the format `{"type": "audio/pcm", "rate": 24000}`, and `noise_reduction` `null` |
 | `input_audio_buffer.append` | adds `audio`, base64 of 16-bit little-endian mono PCM at 24000 Hz |
-| `input_audio_buffer.commit` | transcribes what was appended since the last commit or clear |
-| `input_audio_buffer.clear` | drops what was appended |
+| `input_audio_buffer.commit` | transcribes the buffer: what was appended since the last commit or clear |
+| `input_audio_buffer.clear` | drops the buffer |
 
 | Server event | When |
 |---|---|
 | `session.created`, `session.updated` | on connecting, and after each `session.update`, with the whole configuration |
-| `input_audio_buffer.committed` | at once for a commit, with its `item_id` and the `previous_item_id` |
+| `input_audio_buffer.speech_started` | with `server_vad`, once speech has begun and lasted long enough to be kept, with `audio_start_ms` and the `item_id` of the utterance |
+| `input_audio_buffer.speech_stopped` | with `server_vad`, once the utterance has ended, with `audio_end_ms` and its `item_id` |
+| `input_audio_buffer.committed` | at once for a commit, or with `server_vad` after `speech_stopped`, with its `item_id` and the `previous_item_id` |
 | `input_audio_buffer.cleared` | for a clear |
-| `conversation.item.input_audio_transcription.delta` | once the commit's text is recognized, with all of it: the model gives its text when it ends |
-| `conversation.item.input_audio_transcription.completed` | then, with the `transcript`, `usage` `{"type": "duration", "seconds": …}`, `languages` where the model names them (Qwen3-ASR), and speech.cpp's own `stop`, `complete` or `model_limit` |
-| `conversation.item.input_audio_transcription.failed` | a commit the model could not transcribe, with OpenAI's error object |
+| `conversation.item.input_audio_transcription.delta` | while the utterance goes on: text that adds to the end of what came before (below) |
+| `conversation.item.input_audio_transcription.completed` | once the utterance is recognized whole, with the `transcript`, the whole text, which replaces the deltas; `usage` `{"type": "duration", "seconds": …}`, `languages` where the model names them (Qwen3-ASR), and speech.cpp's own `stop`, `complete` or `model_limit` |
+| `conversation.item.input_audio_transcription.failed` | an utterance the model could not transcribe, with OpenAI's error object |
 | `error` | an event the server does not take, with OpenAI's error object and the client's `event_id` |
 
-Commits are transcribed one after another, each in its turn among the server's other transcriptions, taken when the
-commit is accepted. A session holds at most 25 MB of audio not yet transcribed, appended or committed, which is 546 s;
+While an utterance goes on, the server recognizes it again as audio comes, as often as the model keeps up, and the
+deltas carry the beginning that two of these readings in a row agree on. They may stop short of the text, or differ
+from it where a later reading changed its mind: a client shows them while someone speaks and replaces them with the
+completed `transcript`, as it does for OpenAI's `gpt-live-transcribe`.
+
+Utterances are transcribed one after another, each in its turn among the server's other transcriptions, taken when it
+is committed. A session holds at most 25 MB of audio not yet transcribed, in its buffer or committed, which is 546 s;
 an append past that is an `error` event (`input_audio_buffer_full`) and adds nothing. A member or a value
 speech.cpp does not take is an `error` event rather than ignored: a conversation session (`session.type: "realtime"`),
-`turn_detection` (`server_vad` and `semantic_vad`; commit each utterance instead), `noise_reduction`, the formats
-`audio/pcmu` and `audio/pcma` and rates other than 24000, `include` (log probabilities), `keywords`, `delay`, more than
-one language, and every other client event.
+`semantic_vad`, the members of `server_vad` that steer a response (`create_response`, `interrupt_response`,
+`idle_timeout_ms`), `noise_reduction`, the formats `audio/pcmu` and `audio/pcma` and rates other than 24000, `include`
+(log probabilities), `keywords`, `delay`, more than one language, and every other client event.
+
+### Turn detection
+
+With `turn_detection` `server_vad`, the detection model finds where someone speaks, as `chunking_strategy` does in a
+file, and each region is an utterance, committed and transcribed as it ends: the same audio gives the same regions and
+texts as `chunking_strategy` with the same values. A server without a detection model answers `server_vad` with an
+`error` event that says to give it one: `speech serve reazonspeech-v2 silero-vad`.
+
+| Member | Default | Meaning |
+|---|---|---|
+| `threshold` | 0.5 | the speech probability from which audio counts as speech, 0 to 1 |
+| `prefix_padding_ms` | 300 | the audio kept before and after each utterance |
+| `silence_duration_ms` | 500 | the silence that ends an utterance |
+
+An utterance is at most 10 s long, cut at its longest silence. `speech_started` comes about 0.85 s after the speech
+begins, once it is certain to be kept, and the utterance is committed about 0.6 s after the speech ends. The buffer
+keeps only the utterance under way, or the last moments of silence, so a session can stay open through silence; a
+commit while `server_vad` runs transcribes it as an utterance, the one that `speech_started` named if speech is under
+way, and a clear drops it, and in both cases turn detection begins again on the audio that follows.
 
 A connection that the server refuses gets an HTTP error before the WebSocket opens: a server without a recognition
 model (404, or 503 while the page loads one), a model other than the recognition model held (404), a query member other
@@ -228,7 +255,8 @@ than `model` (400), a web page of an origin `--cors-origin` does not allow (403)
 and, while the server listens on 127.0.0.1, `::1` or `localhost`, a Host other than those names with the server's port
 (403), as for the page. While the page loads another recognition model, a commit fails with `model_loading`; once it is
 loaded, a session that named no model goes on with it, and one that named the previous model, in the address or in
-`session.update`, fails with `model_not_found`.
+`session.update`, fails with `model_not_found`. A session with `server_vad` lets the detection model go when the page
+replaces it, committing the utterance under way, and goes on with the new one.
 
 ## Errors
 

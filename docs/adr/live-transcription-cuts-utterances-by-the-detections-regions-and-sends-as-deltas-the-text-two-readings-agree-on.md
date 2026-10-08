@@ -34,11 +34,11 @@ on the CPU with one thread, 0.17 s with the performance cores and 0.52 s on Meta
   goes on, its audio from its start is recognized again, and two readings in a row agree on the code points both begin
   with, back to the end of a word both have whole where the script puts spaces between words, and, where that is all of
   the later reading, back to the last mark or space before its end. The end of the audio closes whatever was said last,
-  with a mark a recognizer writes there, and two readings that end alike have most often heard a pause or a noise: in
-  the measurements below, two readings of a buffer's first moments agreed on 「何」 for silence, and on 「湖では必ずしも。」
-  where a later reading went on 「…必ずしもヨットは」, and the deltas stopped there. An agreed beginning that does not
-  begin with what was sent adds nothing, since a delta cannot take back text. The completed event carries the
-  recognition of the whole utterance, which may differ from the deltas.
+  with a mark a recognizer writes there, and two readings that end alike have most often heard a pause or a noise: with
+  the whole of both taken, two readings of a buffer's first moments of silence agreed on 「何」, and two of a region on
+  「湖では必ずしも。」 where a later reading went on 「…必ずしもヨットは」, and the deltas stopped there. An agreed
+  beginning that does not begin with what was sent adds nothing, since a delta cannot take back text. The completed
+  event carries the recognition of the whole utterance, which may differ from the deltas.
 - **Readings run as often as the machine allows, with no setting**: once the previous reading has ended and at least
   0.2 s of new audio has come, the next starts at once, so readings never pile up. A committed utterance is recognized
   before any reading, and a reading under way when its utterance ends is stopped with `speech_request_cancel()`. 0.2 s,
@@ -76,13 +76,21 @@ The alternatives were turned down:
 
 ## Consequences
 
-Fed in real time in pieces of 20 ms, 16 kHz PCM of FLEURS ja sentences joined with 1.5 s of silence, on an Apple M5 with
-the recognizer on Metal and the detection on the CPU (2026-10-08, another program using the GPU at times): speech
-started comes 0.84 s after the speech begins; the first delta 0.84 to 1.31 s after it with reazonspeech-v2 and 0.84 to
-1.36 s with qwen3-asr-0.6b, at speech started where two readings have agreed by then; the commit 0.60 s after the speech
-ends, the silence of `min_silence_duration_ms` and the wait for what follows within twice `speech_pad_ms`; and the
-completed event 0.69 to 0.79 s after it with reazonspeech-v2 and 0.72 to 0.97 s with qwen3-asr-0.6b. The detection
-took 0.3 to 0.5 s per minute of audio beside the readings.
+Four FLEURS ja recordings joined with 1.5 s of silence, six regions, fed in real time in pieces of 20 ms to `speech serve` with
+`server_vad` at 24 kHz, on an Apple M5 with the recognizer on Metal and the detection on the CPU (2026-10-08, another
+program using the GPU at times), the times counted from where speech vad finds the speech without padding:
+
+| | reazonspeech-v2 | qwen3-asr-0.6b |
+|---|---|---|
+| speech started, after the speech begins | 0.84 s | 0.84 s |
+| first delta, after the speech begins | 0.84 to 1.32 s | 0.84 to 1.34 s |
+| commit, after the speech ends | 0.60 s | 0.60 s |
+| completed, after the speech ends | 0.70 to 0.78 s | 0.72 to 1.28 s |
+
+`speech asr -` at 16 kHz gave the same within 0.05 s. The first delta comes with speech started where two readings have
+agreed by then. The commit waits for the silence of `min_silence_duration_ms` and for what follows within twice
+`speech_pad_ms`. The detection took 0.12 s per minute of 16 kHz audio and 0.15 s of 24 kHz alone, and 0.3 to 0.6 s
+beside the readings, which take the GPU and the CPU it waits on.
 
 A beginning that two readings agree on and a later reading changes stays in the deltas until the completed event
 replaces it, and the deltas of that utterance stop there. The library cannot say yet whether a region under way is

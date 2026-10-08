@@ -62,8 +62,8 @@ The alternatives were turned down:
 
 ## Consequences
 
-The assembly that cuts utterances for `speech asr -` and `speech asr --live` uses the detection. On Metal,
-`speech_detect()` computes in single precision too: its probabilities lie within 3.7e-6 of the official's, where they lay
-within 6.2e-3, and a minute takes 0.057 s, where it took 0.045 s. A small piece's time is mostly the device's to start a
-graph: a minute in pieces of 20 ms takes 0.2 s on the CPU and 0.7 s on Metal, so a live caller loads the model on the
-CPU.
+The assembly that cuts utterances for `speech asr -`, `speech asr --live` and `server_vad` of `speech serve` uses the
+detection. On Metal, `speech_detect()` computes in single precision too: its probabilities lie within 3.7e-6 of the
+official's, where they lay within 6.2e-3, and a minute takes 0.057 s, where it took 0.045 s. A small piece's time is
+mostly the device's to start a graph: a minute in pieces of 20 ms takes 0.2 s on the CPU and 0.7 s on Metal, so a live
+caller loads the model on the CPU.

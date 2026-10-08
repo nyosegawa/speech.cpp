@@ -40,8 +40,8 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   read from text or JSON and set through the library's setters, transcription by regions, which `asr --vad` and
   `serve` share, the synthesis of a text a sentence at a time for a model whose request speaks a short time, which
   `tts` and `serve` share (`sentences.cpp`), the assembly of utterances from audio that arrives while someone speaks
-  (`utterances.cpp`), which `asr -` and `asr --live` run, and OpenAI's Realtime server events (`realtime-events.cpp`),
-  which they write as the server's Realtime sessions do. Every subcommand reaches the models only through the
+  (`utterances.cpp`), which `asr -`, `asr --live` and the server's Realtime sessions run, and OpenAI's Realtime server
+  events (`realtime-events.cpp`), which they all write. Every subcommand reaches the models only through the
   C API. `tools/models/` names models: the catalog of the release (`catalog.json`, which `update_catalog.py` writes
   from Hugging Face and the build compiles in), the cache folder, and the fetching of a named model with the system's
   curl, which `models`, `pull` and `rm` and every subcommand that takes a model share; the library never reaches the
@@ -62,7 +62,8 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   it reaches the models only through the C API; `openai-api.cpp` reads OpenAI's requests and writes its stream events,
   `audio-speech.cpp` serves `/v1/audio/speech` as it streams,
   `tools/common/openai-error.cpp` OpenAI's error object, mapped from the library's categories alone,
-  `tools/common/realtime-session.cpp` a Realtime session, whose messages `realtime.cpp` carries over the WebSocket,
+  `tools/common/realtime-session.cpp` a Realtime session, with commits or `server_vad`, whose messages `realtime.cpp`
+  carries over the WebSocket, giving it the recognition and detection models held,
   `jobs.h` runs one request at a time in arrival order and cancels the request of a client that goes away, and
   `served-models.cpp` holds one model of each task and replaces it once its requests have ended. `page/` is the page
   of `speech serve --open`, plain HTML, CSS and JavaScript modules compiled into `speech`, which `page.cpp` serves

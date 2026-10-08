@@ -19,20 +19,23 @@ std::string name_of(const Served & served) {
 }
 
 /**
- * A commit's place on the recognition model held when it was accepted: the model, kept until the commit has run, and its
- * turn, which is passed or given up as the place goes, the model let go after it.
+ * A recognition's place on the recognition model held when it was accepted: the model, kept until the recognition has
+ * run, and its turn, which is passed or given up as the place goes, the model let go after it.
  */
-struct Held : realtime::Reservation {
+struct Held : utterances::Reservation {
     explicit Held(std::shared_ptr<Served> model) : on(std::move(model)), turn(on->turns()) {}
     std::shared_ptr<Served> on;
     Turn turn;
     Clock::time_point accepted = Clock::now();
 };
 
-/** The recognition model a session transcribes with: the one the server holds when a commit is accepted. */
-class HeldRecognizer : public realtime::Recognizer {
+/**
+ * The models a session works with: the recognition model the server holds when a recognition is accepted, and the
+ * detection model it holds, which a session's detection keeps until the session lets it go.
+ */
+class HeldModels : public realtime::Models {
 public:
-    explicit HeldRecognizer(ServedModels & models) : models_(models) {}
+    explicit HeldModels(ServedModels & models) : models_(models) {}
 
     std::string held() override {
         const auto served = models_.of(SPEECH_TASK_RECOGNITION);
@@ -43,32 +46,58 @@ public:
         apply_options(new_request(served(model)->get()).get(), options);
     }
 
-    std::unique_ptr<realtime::Reservation> reserve(const std::string & model) override {
+    std::unique_ptr<utterances::Reservation> reserve(const std::string & model) override {
         return std::make_unique<Held>(served(model));
     }
 
-    std::optional<Transcript> transcribe(realtime::Reservation & reservation, const std::vector<float> & samples,
-                                         const std::vector<RequestOption> & options, Cancellation & cancellation, const std::string & item) override {
+    std::optional<Transcript> transcribe(utterances::Reservation & reservation, std::vector<float> samples,
+                                         const std::vector<RequestOption> & options, Cancellation & cancellation, const std::string & item,
+                                         bool provisional) override {
         Held & held = static_cast<Held &>(reservation);
         const Request request = new_request(held.on->get());
-        ::check(speech_request_set_audio(request.get(), samples.data(), samples.size(), realtime::kRate));
+        const size_t n = samples.size();
+        ::check(speech_request_set_audio(request.get(), samples.data(), n, realtime::kRate));
+        // The request holds a copy of its own, so that a reading, whose samples are a copy of the buffer, adds nothing to
+        // the audio the session holds while it waits and runs.
+        samples = std::vector<float>();
         apply_options(request.get(), options);
         held.turn.wait();
         const Clock::time_point started = Clock::now();
+        // The readings of an utterance under way, several a second, are logged only where one stops or fails.
+        const std::string name = provisional ? "a reading" : item;
         speech_status status = SPEECH_CANCELLED;
         try {
             status = ::check(cancellation.run(request.get(), [&] { return speech_transcribe(request.get()); }));
         } catch (const Failure & e) {
-            log(item, samples.size(), held.accepted, started, ", failed: " + e.code() + ": " + e.what());
+            log(name, n, held.accepted, started, ", failed: " + e.code() + ": " + e.what());
             throw;
         }
         if (status == SPEECH_CANCELLED) {
-            log(item, samples.size(), held.accepted, started, ", stopped: the session ended");
+            log(name, n, held.accepted, started, provisional ? ", stopped: its utterance ended" : ", stopped: the session ended");
             return std::nullopt;
         }
         Transcript t = transcript_of(speech_request_result(request.get()), false);
-        log(item, samples.size(), held.accepted, started, ", " + std::to_string(t.text.size()) + " bytes of text");
+        if (!provisional) log(name, n, held.accepted, started, ", " + std::to_string(t.text.size()) + " bytes of text");
         return t;
+    }
+
+    std::unique_ptr<utterances::Detection> detect(const std::vector<RequestOption> & options) override {
+        const auto on = models_.of(SPEECH_TASK_DETECTION);
+        if (!on) {
+            const std::string coming = models_.replacing(SPEECH_TASK_DETECTION);
+            if (!coming.empty()) {
+                throw ApiError{503, "The speech detection model, which server_vad needs, is being loaded (" + coming + "); turn detection begins once "
+                                    "it is in place.", "", "model_loading"};
+            }
+            throw ApiError{400, "server_vad finds the turns where a speech detection model finds that someone speaks, and this server holds none. "
+                                "Give speech serve one beside the recognition model, as in speech serve " + held() + " silero-vad, or give "
+                                "turn_detection null and commit each utterance.", "", "unsupported_value"};
+        }
+        return std::make_unique<utterances::Detection>(on->get(), on, options, realtime::kRate);
+    }
+
+    bool holds(const utterances::Detection & detection) override {
+        return models_.of(SPEECH_TASK_DETECTION).get() == detection.model();
     }
 
 private:
@@ -132,16 +161,25 @@ std::optional<ApiError> Realtime::refusal(const httplib::Request & req) const {
 
 void Realtime::route(httplib::Server & http) {
     http.WebSocket("/v1/realtime", [this](const httplib::Request & req, httplib::ws::WebSocket & ws) {
-        HeldRecognizer recognizer(models_);
-        realtime::Session session(recognizer, [&ws](const std::string & event) { ws.send(event); }, limit_, req.get_param_value("model"));
+        HeldModels held(models_);
+        realtime::Session session(held, [&ws](const std::string & event) { ws.send(event); }, limit_, req.get_param_value("model"));
         std::fprintf(stderr, "%s realtime session opened\n", req.remote_addr.c_str());
         session.open();
+        // read() returns at least every 0.2 s, so that a session lets a detection model go soon after the page replaces
+        // it; a client silent for as long as the server's read timeout is still taken to be gone.
+        ws.set_read_timeout(std::chrono::milliseconds(200));
+        Clock::time_point heard = Clock::now();
         std::string message;
         for (;;) {
             const httplib::ws::ReadResult got = ws.read(message);
             if (got == httplib::ws::Fail) break;
-            if (got == httplib::ws::Timeout) continue;
-            session.receive(message, got == httplib::ws::Text);
+            if (got == httplib::ws::Timeout) {
+                if (seconds_between(heard, Clock::now()) > CPPHTTPLIB_WEBSOCKET_SERVER_READ_TIMEOUT_SECOND) break;
+            } else {
+                heard = Clock::now();
+                session.receive(message, got == httplib::ws::Text);
+            }
+            session.tick();
         }
         std::fprintf(stderr, "%s realtime session closed\n", req.remote_addr.c_str());
     });
