@@ -8,6 +8,19 @@ namespace silero_vad {
 namespace {
 
 /**
+ * The matrix `a` times each column of `b`, [rows, columns], as one product of a column each. A backend chooses the
+ * kernel of a product by its number of columns, and the kernels round differently: Metal's matrix kernel, which takes
+ * products of more than eight columns, rounds its inputs to half precision, and a CPU build of ggml with llamafile's
+ * tinyBLAS sums with it from a few columns on and with its own dot products below. Products of one column compute a chunk
+ * alike however many chunks a graph holds, so that audio given a piece at a time gets the probabilities the whole audio
+ * gets, and Metal computes them in single precision.
+ */
+ggml_tensor * product(ggml_context * ctx, ggml_tensor * a, ggml_tensor * b) {
+    const int64_t columns = ggml_nelements(b) / b->ne[0];
+    return ggml_reshape_2d(ctx, mul_mat(ctx, a, ggml_reshape_3d(ctx, b, b->ne[0], 1, columns)), a->ne[1], columns);
+}
+
+/**
  * Columns [rows, 1] joined into [rows, n] in order, in pairs and pairs of pairs, so that each value is copied as often as
  * the pairs are deep, not once for each column after it.
  */
@@ -45,8 +58,8 @@ ggml_tensor * Network::stft(ggml_context * ctx, ggml_tensor * input) const {
                                        0, 0, 1, 0, false, GGML_TYPE_F32);
     frames = ggml_reshape_2d(ctx, frames, n_fft_, frames_ * n);
     // The basis holds the real parts' filters in its first n_fft / 2 + 1 rows and the imaginary parts' in the rest.
-    ggml_tensor * real = mul_mat(ctx, ggml_view_2d(ctx, basis, n_fft_, bins(), basis->nb[1], 0), frames);
-    ggml_tensor * imag = mul_mat(ctx, ggml_view_2d(ctx, basis, n_fft_, bins(), basis->nb[1], (size_t) bins() * basis->nb[1]), frames);
+    ggml_tensor * real = product(ctx, ggml_view_2d(ctx, basis, n_fft_, bins(), basis->nb[1], 0), frames);
+    ggml_tensor * imag = product(ctx, ggml_view_2d(ctx, basis, n_fft_, bins(), basis->nb[1], (size_t) bins() * basis->nb[1]), frames);
     ggml_tensor * magnitude = ggml_sqrt(ctx, ggml_add(ctx, ggml_sqr(ctx, real), ggml_sqr(ctx, imag)));
     return ggml_reshape_3d(ctx, magnitude, bins(), frames_, n);
 }
@@ -60,7 +73,7 @@ ggml_tensor * Network::block(ggml_context * ctx, int i, ggml_tensor * x) const {
     ggml_tensor * by_frame = ggml_cont(ctx, ggml_permute(ctx, x, 1, 0, 2, 3));
     ggml_tensor * columns = ggml_im2col(ctx, w, by_frame, strides_[i], 0, padding_[i], 0, 1, 0, false, GGML_TYPE_F32);
     const int64_t out_frames = columns->ne[1];
-    ggml_tensor * y = mul_mat(ctx, ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1], w->ne[2]),
+    ggml_tensor * y = product(ctx, ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1], w->ne[2]),
                               ggml_reshape_2d(ctx, columns, columns->ne[0], out_frames * n));
     y = ggml_relu(ctx, ggml_add(ctx, y, m_.tensor(name + ".bias")));
     return ggml_reshape_3d(ctx, y, w->ne[2], out_frames, n);
@@ -83,7 +96,7 @@ ggml_tensor * Network::encode(ggml_context * ctx, ggml_tensor * magnitude, std::
 Network::Steps Network::lstm(ggml_context * ctx, ggml_tensor * encoded, ggml_tensor * h0, ggml_tensor * c0, bool keep_c) const {
     const int64_t n = encoded->ne[1];
     const size_t width = (size_t) hidden_ * sizeof(float);
-    ggml_tensor * inputs = ggml_add(ctx, mul_mat(ctx, m_.tensor("lstm.ih.weight"), encoded), m_.tensor("lstm.bias"));
+    ggml_tensor * inputs = ggml_add(ctx, product(ctx, m_.tensor("lstm.ih.weight"), encoded), m_.tensor("lstm.bias"));
     ggml_tensor * hh = m_.tensor("lstm.hh.weight");
     ggml_tensor * h = h0;
     ggml_tensor * c = c0;
@@ -102,7 +115,7 @@ Network::Steps Network::lstm(ggml_context * ctx, ggml_tensor * encoded, ggml_ten
 }
 
 ggml_tensor * Network::decode(ggml_context * ctx, ggml_tensor * h) const {
-    ggml_tensor * logits = ggml_add(ctx, mul_mat(ctx, m_.tensor("decoder.weight"), ggml_relu(ctx, h)), m_.tensor("decoder.bias"));
+    ggml_tensor * logits = ggml_add(ctx, product(ctx, m_.tensor("decoder.weight"), ggml_relu(ctx, h)), m_.tensor("decoder.bias"));
     return ggml_reshape_1d(ctx, ggml_sigmoid(ctx, logits), h->ne[1]);
 }
 

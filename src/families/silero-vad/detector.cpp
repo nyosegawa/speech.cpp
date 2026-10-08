@@ -1,6 +1,7 @@
 #include "detector.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <string>
 
 #include "error.h"
@@ -75,22 +76,60 @@ std::vector<float> Detector::inputs(const std::vector<float> & samples, int64_t 
     return out;
 }
 
+CellState Detector::start() const {
+    return {std::vector<float>((size_t) network_.hidden(), 0.0f), std::vector<float>((size_t) network_.hidden(), 0.0f)};
+}
+
+void Detector::compute(const std::vector<float> & inputs, int64_t count, CellState & state, std::vector<float> & probs) {
+    Graph g;
+    const Block b = build(g, network_, inputs, count, state.h, state.c);
+    g.compute(backend_, allocr_);
+    const std::vector<float> block = Graph::read(b.probs);
+    probs.insert(probs.end(), block.begin(), block.end());
+    Graph::read(b.h, state.h);
+    Graph::read(b.c, state.c);
+}
+
 std::vector<float> Detector::probabilities(const std::vector<float> & samples, const std::function<bool(double done)> & progress) {
     const int64_t n = chunks(samples);
-    std::vector<float> probs, h((size_t) network_.hidden(), 0.0f), c((size_t) network_.hidden(), 0.0f), block;
+    std::vector<float> probs;
     probs.reserve((size_t) n);
+    CellState state = start();
     for (int64_t first = 0; first < n; first += kBlock) {
         const int64_t count = std::min(kBlock, n - first);
-        Graph g;
-        const Block b = build(g, network_, inputs(samples, first, count), count, h, c);
-        g.compute(backend_, allocr_);
-        Graph::read(b.probs, block);
-        probs.insert(probs.end(), block.begin(), block.end());
-        Graph::read(b.h, h);
-        Graph::read(b.c, c);
+        compute(inputs(samples, first, count), count, state, probs);
         if (progress && !progress((double) (first + count) / (double) n)) break;
     }
     return probs;
+}
+
+ChunkStream::ChunkStream(Detector & detector)
+    : detector_(detector), state_(detector.start()), pending_((size_t) detector.network().context(), 0.0f) {}
+
+void ChunkStream::push(const float * samples, size_t n, std::vector<float> & probs) {
+    const size_t chunk = (size_t) detector_.network().chunk(), context = (size_t) detector_.network().context();
+    pending_.insert(pending_.end(), samples, samples + n);
+    samples_ += (int64_t) n;
+    const int64_t ready = (int64_t) ((pending_.size() - context) / chunk);
+    // A graph holds a block of chunks at most, so that a long push builds no larger graph than a whole audio does.
+    for (int64_t first = 0; first < ready; first += Detector::kBlock) {
+        const int64_t count = std::min(Detector::kBlock, ready - first);
+        std::vector<float> inputs((size_t) count * (context + chunk));
+        for (int64_t k = 0; k < count; k++) {
+            const auto from = pending_.begin() + (ptrdiff_t) ((size_t) (first + k) * chunk);
+            std::copy(from, from + (ptrdiff_t) (context + chunk), inputs.begin() + (ptrdiff_t) ((size_t) k * (context + chunk)));
+        }
+        detector_.compute(inputs, count, state_, probs);
+    }
+    pending_.erase(pending_.begin(), pending_.begin() + (ptrdiff_t) ((size_t) ready * chunk));
+}
+
+void ChunkStream::end(std::vector<float> & probs) {
+    const size_t chunk = (size_t) detector_.network().chunk(), context = (size_t) detector_.network().context();
+    if (pending_.size() == context) return;
+    pending_.resize(context + chunk, 0.0f);
+    detector_.compute(pending_, 1, state_, probs);
+    pending_.erase(pending_.begin(), pending_.begin() + (ptrdiff_t) chunk);
 }
 
 }  // namespace silero_vad

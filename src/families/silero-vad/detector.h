@@ -9,6 +9,11 @@
 
 namespace silero_vad {
 
+/** The LSTM cell's state, which carries from one chunk to the next: h and c, zeros before the first chunk. */
+struct CellState {
+    std::vector<float> h, c;
+};
+
 /**
  * A Silero VAD model on one backend, from audio to the speech probability of each chunk, which speech_regions() turns
  * into regions, as silero-vad's get_speech_timestamps() runs it: the audio cut into chunks, the last padded with zeros,
@@ -31,6 +36,16 @@ public:
      */
     std::vector<float> inputs(const std::vector<float> & samples, int64_t first, int64_t count) const;
 
+    /** The cell's state before the first chunk. */
+    CellState start() const;
+
+    /**
+     * Appends to `probs` the speech probability of each of `count` chunks, whose input `inputs` holds as inputs() gives
+     * it, computed in one graph from the cell's state `state`, which it leaves at the state after the last of them. A
+     * chunk gets the same probability in a graph of any count.
+     */
+    void compute(const std::vector<float> & inputs, int64_t count, CellState & state, std::vector<float> & probs);
+
     /**
      * The speech probability of each chunk of the samples, the chunks computed in blocks of kBlock, each cut from the
      * samples as it is computed, after each of which `progress` is told the share done; it returns early, with the
@@ -44,8 +59,9 @@ public:
 
     /**
      * The chunks one graph computes, 16 s, in a graph of under 8000 nodes, most of them the LSTM cell's steps. On an Apple
-     * M5 a minute of audio took 40 to 48 ms with blocks of 128 to 2048 chunks, on the CPU and on Metal alike
-     * (2026-10-08), so the block bounds the graph's size and how long a cancel waits, not the speed.
+     * M5 a minute of audio took 33 to 44 ms on the CPU and 61 to 70 ms on Metal with blocks of 128, 512 or 2048 chunks, the
+     * least of eight runs while other work loaded the machine (2026-10-08), so the block bounds the graph's size and how
+     * long a cancel waits, not the speed.
      */
     static constexpr int64_t kBlock = 512;
 
@@ -55,6 +71,32 @@ private:
     Network network_;
     int sample_rate_;
     ggml_gallocr_t allocr_;
+};
+
+/**
+ * The chunks of audio at the model's rate that arrives a piece at a time, each computed once its samples have arrived,
+ * with the samples before it as context and the cell's state from the chunk before, so that each gets the probability
+ * Detector::probabilities() gives it from the whole audio.
+ */
+class ChunkStream {
+public:
+    explicit ChunkStream(Detector & detector);
+
+    /** Takes the next samples and appends to `probs` the probabilities of the chunks they complete. */
+    void push(const float * samples, size_t n, std::vector<float> & probs);
+
+    /** Appends the probability of the last chunk, padded with zeros, when samples remain after the last whole one. */
+    void end(std::vector<float> & probs);
+
+    /** The samples taken so far. */
+    int64_t samples() const { return samples_; }
+
+private:
+    Detector & detector_;
+    CellState state_;
+    /** The samples from the context of the next chunk on: zeros before the first sample, as the model starts. */
+    std::vector<float> pending_;
+    int64_t samples_ = 0;
 };
 
 }  // namespace silero_vad

@@ -100,6 +100,12 @@ float * read_audio(const char * dump, size_t * n);
  * NAME]. Returns the exit status.
  */
 int check_detection(int argc, char ** argv);
+
+/**
+ * The checks of detections of audio given a piece at a time, on a loaded detection model, with the audio of `n_dumps`
+ * dumps at the model's rate, named by their folders. Returns nonzero on a failure.
+ */
+int check_detection_stream(speech_model * model, float * const * audio, const size_t * lengths, const char * const * names, int n_dumps);
 int check_recognition(int argc, char ** argv);
 
 /** The sentence a synthesis model speaks in most checks. */

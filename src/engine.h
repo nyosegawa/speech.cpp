@@ -169,6 +169,30 @@ struct Recognized {
 };
 
 /**
+ * A detection of mono audio at the model's rate that arrives a piece at a time, with a request's options: the regions
+ * given so far, in seconds from the start and in order, each with an empty text, which never change once given, and,
+ * once the audio has ended, are those detect() gives for the whole audio.
+ */
+class DetectionStream {
+public:
+    virtual ~DetectionStream() = default;
+
+    /** Takes the next `n` samples. */
+    virtual void push(const float * samples, size_t n) = 0;
+
+    /** Ends the audio and gives the regions left. */
+    virtual void end() = 0;
+
+    virtual const std::vector<TimedText> & regions() const = 0;
+
+    /**
+     * The start, in seconds, of the earliest region begun but not given yet: one that has ended whose end waits on what
+     * follows, or else the one under way at the end of the audio heard, if it is kept; none when there is neither.
+     */
+    virtual std::optional<double> open() const = 0;
+};
+
+/**
  * One loaded model of a family behind the C API, which has checked each value of a request against the family's table
  * and the request as a whole for what the table shows. A synthesis family overrides speak(), a recognition family
  * transcribe() and a detection family detect(); a family that takes voice files overrides add_voice().
@@ -195,6 +219,12 @@ public:
      * the request as a whole.
      */
     virtual std::vector<TimedText> detect(const std::vector<float> & samples, const RequestValues & values, Run & run);
+
+    /**
+     * A detection of audio that arrives a piece at a time, with the request's options, after checking what the family's
+     * rules ask of them. It computes on the engine, which runs one of its calls at a time, and lives no longer.
+     */
+    virtual std::unique_ptr<DetectionStream> start_detection(const RequestValues & values);
 
     /** Adds a voice from a voice file or a WAVE file under a name the C API has checked is new. */
     virtual void add_voice(const std::string & name, const std::string & path);

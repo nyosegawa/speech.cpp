@@ -11,8 +11,9 @@ fold a tone at 1.1 of it back into the band at −14 dB.
 
 ## Decision
 
-The library resamples what it is given, a recognition's audio and a voice's references, to the model's rate, and never
-what it makes. The method is torchaudio's rational polyphase windowed sinc with the parameters torchaudio documents as
+The library resamples what it is given, a recognition's or a detection's audio and a voice's references, to the model's
+rate, and never what it makes; audio given a piece at a time gets the samples of the whole
+([the record of detections](a-detection-of-audio-given-a-piece-at-a-time-gives-speech-detects-regions-each-once-it-is-certain.md)). The method is torchaudio's rational polyphase windowed sinc with the parameters torchaudio documents as
 librosa's `kaiser_best` (a Kaiser window of beta 14.769656459379492, 64 zero crossings, a cutoff at 0.9475937167399596
 of the lower Nyquist frequency), in double precision except where torchaudio rounds to float32: beta, the window's peak
 i0(beta) and the output length. Measured as above, it passes the band to 0.9 of the lower Nyquist frequency within 0.022

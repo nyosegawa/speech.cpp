@@ -20,34 +20,6 @@
 // Requests: each value checked against the model's table as it is set, the whole request when it runs, its
 // cancellation from any thread, and its result.
 
-struct speech_result {
-    speech_task task = SPEECH_TASK_SYNTHESIS;
-    speech_stop stop = SPEECH_STOP_COMPLETE;
-    int64_t seed = -1;
-    uint64_t samples = 0;
-    std::string text;
-    std::vector<TimedText> segments, tokens;
-    std::vector<std::string> languages;
-};
-
-struct speech_request {
-    speech_model * model = nullptr;
-    std::optional<std::string> text;
-    std::vector<float> audio;
-    int sample_rate = 0;
-    /** The options set, each checked as it was set. */
-    std::map<speech_option, OptionValue> values;
-    speech_progress_callback on_progress = nullptr;
-    void * progress_data = nullptr;
-    std::atomic<bool> cancelled{false};
-    /**
-     * Whether a run has started its work, which a request allows once. A run that the request's checks refuse before
-     * any work leaves the request to be fixed and run again.
-     */
-    bool ran = false;
-    std::unique_ptr<speech_result> result;
-};
-
 namespace {
 
 std::string number(double v) {
@@ -170,26 +142,6 @@ int64_t draw_seed() {
     return (int64_t) (((uint64_t) device() << 32 | device()) & (uint64_t) kMaxSeed);
 }
 
-/** The request's options as its run takes them: those it set, the defaults, and a seed drawn where it took one. */
-RequestValues run_values(const speech_request & request) {
-    const FileInfo & file = *request.model->file;
-    RequestValues values;
-    for (const OptionSpec & spec : file.described.options) {
-        const auto set = request.values.find(spec.option);
-        if (set != request.values.end()) {
-            values.set(spec.option, set->second, true);
-        } else if (spec.required) {
-            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, file.identity.name + " needs the option " + speech_option_name(spec.option) + "; set it",
-                           speech_option_name(spec.option));
-        } else if (spec.default_value) {
-            values.set(spec.option, *spec.default_value, false);
-        } else if (spec.option == SPEECH_OPT_SEED) {
-            values.set(spec.option, draw_seed(), false);
-        }
-    }
-    return values;
-}
-
 /** Joins a request that runs to its caller's callbacks and cancellation. */
 class RequestRun : public Run {
 public:
@@ -252,16 +204,6 @@ void spend(speech_request & request, const RequestRun & run, Body && body) {
     request.ran = true;
 }
 
-/** The call that runs a request of a model of `task`, for a message that names it. */
-const char * call_of(speech_task task) {
-    switch (task) {
-        case SPEECH_TASK_SYNTHESIS: return "speech_synthesize() to speak with it";
-        case SPEECH_TASK_RECOGNITION: return "speech_transcribe() to recognize speech with it";
-        case SPEECH_TASK_DETECTION: return "speech_detect() to find where someone speaks";
-    }
-    throw std::logic_error("a task the library does not know");
-}
-
 /** Checks that a request can run its one run of `task`, and returns its options. */
 RequestValues take(speech_request * request, speech_task task) {
     require(request, "request");
@@ -320,6 +262,25 @@ speech_status timed_text(const speech_result * result, const std::vector<TimedTe
 }
 
 }  // namespace
+
+RequestValues run_values(const speech_request & request) {
+    const FileInfo & file = *request.model->file;
+    RequestValues values;
+    for (const OptionSpec & spec : file.described.options) {
+        const auto set = request.values.find(spec.option);
+        if (set != request.values.end()) {
+            values.set(spec.option, set->second, true);
+        } else if (spec.required) {
+            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, file.identity.name + " needs the option " + speech_option_name(spec.option) + "; set it",
+                           speech_option_name(spec.option));
+        } else if (spec.default_value) {
+            values.set(spec.option, *spec.default_value, false);
+        } else if (spec.option == SPEECH_OPT_SEED) {
+            values.set(spec.option, draw_seed(), false);
+        }
+    }
+    return values;
+}
 
 extern "C" {
 

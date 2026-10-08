@@ -1,3 +1,5 @@
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -7,26 +9,85 @@
 
 namespace {
 
+/** The rule of a request's options, with the constants of the model file. */
+silero_vad::RegionRule rule_of(const silero_vad::Detector & detector, const RequestValues & values) {
+    silero_vad::RegionRule rule = silero_vad::default_rule(detector.model());
+    rule.threshold = values.number(SPEECH_OPT_THRESHOLD);
+    rule.min_speech_duration_ms = values.integer(SPEECH_OPT_MIN_SPEECH_DURATION_MS);
+    rule.min_silence_duration_ms = values.integer(SPEECH_OPT_MIN_SILENCE_DURATION_MS);
+    rule.speech_pad_ms = values.integer(SPEECH_OPT_SPEECH_PAD_MS);
+    if (values.has(SPEECH_OPT_MAX_SPEECH_DURATION_S)) rule.max_speech_duration_s = values.number(SPEECH_OPT_MAX_SPEECH_DURATION_S);
+    return rule;
+}
+
+/** A region in samples as the C API gives it, in seconds at the model's rate. */
+TimedText in_seconds(const silero_vad::Region & r, int sample_rate) {
+    return {(double) r.start / sample_rate, (double) r.end / sample_rate, ""};
+}
+
+/**
+ * The chunks of the audio computed as their samples arrive and walked by the region rule at once, which settles the
+ * regions after each push from the samples heard so far.
+ */
+class SileroVadStream : public DetectionStream {
+public:
+    SileroVadStream(silero_vad::Detector & detector, const silero_vad::RegionRule & rule)
+        : chunks_(detector), rule_(rule, detector.sample_rate(), detector.network().chunk()), sample_rate_(detector.sample_rate()) {}
+
+    void push(const float * samples, size_t n) override {
+        probs_.clear();
+        chunks_.push(samples, n, probs_);
+        for (const float p : probs_) rule_.add(p);
+        rule_.settle(chunks_.samples());
+        collect();
+    }
+
+    void end() override {
+        probs_.clear();
+        chunks_.end(probs_);
+        for (const float p : probs_) rule_.add(p);
+        rule_.end(chunks_.samples());
+        collect();
+    }
+
+    const std::vector<TimedText> & regions() const override { return regions_; }
+
+    std::optional<double> open() const override {
+        const std::optional<int64_t> start = rule_.open();
+        if (!start) return std::nullopt;
+        return (double) *start / sample_rate_;
+    }
+
+private:
+    void collect() {
+        for (size_t i = regions_.size(); i < rule_.regions().size(); i++) regions_.push_back(in_seconds(rule_.regions()[i], sample_rate_));
+    }
+
+    silero_vad::ChunkStream chunks_;
+    silero_vad::RegionStream rule_;
+    int sample_rate_;
+    std::vector<float> probs_;
+    std::vector<TimedText> regions_;
+};
+
 class SileroVadEngine : public Engine {
 public:
     SileroVadEngine(const std::string & path, ggml_backend_t backend) : detector_(path, backend) {}
 
     /** The blocks of chunks report their progress as they finish; the regions follow from the probabilities at once. */
     std::vector<TimedText> detect(const std::vector<float> & samples, const RequestValues & values, Run & run) override {
-        silero_vad::RegionRule rule = silero_vad::default_rule(detector_.model());
-        rule.threshold = values.number(SPEECH_OPT_THRESHOLD);
-        rule.min_speech_duration_ms = values.integer(SPEECH_OPT_MIN_SPEECH_DURATION_MS);
-        rule.min_silence_duration_ms = values.integer(SPEECH_OPT_MIN_SILENCE_DURATION_MS);
-        rule.speech_pad_ms = values.integer(SPEECH_OPT_SPEECH_PAD_MS);
-        if (values.has(SPEECH_OPT_MAX_SPEECH_DURATION_S)) rule.max_speech_duration_s = values.number(SPEECH_OPT_MAX_SPEECH_DURATION_S);
+        const silero_vad::RegionRule rule = rule_of(detector_, values);
         const std::vector<float> probs = detector_.probabilities(samples, [&](double done) { return run.progress(done); });
         if (run.stopped()) return {};
-        const double rate = detector_.sample_rate();
         std::vector<TimedText> out;
         for (const silero_vad::Region & r : silero_vad::speech_regions(probs, (int64_t) samples.size(), detector_.sample_rate(), detector_.network().chunk(), rule)) {
-            out.push_back({(double) r.start / rate, (double) r.end / rate, ""});
+            out.push_back(in_seconds(r, detector_.sample_rate()));
         }
         return out;
+    }
+
+    std::unique_ptr<DetectionStream> start_detection(const RequestValues & values) override {
+        return std::make_unique<SileroVadStream>(detector_, rule_of(detector_, values));
     }
 
     void warm_up() override {

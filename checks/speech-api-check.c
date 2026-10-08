@@ -13,7 +13,7 @@
  * before it runs, and runs requests from two threads at once. Irodori-TTS's own checks are in speech-api-irodori.c.
  *
  * With a recognition model (transcribe), speech-api-recognition.c, which takes F32 or F16 weights only, and with a
- * detection model (detect), speech-api-detection.c.
+ * detection model (detect), speech-api-detection.c and speech-api-detection-stream.c.
  *
  * usage: speech-api-check <model.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]...
  *                         [--make-voice <reference.wav> <voice.gguf>]
@@ -407,6 +407,10 @@ static int check_model(speech_model * model, const char * model_path, const char
     r = new_request(model, NULL, voice, 13);
     ok &= expect(speech_request_set_audio(r, audio.samples, audio.n, rate), SPEECH_ERROR_UNSUPPORTED, "audio", "audio for a synthesis");
     ok &= expect(speech_transcribe(r), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_transcribe() of a synthesis model");
+    ok &= expect(speech_detect(r), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_detect() of a synthesis model");
+    speech_detection * detection = NULL;
+    ok &= expect(speech_detection_start(r, rate, &detection), SPEECH_ERROR_UNSUPPORTED, NULL, "a detection of a synthesis model") &&
+          detection == NULL;
     ok &= expect(speak(r, &audio, NULL, NULL), SPEECH_ERROR_INVALID_ARGUMENT, "text", "a request without a text");
     // A request refused before its work is fixed and run again; one that has done its work runs once.
     r = new_request(model, "一回だけです。", NULL, 14);

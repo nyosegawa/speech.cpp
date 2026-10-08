@@ -21,8 +21,11 @@ speech vad silero-vad --min-silence-duration-ms 1000 --max-speech-duration-s 10 
 - Audio at any rate is resampled to 16 kHz first. The times are seconds from the start of the audio.
 - A file without speech, or with silence and faint noise alone, has no region.
 - The model takes no language, and its `language` is `auto` alone.
+- Audio that arrives a piece at a time, as from a microphone, gives the same regions through the C API's detections
+  ([c-api.md](../c-api.md#detections)), each as soon as it is certain: with the defaults, about 160 ms after the speech
+  ends, once 100 ms of silence has ended the region.
 - The file is F32 alone: `speech quantize` writes no other type of it.
-- `speech worker` and `speech serve` do not take it; `speech vad` and the C API's `speech_detect()` do.
+- `speech worker` and `speech serve` do not take it; `speech vad` and the C API's `speech_detect()` and detections do.
 
 ## Options
 
@@ -48,9 +51,24 @@ limits among them. On an Apple M5:
 | Device | Probabilities, largest difference from the official | Regions |
 |---|---|---|
 | CPU, F32 | 3.6e-6 | the official's, all 42 |
-| Metal | 6.2e-3 | the official's, all 42 |
+| Metal | 3.7e-6 | the official's, all 42 |
+
+The same inputs at 16, 24 and 48 kHz, given a piece at a time in pieces of one sample, 20 ms, 100 ms, 1 s and random
+sizes, give the regions of the whole audio on both devices.
 
 ## Speed
 
-A minute of audio on an Apple M5, after the model's load of 0.04 s: 0.041 s on the CPU and 0.045 s on Metal, a real-time
-factor of 0.0007 and 0.0008. The official package takes 0.150 s on the same CPU.
+A minute of audio on an Apple M5, after the model's load of 0.04 s: 0.033 s on the CPU and 0.057 s on Metal, a real-time
+factor of 0.0006 and 0.0010. The official package takes 0.150 s on the same CPU.
+
+The same minute given a piece at a time, as audio arrives:
+
+| Pieces | CPU | CPU, one thread | Metal |
+|---|---|---|---|
+| 20 ms | 0.20 s | 0.12 s | 0.7 s |
+| 100 ms | 0.08 s | 0.10 s | 0.25 s |
+| 1 s | 0.04 s | 0.08 s | 0.08 s |
+
+A piece computes the chunks it completes in a graph of their own, and a small graph's time is mostly what the device
+takes to start computing. For audio that arrives as it is said, load the model on the CPU, with one thread for pieces of
+20 ms: a push then takes 0.04 ms on average and 0.2 ms at most, and the GPU is left to the recognizer.

@@ -948,6 +948,69 @@ SPEECH_API speech_status speech_transcribe(speech_request * request);
  */
 SPEECH_API speech_status speech_detect(speech_request * request);
 
+/*
+ * Detections of audio that arrives a piece at a time, as from a microphone, for a detection model: the regions where
+ * someone speaks, each given as soon as the audio heard makes it certain. Once the audio has ended, the regions are those
+ * speech_detect() gives for all of it, sample for sample, however it was cut into pieces. A detection is used by one
+ * thread at a time. Added in 3.1.
+ */
+typedef struct speech_detection speech_detection;
+
+/**
+ * Starts a detection of audio at `sample_rate` Hz, which speech_detection_push() gives, with the options of `request`,
+ * checked as speech_detect() checks them and copied; the request is left as it was. A request that has audio is
+ * SPEECH_ERROR_INVALID_ARGUMENT naming "audio", as its audio would go unused, and so is a rate that
+ * speech_request_set_audio() refuses. A synthesis or recognition model is SPEECH_ERROR_UNSUPPORTED. On success
+ * `*detection` is a detection that speech_detection_free() frees before the model. Added in 3.1.
+ */
+SPEECH_API speech_status speech_detection_start(const speech_request * request, int sample_rate, speech_detection ** detection);
+
+/** Frees a detection. NULL is ignored. Added in 3.1. */
+SPEECH_API void speech_detection_free(speech_detection * detection);
+
+/**
+ * Gives the detection the next `n_samples` mono samples, nominally within [-1, 1], at its rate, copied; none at all is
+ * allowed, and `samples` may then be NULL. The samples are resampled to the model's rate, which holds back the last 4.3 ms
+ * of audio from 24, 44.1 or 48 kHz (8.6 ms from 8 kHz) until the audio after them arrives; the model computes each of
+ * its chunks (32 ms for Silero VAD) once its samples have arrived, and the regions that the audio heard makes certain
+ * are given (speech_detection_region_count()). It computes on the model's device while the model does nothing else, so
+ * that the pushes of detections on one model and the model's requests wait for each other. A detection that has ended,
+ * or whose push or end failed, takes no more audio: SPEECH_ERROR_INVALID_ARGUMENT. Added in 3.1.
+ */
+SPEECH_API speech_status speech_detection_push(speech_detection * detection, const float * samples, size_t n_samples);
+
+/**
+ * Ends the audio: the samples held back are resampled, the model computes its last chunk, padded with zeros, and every
+ * region left is given, after which the regions are those speech_detect() gives for all of the audio pushed. A detection
+ * that has ended, or whose push failed, is SPEECH_ERROR_INVALID_ARGUMENT. Added in 3.1.
+ */
+SPEECH_API speech_status speech_detection_end(speech_detection * detection);
+
+/**
+ * The number of regions given so far. A region is given once the audio heard makes its padded start and end certain.
+ * With min_silence_duration_ms at least twice speech_pad_ms, as with the defaults, that is the chunk where the silence
+ * after the region has lasted min_silence_duration_ms and ends it. With less, the region's end waits on whether speech
+ * resumes within twice speech_pad_ms of it, for at most 2 · speech_pad_ms + min_speech_duration_ms +
+ * min_silence_duration_ms and two chunks after the region. A region that max_speech_duration_s cuts is given at the cut
+ * at the earliest, and may wait as long after it. Added in 3.1.
+ */
+SPEECH_API size_t speech_detection_region_count(const speech_detection * detection);
+
+/**
+ * The region at `index` in the order given: its start and end in seconds from the start of the audio pushed, as
+ * speech_detect() times a region. A region once given never changes. Added in 3.1.
+ */
+SPEECH_API speech_status speech_detection_region(const speech_detection * detection, size_t index, double * start, double * end);
+
+/**
+ * Whether a region has begun that is not given yet (1), with the start it will have in `*start` unless that is NULL:
+ * a region that has ended and whose end waits on what follows, as with min_silence_duration_ms below twice speech_pad_ms
+ * or after a cut at max_speech_duration_s, or else the region under way, where someone speaks at the end of the audio
+ * heard. A region under way that ends no longer than min_speech_duration_ms is dropped, and none is then given from that
+ * start. 0 when neither, and after speech_detection_end(). Added in 3.1.
+ */
+SPEECH_API int speech_detection_speaking(const speech_detection * detection, double * start);
+
 /** Why a request ended. */
 typedef enum speech_stop {
     /** It did all it was asked: the speech came to its end, or the audio was recognized or searched whole. */

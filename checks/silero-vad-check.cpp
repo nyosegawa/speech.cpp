@@ -1,17 +1,20 @@
 // Checks Silero VAD against the official silero-vad package on each dump of reference/silero-vad/dump.py, in the order
 // data flows, each stage from the dump's own input: each chunk's input with its context, cut from the dump's audio; the
 // STFT's magnitude; each encoder block; the LSTM cell's h and c over every chunk from the dump's encoder output; the
-// decoder's probabilities from the dump's h; then the probabilities from the audio alone, and the regions of every set of
-// options in the dump's regions.json, which must equal the official's sample for sample, both from the official's
-// probabilities and from the ones computed here. The dumps are those in <reference out dir>/<the file's general.name>/.
+// decoder's probabilities from the dump's h; then the probabilities from the audio alone, which graphs of any number of
+// chunks must give bit for bit, as audio given a piece at a time computes them, and the regions of every set of options
+// in the dump's regions.json, which must equal the official's sample for sample, both from the official's probabilities
+// and from the ones computed here. The dumps are those in <reference out dir>/<the file's general.name>/.
 //
 // usage: silero-vad-check <model.gguf> <reference out dir> [gpu|cpu|device name]
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "args.h"
@@ -73,6 +76,52 @@ RegionRule rule_of(const ModelFile & m, const JsonValue & options) {
     return r;
 }
 
+bool same_region(const Region & a, const Region & b) {
+    return a.start == b.start && a.end == b.end;
+}
+
+/**
+ * What is wrong with the regions that RegionStream gives as the chunks come, settled after each whole chunk: a region
+ * must not be given before the rule decided at the end gives it alike whether 1000 chunks of silence (probability 0) or
+ * of speech (1) follow, and without max_speech_duration_s it must be given at the first chunk after which they do, which
+ * then makes it certain; a limit cuts a region at its longest silence, which audio between the two can lengthen. Once the
+ * audio has ended the regions must be the whole audio's. Empty when nothing is.
+ */
+std::string as_chunks_come(const std::vector<float> & probs, int64_t samples, int rate, int chunk, const RegionRule & rule) {
+    RegionStream settled(rule, rate, chunk), walked(rule, rate, chunk);
+    const int64_t n = (int64_t) probs.size();
+    // The last chunk may be partial and the audio ends after it, which no continuation follows.
+    for (int64_t k = 0; k + 1 < n; k++) {
+        settled.add(probs[(size_t) k]);
+        walked.add(probs[(size_t) k]);
+        settled.settle((k + 1) * chunk);
+        const auto followed = [&](float p) {
+            RegionStream s = walked;
+            for (int i = 0; i < 1000; i++) s.add(p);
+            s.end((k + 1001) * chunk);
+            return s.regions();
+        };
+        const std::vector<Region> silence = followed(0.0f), speech = followed(1.0f);
+        const auto certain = [&](size_t i) { return i < silence.size() && i < speech.size() && same_region(silence[i], speech[i]); };
+        const std::vector<Region> & given = settled.regions();
+        for (size_t i = 0; i < given.size(); i++) {
+            if (!certain(i) || !same_region(given[i], silence[i])) return "region " + std::to_string(i) + " is given at chunk " + std::to_string(k) + " before it is certain";
+        }
+        if (std::isinf(rule.max_speech_duration_s) && certain(given.size())) {
+            return "region " + std::to_string(given.size()) + " is certain at chunk " + std::to_string(k) + " but not given";
+        }
+    }
+    if (n > 0) {
+        settled.add(probs.back());
+        walked.add(probs.back());
+    }
+    settled.end(samples);
+    walked.end(samples);
+    const std::vector<Region> & a = settled.regions(), & b = walked.regions();
+    if (a.size() != b.size() || !std::equal(a.begin(), a.end(), b.begin(), same_region)) return "the regions given as the chunks came differ from the whole's";
+    return "";
+}
+
 std::string regions_text(const std::vector<Region> & regions) {
     std::string out;
     for (const Region & r : regions) out += (out.empty() ? "" : " ") + std::to_string(r.start) + "-" + std::to_string(r.end);
@@ -90,13 +139,13 @@ int main(int argc, char ** argv) {
     try {
         ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
         std::printf("backend: %s\n", ggml_backend_name(backend));
-        // Measured on an Apple M5 on 2026-10-08 over the six dumps: on the CPU in F32 every stage lies 125 to 164 dB from
-        // the official, and the probabilities from the audio within 3.6e-6 of it; on Metal, whose matrix kernel rounds
-        // its inputs to half precision where it multiplies more than a few columns, 62 to 113 dB and within 6.2e-3. The
-        // dump of one chunk lies 120 dB or more from it on both, Metal multiplying a single column in float32. A wrong
-        // window, padding, stride or gate gives a few dB.
-        const bool cpu = ggml_backend_is_cpu(backend);
-        const double stage_db = cpu ? 100 : 50, probs_abs = cpu ? 1e-5 : 2e-2;
+        // Measured on an Apple M5 on 2026-10-08 over the six dumps, each product of the network multiplying one column:
+        // every stage lies 125 to 164 dB from the official on the CPU in F32 and 119 to 155 dB on Metal, and the
+        // probabilities from the audio within 3.6e-6 and 3.8e-6 of it. A GPU whose kernels round to half precision lies
+        // further: Metal's matrix kernel, which products of more columns took, gave 62 to 113 dB and 6.2e-3. A wrong window,
+        // padding, stride or gate gives a few dB.
+        const bool cpu = ggml_backend_is_cpu(backend), single = cpu || std::string(ggml_backend_name(backend)).rfind("MTL", 0) == 0;
+        const double stage_db = single ? 100 : 50, probs_abs = single ? 1e-5 : 2e-2;
         bool ok = true;
         {
             Detector detector(args[1], backend);
@@ -182,6 +231,25 @@ int main(int argc, char ** argv) {
                 print_diff("  probabilities from the audio", dp);
                 ok = ok && got.size() == probs.f32.size() && dp.max_abs < probs_abs;
 
+                // The probabilities in graphs of other numbers of chunks than the detector's blocks, bit for bit.
+                bool independent = true;
+                for (const int64_t size : {1, 2, 3, 5, 8, 13, 100}) {
+                    std::vector<float> in_blocks;
+                    CellState state = detector.start();
+                    for (int64_t first = 0; first < n; first += size) {
+                        const int64_t count = std::min(size, n - first);
+                        detector.compute(detector.inputs(audio.f32, first, count), count, state, in_blocks);
+                    }
+                    const bool same = in_blocks.size() == got.size() && std::memcmp(in_blocks.data(), got.data(), got.size() * sizeof(float)) == 0;
+                    if (!same) {
+                        std::printf("  %-32s DIFFER, by up to %.2e\n", ("in graphs of " + std::to_string(size) + " chunks").c_str(),
+                                    compare(in_blocks, got).max_abs);
+                    }
+                    independent = independent && same;
+                }
+                std::printf("  %-32s %s\n", "in graphs of 1 to 100 chunks", independent ? "equal" : "DIFFER");
+                ok = ok && independent;
+
                 const JsonValue sets = parse_json(dump_text(d / "regions.json"));
                 for (const auto & [name, set] : sets.members) {
                     std::vector<Region> want;
@@ -208,6 +276,29 @@ int main(int argc, char ** argv) {
                     }
                     ok = ok && same(official) && (same(own) || near);
                 }
+
+                // The regions of the official probabilities as the chunks come, with each set of options of the dump and
+                // with sets whose regions' ends wait on what follows them.
+                std::vector<std::pair<std::string, RegionRule>> rules;
+                for (const auto & [name, set] : sets.members) rules.push_back({name, rule_of(model, *set.member("options"))});
+                for (const auto & [name, pad, silence, speech, max] : std::vector<std::tuple<std::string, int64_t, int64_t, int64_t, double>>{
+                         {"pad100-silence0", 100, 0, -1, INFINITY}, {"pad200-silence50-speech0", 200, 50, 0, INFINITY}, {"pad100-silence0-max2", 100, 0, -1, 2.0}}) {
+                    RegionRule r = default_rule(model);
+                    r.speech_pad_ms = pad;
+                    r.min_silence_duration_ms = silence;
+                    if (speech >= 0) r.min_speech_duration_ms = speech;
+                    r.max_speech_duration_s = max;
+                    rules.push_back({name, r});
+                }
+                std::string wrong;
+                for (const auto & [name, rule] : rules) {
+                    if (!wrong.empty()) break;
+                    wrong = as_chunks_come(probs.f32, (int64_t) audio.f32.size(), detector.sample_rate(), net.chunk(), rule);
+                    if (!wrong.empty()) wrong = name + ": " + wrong;
+                }
+                std::printf("  %-32s %s\n", "regions as the chunks come", wrong.empty() ? ("each given once certain, " + std::to_string(rules.size()) + " sets").c_str()
+                                                                                       : ("WRONG: " + wrong).c_str());
+                ok = ok && wrong.empty();
             }
             ggml_gallocr_free(allocr);
         }
