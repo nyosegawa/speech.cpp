@@ -1,6 +1,6 @@
-"""A client of the worker protocol 2 for the smoke scripts. It starts `speech worker`, and on every line it reads it
-checks that the line is one JSON object with a string "type", that a chunk, progress, partial text or terminal message
-belongs to a request in flight, and that a request gets exactly one terminal message (end, error or cancelled) and
+"""A client of the worker protocol for the smoke scripts. It starts `speech worker`, checks that ready names the protocol
+it speaks, and on every line it reads it checks that the line is one JSON object with a string "type", that a chunk,
+progress or terminal message belongs to a request in flight, and that a request gets exactly one terminal message (end, error or cancelled) and
 nothing for its id after it. It also compares the model information of ready with `speech info --json`, and reads the
 requests a recognition model's reference dumped.
 """
@@ -11,6 +11,8 @@ import subprocess
 import time
 
 TERMINAL = {"end", "error", "cancelled"}
+# The protocol this client speaks; a worker that says another in ready is one its callers must change for.
+PROTOCOL = 3
 
 
 class Worker:
@@ -24,6 +26,8 @@ class Worker:
         self.ready = self._read_line()
         if self.ready["type"] != "ready":
             raise SystemExit(f"the worker did not start: {self.ready}")
+        if self.ready["protocol"] != PROTOCOL:
+            raise SystemExit(f"the worker speaks protocol {self.ready['protocol']!r}, and this client protocol {PROTOCOL}")
 
     def _read_line(self):
         line = self.proc.stdout.readline()
@@ -48,7 +52,7 @@ class Worker:
         if kind in TERMINAL and id is None:
             if kind != "error":
                 raise SystemExit(f"a terminal message without an id: {m}")
-        elif kind in TERMINAL or kind in ("chunk", "progress") or (kind == "partial" and "error" not in m):
+        elif kind in TERMINAL or kind in ("chunk", "progress"):
             if id not in self.in_flight:
                 raise SystemExit(f"{kind} for {id!r}, which has no request in flight: {short(m)}")
             if kind in TERMINAL:
@@ -60,7 +64,7 @@ class Worker:
         self.proc.stdin.flush()
 
     def send(self, message):
-        """Sends a line that starts no request: a chunk after the first, a peek or a cancel."""
+        """Sends a line that starts no request: a chunk after the first, or a cancel."""
         self.send_line(json.dumps(message, ensure_ascii=False))
 
     def expect(self, id):

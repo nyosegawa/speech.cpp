@@ -123,7 +123,7 @@ fatal = json.loads(r.stdout)
 assert fatal["type"] == "fatal" and fatal["error"]["code"] == "invalid_argument", fatal
 r = run("worker", model, "--device", "no-such-device", code=1)
 fatal = json.loads(r.stdout)
-# The worker refuses a detection model, which protocol 2 has no messages for, before it touches a device.
+# The worker refuses a detection model, which its protocol has no messages for, before it touches a device.
 refused = ("unsupported", None) if info["task"] == "detection" else ("device", "device")
 assert fatal["type"] == "fatal" and (fatal["error"]["code"], fatal["error"]["option"]) == refused, fatal
 failure(r, *refused)

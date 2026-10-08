@@ -1,4 +1,4 @@
-"""Drives `speech worker` with a recognition model through protocol 2 the way a caller does, with every line checked by
+"""Drives `speech worker` with a recognition model through its protocol the way a caller does, with every line checked by
 worker_client.py: one JSON object per line, and one terminal message per request and nothing after it.
 
 It sends the audio of each dump of reference/fastconformer/dump.py or reference/qwen3-asr/dump.py as 16-bit chunks of
@@ -6,10 +6,7 @@ one second and checks that the text is the dump's, the languages the one qwen-as
 FastConformer, which writes none, a member left out), and the stop complete, for each request a Qwen3-ASR dump holds
 with its forced language and its prompt and each decoding other than the default that a FastConformer dump holds, that
 a language the model only checks changes nothing, and with timestamps, where the model takes them, that the segments
-and tokens join into the text in time order; peeks at a request while it collects chunks, with and without
-timestamps, and checks that a peek at the whole audio and the request's one end then carry the dump's text and
-languages; checks that a peek of a request cancelled before the peek's turn is dropped, and that a peek of an id that
-is not collecting is a partial with an error; that the chunks of two requests may interleave and the requests are
+and tokens join into the text in time order; that the chunks of two requests may interleave and the requests are
 answered in the order of their transcribes; cancels while a request collects chunks (whose later lines are dropped and
 whose id a chunk 0 starts again), while it waits and while it runs; that audio at three times the model's rate is
 recognized; each error with its code and option (a chunk out of order, not base64 or of odd bytes, a sample rate
@@ -43,7 +40,7 @@ if not dumps:
     raise SystemExit(__doc__)
 w = Worker(speech, model, options)
 info = w.ready["model"]
-assert w.ready["protocol"] == 2 and info["task"] == "recognition" and "voices" not in info, short(w.ready)
+assert info["task"] == "recognition" and "voices" not in info, short(w.ready)
 w.check_model_information()
 rate = info["sample_rate"]
 options = {o["name"]: o for o in info["options"]}
@@ -136,53 +133,13 @@ by_length = sorted((n for n in audio if want_text[n]), key=lambda n: len(audio[n
 first, last = by_length[0], by_length[-1]
 short_pcm, short_text, short_languages = audio[first], want_text[first], want_langs[first]
 
-# A peek recognizes the audio so far and leaves the request open for more chunks and its one end.
-c = chunks("p", short_pcm)
-half = max(1, len(c) // 2)
-w.expect("p")
-for x in c[:half]:
-    w.send(x)
-w.send({"type": "peek", "id": "p", "sample_rate": rate})
-first_partial = w.next_for("p")
-assert first_partial["type"] == "partial" and isinstance(first_partial["text"], str) and "segments" not in first_partial, short(first_partial)
-for x in c[half:]:
-    w.send(x)
-w.send({"type": "peek", "id": "p", "sample_rate": rate, **timed})
-m2 = w.next_for("p")
-assert m2["type"] == "partial" and m2["text"] == short_text and m2.get("languages", []) == short_languages, short(m2)
-check_times(m2)
-w.send({"type": "peek", "id": "p", "sample_rate": rate, "speed": 2})
-m3 = w.next_for("p")
-assert m3["type"] == "partial" and m3["error"]["code"] == "unsupported" and m3["error"]["option"] == "speed", short(m3)
-w.send({"type": "transcribe", "id": "p", "sample_rate": rate})
-p_end = w.terminal("p", "end")
-assert p_end["text"] == short_text and p_end.get("languages", []) == short_languages, short(p_end)
-w.send({"type": "peek", "id": "p", "sample_rate": rate})
-m = w.next_for("p")
-assert m["type"] == "partial" and m["error"]["option"] == "id", short(m)
-print(f"peek: half the audio gave {first_partial['text'][:20]!r}...; the whole gave the dump's text{' with times' if timed else ''} and "
-      f"languages {short_languages}; a peek's "
-      f"error left the request open; the request ended once; a peek after it is a partial with an error")
-
-# A peek of a request cancelled before the peek's turn is dropped without an answer.
+# info reads the model's information alone, so it is answered while a recognition runs.
 send_audio("long", audio[last])
-w.expect("q")
-for x in chunks("q", short_pcm):
-    w.send(x)
-w.send({"type": "peek", "id": "q", "sample_rate": rate})
-w.send({"type": "cancel", "id": "q"})
-assert [m["type"] for m in w.until("q")] == ["cancelled"]
-# info reads the model's information alone, so it is answered while the recognition runs.
 w.request({"type": "info", "id": "busy-info"})
 busy_info = w.terminal("busy-info", "end")
 long_end = w.terminal("long", "end")
 assert busy_info["model"] == info and busy_info["_at"] < long_end["_at"], "info waited for the running recognition"
-# A request queued behind the dropped peek ends after it, and nothing came for q.
-send_audio("after-q", short_pcm)
-w.terminal("after-q", "end")
-assert not any(m.get("id") == "q" for m in w.backlog), w.backlog
-print("a peek of a request cancelled while it collected chunks was dropped; the request had its cancelled alone; info sent "
-      "while a recognition ran was answered before it ended")
+print("info sent while a recognition ran was answered before it ended")
 
 # Two requests whose chunks interleave are answered in the order of their transcribes.
 a, b = chunks("a", short_pcm), chunks("b", short_pcm)
@@ -291,11 +248,6 @@ w.request({"type": "chunk", "id": "o3", "seq": 0, "pcm": "", "language": "ja"})
 expect_error("o3", "invalid_argument", "language", "a member chunk does not have")
 send_audio("m", short_pcm)
 assert w.terminal("m", "end")["text"] == short_text
-w.send({"type": "peek", "id": "nothing", "sample_rate": rate})
-m = w.next_for("nothing")
-assert m["type"] == "partial" and m["error"]["option"] == "id", short(m)
-print("a peek of an unknown id: a partial with an error")
-
 send_audio("u", audio[last])
 w.send({"type": "transcribe", "id": "u", "sample_rate": rate})
 w.error_without_id("invalid_argument", "id")

@@ -1,4 +1,4 @@
-# Worker protocol 2
+# Worker protocol
 
 This page describes `speech worker`, a process that another program starts to speak texts or recognize speech, as
 [ASIST](https://github.com/nyosegawa/asist) does, and the protocol it speaks.
@@ -28,7 +28,7 @@ stdout, in UTF-8.
 ## Start
 
 ```
-out {"type":"ready","protocol":2,"version":"0.8.0","model":{...model information...}}
+out {"type":"ready","protocol":3,"version":"0.8.0","model":{...model information...}}
 out {"type":"fatal","error":{"code":"model_file","option":null,"message":"..."}}
 ```
 
@@ -50,7 +50,6 @@ not raise it.
 | `synthesize` | `id`, `text`, option members | synthesis | `progress` and `chunk`s, then one terminal message |
 | `chunk` | `id`, `seq`, `pcm` | recognition | none of its own; it adds audio to request `id` |
 | `transcribe` | `id`, `sample_rate`, option members | recognition | `progress`, then one terminal message |
-| `peek` | `id`, `sample_rate`, option members | recognition | one `partial`; the request stays open |
 | `add_voice` | `id`, `name`, `path` | synthesis models that take voice files | one terminal message |
 | `info` | `id` | any | one terminal message, at once |
 | `count_tokens` | `id`, `text` | synthesis | one terminal message, at once |
@@ -66,13 +65,6 @@ not raise it.
 - `info` gives the voices added so far: one sent before an `add_voice` has had its `end` may not list that voice yet.
 - `count_tokens` counts a text's tokens as a synthesis counts them against `max_text_tokens`, so that a caller can split a
   long text before it sends it, also while a synthesis runs.
-- `peek`, for live captions, asks for the text of a recognition request that is still collecting chunks. Its members
-  apply to that peek alone: it recognizes the chunks so far as a `transcribe` with those members would, answers one
-  `partial`, and leaves the request collecting, so that more chunks may follow. A peek waits its turn as a request does,
-  sends no `progress`, and is dropped without an answer when its request ends before its turn. A peek of an id that is
-  not collecting chunks gets a `partial` with an `error`, and that request is left as it was.
-- A peek recognizes the whole audio received so far, so its cost grows with the audio: parakeet-tdt_ctc-0.6b-ja in F16 on
-  Metal took 0.07 s for 6.4 s of audio and 0.11 s for 10.5 s.
 - `cancel` of a request that is collecting chunks or waiting ends it with `cancelled` at once. A running request stops at
   the next point where its work can stop and ends with `cancelled`; `add_voice` cannot be stopped once it runs. A cancel
   of an id that no request in flight has is ignored.
@@ -88,8 +80,6 @@ since no `transcribe` can follow, and exits with 0.
 ```
 out {"type":"chunk","id":"a","seq":0,"pcm":"..."}
 out {"type":"progress","id":"r","done":0.42}
-out {"type":"partial","id":"r","text":"...","stop":"complete","segments":[...],"tokens":[...]}
-out {"type":"partial","id":"x","error":{"code":"invalid_argument","option":"id","message":"..."}}
 out {"type":"end","id":"a","seed":1234,"samples":96000,"stop":"complete"}
 out {"type":"end","id":"r","text":"...","stop":"complete","segments":[{"start":0.0,"end":2.48,"text":"..."}],"tokens":[{"start":0.0,"end":0.16,"text":"..."}]}
 out {"type":"end","id":"q","text":"...","stop":"complete","languages":["ja"]}
@@ -107,8 +97,6 @@ out {"type":"cancelled","id":"a"}
   writes, with the text written up to there). It has `languages`, the tags of the languages the model heard in the
   order of the audio, where there are any (Qwen3-ASR), and `segments` and `tokens` when the request set `timestamps`.
 - `end` of `info` has `model`, `end` of `count_tokens` has `tokens`, and `end` of `add_voice` has nothing more.
-- `partial` is never terminal. It has the members of a recognition's `end`, or an `error`, which ends the peek and not
-  its request.
 - `error` has `code` (an error category, [c-api.md](c-api.md#errors)), `option` (the input it concerns: an option's
   name, `text`, `audio`, `id`, `type`, `seq`, `pcm`, `name`, `path`, `sample_rate` or another member's name, or null)
   and `message`.
@@ -136,7 +124,7 @@ out {"type":"cancelled","id":"a"}
 
 ## A session
 
-Irodori-TTS speaking a sentence, and a recognizer peeking at a request while it collects chunks:
+Irodori-TTS speaking a sentence, and a recognizer taking a request in two chunks:
 
 ```
 in  {"type":"synthesize","id":"1","text":"明日の東京は晴れです。","voice":"me","seed":42}
@@ -145,8 +133,6 @@ out {"type":"chunk","id":"1","seq":1,"pcm":"..."}
 out {"type":"end","id":"1","seed":42,"samples":134400,"stop":"complete"}
 
 in  {"type":"chunk","id":"r","seq":0,"pcm":"..."}
-in  {"type":"peek","id":"r","sample_rate":16000}
-out {"type":"partial","id":"r","text":"群島や湖では","stop":"complete"}
 in  {"type":"chunk","id":"r","seq":1,"pcm":"..."}
 in  {"type":"transcribe","id":"r","sample_rate":16000}
 out {"type":"end","id":"r","text":"群島や湖では必ずしもヨットは必要ありません。","stop":"complete"}

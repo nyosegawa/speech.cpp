@@ -41,7 +41,7 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   C API. `tools/models/` names models: the catalog of the release (`catalog.json`, which `update_catalog.py` writes
   from Hugging Face and the build compiles in), the cache folder, and the fetching of a named model with the system's
   curl, which `models`, `pull` and `rm` and every subcommand that takes a model share; the library never reaches the
-  network. The worker's protocol 2 is JSON Lines, one JSON object per line on stdin and
+  network. The worker's protocol is JSON Lines, one JSON object per line on stdin and
   stdout, and is the contract of every program that starts it, ASIST among them: stdout carries the protocol and
   nothing else, every log goes to stderr, and every request gets exactly one terminal message. Its `ready` message
   carries the protocol's version, the release and the model's information.
@@ -60,7 +60,7 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   of `speech serve --open`, plain HTML, CSS and JavaScript modules compiled into `speech`, which `page.cpp` serves
   with the endpoints that fetch and load models; `access.cpp` guards them with the token, the Host and the Origin.
 - The smoke scripts in `tools/` drive each entry point as its caller does and fail on a defect:
-  `worker_smoke.py` and `worker_recognition_smoke.py` the worker protocol 2 through `worker_client.py`, which checks
+  `worker_smoke.py` and `worker_recognition_smoke.py` the worker protocol through `worker_client.py`, which checks
   every line and one terminal message per request, `server_smoke.py` every endpoint and the mapping of errors and
   `server_page_smoke.py` the page's endpoints and every guard, both through `server_client.py`, which stops the
   server however the script ends, `speech_cli_smoke.py` the command line against the worker, and `models_smoke.py`

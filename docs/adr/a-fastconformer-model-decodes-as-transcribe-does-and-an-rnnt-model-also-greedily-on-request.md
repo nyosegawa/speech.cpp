@@ -76,6 +76,6 @@ The alternatives were turned down:
 ## Consequences
 
 A request that leaves `decoding` unset gives the text NeMo's `transcribe()` returns. A caller finds the option in a
-model's information and chooses per request through every entry point: the worker's `transcribe` and `peek`, the
-server's form field `decoding` and `speech asr --decoding`. `reference/fastconformer/dump.py --greedy` dumps NeMo's
+model's information and chooses per request through every entry point: the worker's `transcribe`, the server's form
+field `decoding` and `speech asr --decoding`. `reference/fastconformer/dump.py --greedy` dumps NeMo's
 greedy decoding beside the beam search's, and the transducer, times and C API checks compare `greedy` with it.

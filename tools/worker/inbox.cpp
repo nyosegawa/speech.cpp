@@ -10,7 +10,7 @@
 
 namespace {
 
-const char * const kTypes = "synthesize, chunk, transcribe, peek, add_voice, info, count_tokens or cancel";
+const char * const kTypes = "synthesize, chunk, transcribe, add_voice, info, count_tokens or cancel";
 
 std::string joined(const std::vector<std::string> & names) {
     std::string out;
@@ -95,12 +95,8 @@ bool Inbox::start(const Job & job, speech_request * request) {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = pending_.find(job.id);
     if (it == pending_.end() || it->second.serial != job.serial) return false;
-    if (job.kind == Job::Kind::Peek) {
-        it->second.peeking = request;
-    } else {
-        it->second.state = Pending::State::Running;
-        it->second.running = request;
-    }
+    it->second.state = Pending::State::Running;
+    it->second.running = request;
     return true;
 }
 
@@ -108,14 +104,6 @@ void Inbox::finish(const Job & job, const std::string & line) {
     std::lock_guard<std::mutex> lock(mutex_);
     pending_.erase(job.id);
     protocol_.line(line);
-}
-
-void Inbox::finish_peek(const Job & job, const std::string & line) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = pending_.find(job.id);
-    if (it == pending_.end() || it->second.serial != job.serial) return;
-    it->second.peeking = nullptr;
-    if (!line.empty()) protocol_.line(line);
 }
 
 void Inbox::close_collecting() {
@@ -141,9 +129,7 @@ void Inbox::refuse(const std::string & id, const std::string & code, const std::
 }
 
 void Inbox::fail_collecting(const std::string & id, const std::string & option, const std::string & message) {
-    const auto it = pending_.find(id);
-    if (it->second.peeking) speech_request_cancel(it->second.peeking);
-    pending_.erase(it);
+    pending_.erase(id);
     reply_error(&id, speech_status_name(SPEECH_ERROR_INVALID_ARGUMENT), option, message);
     dropping_.insert(id);
 }
@@ -230,8 +216,6 @@ void Inbox::take_line(const std::string & line) {
         chunk(id, message);
     } else if (t == "transcribe") {
         transcribe(id, message);
-    } else if (t == "peek") {
-        peek(id, message);
     } else if (t == "synthesize") {
         request(Job::Kind::Synthesize, t, id, message);
     } else if (t == "add_voice") {
@@ -249,7 +233,6 @@ void Inbox::cancel(const std::string & id) {
     const auto it = pending_.find(id);
     if (it == pending_.end()) return;
     Pending & p = it->second;
-    if (p.peeking) speech_request_cancel(p.peeking);
     if (p.state == Pending::State::Running) {
         // The run ends with `cancelled`, or with its answer when it was past the point where it could stop.
         if (p.running) speech_request_cancel(p.running);
@@ -269,7 +252,7 @@ void Inbox::request(Job::Kind kind, const std::string & type, const std::string 
     }
     if (kind == Job::Kind::Synthesize && task_ != SPEECH_TASK_SYNTHESIS) {
         reply_error(&id, speech_status_name(SPEECH_ERROR_UNSUPPORTED), "type",
-                    model_name_ + " is a model of speech recognition, which takes chunk, transcribe and peek; synthesize needs a synthesis model");
+                    model_name_ + " is a model of speech recognition, which takes chunk and transcribe; synthesize needs a synthesis model");
         return;
     }
     Job job;
@@ -319,7 +302,7 @@ void Inbox::chunk(const std::string & id, const JsonValue & message) {
     }
     if (!in_flight(id) && task_ != SPEECH_TASK_RECOGNITION) {
         reply_error(&id, speech_status_name(SPEECH_ERROR_UNSUPPORTED), "type",
-                    model_name_ + " is a model of speech synthesis, which takes synthesize; chunk, transcribe and peek need a recognition model");
+                    model_name_ + " is a model of speech synthesis, which takes synthesize; chunk and transcribe need a recognition model");
         dropping_.insert(id);
         return;
     }
@@ -372,7 +355,7 @@ void Inbox::transcribe(const std::string & id, const JsonValue & message) {
     }
     if (!in_flight(id) && task_ != SPEECH_TASK_RECOGNITION) {
         reply_error(&id, speech_status_name(SPEECH_ERROR_UNSUPPORTED), "type",
-                    model_name_ + " is a model of speech synthesis, which takes synthesize; chunk, transcribe and peek need a recognition model");
+                    model_name_ + " is a model of speech synthesis, which takes synthesize; chunk and transcribe need a recognition model");
         return;
     }
     Pending & p = in_flight(id) ? pending_[id] : open(id, Pending::State::Collecting);
@@ -382,7 +365,6 @@ void Inbox::transcribe(const std::string & id, const JsonValue & message) {
     std::string option, problem;
     int64_t rate = 0;
     if (!read_rate(message, job.options, rate, option, problem)) {
-        if (p.peeking) speech_request_cancel(p.peeking);
         pending_.erase(id);
         reply_error(&id, invalid, option, problem);
         return;
@@ -391,36 +373,5 @@ void Inbox::transcribe(const std::string & id, const JsonValue & message) {
     job.pcm = std::move(p.pcm);
     job.serial = p.serial;
     p.state = Pending::State::Waiting;
-    queue(std::move(job));
-}
-
-void Inbox::peek(const std::string & id, const JsonValue & message) {
-    const auto partial_error = [&](const std::string & code, const std::string & option, const std::string & text) {
-        protocol_.line("{\"type\":\"partial\",\"id\":" + json_string(id) + ",\"error\":" + error_object(code, option, text) + "}");
-    };
-    const std::string invalid = speech_status_name(SPEECH_ERROR_INVALID_ARGUMENT);
-    if (task_ != SPEECH_TASK_RECOGNITION) {
-        partial_error(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "type",
-                      model_name_ + " is a model of speech synthesis, which takes synthesize; chunk, transcribe and peek need a recognition model");
-        return;
-    }
-    const auto it = pending_.find(id);
-    if (it == pending_.end() || it->second.state != Pending::State::Collecting) {
-        partial_error(invalid, "id", json_string(id) + " is not a recognition request collecting chunks; peek at a request after its first chunk "
-                                     "and before its transcribe");
-        return;
-    }
-    Job job;
-    job.kind = Job::Kind::Peek;
-    job.id = id;
-    std::string option, problem;
-    int64_t rate = 0;
-    if (!read_rate(message, job.options, rate, option, problem)) {
-        partial_error(invalid, option, problem);
-        return;
-    }
-    job.sample_rate = (int) rate;
-    job.pcm = it->second.pcm;
-    job.serial = it->second.serial;
     queue(std::move(job));
 }
