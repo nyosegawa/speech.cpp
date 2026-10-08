@@ -80,18 +80,18 @@ export class AudioInput {
   }
 
   /**
-   * The audio given in pieces of at most `maxSeconds`, each {samples, rate, start, total} with its start and the whole
-   * audio's length in seconds. A WAVE file of 16-bit PCM, a recording made here among them, is read ten seconds at a
-   * time at its own rate, which the server resamples, so that an hour of it never sits in the page's memory; any other
-   * file is decoded whole at `rate`, the model's.
+   * The audio given in pieces whose WAVE files of one channel of 16-bit samples hold at most `maxBytes`, each
+   * {samples, rate, start, total} with its start and the whole audio's length in seconds. A WAVE file of 16-bit PCM, a
+   * recording made here among them, is read ten seconds at a time at its own rate, which the server resamples, so that
+   * an hour of it never sits in the page's memory; any other file is decoded whole at `rate`, the model's.
    */
-  async *pieces(rate, maxSeconds) {
+  async *pieces(rate, maxBytes) {
     // Audio given while the pieces are read does not change what they are read from.
     const file = this.#file;
     const layout = this.#recorded ?? (await pcmLayout(file));
     if (layout) {
       const { rate: own, channels, offset, count } = layout;
-      const cutter = new PieceCutter(own, maxSeconds);
+      const cutter = new PieceCutter(own, maxBytes / 2 / own);
       const frame = 2 * channels;
       for (let at = 0; at < count; at += 10 * own) {
         const end = Math.min(count, at + 10 * own);
@@ -103,7 +103,7 @@ export class AudioInput {
       return;
     }
     const samples = await decode(await file.arrayBuffer(), rate);
-    const cutter = new PieceCutter(rate, maxSeconds);
+    const cutter = new PieceCutter(rate, maxBytes / 2 / rate);
     const total = samples.length / rate;
     // Pushed a slice at a time, so that each piece is copied out only when it is wanted.
     for (let at = 0; at < samples.length; at += rate) {

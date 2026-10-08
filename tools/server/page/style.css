@@ -190,6 +190,12 @@ main {
   gap: 8px;
 }
 
+.picker-role {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 .picker-button {
   display: flex;
   align-items: center;

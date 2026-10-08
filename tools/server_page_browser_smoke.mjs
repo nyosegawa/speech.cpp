@@ -1,0 +1,253 @@
+// Drives the page of speech serve in a headless Chrome as a person does, and fails on a defect: the tabs, with the model
+// pickers moving to the panel in view; the transcribe panel without a detection model, which transcribes audio up to a
+// minute whole, as the API does, and asks for one for longer audio; the detection model chosen in its picker and loaded
+// from the catalog; and longer audio then transcribed by its regions, giving the text chunking_strategy "auto" gives.
+// The audio is 16-bit WAVE made of the dumps of reference/fastconformer/dump.py or reference/qwen3-asr/dump.py. Chrome
+// is the one at $CHROME, or macOS's; the server and Chrome are stopped however the script ends.
+// usage: node tools/server_page_browser_smoke.mjs <speech> <work dir> <recognition model> <detection model's catalog name> <dump folder>...
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+
+const [speech, work, recognition, detection, ...dumps] = process.argv.slice(2);
+if (!dumps.length) {
+  console.error('usage: node tools/server_page_browser_smoke.mjs <speech> <work dir> <recognition model> <detection model\'s catalog name> <dump folder>...');
+  process.exit(2);
+}
+const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** A child process, and a promise that rejects when it cannot start or exits before it is stopped. */
+function start(command, args, options) {
+  const child = spawn(command, args, options);
+  let stopping = false;
+  const failed = new Promise((_, reject) => {
+    child.on('error', (e) => reject(new Error(`${command} could not start: ${e.message}`)));
+    child.on('exit', (code) => stopping || reject(new Error(`${command} exited with ${code}`)));
+  });
+  failed.catch(() => {});
+  return { child, failed, stop: () => ((stopping = true), child.kill()) };
+}
+
+/** `promise`, or the first failure of `processes`, or a timeout. */
+function racing(promise, processes, ms, what) {
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error(`timed out waiting for ${what}`)), ms));
+  return Promise.race([promise, timeout, ...processes.map((p) => p.failed)]);
+}
+
+async function freePort() {
+  const server = net.createServer();
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+
+/** The float32 samples of a dump's audio.npy. */
+function readNpy(file) {
+  const data = fs.readFileSync(file);
+  const headerLength = data.readUInt16LE(8);
+  const header = data.subarray(10, 10 + headerLength).toString();
+  if (!header.includes("'<f4'")) throw new Error(`${file} is not float32`);
+  const body = data.subarray(10 + headerLength);
+  return new Float32Array(body.buffer.slice(body.byteOffset, body.byteOffset + body.length));
+}
+
+/** A WAVE file of one channel of 16-bit samples, as the page writes one. */
+function wav(samples, rate) {
+  const out = Buffer.alloc(44 + 2 * samples.length);
+  out.write('RIFF', 0);
+  out.writeUInt32LE(36 + 2 * samples.length, 4);
+  out.write('WAVEfmt ', 8);
+  out.writeUInt32LE(16, 16);
+  out.writeUInt16LE(1, 20);
+  out.writeUInt16LE(1, 22);
+  out.writeUInt32LE(rate, 24);
+  out.writeUInt32LE(2 * rate, 28);
+  out.writeUInt16LE(2, 32);
+  out.writeUInt16LE(16, 34);
+  out.write('data', 36);
+  out.writeUInt32LE(2 * samples.length, 40);
+  samples.forEach((x, i) => out.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(x * 32768))), 44 + 2 * i));
+  return out;
+}
+
+const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'page-smoke-chrome-'));
+const running = [];
+let ws = null;
+try {
+  // Audio: the first dump alone, under a minute, and every dump with a second of silence after each, repeated past one.
+  const rate = 16000;
+  const first = readNpy(path.join(dumps[0], 'audio.npy'));
+  if (first.length > 50 * rate) throw new Error(`${dumps[0]} is longer than 50 s; give a shorter dump first`);
+  const parts = [];
+  for (let n = 0; n < 75 * rate; ) {
+    for (const d of dumps) {
+      const samples = readNpy(path.join(d, 'audio.npy'));
+      parts.push(samples, new Float32Array(rate));
+      n += samples.length + rate;
+    }
+  }
+  const joined = new Float32Array(parts.reduce((n, p) => n + p.length, 0));
+  parts.reduce((at, p) => (joined.set(p, at), at + p.length), 0);
+  fs.mkdirSync(work, { recursive: true });
+  const short = path.join(work, 'page-smoke-short.wav');
+  const long = path.join(work, 'page-smoke-long.wav');
+  fs.writeFileSync(short, wav(first, rate));
+  fs.writeFileSync(long, wav(joined, rate));
+
+  const server = start(speech, ['serve', recognition, '--port', String(await freePort())], { stdio: ['ignore', 'pipe', 'pipe'] });
+  running.push(server);
+  let log = '';
+  const address = await racing(new Promise((resolve) => {
+    const read = (chunk) => {
+      log += chunk;
+      const m = /(http:\/\/127\.0\.0\.1:\d+\/#token=[0-9a-f]+)/.exec(log);
+      if (m) resolve(m[1]);
+    };
+    server.child.stdout.on('data', read);
+    server.child.stderr.on('data', read);
+  }), [server], 120000, 'speech serve to listen').catch((e) => {
+    throw new Error(`${e.message}\n${log}`);
+  });
+  const origin = new URL(address).origin;
+
+  /** The text of the API for `file`, with the form's other fields. */
+  const api = async (file, fields = {}) => {
+    const form = new FormData();
+    form.append('file', new Blob([fs.readFileSync(file)], { type: 'audio/wav' }), 'x.wav');
+    for (const [name, value] of Object.entries(fields)) form.append(name, value);
+    const response = await fetch(`${origin}/v1/audio/transcriptions`, { method: 'POST', body: form });
+    const body = await response.json();
+    if (!response.ok) throw new Error(`the API answered ${response.status}: ${JSON.stringify(body)}`);
+    return body.text;
+  };
+
+  const chrome = start(CHROME, [
+    '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run',
+    '--hide-scrollbars', '--lang=en-US', '--accept-lang=en-US', '--window-size=960,900',
+  ], { stdio: 'ignore' });
+  running.push(chrome);
+  const port = await racing((async () => {
+    for (;;) {
+      try {
+        return fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0];
+      } catch {
+        // Chrome writes the file once it listens.
+        await wait(100);
+      }
+    }
+  })(), [chrome], 30000, 'Chrome to listen');
+  const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+  ws = new WebSocket(targets.find((t) => t.type === 'page').webSocketDebuggerUrl);
+  await racing(new Promise((resolve) => ws.addEventListener('open', resolve)), [chrome], 30000, 'Chrome\'s page');
+  let id = 0;
+  const pending = new Map();
+  const errors = [];
+  ws.addEventListener('message', (event) => {
+    const message = JSON.parse(event.data);
+    if (message.id && pending.has(message.id)) {
+      pending.get(message.id)(message);
+      pending.delete(message.id);
+    } else if (message.method === 'Runtime.exceptionThrown') {
+      errors.push(message.params.exceptionDetails.exception?.description ?? message.params.exceptionDetails.text);
+    }
+  });
+  const send = (method, params = {}) => racing(new Promise((resolve) => {
+    const n = ++id;
+    pending.set(n, resolve);
+    ws.send(JSON.stringify({ id: n, method, params }));
+  }), running, 300000, method);
+  /** Runs `body`, an async function's body, in the page with $ and until(check, what) defined. */
+  const page = async (body) => {
+    const expression = `(async () => {
+      const $ = (id) => document.getElementById(id);
+      const until = async (check, what, ms = 240000) => {
+        const t = Date.now();
+        while (!check()) {
+          if (Date.now() - t > ms) throw new Error('timed out waiting for ' + what);
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      };
+      ${body}
+    })()`;
+    const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+    if (r.result?.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description ?? JSON.stringify(r.result.exceptionDetails));
+    return r.result?.result?.value;
+  };
+  /** Gives `file` to the transcribe panel's file input, as a person choosing it does. */
+  const choose = async (file) => {
+    const input = await send('Runtime.evaluate', { expression: "document.querySelector('#transcribe-audio .audio-file')" });
+    await send('DOM.setFileInputFiles', { files: [path.resolve(file)], objectId: input.result.result.objectId });
+  };
+  /** Transcribes the audio given in the transcribe panel and returns the card's text, or the panel's error. */
+  const transcribe = () => page(`
+    await until(() => !$('transcribe-start').disabled, 'the transcribe button');
+    $('transcribe-start').click();
+    const card = document.querySelector('#transcribe-transcript .transcript');
+    await until(() => !$('transcribe-start').disabled && !$('transcribe-status').textContent, 'the transcription');
+    return $('transcribe-error').hidden ? { text: card.querySelector('.transcript-text').textContent } : { error: $('transcribe-error').textContent };
+  `);
+
+  await send('Runtime.enable');
+  await send('Page.navigate', { url: address.replace('127.0.0.1', 'localhost') });
+  await page(`await until(() => $('transcribe-options').children.length, 'the models');`);
+
+  // The tabs: each picker sits in the panel in view, and the transcribe panel has the detection model's, empty.
+  const tabs = await page(`
+    const where = (task) => document.querySelector('.picker-slot[data-task="' + task + '"] .picker')?.closest('.panel')?.id ?? null;
+    const seen = {};
+    for (const tab of ['speak', 'transcribe', 'live']) {
+      $('tab-' + tab).click();
+      seen[tab] = { recognition: where('recognition'), detection: where('detection'), synthesis: where('synthesis'), hidden: $(tab).hidden };
+    }
+    $('tab-transcribe').click();
+    const picker = document.querySelector('#transcribe .picker-slot[data-task="detection"] .picker');
+    return { seen, detection: picker.querySelector('.picker-name').textContent, hint: $('transcribe-detection-hint').textContent };
+  `);
+  if (tabs.seen.transcribe.recognition !== 'transcribe' || tabs.seen.live.recognition !== 'live' || tabs.seen.transcribe.detection !== 'transcribe'
+      || tabs.seen.speak.synthesis !== 'speak' || Object.values(tabs.seen).some((s) => s.hidden)) {
+    throw new Error(`the pickers did not follow the tabs: ${JSON.stringify(tabs.seen)}`);
+  }
+  if (tabs.detection !== 'None' || !/longer audio needs one/.test(tabs.hint)) throw new Error(`the detection picker without a model: ${JSON.stringify(tabs)}`);
+  console.log('tabs: the recognition picker in the transcribe and live panels, the detection picker in the transcribe panel, empty');
+
+  // Without a detection model: audio under a minute whole, as the API transcribes it; longer audio refused.
+  await choose(short);
+  const whole = await transcribe();
+  const wantWhole = await api(short);
+  if (whole.text !== wantWhole) throw new Error(`the page's text without a detection model, ${JSON.stringify(whole)}, is not the API's ${JSON.stringify(wantWhole)}`);
+  console.log(`transcribe without a detection model: ${(first.length / rate).toFixed(1)} s whole, the API's text: ${wantWhole.slice(0, 40)}`);
+  await choose(long);
+  const refused = await transcribe();
+  if (!/Without a detection model/.test(refused.error ?? '')) throw new Error(`audio over a minute without a detection model: ${JSON.stringify(refused)}`);
+  console.log(`transcribe without a detection model: ${(joined.length / rate).toFixed(1)} s refused, asking for one`);
+
+  // The detection model chosen in its picker, fetched already, and loaded in its place.
+  const loaded = await page(`
+    const picker = document.querySelector('#transcribe .picker-slot[data-task="detection"] .picker');
+    picker.querySelector('.picker-button').click();
+    const use = [...picker.querySelectorAll('.model')].find((m) => m.querySelector('.model-name').textContent === ${JSON.stringify(detection)})?.querySelector('.model-use');
+    if (!use) throw new Error('the detection picker does not list ${detection}');
+    use.click();
+    await until(() => picker.querySelector('.picker-name').textContent === ${JSON.stringify(detection)} && picker.querySelector('.picker-progress').hidden, 'the detection model');
+    return $('transcribe-detection-hint').textContent;
+  `);
+  if (!/a region at a time/.test(loaded)) throw new Error(`the hint with a detection model: ${loaded}`);
+  console.log(`the detection picker loaded ${detection}`);
+
+  // With it, the longer audio by its regions, as chunking_strategy "auto" gives it.
+  const regions = await transcribe();
+  const wantRegions = await api(long, { chunking_strategy: 'auto' });
+  if (regions.text !== wantRegions) throw new Error(`the page's text by regions, ${JSON.stringify(regions)}, is not the API's ${JSON.stringify(wantRegions)}`);
+  console.log(`transcribe with ${detection}: ${(joined.length / rate).toFixed(1)} s by its regions, the text of chunking_strategy "auto": ${wantRegions.slice(0, 40)}`);
+  if (errors.length) throw new Error(`the page threw: ${errors.join('; ')}`);
+  console.log('ok');
+} finally {
+  ws?.close();
+  for (const child of running.reverse()) child.stop();
+  await wait(500);
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+}

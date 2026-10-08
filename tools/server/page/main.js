@@ -1,6 +1,7 @@
 // The page of speech serve: takes the token from its address, asks the server for the catalog and the models it holds,
 // and shows a tab for each panel. A task has one model picker, which moves to the panel in view, so that the
-// transcribe and live panels show the same recognition model and the same progress of a load.
+// transcribe and live panels show the same recognition model and the same progress of a load. The transcribe panel
+// also shows the detection model, which finds the regions it transcribes.
 
 import * as api from './api.js';
 import { LivePanel } from './live.js';
@@ -10,7 +11,7 @@ import { Tabs } from './tabs.js';
 import { TranscribePanel } from './transcribe.js';
 
 const $ = (id) => document.getElementById(id);
-const TASKS = ['synthesis', 'recognition'];
+const TASKS = ['synthesis', 'recognition', 'detection'];
 
 /** How often the page asks again while a model of a task is being replaced by a load that another page started. */
 const WATCH_MS = 500;
@@ -24,7 +25,11 @@ const speak = new SpeakPanel((wav, label) => {
   transcribe.use(wav, label);
   tabs.select('transcribe');
 });
-const panels = { synthesis: [speak], recognition: [transcribe, new LivePanel((busy) => tabs.busy('live', busy))] };
+const panels = {
+  synthesis: [speak],
+  recognition: [transcribe, new LivePanel((busy) => tabs.busy('live', busy))],
+  detection: [{ show: (held) => transcribe.showDetection(held) }],
+};
 /** What each panel shows, so that a refresh that changes nothing leaves its fields alone. */
 const shown = {};
 let watching = 0;

@@ -254,11 +254,15 @@ the client reads as a broken transfer, and an SSE stream with `{"type":"error","
   as a WAVE file or hand it to Transcribe. For Irodori-TTS it makes a voice from a recording dropped on it or recorded in
   the browser.
 - Transcribe takes an audio file in any format the browser decodes, or a recording, and shows the text, the language
-  heard, the time it took and the segments.
+  heard, the time it took and the segments. A second picker there holds a detection model: with one, the audio is
+  transcribed by the regions where someone speaks (`chunking_strategy`); without one, audio up to a minute is
+  transcribed whole, and longer audio asks for one, since a FastConformer model loses sentences of a long stretch and
+  parakeet's memory grows with the square of its length.
 - Live transcribes the microphone while you speak. The text that can still change is shown in grey and updated as
   often as the model keeps up.
-- The page sends audio in pieces of at most 20 s, or as long as set, each cut at a pause, so that a recording or a file
-  of an hour or more needs no more of the server's memory than a minute does. The texts of the pieces are joined.
+- Transcribe sends a file whole, or, where it is larger than the server takes in a request, in pieces of about
+  12 minutes cut at a pause. Live sends what it records in pieces of at most 20 s, or as long as set, each cut at a
+  pause. The texts of the pieces are joined.
 - The page is built into `speech` and needs nothing from the network.
 
 The server prints the page's address, `http://127.0.0.1:8080/#token=…`, with a token that changes each time it starts;
