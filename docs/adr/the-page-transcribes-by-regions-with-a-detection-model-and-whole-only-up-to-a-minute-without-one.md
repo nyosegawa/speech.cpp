@@ -34,4 +34,4 @@ The alternatives were turned down:
 
 `tools/server_page_browser_smoke.mjs` drives the page in a headless Chrome: the pickers in the tabs, a short file whole
 with the API's text, a long file refused, the detection model chosen in its picker, and the long file then transcribed
-with the text of `chunking_strategy` "auto". The live panel keeps its pieces until it is rebuilt on the Realtime API.
+with the text of `chunking_strategy` "auto".

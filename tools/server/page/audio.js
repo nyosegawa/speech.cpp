@@ -27,13 +27,20 @@ export class Recorder {
   #context = null;
   #chunks = [];
 
+  #rate;
+
+  /** A recorder at `rate`, which the browser resamples the microphone to, or at the microphone's own rate. */
+  constructor(rate = undefined) {
+    this.#rate = rate;
+  }
+
   /** Starts recording; a failure lets go of what it took, so that the microphone is not left on without a recorder. */
   async start() {
     this.#stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     });
     try {
-      this.#context = new AudioContext();
+      this.#context = new AudioContext(this.#rate ? { sampleRate: this.#rate } : {});
       await this.#context.audioWorklet.addModule('/page/recorder-worklet.js');
       const node = new AudioWorkletNode(this.#context, 'recorder');
       this.#chunks = [];
@@ -47,7 +54,7 @@ export class Recorder {
     }
   }
 
-  /** The microphone's rate, at which every sample is recorded. */
+  /** The rate at which every sample is recorded. */
   get rate() {
     return this.#context.sampleRate;
   }

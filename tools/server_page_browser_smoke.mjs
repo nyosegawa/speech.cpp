@@ -1,9 +1,13 @@
 // Drives the page of speech serve in a headless Chrome as a person does, and fails on a defect: the tabs, with the model
 // pickers moving to the panel in view; the transcribe panel without a detection model, which transcribes audio up to a
 // minute whole, as the API does, and asks for one for longer audio; the detection model chosen in its picker and loaded
-// from the catalog; and longer audio then transcribed by its regions, giving the text chunking_strategy "auto" gives.
-// The audio is 16-bit WAVE made of the dumps of reference/fastconformer/dump.py or reference/qwen3-asr/dump.py. Chrome
-// is the one at $CHROME, or macOS's; the server and Chrome are stopped however the script ends.
+// from the catalog; longer audio then transcribed by its regions, giving the text chunking_strategy "auto" gives; and the
+// live panel, which waits for a detection model, transcribing a microphone that plays the dumps with pauses between
+// them over /v1/realtime with the pause set in its options: grey text while an utterance is said, and at the end a text
+// within a CER of 10% of the API's for the same audio and pause (the browser resamples the microphone to 24 kHz, so the
+// samples are not the file's). The audio is
+// 16-bit WAVE made of the dumps of reference/fastconformer/dump.py or reference/qwen3-asr/dump.py. Chrome is the one at
+// $CHROME, or macOS's; the server and Chrome are stopped however the script ends.
 // usage: node tools/server_page_browser_smoke.mjs <speech> <work dir> <recognition model> <detection model's catalog name> <dump folder>...
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -56,6 +60,19 @@ function readNpy(file) {
   return new Float32Array(body.buffer.slice(body.byteOffset, body.byteOffset + body.length));
 }
 
+/** The character error rate of `got` against `want`, both without punctuation, symbols or spaces after NFKC. */
+function cer(got, want) {
+  const plain = (text) => [...text.normalize('NFKC').toLowerCase().replace(/[\p{P}\p{S}\s]/gu, '')];
+  const a = plain(got), b = plain(want);
+  let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    row = next;
+  }
+  return row[b.length] / Math.max(1, b.length);
+}
+
 /** A WAVE file of one channel of 16-bit samples, as the page writes one. */
 function wav(samples, rate) {
   const out = Buffer.alloc(44 + 2 * samples.length);
@@ -83,6 +100,10 @@ try {
   const rate = 16000;
   const first = readNpy(path.join(dumps[0], 'audio.npy'));
   if (first.length > 50 * rate) throw new Error(`${dumps[0]} is longer than 50 s; give a shorter dump first`);
+  const once = [];
+  for (const d of dumps) once.push(readNpy(path.join(d, 'audio.npy')), new Float32Array(rate));
+  const spoken = new Float32Array(once.reduce((n, p) => n + p.length, 0));
+  once.reduce((at, p) => (spoken.set(p, at), at + p.length), 0);
   const parts = [];
   for (let n = 0; n < 75 * rate; ) {
     for (const d of dumps) {
@@ -98,6 +119,8 @@ try {
   const long = path.join(work, 'page-smoke-long.wav');
   fs.writeFileSync(short, wav(first, rate));
   fs.writeFileSync(long, wav(joined, rate));
+  const microphone = path.join(work, 'page-smoke-microphone.wav');
+  fs.writeFileSync(microphone, wav(spoken, rate));
 
   const server = start(speech, ['serve', recognition, '--port', String(await freePort())], { stdio: ['ignore', 'pipe', 'pipe'] });
   running.push(server);
@@ -129,6 +152,8 @@ try {
   const chrome = start(CHROME, [
     '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run',
     '--hide-scrollbars', '--lang=en-US', '--accept-lang=en-US', '--window-size=960,900',
+    // A click the script makes is no gesture of a person's, which an audio context needs to run.
+    '--autoplay-policy=no-user-gesture-required',
   ], { stdio: 'ignore' });
   running.push(chrome);
   const port = await racing((async () => {
@@ -200,7 +225,27 @@ try {
   await send('Runtime.enable');
   await send('Page.enable');
   // The page's transcription requests, each with the fields of its form other than the file.
+  // The microphone plays the dumps once, in real time, and then silence.
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `
+    navigator.mediaDevices.getUserMedia = async () => {
+      const bytes = Uint8Array.from(atob(${JSON.stringify(fs.readFileSync(microphone).toString('base64'))}), (c) => c.charCodeAt(0));
+      const context = new AudioContext();
+      const source = context.createBufferSource();
+      source.buffer = await context.decodeAudioData(bytes.buffer);
+      const out = context.createMediaStreamDestination();
+      source.connect(out);
+      source.start();
+      return out.stream;
+    };
+  ` });
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: `
+    window.__sessions = [];
+    const sent = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (data) {
+      const event = JSON.parse(data);
+      if (event.type === 'session.update') window.__sessions.push(event.session);
+      return sent.call(this, data);
+    };
     window.__transcriptions = [];
     const fetched = window.fetch;
     window.fetch = (url, init) => {
@@ -210,7 +255,13 @@ try {
       return fetched(url, init);
     };
   ` });
+  const pageLoaded = new Promise((resolve) => ws.addEventListener('message', (event) => {
+    if (JSON.parse(event.data).method === 'Page.loadEventFired') resolve();
+  }));
   await send('Page.navigate', { url: address.replace('127.0.0.1', 'localhost') });
+  // Page.navigate answers once the new document is committed, which can be before the page's modules have run and
+  // given the tabs their clicks; a click then is lost.
+  await racing(pageLoaded, running, 60000, 'the page to load');
   // A picker sits only in the panel in view.
   await page(`
     $('tab-transcribe').click();
@@ -227,13 +278,14 @@ try {
     }
     $('tab-transcribe').click();
     const picker = document.querySelector('#transcribe .picker-slot[data-task="detection"] .picker');
-    return { seen, empty: picker.querySelector('.picker-button').classList.contains('empty') };
+    return { seen, empty: picker.querySelector('.picker-button').classList.contains('empty'), liveStarts: !$('live-start').disabled };
   `);
   if (tabs.seen.transcribe.recognition !== 'transcribe' || tabs.seen.live.recognition !== 'live' || tabs.seen.transcribe.detection !== 'transcribe'
       || tabs.seen.speak.synthesis !== 'speak' || Object.values(tabs.seen).some((s) => s.hidden)) {
     throw new Error(`the pickers did not follow the tabs: ${JSON.stringify(tabs.seen)}`);
   }
   if (!tabs.empty) throw new Error('the detection picker shows a model the server does not hold');
+  if (tabs.liveStarts) throw new Error('the live panel starts without a detection model');
   console.log('tabs: the recognition picker in the transcribe and live panels, the detection picker in the transcribe panel, empty');
 
   // Without a detection model: audio under a minute whole, as the API transcribes it; longer audio refused.
@@ -269,6 +321,36 @@ try {
     throw new Error(`the page by regions: ${JSON.stringify(regions)}, where the API gives ${JSON.stringify(wantRegions)} with chunking_strategy "auto"`);
   }
   console.log(`transcribe with ${detection}: ${(joined.length / rate).toFixed(1)} s by its regions, the text of chunking_strategy "auto": ${wantRegions.slice(0, 40)}`);
+  // The live panel: the microphone transcribed as it plays, grey text while an utterance is said, then the whole text.
+  const live = await page(`
+    $('tab-live').click();
+    await until(() => !$('live-start').disabled, 'the live panel to start');
+    $('live-silence').value = '400';
+    $('live-silence').dispatchEvent(new Event('change'));
+    $('live-start').click();
+    const card = document.querySelector('#live-transcript .transcript');
+    let grey = 0;
+    const end = Date.now() + ${Math.ceil((spoken.length / rate) * 1000) + 2500};
+    while (Date.now() < end) {
+      if (!$('live-error').hidden) return { error: $('live-error').textContent };
+      if (card.querySelector('.provisional')?.textContent) grey++;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    $('live-start').click();
+    await until(() => !$('live-start').disabled && !$('live-status').textContent, 'the last words');
+    if (!$('live-error').hidden) return { error: $('live-error').textContent };
+    return {
+      text: card.querySelector('.transcript-text').textContent, grey, provisional: card.querySelector('.provisional')?.textContent ?? '',
+      // Stop's session.update changes nothing and carries no audio.
+      turns: window.__sessions.filter((s) => s.audio).map((s) => s.audio.input.turn_detection),
+    };
+  `);
+  const wantLive = await api(microphone, { 'chunking_strategy[type]': 'server_vad', 'chunking_strategy[silence_duration_ms]': '400' });
+  if (live.error || !live.grey || live.provisional || cer(live.text, wantLive) > 0.1
+      || JSON.stringify(live.turns) !== JSON.stringify([{ type: 'server_vad', silence_duration_ms: 400 }])) {
+    throw new Error(`the live panel: ${JSON.stringify(live)}, where the API gives ${JSON.stringify(wantLive)} for the same audio`);
+  }
+  console.log(`live: ${(spoken.length / rate).toFixed(1)} s from the microphone, grey text in ${live.grey} of its looks, CER ${(100 * cer(live.text, wantLive)).toFixed(1)}% against the API: ${live.text.slice(0, 40)}`);
   if (errors.length) throw new Error(`the page threw: ${errors.join('; ')}`);
   console.log('ok');
 } finally {

@@ -283,7 +283,7 @@ the client reads as a broken transfer, and an SSE stream with `{"type":"error","
 - Three tabs: Speak, Transcribe and Live. At the top of each, a picker lists the catalog's models of its task with
   their sizes, whether they are fetched and their languages. Picking one fetches it, with progress that can be
   cancelled and is resumed the next time, and loads it in place of the model of its task. Transcribe and Live use the
-  same recognition model.
+  same recognition model and the same detection model.
 - Speak takes a text and the model's options, plays the speech as the server streams it, and can play it again, save it
   as a WAVE file or hand it to Transcribe. For Irodori-TTS it makes a voice from a recording dropped on it or recorded in
   the browser.
@@ -292,11 +292,12 @@ the client reads as a broken transfer, and an SSE stream with `{"type":"error","
   transcribed by the regions where someone speaks (`chunking_strategy`); without one, audio up to a minute is
   transcribed whole, and longer audio asks for one, since a FastConformer model loses sentences of a long stretch and
   parakeet's memory grows with the square of its length.
-- Live transcribes the microphone while you speak. The text that can still change is shown in grey and updated as
-  often as the model keeps up.
+- Live transcribes the microphone while you speak, over `/v1/realtime` with `server_vad`, so it needs a detection model,
+  which a second picker holds as in Transcribe. The text of an utterance under way is shown in grey and grows as the
+  readings agree; once a pause ends the utterance, its final text replaces it. More options set that pause, 500 ms
+  unless changed.
 - Transcribe sends a file whole, or, where it is larger than the server takes in a request, in pieces of about
-  12 minutes cut at a pause. Live sends what it records in pieces of at most 20 s, or as long as set, each cut at a
-  pause. The texts of the pieces are joined.
+  12 minutes cut at a pause, whose texts are joined.
 - The page is built into `speech` and needs nothing from the network.
 
 The server prints the page's address, `http://127.0.0.1:8080/`. Other web pages cannot use it: the server refuses a
