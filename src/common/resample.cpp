@@ -80,31 +80,45 @@ Resampler::Resampler(int from_rate, int to_rate) {
     for (int j = 0; j < to_; j++) std::copy(phases[j].begin(), phases[j].end(), kernel_.begin() + (ptrdiff_t) j * taps_);
 }
 
-template <typename T>
-std::vector<T> Resampler::apply(const std::vector<float> & samples) const {
-    if (from_ == to_) return std::vector<T>(samples.begin(), samples.end());
-    const long long n = (long long) samples.size();
+size_t Resampler::length(long long n) const {
+    if (from_ == to_) return (size_t) n;
     // torchaudio rounds n · to / from to float32 (torch.as_tensor of a Python float) before its ceiling, which once
     // the output reaches about 2^24 / from samples is now and then one below the exact ceiling: 180697 samples from
     // 44100 Hz become 65559 at 16000 Hz, not 65560. Its length is kept so that the output is torchaudio's sample for
     // sample. Its convolution makes (n / from + 1) · to samples, of which it keeps that many.
-    const size_t length = std::min((size_t) std::ceil((float) ((double) n * to_ / from_)), (size_t) (n / from_ + 1) * to_);
-    std::vector<T> out(length);
-    const float * x = samples.data();
-    for (size_t m = 0; m < length; m++) {
-        const int phase = (int) (m % (size_t) to_);
-        const long long start = (long long) (m / (size_t) to_) * from_ + first_[phase] - width_;
-        const long long lo = std::max(0LL, -start), hi = std::min((long long) taps_, n - start);
-        const double * h = kernel_.data() + (size_t) phase * taps_;
-        // Four sums, so that the additions do not wait for each other.
-        double sum[4] = {0, 0, 0, 0};
-        long long r = lo;
-        for (; r + 4 <= hi; r += 4) {
-            for (int s = 0; s < 4; s++) sum[s] += h[r + s] * x[start + r + s];
-        }
-        for (; r < hi; r++) sum[0] += h[r] * x[start + r];
-        out[m] = (T) ((sum[0] + sum[1]) + (sum[2] + sum[3]));
+    return std::min((size_t) std::ceil((float) ((double) n * to_ / from_)), (size_t) (n / from_ + 1) * to_);
+}
+
+long long Resampler::needs(size_t m) const {
+    return (long long) (m / (size_t) to_) * from_ + first_[m % (size_t) to_] - width_ + taps_;
+}
+
+long long Resampler::keeps(size_t m) const {
+    return std::max(0LL, (long long) (m / (size_t) to_) * from_ - width_);
+}
+
+double Resampler::sample(size_t m, const float * x, long long first, long long n) const {
+    const int phase = (int) (m % (size_t) to_);
+    const long long start = (long long) (m / (size_t) to_) * from_ + first_[phase] - width_;
+    const long long lo = std::max(0LL, -start), hi = std::min((long long) taps_, n - start);
+    const double * h = kernel_.data() + (size_t) phase * taps_;
+    const long long at = start - first;
+    // Four sums, so that the additions do not wait for each other.
+    double sum[4] = {0, 0, 0, 0};
+    long long r = lo;
+    for (; r + 4 <= hi; r += 4) {
+        for (int s = 0; s < 4; s++) sum[s] += h[r + s] * x[at + r + s];
     }
+    for (; r < hi; r++) sum[0] += h[r] * x[at + r];
+    return (sum[0] + sum[1]) + (sum[2] + sum[3]);
+}
+
+template <typename T>
+std::vector<T> Resampler::apply(const std::vector<float> & samples) const {
+    if (from_ == to_) return std::vector<T>(samples.begin(), samples.end());
+    const long long n = (long long) samples.size();
+    std::vector<T> out(length(n));
+    for (size_t m = 0; m < out.size(); m++) out[m] = (T) sample(m, samples.data(), 0, n);
     return out;
 }
 
@@ -115,4 +129,33 @@ std::vector<float> Resampler::operator()(std::vector<float> samples) const {
 
 std::vector<double> Resampler::in_double(const std::vector<float> & samples) const {
     return apply<double>(samples);
+}
+
+ResampleStream::ResampleStream(int from_rate, int to_rate) : resampler_(from_rate, to_rate) {}
+
+void ResampleStream::push(const float * samples, size_t n, std::vector<float> & out) {
+    if (resampler_.unchanged()) {
+        out.insert(out.end(), samples, samples + n);
+        return;
+    }
+    input_.insert(input_.end(), samples, samples + n);
+    received_ += (long long) n;
+    // An output sample is final once its taps lie within the input received, and the output of the input so far, which
+    // never shrinks as the input grows, bounds the whole's.
+    const size_t ready = resampler_.length(received_);
+    for (; given_ < ready && resampler_.needs(given_) <= received_; given_++) {
+        out.push_back((float) resampler_.sample(given_, input_.data(), first_, received_));
+    }
+    const long long keep = std::min(resampler_.keeps(given_), received_);
+    if (keep > first_) {
+        input_.erase(input_.begin(), input_.begin() + (ptrdiff_t) (keep - first_));
+        first_ = keep;
+    }
+}
+
+void ResampleStream::end(std::vector<float> & out) {
+    if (resampler_.unchanged()) return;
+    for (const size_t length = resampler_.length(received_); given_ < length; given_++) {
+        out.push_back((float) resampler_.sample(given_, input_.data(), first_, received_));
+    }
 }

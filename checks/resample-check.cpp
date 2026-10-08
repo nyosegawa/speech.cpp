@@ -1,13 +1,17 @@
 // Checks the resampler against torchaudio.functional.resample() in float64 with librosa's kaiser_best parameters, on
 // the chirps and the noise of reference/resample/dump.py: each output has torchaudio's length and its samples, to what
-// double precision explains. Then checks that audio at the rate it is asked for passes through unchanged.
+// double precision explains. Each input given a piece at a time, in pieces of one sample, 10 ms and 100 ms and of random
+// sizes from a fixed seed, must give the whole input's float samples bit for bit. Then checks that audio at the rate it
+// is asked for passes through unchanged, whole and in pieces.
 //
 // usage: resample-check <reference/resample out dir>
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -16,6 +20,24 @@
 #include "compare.h"
 #include "npy.h"
 #include "resample.h"
+
+namespace {
+
+/** The samples at `to` Hz of `input` given in pieces of `size` samples, or of random sizes for 0. */
+std::vector<float> in_pieces(int from, int to, const std::vector<float> & input, size_t size) {
+    ResampleStream stream(from, to);
+    std::vector<float> out;
+    std::mt19937 draw(20261008);
+    for (size_t at = 0; at < input.size();) {
+        const size_t n = std::min(size ? size : 1 + (size_t) (draw() % 9600), input.size() - at);
+        stream.push(input.data() + at, n, out);
+        at += n;
+    }
+    stream.end(out);
+    return out;
+}
+
+}  // namespace
 
 int main(int argc, char ** argv) {
     const std::vector<std::string> args = utf8_args(argc, argv);
@@ -48,11 +70,21 @@ int main(int argc, char ** argv) {
             // of double precision summed in another order. The window's beta unrounded, where torchaudio rounds it to
             // float32, gives 154 dB, and taps rounded to float32 149 dB.
             ok = ok && got.size() == want.f64.size() && diff.snr_db > 250;
+
+            const std::vector<float> whole = Resampler(from, to)(input.f32);
+            bool same = true;
+            for (const size_t size : {(size_t) 1, (size_t) from / 100, (size_t) from / 10, (size_t) 0}) {
+                const std::vector<float> streamed = in_pieces(from, to, input.f32, size);
+                same = same && streamed.size() == whole.size() && std::memcmp(streamed.data(), whole.data(), whole.size() * sizeof(float)) == 0;
+            }
+            std::printf("  %-32s %s\n", "in pieces", same ? "the whole's samples" : "DIFFER");
+            ok = ok && same;
         }
         std::vector<float> same(48000);
         for (size_t i = 0; i < same.size(); i++) same[i] = (float) ((double) i / same.size() - 0.5);
         const bool unchanged = Resampler(48000, 48000)(same) == same && Resampler(16000, 16000).in_double(same) ==
-                                                                            std::vector<double>(same.begin(), same.end());
+                                                                            std::vector<double>(same.begin(), same.end()) &&
+                               in_pieces(16000, 16000, same, 0) == same;
         std::printf("equal rates: the samples %s\n", unchanged ? "unchanged" : "changed");
         return ok && unchanged ? 0 : 1;
     } catch (const std::exception & e) {
