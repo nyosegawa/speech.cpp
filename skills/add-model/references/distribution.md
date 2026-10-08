@@ -14,8 +14,8 @@
 
 ## The catalog
 
-`tools/models/catalog.json` lists, for each model, its name, repository, recommended type and the languages it is the
-one to start with; `python3 tools/models/update_catalog.py` fills in the revision, files, sizes, SHA-256 values, task
+`tools/catalog/catalog.json` lists, for each model, its name, repository, recommended type and the languages it is the
+one to start with; `python3 tools/catalog/update_catalog.py` fills in the revision, files, sizes, SHA-256 values, task
 and languages from Hugging Face and the `.json` beside each file. Run it after every upload, and review its diff like
 code: a release ships the files it was checked with.
 

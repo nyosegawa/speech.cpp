@@ -28,6 +28,6 @@ The alternatives were turned down:
 
 ## Consequences
 
-`tools/server_page_browser_smoke.mjs` runs the live panel with a microphone that plays the dumps with pauses between
-them: the panel waits for a detection model, sends the pause set in its options, shows grey text while an utterance is
-said, and ends with a text within a CER of 10% of the API's for the same audio and pause.
+`checks/smoke/server_page_browser_smoke.mjs` runs the live panel with a microphone that plays the dumps with pauses
+between them: the panel waits for a detection model, sends the pause set in its options, shows grey text while an
+utterance is said, and ends with a text within a CER of 10% of the API's for the same audio and pause.

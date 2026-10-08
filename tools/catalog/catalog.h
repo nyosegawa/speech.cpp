@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-// The catalog of the models a release fetches by name, read from tools/models/catalog.json as the build copies it into
+// The catalog of the models a release fetches by name, read from tools/catalog/catalog.json as the build copies it into
 // the executable: each model's name, its Hugging Face repository pinned at a revision, its files with their sizes and
 // SHA-256, its task and languages, and the languages it is the model to start with. A model argument is a path to a
 // GGUF file, or NAME[:TYPE], NAME being a model's name or its repository.

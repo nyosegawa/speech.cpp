@@ -1,7 +1,7 @@
 # Stage checks and their bounds
 
-Each ported stage has a check in `checks/` (`<family>-<stage>-check.cpp`) that starts from the dump's own inputs, so
-that a difference points to the stage that made it, not to everything before it.
+Each ported stage has a check in `checks/<family>/` (`<family>-<stage>-check.cpp`) that starts from the dump's own
+inputs, so that a difference points to the stage that made it, not to everything before it.
 
 ## What a check compares
 
@@ -33,8 +33,9 @@ numbers in the pull request's description instead.
 
 ## Bit-for-bit claims
 
-- A request without new options gives the previous release's float samples: `tools/same_audio.py <old lib> <model>
-  <new lib> <model> <prompts.json> --voice … --seeds …`, on Metal and on the CPU, and on Vulkan before the release.
+- A request without new options gives the previous release's float samples: `checks/compare/same_audio.py <old lib>
+  <model> <new lib> <model> <prompts.json> --voice … --seeds …`, on Metal and on the CPU, and on Vulkan before the
+  release.
 - A decoder that may be cut into windows of any size gives the samples of one whole decode, for several forced
   patterns, on every backend. A decoder that carries state between chunks (Qwen3-TTS's codec) does not, and keeps a
   fixed schedule.

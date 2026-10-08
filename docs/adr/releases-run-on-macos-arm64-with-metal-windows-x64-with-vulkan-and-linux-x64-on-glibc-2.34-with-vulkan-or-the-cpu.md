@@ -28,8 +28,8 @@ need glibc 2.34 and GCC 11's libstdc++ (`GLIBCXX_3.4.29`). GitHub retired its Ub
   newer than 2.34.
 - **On Linux the C++ runtime is linked into each file** (`-static-libstdc++ -static-libgcc`) and ggml's OpenMP is off,
   so that a file needs no shared library but glibc's and, in the Vulkan build, `libvulkan.so.1`. CI fails a file that
-  needs another one. `libspeech.so` carries its own libstdc++ hidden behind `src/speech.map`, which is safe because no
-  C++ type or exception crosses the C API.
+  needs another one. `libspeech.so` carries its own libstdc++ hidden behind `src/api/speech.map`, which is safe because
+  no C++ type or exception crosses the C API.
 - **No CUDA build is released.**
 
 The alternatives were turned down:

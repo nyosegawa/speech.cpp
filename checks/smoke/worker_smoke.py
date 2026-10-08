@@ -10,7 +10,7 @@ objects or have no id or type, the other task's messages); chunks to a synthesis
 Irodori-TTS a fixed length and the progress of a long sampler, for Qwen3-TTS max_seconds and the sampling options, and
 an instruction where the model takes one and its refusal where it does not. Writes the first answer to a WAV.
 
-usage: python3 tools/worker_smoke.py <out.wav> <speech> <model.gguf> [worker options...]
+usage: python3 checks/smoke/worker_smoke.py <out.wav> <speech> <model.gguf> [worker options...]
        A model that takes voice files needs --add-voice NAME=FILE, whose FILE add_voice adds again under another name.
 """
 

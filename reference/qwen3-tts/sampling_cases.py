@@ -1,5 +1,5 @@
 """Runs transformers' logits processors, as the official generate() builds them for the talker and the code predictor,
-on the logits of a dump of dump.py, and saves what they leave for sampler-check.
+on the logits of a dump of dump.py, and saves what they leave for qwen3-tts-sampler-check.
 
 usage: uv run python sampling_cases.py <model dir> <dump dir> <out dir>
 

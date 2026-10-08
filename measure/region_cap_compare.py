@@ -24,9 +24,9 @@ Last, `speech asr --vad` with its defaults on every recording is compared with t
 the longest region it gives. Everything it makes goes into the work folder, and a step that has its output there is not
 run again.
 
-usage: uv run --script tools/region_cap_compare.py <speech> <work dir> <FLEURS ja_jp test folder> <FLEURS ja_jp test.tsv>
-                                                   <Common Voice 8.0 ja test folder> <Common Voice 8.0 ja test.parquet>
-                                                   [--vad silero-vad] [--models reazonspeech-v2 parakeet-tdt_ctc-0.6b-ja qwen3-asr-0.6b]
+usage: uv run --script measure/region_cap_compare.py <speech> <work dir> <FLEURS ja_jp test folder> <FLEURS ja_jp test.tsv>
+                                                     <Common Voice 8.0 ja test folder> <Common Voice 8.0 ja test.parquet>
+                                                     [--vad silero-vad] [--models reazonspeech-v2 parakeet-tdt_ctc-0.6b-ja qwen3-asr-0.6b]
 """
 
 import array
@@ -41,7 +41,7 @@ import unicodedata
 
 import pyarrow.parquet
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "checks", "smoke"))
 from worker_client import joined_transcript  # noqa: E402
 
 RATE = 16000

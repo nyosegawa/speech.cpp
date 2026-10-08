@@ -20,10 +20,10 @@ never deleted or moved: callers such as ASIST pin the archives by SHA-256.
 A file changes when its family's layout changes, a type is added, or a checkpoint is converted again.
 
 1. Make the files: `reference/<family>/convert.py` writes F32 and `speech quantize F32.gguf OUT --type <type>` the
-   other types; `tools/quantize_compare.py` shows that an unchanged file comes out byte for byte. Check each with the
-   family's stage checks and `speech-api-check`. Before a type is published for the first time,
-   `tools/quantize_releases.py` with the previous release's `speech` shows that each file's `speech.requires` names a
-   release that reads it.
+   other types; `checks/compare/quantize_compare.py` shows that an unchanged file comes out byte for byte. Check each
+   with the family's stage checks and `speech-api-check`. Before a type is published for the first time,
+   `checks/compare/quantize_releases.py` with the previous release's `speech` shows that each file's `speech.requires`
+   names a release that reads it.
 2. Write each file's information beside it: `speech info --json <file> > <file>.json`.
 3. Write the card, as references/model-card.md says.
 4. **Only with the maintainer's approval**, upload the file, its JSON and the card to the model's repository in one
@@ -40,7 +40,7 @@ go up only with their measured accuracy in the card, and never as the type a nam
 
 ## 3. The catalog
 
-`python3 tools/models/update_catalog.py` pins every model at its repository's current revision. Review the diff: each
+`python3 tools/catalog/update_catalog.py` pins every model at its repository's current revision. Review the diff: each
 changed revision must be one you uploaded on purpose. Build, and check that `speech pull` fetches each changed file and
 the model loads. The catalog's update is a pull request of its own, or part of the version's.
 

@@ -1,4 +1,4 @@
-"""Checks models by name: the catalog built into `speech` against tools/models/catalog.json, `speech models` in text
+"""Checks models by name: the catalog built into `speech` against tools/catalog/catalog.json, `speech models` in text
 and JSON, `speech pull`, `speech rm` and a subcommand given a name, in a model folder of its own (SPEECH_MODEL_DIR).
 
 It refuses what it should: a subcommand given no model (exit 2, naming the models to start with of its task, and for
@@ -18,7 +18,7 @@ one of the catalog's files, given as LOCAL.gguf and found by its size and SHA-25
   removes it and leaves the catalog's file, and files outside the folders a fetch makes, which are not old;
   `speech rm NAME` removes the file and the folders it leaves empty.
 
-usage: python3 tools/models_smoke.py <speech> <work dir> <LOCAL.gguf>
+usage: python3 checks/smoke/models_smoke.py <speech> <work dir> <LOCAL.gguf>
 """
 
 import hashlib
@@ -78,7 +78,7 @@ def write_part(path, size, first=None):
 
 
 listing = json.loads(run("models", "--json").stdout)
-with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "catalog.json"), encoding="utf-8") as f:
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tools", "catalog", "catalog.json"), encoding="utf-8") as f:
     committed = json.load(f)["models"]
 assert listing["directory"] == folder, listing["directory"]
 assert listing["old"] == [], listing["old"]

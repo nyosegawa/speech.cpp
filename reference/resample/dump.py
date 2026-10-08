@@ -1,5 +1,5 @@
 """Resamples a chirp and white noise with torchaudio in float64, with the parameters torchaudio's documentation gives
-for librosa's kaiser_best, and saves what checks/resample-check.cpp compares speech.cpp's resampler with.
+for librosa's kaiser_best, and saves what checks/common/resample-check.cpp compares speech.cpp's resampler with.
 
 usage: uv run python dump.py <out dir>
 

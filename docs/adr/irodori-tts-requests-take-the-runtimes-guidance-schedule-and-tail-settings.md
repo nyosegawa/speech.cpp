@@ -49,9 +49,9 @@ the runtime's default path that the port runs.
   each is a take of the same distribution, though not the runtime's candidates, as no seed of speech.cpp's generator
   gives the runtime's noise. The bounds stay the model's, from its file, past which speech.cpp refuses.
 - **A request that sets none of these options runs the runtime's default path**, on every device: each default builds
-  the graph and the order of float32 operations of a request without the option, which `tools/same_audio.py` shows by
-  comparing the callback's samples of two builds bit for bit. The noise of `speaker_uncond_mode` `noise` comes after the
-  latent's from the request's seed, so that the latent's noise stays the seed's.
+  the graph and the order of float32 operations of a request without the option, which `checks/compare/same_audio.py`
+  shows by comparing the callback's samples of two builds bit for bit. The noise of `speaker_uncond_mode` `noise` comes
+  after the latent's from the request's seed, so that the latent's noise stays the seed's.
 
 The alternatives were turned down:
 

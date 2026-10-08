@@ -15,7 +15,7 @@ file; a session.update to turn_detection server_vad, after which the same PCM fo
 speech vad finds speech, joined into the text of chunking_strategy "auto"; an error event for semantic_vad; and
 input_audio_buffer.cleared.
 
-usage: uv run --script tools/server_openai_smoke.py <speech> <recognition.gguf> <detection.gguf> <dump folder>
+usage: uv run --script checks/smoke/server_openai_smoke.py <speech> <recognition.gguf> <detection.gguf> <dump folder>
 """
 
 import array

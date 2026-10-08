@@ -13,7 +13,7 @@ values together and of the model's activations.
 ## Decision
 
 - **The audio of every synthesis passes one check on its way to the caller**: `RequestRun::audio()` in
-  `src/request.cpp`, through which every family passes its audio, refuses a sample that is not finite before the
+  `src/api/request.cpp`, through which every family passes its audio, refuses a sample that is not finite before the
   callback sees it, so no family returns such audio as speech, a family added later included.
 - **The request fails with SPEECH_ERROR_OUT_OF_RANGE, naming no option.** The model takes each value but not the values
   together, which is the category's meaning, where SPEECH_ERROR_INVALID_ARGUMENT is the caller's mistake of form and

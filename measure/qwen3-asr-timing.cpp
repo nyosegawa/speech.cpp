@@ -3,7 +3,7 @@
 // the encoder, the prefill (the decoder's input and its prompt) and the decoding, and of the decoding's steps per
 // second, a step being a token fed back to the decoder, as llama.cpp's llama-server counts them. One recognition of the
 // first dump goes first, untimed, so that the times leave out the compilation of a GPU's kernels. It prints one JSON
-// object per line; checks/llama-server-timing.py prints the same of llama.cpp's server.
+// object per line; measure/llama-server-timing.py prints the same of llama.cpp's server.
 //
 // usage: qwen3-asr-timing <model.gguf> <gpu|cpu|device name> <runs> <dump dir>...
 

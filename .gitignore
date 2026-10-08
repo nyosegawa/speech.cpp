@@ -1,4 +1,4 @@
-build/
+build*/
 /models/
 reference/*/out/
 .venv/

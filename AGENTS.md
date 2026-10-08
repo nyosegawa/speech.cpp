@@ -18,14 +18,15 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   crossing it. The API has two versions: a change an existing caller notices raises `SPEECH_API_VERSION_MAJOR`,
   which is the shared library's SOVERSION, and an added function, option or enum value raises
   `SPEECH_API_VERSION_MINOR`.
-- `src/speech.cpp`, `src/info.cpp`, `src/request.cpp` and `src/voice.cpp` implement the C API over `src/engine.h`,
-  the interface of one family behind it, with one engine per family (`src/<family>-engine.cpp`). An engine declares
-  in one table the request options its family takes, with their defaults and ranges read from the model file, and
-  turns a request checked against that table into the family's; the setters, the model information and its JSON read
-  the table and nothing else. One table in `src/speech.cpp` lists the families: their task (synthesis,
-  recognition or detection), the layout their reader takes, which names the `general.architecture` of their files, their engine
-  and, for a family that takes voice files, how it makes one. `speech_model_load()` and `speech_model_info_open()` choose the family from
-  the table, and adding a family is adding its line.
+- In `src/api/`, `speech.cpp`, `info.cpp`, `request.cpp` and `voice.cpp` implement the C API over
+  `src/engines/engine.h`, the interface of one family behind it, with one engine per family
+  (`src/engines/<family>-engine.cpp`). An engine declares in one table the request options its family takes, with their
+  defaults and ranges read from the model file, and turns a request checked against that table into the family's; the
+  setters, the model information and its JSON read the table and nothing else. One table in `src/api/speech.cpp` lists
+  the families: their task (synthesis, recognition or detection), the layout their reader takes, which names the
+  `general.architecture` of their files, their engine and, for a family that takes voice files, how it makes one.
+  `speech_model_load()` and `speech_model_info_open()` choose the family from the table, and adding a family is adding
+  its line.
 - `src/families/<family>/` holds the code of one architecture, whichever weights it is given: `qwen3-tts/`
   runs Qwen3-TTS 0.6B and 1.7B. A family reads its model's one GGUF file, its codec included, and turns text into
   audio, or audio into text or into the regions where someone speaks; it knows nothing of the C API, the worker protocol or the command line. Its
@@ -42,20 +43,26 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   `tts` and `serve` share (`sentences.cpp`), the assembly of utterances from audio that arrives while someone speaks
   (`utterances.cpp`), which `asr -`, `asr --live` and the server's Realtime sessions run, and OpenAI's Realtime server
   events (`realtime-events.cpp`), which they all write. Every subcommand reaches the models only through the
-  C API. `tools/models/` names models: the catalog of the release (`catalog.json`, which `update_catalog.py` writes
+  C API. `tools/catalog/` names models: the catalog of the release (`catalog.json`, which `update_catalog.py` writes
   from Hugging Face and the build compiles in), the cache folder, and the fetching of a named model with the system's
   curl, which `models`, `pull` and `rm` and every subcommand that takes a model share; the library never reaches the
   network. The worker's protocol is JSON Lines, one JSON object per line on stdin and
   stdout, and is the contract of every program that starts it, ASIST among them: stdout carries the protocol and
   nothing else, every log goes to stderr, and every request gets exactly one terminal message. Its `ready` message
   carries the protocol's version, the release and the model's information.
-- `checks/` holds one check per ported stage (`*-check.cpp`) that compares the stage with the reference
-  dumps, and `speech-api-check`, which runs the C API through the shared library with a synthesis model, Irodori-TTS's
-  own rules and voice files in `speech-api-irodori.c`, with `transcribe`, with a recognition model
-  (`speech-api-recognition.c`), and with `detect`, with a detection model (`speech-api-detection.c`, and detections of
-  audio given a piece at a time in `speech-api-detection-stream.c`), what they share in `speech-api-common.c` and what
-  differs by the operating system in `speech-api-platform.c`. Checks reach into `src/` for the stage they check; they are
-  built but not released.
+- `checks/` holds one check per ported stage (`*-check.cpp`) that compares the stage with the reference dumps, a
+  family's in `checks/<family>/` and those of `src/common/` in `checks/common/`, with the headers they share at the top
+  of `checks/`, and, in `checks/api/`, `speech-api-check`, which runs the C API through the shared library with a
+  synthesis model, Irodori-TTS's own rules and voice files in `speech-api-irodori.c`, with `transcribe`, with a
+  recognition model (`speech-api-recognition.c`), and with `detect`, with a detection model (`speech-api-detection.c`,
+  and detections of audio given a piece at a time in `speech-api-detection-stream.c`), what they share in
+  `speech-api-common.c` and what differs by the operating system in `speech-api-platform.c`. Checks reach into `src/`
+  for the stage they check; they are built but not released. `checks/compare/` holds the scripts that compare two builds
+  or releases: the audio of the same requests bit for bit (`same_audio.py`), the files `speech quantize` makes with the
+  converters' (`quantize_compare.py`) and the first release that reads each (`quantize_releases.py`).
+- `measure/` holds what measures and passes or fails nothing: the times of Qwen3-ASR's stages (`qwen3-asr-timing.cpp`,
+  built with the checks), of llama.cpp's llama-server on the same audio and of Irodori-TTS with and without a caption,
+  and the accuracy of each longest region of transcription by regions (`region_cap_compare.py`).
 - `tools/server/` holds `speech serve`, which serves a synthesis, a recognition and a detection model over HTTP with
   OpenAI's audio API (`POST /v1/audio/speech`, `POST /v1/audio/transcriptions`, `GET /v1/models`, `GET /health`)
   and OpenAI's Realtime transcription over a WebSocket at `/v1/realtime`, for programs that speak HTTP. Like the worker
@@ -68,7 +75,7 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   `served-models.cpp` holds one model of each task and replaces it once its requests have ended. `page/` is the page
   of `speech serve --open`, plain HTML, CSS and JavaScript modules compiled into `speech`, which `page.cpp` serves
   with the endpoints that fetch and load models; `access.cpp` guards them with the Host and the Origin.
-- The smoke scripts in `tools/` drive each entry point as its caller does and fail on a defect:
+- The smoke scripts in `checks/smoke/` drive each entry point as its caller does and fail on a defect:
   `worker_smoke.py` and `worker_recognition_smoke.py` the worker protocol through `worker_client.py`, which checks
   every line and one terminal message per request, `server_smoke.py` every HTTP endpoint and the mapping of errors,
   `server_realtime_smoke.py` the Realtime sessions of `/v1/realtime` and `server_page_smoke.py` the page's endpoints and
@@ -183,12 +190,12 @@ comment.
 
 - Build with `cmake -B build && cmake --build build -j`, and run the checks the change touches before
   committing code. A change to the C API or the worker also runs `speech-api-check` and
-  `tools/worker_smoke.py` for both synthesis families, and `speech-api-check transcribe` and
-  `tools/worker_recognition_smoke.py` for both recognition families, and `speech-api-check detect` with Silero VAD; a
-  change to the server runs
-  `tools/server_smoke.py`, `tools/server_realtime_smoke.py` and `tools/server_page_smoke.py`, one to the page
-  `tools/server_page_browser_smoke.mjs`, one to the command line or the parser
-  `tools/speech_cli_smoke.py`, with a model of each family, and one to `tools/models/` `tools/models_smoke.py`.
+  `checks/smoke/worker_smoke.py` for both synthesis families, and `speech-api-check transcribe` and
+  `checks/smoke/worker_recognition_smoke.py` for both recognition families, and `speech-api-check detect` with Silero
+  VAD; a change to the server runs `checks/smoke/server_smoke.py`, `checks/smoke/server_realtime_smoke.py` and
+  `checks/smoke/server_page_smoke.py`, one to the page `checks/smoke/server_page_browser_smoke.mjs`, one to the command
+  line or the parser `checks/smoke/speech_cli_smoke.py`, with a model of each family, and one to `tools/catalog/`
+  `checks/smoke/models_smoke.py`.
 - Never commit on main. Every change reaches main through a pull request, one coherent unit each: a
   model's stage, a fix, a refactor or a documentation change.
 - Commit messages and pull request titles are one English sentence in the imperative, without a prefix

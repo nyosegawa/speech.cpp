@@ -35,8 +35,9 @@ names keys, files and layouts.
 - `src/families/<family>/` reads one GGUF file through its `layout.cpp`, which says every key, every tensor and the
   types each tensor may take. A layout change raises `speech.layout`, adds the release that reads it, and brings the
   previous layout up in the family's one upgrade function, so that no user downloads a file again.
-- The engine (`src/<family>-engine.cpp`) declares the options the model takes, with defaults and ranges read from the
-  file. An option without effect, or a value the model cannot compute, is refused with the option named, never ignored.
+- The engine (`src/engines/<family>-engine.cpp`) declares the options the model takes, with defaults and ranges read
+  from the file. An option without effect, or a value the model cannot compute, is refused with the option named, never
+  ignored.
 
 ## 4. Checks
 
@@ -46,7 +47,7 @@ arguments, and each `dump.py` and `convert.py` says its own at the top.
 - Each stage from the dump's own inputs, on the CPU in F32 to a tight bound, on Metal, and on Vulkan (windows-check).
   Tokens and text compare exactly; tensors compare by SNR.
 - **Unchanged behaviour:** a request that sets none of the new options gives the previous release's float samples bit
-  for bit (`tools/same_audio.py`), or the difference is measured and written down. The same seed gives the same
+  for bit (`checks/compare/same_audio.py`), or the difference is measured and written down. The same seed gives the same
   output. A computation may follow the machine's speed (window or chunk sizes) only where every size gives the same
   samples, shown bit for bit on every backend.
 - A check that fails without your change, wherever one can be written.
@@ -67,7 +68,7 @@ that speech.cpp does not; references/recognition.md for decoding, prompts, langu
 
 Read references/distribution.md. In short: one `sakasegawa/<Upstream>-GGUF` repository per upstream model with a card
 and the `speech info --json` of each file beside it, uploaded only when the maintainer approves; then
-`python3 tools/models/update_catalog.py`; then speech-bench's catalog and a measurement against the official
+`python3 tools/catalog/update_catalog.py`; then speech-bench's catalog and a measurement against the official
 implementation and the other runtimes on the same day, on a quiet machine.
 
 ## 8. Finishing

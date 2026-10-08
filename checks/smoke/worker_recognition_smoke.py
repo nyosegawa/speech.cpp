@@ -19,7 +19,7 @@ when stdin closes.
 The audio goes as 16-bit samples, which move the near-silent input of reference/qwen3-asr/dump.py far enough to change
 the text a forced language makes of it; leave that dump out.
 
-usage: python3 tools/worker_recognition_smoke.py <speech> <model.gguf> <dump folder>... [-- worker options...]
+usage: python3 checks/smoke/worker_recognition_smoke.py <speech> <model.gguf> <dump folder>... [-- worker options...]
 """
 
 import array

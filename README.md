@@ -7,9 +7,10 @@ on [ggml](https://github.com/ggml-org/ggml), behind one C API, on the CPU, Metal
 [C API](docs/c-api.md)
 
 It is one command, `speech`, and one shared library, `libspeech`. The command speaks text, writes the text of
-recordings, finds where someone speaks in them, serves OpenAI's audio API over HTTP, and runs the worker process that
-[ASIST](https://github.com/nyosegawa/asist) starts. Every stage of every model is checked against the model's official
-implementation.
+recordings, finds where someone speaks in them, transcribes the microphone as someone speaks (`speech asr --live`),
+serves OpenAI's audio API and its Realtime transcription over HTTP, and runs a worker process for any program that keeps
+models loaded between requests, [ASIST](https://github.com/nyosegawa/asist) among them. Every stage of every model is
+checked against the model's official implementation.
 
 ## Models
 

@@ -17,7 +17,7 @@ convolution kernels through `ggml_im2col()`, and FastConformer's through `ggml_c
 (each backend's `supports_op`).
 
 On the nine released models, ggml's Q8_0 and F16 are gguf-py's on every tensor, and `speech quantize` of each F32 file
-writes the released F16 and Q8_0 files byte for byte (`tools/quantize_compare.py`, 2026-10-08).
+writes the released F16 and Q8_0 files byte for byte (`checks/compare/quantize_compare.py`, 2026-10-08).
 
 ## Decision
 

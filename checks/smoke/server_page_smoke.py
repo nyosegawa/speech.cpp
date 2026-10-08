@@ -34,8 +34,8 @@ folder of the script's own (SPEECH_MODEL_DIR), so that loading one by its name f
 - a server on 0.0.0.0, which has no page and answers its endpoints with how to reach them (on Windows its firewall may
   ask about it).
 
-usage: python3 tools/server_page_smoke.py <speech> <work dir> <synthesis.gguf with voices of its own> <recognition.gguf> <third model.gguf>
-                                          [detection.gguf]
+usage: python3 checks/smoke/server_page_smoke.py <speech> <work dir> <synthesis.gguf with voices of its own> <recognition.gguf> <third model.gguf>
+                                                 [detection.gguf]
 """
 
 import array

@@ -7,9 +7,9 @@ namespace {
 
 /**
  * The longest region, in seconds, that transcription by regions gives a recognizer. On 106 minutes of FLEURS and Common
- * Voice ja joined into recordings (tools/region_cap_compare.py, Apple M5, Metal, 2026-10-08), 10 s gave the lowest CER
- * on average over reazonspeech-nemo-v2, parakeet-tdt_ctc-0.6b-ja and Qwen3-ASR 0.6B: longer regions let the FastConformer
- * models drop more sentences, and shorter ones cost Qwen3-ASR the context it reads them with.
+ * Voice ja joined into recordings (measure/region_cap_compare.py, Apple M5, Metal, 2026-10-08), 10 s gave the lowest
+ * CER on average over reazonspeech-nemo-v2, parakeet-tdt_ctc-0.6b-ja and Qwen3-ASR 0.6B: longer regions let the
+ * FastConformer models drop more sentences, and shorter ones cost Qwen3-ASR the context it reads them with.
  */
 constexpr double kLongestRegion = 10;
 

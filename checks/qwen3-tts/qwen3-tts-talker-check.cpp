@@ -14,7 +14,7 @@
 // of an Apple M5, and the prompt by 1.2e-6 on the CPU and 7.8e-5 on Metal, for the 1.7B model with and without an
 // instruction (2026-10-07).
 //
-// usage: talker-check <model.gguf> <reference dir> [gpu|cpu]
+// usage: qwen3-tts-talker-check <model.gguf> <reference dir> [gpu|cpu]
 
 #include <algorithm>
 #include <cmath>

@@ -10,7 +10,7 @@
 // repetition penalty that takes a logit beyond a float is refused, naming the option, by a greedy pick as by a draw:
 // an argmax among infinite logits takes the first of them rather than the largest.
 //
-// usage: sampler-check <qwen3-tts model.gguf> <sampling cases dir>
+// usage: qwen3-tts-sampler-check <qwen3-tts model.gguf> <sampling cases dir>
 
 #include <algorithm>
 #include <cmath>

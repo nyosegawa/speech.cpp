@@ -30,9 +30,9 @@ each region holding its samples as 16-bit PCM, named so that they sort in order,
 name and of a file named as another's region in the folder, left as it was; and `speech asr` of the detection model with
 --vad, refused on a file without speech.
 
-usage: python3 tools/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav]
-                                         [--embedding E.speaker.safetensors] [--vad DETECTION.gguf] [--asr RECOGNITION.gguf]
-                                         [-- load options...]
+usage: python3 checks/smoke/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav]
+                                                [--embedding E.speaker.safetensors] [--vad DETECTION.gguf] [--asr RECOGNITION.gguf]
+                                                [-- load options...]
 """
 
 import array

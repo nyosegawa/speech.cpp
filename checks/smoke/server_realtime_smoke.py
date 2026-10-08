@@ -15,7 +15,7 @@ joined into the text of chunking_strategy with the same values; deltas of an utt
 commit; a commit and a clear while speech is under way; minutes of silence held within the bound; and server_vad's
 refusals, on a server without a detection model too.
 
-usage: python3 tools/server_realtime_smoke.py <speech> <recognition.gguf> <detection.gguf> <dump folder>... [-- serve options...]
+usage: python3 checks/smoke/server_realtime_smoke.py <speech> <recognition.gguf> <detection.gguf> <dump folder>... [-- serve options...]
 """
 
 import array

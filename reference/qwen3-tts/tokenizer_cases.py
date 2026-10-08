@@ -1,5 +1,5 @@
-"""Writes tokenizer cases for checks/tokenizer-check from the model's own tokenizer.json, which transformers builds
-from a Qwen3-TTS or Qwen3-ASR checkpoint.
+"""Writes tokenizer cases for checks/common/tokenizer-check from the model's own tokenizer.json, which transformers
+builds from a Qwen3-TTS or Qwen3-ASR checkpoint.
 
 The encoding cases are one line per text: the text's UTF-8 in hex, a tab, and the ids the tokenizer gives the text as
 it is, which its normalizer brings to NFC first. The decoding cases are one line per sequence of ids: the ids, a tab,

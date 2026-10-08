@@ -54,6 +54,6 @@ The alternatives were turned down:
 
 ## Consequences
 
-`codec-check` compares Qwen3-TTS's decode in chunks with the whole decode as an SNR. A machine that makes frames more
-slowly than the measured ones can still run a player dry, which then buffers. Irodori-TTS's windows of one request
-depend on the machine and its load, and its samples do not.
+`qwen3-tts-codec-check` compares Qwen3-TTS's decode in chunks with the whole decode as an SNR. A machine that makes
+frames more slowly than the measured ones can still run a player dry, which then buffers. Irodori-TTS's windows of one
+request depend on the machine and its load, and its samples do not.

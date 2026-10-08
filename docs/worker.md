@@ -137,4 +137,4 @@ in  {"type":"transcribe","id":"r","sample_rate":16000}
 out {"type":"end","id":"r","text":"群島や湖では必ずしもヨットは必要ありません。","stop":"complete"}
 ```
 
-`tools/worker_client.py` is a client in Python that checks every line and one terminal message per request.
+`checks/smoke/worker_client.py` is a client in Python that checks every line and one terminal message per request.
