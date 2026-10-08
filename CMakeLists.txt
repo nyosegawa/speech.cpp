@@ -192,13 +192,18 @@ string(APPEND SPEECH_PAGE_SOURCE "extern const PageFile speech_page_files[] = {\
 file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/page-files.cpp CONTENT "@SPEECH_PAGE_SOURCE@" @ONLY)
 
 # Every program on the library is one executable, speech, with a subcommand each, the library and
-# ggml linked in. The target is speech-cli since the shared library holds the name speech. It has the one dependency
-# besides ggml, cpp-httplib's single header for `speech serve`, vendored in vendor/cpp-httplib from
-# yhirose/cpp-httplib at commit cf3693cb5cc0d39b0e6f4122ba89bda9edb5ac6b (v0.59.0), with its license.
+# ggml linked in. The target is speech-cli since the shared library holds the name speech. It has two dependencies
+# besides ggml, each a single header vendored with its license: cpp-httplib for `speech serve`, in vendor/cpp-httplib from
+# yhirose/cpp-httplib at commit cf3693cb5cc0d39b0e6f4122ba89bda9edb5ac6b (v0.59.0), and miniaudio for the microphone of
+# `speech asr --live`, in vendor/miniaudio from mackron/miniaudio at commit 9634bedb5b5a2ca38c1ee7108a9358a4e233f14d
+# (v0.11.25).
 add_executable(speech-cli
     tools/cli/main.cpp
     tools/cli/tts.cpp
     tools/cli/asr.cpp
+    tools/cli/asr-stream.cpp
+    tools/cli/microphone.cpp
+    tools/cli/miniaudio.c
     tools/cli/vad.cpp
     tools/cli/model.cpp
     tools/cli/models.cpp
@@ -213,10 +218,12 @@ add_executable(speech-cli
     tools/common/json-reader.cpp
     tools/common/request-options.cpp
     tools/common/openai-error.cpp
+    tools/common/realtime-events.cpp
     tools/common/realtime-session.cpp
     tools/common/regions.cpp
     tools/common/sentences.cpp
     tools/common/transcript.cpp
+    tools/common/utterances.cpp
     tools/worker/worker.cpp
     tools/worker/inbox.cpp
     tools/server/server.cpp
@@ -228,8 +235,21 @@ add_executable(speech-cli
     tools/server/realtime.cpp
 )
 set_target_properties(speech-cli PROPERTIES OUTPUT_NAME speech)
-target_include_directories(speech-cli PRIVATE tools/common tools/cli tools/models tools/server vendor/cpp-httplib)
+target_include_directories(speech-cli PRIVATE tools/common tools/cli tools/models tools/server vendor/cpp-httplib vendor/miniaudio)
 target_link_libraries(speech-cli PRIVATE speech-static)
+# miniaudio captures audio and nothing else, so that its decoders, encoders and engine stay out of speech, and without its
+# null backend, which opens "NULL Capture Device" when no real one does and gives silence, where speech asr --live is to
+# say that the microphone did not open. On macOS it links the system's audio frameworks; elsewhere it loads the system's
+# audio library when the microphone opens, so that no build needs the development packages of ALSA or PulseAudio and a
+# Linux release needs no audio library to start.
+target_compile_definitions(speech-cli PRIVATE MA_NO_DECODING MA_NO_ENCODING MA_NO_GENERATION MA_NO_ENGINE MA_NO_NODE_GRAPH
+                           MA_NO_RESOURCE_MANAGER MA_NO_NULL)
+if (APPLE)
+    target_compile_definitions(speech-cli PRIVATE MA_NO_RUNTIME_LINKING)
+    target_link_libraries(speech-cli PRIVATE "-framework CoreFoundation" "-framework CoreAudio" "-framework AudioToolbox")
+elseif (UNIX)
+    target_link_libraries(speech-cli PRIVATE ${CMAKE_DL_LIBS})
+endif()
 if (WIN32)
     target_compile_definitions(speech-cli PRIVATE NOMINMAX)
     target_link_libraries(speech-cli PRIVATE ws2_32)

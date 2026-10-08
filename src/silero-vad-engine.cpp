@@ -52,10 +52,10 @@ public:
 
     const std::vector<TimedText> & regions() const override { return regions_; }
 
-    std::optional<double> open() const override {
-        const std::optional<int64_t> start = rule_.open();
-        if (!start) return std::nullopt;
-        return (double) *start / sample_rate_;
+    std::optional<Begun> open() const override {
+        const std::optional<silero_vad::Begun> begun = rule_.open();
+        if (!begun) return std::nullopt;
+        return Begun{(double) begun->start / sample_rate_, begun->kept};
     }
 
 private:

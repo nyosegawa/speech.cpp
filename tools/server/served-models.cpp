@@ -37,9 +37,13 @@ ServedModels::ServedModels(Loading loading) : loading_(std::move(loading)) {
     loading_.voices.clear();
 }
 
+Loading ServedModels::loading_of(speech_task task) const {
+    return task == SPEECH_TASK_DETECTION ? detection_loading(loading_) : loading_;
+}
+
 void ServedModels::load_given(const std::string & path, const std::string & catalog_name) {
-    auto served = std::make_shared<Served>(load_model(path, loading_), path, catalog_name);
-    const speech_task task = speech_model_info_task(served->info().get());
+    const speech_task task = speech_model_info_task(file_info(path).get());
+    auto served = std::make_shared<Served>(load_model(path, loading_of(task)), path, catalog_name);
     std::lock_guard<std::mutex> lock(mutex_);
     Place & p = place(task);
     if (p.model) {
@@ -96,7 +100,7 @@ std::shared_ptr<Served> ServedModels::replace(speech_task task, const std::strin
     while (!old.expired()) std::this_thread::sleep_for(std::chrono::milliseconds(50));
     std::shared_ptr<Served> served;
     try {
-        served = std::make_shared<Served>(load_model(path, loading_), path, name);
+        served = std::make_shared<Served>(load_model(path, loading_of(task)), path, name);
         if (speech_model_info_task(served->info().get()) != task) {
             throw Failure(speech_status_name(SPEECH_ERROR_MODEL_FILE), "", path + " is a speech " +
                           task_name(speech_model_info_task(served->info().get())) + " model, where the catalog says " + task_name(task));

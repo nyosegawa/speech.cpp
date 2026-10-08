@@ -51,7 +51,10 @@ private:
  */
 class ServedModels {
 public:
-    /** `loading` is how every model loads: the device, the threads and the warm-up; its voices go to no model. */
+    /**
+     * `loading` is how the synthesis and recognition models load: the device, the threads and the warm-up, which a
+     * detection model takes on the CPU with one thread (detection_loading()); its voices go to no model.
+     */
     explicit ServedModels(Loading loading);
 
     /**
@@ -82,6 +85,8 @@ private:
         std::shared_ptr<Served> model;
         std::string replacing;
     };
+
+    Loading loading_of(speech_task task) const;
 
     Place & place(speech_task task) {
         switch (task) {

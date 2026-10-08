@@ -68,7 +68,12 @@ int run_vad(const CommandLine & line, FILE * out) {
     if (format != "text" && format != "json") throw UsageError("--format takes text or json, not \"" + format + "\"");
 
     const auto t0 = Clock::now();
-    const Model model = load_model(model_file(line.args[0]), line.loading(false));
+    // The device and threads of every other detection, unless the command line names its own.
+    Loading loading = line.loading(false);
+    const Loading usual = detection_loading(loading);
+    if (!loading.device) loading.device = usual.device;
+    if (!loading.threads) loading.threads = usual.threads;
+    const Model model = load_model(model_file(line.args[0]), loading);
     const ModelInfo info = model_info(model.get());
     const speech_model_info * m = info.get();
     std::fprintf(stderr, "load %.2f s: %s on %s\n", seconds_since(t0), speech_model_info_name(m), speech_model_info_device(m));
@@ -164,7 +169,7 @@ Command vad_command() {
     c.flags = {
         {"--format", "text|json", false, "text (the default) or one JSON object per file and line"},
         {"--split", "DIR", false, "also write each region as a WAVE file in DIR, made if it is not there"},
-        device_flag("auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists"),
+        device_flag("cpu (the default, with one thread unless --threads says otherwise), auto, gpu or a name `speech devices` lists"),
         threads_flag(),
         verbose_flag("also report the release and the sample rate"),
     };

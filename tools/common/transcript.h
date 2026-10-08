@@ -40,6 +40,15 @@ Transcript transcript_of(const speech_result * result, bool timestamps);
 void append_part(Transcript & whole, const Transcript & part, double offset);
 
 /**
+ * The beginning that two readings of the beginning of one utterance agree on, `earlier` read from less audio than
+ * `later`: the code points both begin with, back to the end of the last word both have whole where the script puts
+ * spaces between words, so that a word that the end of the shorter audio cut is not taken as agreed; and where that is
+ * all of `later`, only up to the last mark or space before the end, since the end of the audio closes whatever was said
+ * last, with a mark the recognizer writes there.
+ */
+std::string agreed_beginning(const std::string & earlier, const std::string & later);
+
+/**
  * The members of a recognition in the form of the worker's messages, each after a comma: "text", "stop" ("complete" or
  * "model_limit"), "languages" where it has any, and with `timestamps` "segments" and "tokens", each a list of
  * {"start", "end", "text"} with the times in seconds.

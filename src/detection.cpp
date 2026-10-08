@@ -134,10 +134,11 @@ speech_status speech_detection_region(const speech_detection * detection, size_t
     });
 }
 
-int speech_detection_speaking(const speech_detection * detection, double * start) {
+int speech_detection_speaking(const speech_detection * detection, double * start, int * kept) {
     if (!detection) return 0;
-    const std::optional<double> open = detection->stream->open();
-    if (open && start) *start = *open;
+    const std::optional<DetectionStream::Begun> open = detection->stream->open();
+    if (open && start) *start = open->start;
+    if (open && kept) *kept = open->kept ? 1 : 0;
     return open ? 1 : 0;
 }
 

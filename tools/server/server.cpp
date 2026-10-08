@@ -44,7 +44,7 @@ const char * use_of(speech_task task) {
     switch (task) {
         case SPEECH_TASK_SYNTHESIS: return "/v1/audio/speech";
         case SPEECH_TASK_RECOGNITION: return "/v1/audio/transcriptions";
-        case SPEECH_TASK_DETECTION: return "chunking_strategy of /v1/audio/transcriptions";
+        case SPEECH_TASK_DETECTION: return "chunking_strategy of /v1/audio/transcriptions and server_vad of /v1/realtime";
     }
     throw std::logic_error("a task speech.h does not have");
 }
@@ -328,7 +328,8 @@ Command serve_command() {
         "--no-warmup, adds the voices of --add-voice to the synthesis model, and serves them over HTTP: POST\n"
         "/v1/audio/speech, POST /v1/audio/transcriptions, which with chunking_strategy recognizes the regions where the\n"
         "detection model finds speech, GET /v1/models, GET /health, and OpenAI's Realtime transcription over a WebSocket at\n"
-        "/v1/realtime, which transcribes each buffer the client commits. It has no authentication and no TLS, and refuses a\n"
+        "/v1/realtime, which transcribes each buffer the client commits, or with server_vad each region of the detection\n"
+        "model, and the text agreed so far while it is said. It has no authentication and no TLS, and refuses a\n"
         "request that a web page at another origin than --cors-origin's sends. On 127.0.0.1, ::1 or localhost it also\n"
         "serves a page on which to pick models of the catalog, fetch them and try them, at the address it prints;\n"
         "--open opens it, and starts the server without a model if none is given.";
@@ -338,7 +339,8 @@ Command serve_command() {
         {"--open", "", false, "open the page in the browser once the server listens"},
         {"--cors-origin", "ORIGIN|*", true, "an origin a web page may call the server from, or * for any"},
         add_voice_flag(),
-        device_flag("auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists"),
+        device_flag("auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists; a detection model "
+                    "runs on the CPU"),
         threads_flag(),
         no_warmup_flag(),
     };

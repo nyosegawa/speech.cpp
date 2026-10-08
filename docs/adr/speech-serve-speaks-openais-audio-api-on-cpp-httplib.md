@@ -69,8 +69,8 @@ The alternatives were turned down:
 
 ## Consequences
 
-AGENTS.md allows this one vendored header and no other dependency. Updating cpp-httplib replaces the header and its
-license from a newer commit and names that commit in CMakeLists.txt, in one commit. An OpenAI client that asks for `mp3`
-or for another model gets an error rather than audio it did not ask for. A server reachable from other machines goes
-behind a proxy that adds TLS and authentication. docs/server.md gives the members, the responses and the mapping of
-categories to statuses.
+AGENTS.md allows this vendored header for the server and no other dependency for it. Updating cpp-httplib replaces the
+header and its license from a newer commit and names that commit in CMakeLists.txt, in one commit. An OpenAI client
+that asks for `mp3` or for another model gets an error rather than audio it did not ask for. A server reachable from
+other machines goes behind a proxy that adds TLS and authentication. docs/server.md gives the members, the responses and
+the mapping of categories to statuses.

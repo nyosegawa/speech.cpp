@@ -32,6 +32,12 @@ struct Region {
     int64_t start, end;
 };
 
+/** A region begun and not given yet: its padded start, and whether it is certain to be given. */
+struct Begun {
+    int64_t start;
+    bool kept;
+};
+
 /**
  * The regions that silero-vad 6.2.3's get_speech_timestamps_from_probs() gives for the speech probability of each chunk
  * of `chunk` samples of audio at `sample_rate`, with use_max_poss_sil_at_max_speech at its default, true: a region longer
@@ -69,13 +75,19 @@ public:
     const std::vector<Region> & regions() const { return given_; }
 
     /**
-     * The padded start of the earliest region begun but not given yet: one whose end waits on what follows, or the region
-     * under way, if it is kept; none when there is neither. A region under way that ends no longer than
-     * min_speech_duration_ms is dropped, and no region is then given from its start.
+     * The earliest region begun but not given yet: one whose end waits on what follows, which is kept, or else the region
+     * under way, kept once no end it can still take leaves it no longer than min_speech_duration_ms; none when there is
+     * neither. A region under way not kept is dropped if its speech ends that soon, and no region is then given from its
+     * start. With what settle() or end() was last told of the audio heard.
      */
-    std::optional<int64_t> open() const;
+    std::optional<Begun> open() const;
 
 private:
+    /**
+     * The earliest end the region under way can still take: where its probability fell below neg_threshold, unless it
+     * rose above the threshold since, or else the next chunk, whose probability may fall, or the end of the audio heard.
+     */
+    int64_t earliest_end() const;
     /** Appends a region of the official's list, before padding, and gives the one before it. */
     void append(Region raw);
     /** The padded start of a region whose unpadded start is `start`, after the regions appended so far. */
@@ -89,8 +101,8 @@ private:
 
     double threshold_, neg_threshold_, min_speech_, pad_, max_speech_, min_silence_, min_silence_at_max_speech_;
     int chunk_;
-    /** The chunks taken. */
-    int64_t chunks_ = 0;
+    /** The chunks taken, and the samples settle() or end() was last told the audio holds. */
+    int64_t chunks_ = 0, heard_ = 0;
     bool triggered_ = false;
     // The start of the region under way while triggered, and where its probability first fell below neg_threshold, 0
     // while it has not, as the official's temp_end.

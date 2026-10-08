@@ -28,7 +28,9 @@ folder of the script's own (SPEECH_MODEL_DIR), so that loading one by its name f
   with the new one, and one that named the old model, in session.update or in the address's query, fails with
   model_not_found;
 - with a detection model, the place of detection, empty until the page loads that model into it by its catalog name,
-  a transcription with chunking_strategy refused before and answered after, and /v1/models listing it third;
+  a transcription with chunking_strategy refused before and answered after, /v1/models listing it third, and its
+  replacement while a Realtime session with server_vad holds it, which the load does not wait for and after which the
+  session goes on with the new model;
 - a server on 0.0.0.0, which has no page and answers its endpoints with how to reach them (on Windows its firewall may
   ask about it).
 
@@ -291,6 +293,28 @@ if detection:
     assert status == 200 and json.loads(body)["text"], body
     print(f"detection: {held['name']} loaded by the page into its empty place, /v1/models listing it third, and chunking_strategy "
           f"refused before and answered after: {json.loads(body)['text']!r}")
+    # A Realtime session with server_vad keeps the detection model only until the page replaces it, so that the load does
+    # not wait for the session, and goes on with the new one.
+    vad_session = server.websocket("/v1/realtime")
+    assert vad_session.event()["type"] == "session.created"
+    vad_session.send({"type": "session.update", "session": {"type": "transcription", "audio": {"input": {"turn_detection": {"type": "server_vad"}}}}})
+    assert vad_session.event()["type"] == "session.updated"
+    started = time.perf_counter()
+    load(detection["name"], "detection")
+    took = time.perf_counter() - started
+    assert took < 10, f"the page's load of the detection model waited {took:.1f} s for a Realtime session"
+    at = struct.unpack("<I", wav[24:28])[0]
+    values = array.array("h", wav[44:])
+    spoken = array.array("h", [values[min(i * at // 24000, len(values) - 1)] for i in range(len(values) * 24000 // at)]).tobytes() + b"\0" * 72000
+    for start in range(0, len(spoken), 960):
+        vad_session.send({"type": "input_audio_buffer.append", "audio": base64.b64encode(spoken[start:start + 960]).decode()})
+    e = vad_session.event()
+    while not e["type"].endswith((".completed", ".failed")):
+        e = vad_session.event()
+    assert e["type"].endswith(".completed") and e["transcript"], e
+    vad_session.close()
+    print(f"detection replaced by the page in {took:.2f} s while a server_vad session held it, which went on with the new one: "
+          f"{e['transcript']!r}")
 
 absent = next(m for m in catalog["models"] if all(m["name"] != g["name"].split(":")[0] for g in given))
 held_before = json.loads(call("GET", "/speech/models")[2])[absent["task"]]["held"]

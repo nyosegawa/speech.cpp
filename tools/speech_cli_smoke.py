@@ -47,6 +47,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 
 from worker_client import MOST_CER, PARAGRAPH, Worker, cer, dump_requests, heard, joined_transcript, short, speaks_by_sentence
 
@@ -480,7 +481,8 @@ elif info["task"] == "recognition":
         detection = ["--threshold", "0.5", "--speech-pad-ms", "300", "--min-silence-duration-ms", "500", "--max-speech-duration-s", "8"]
         split = os.path.join(work, "speech-cli-smoke-split")
         shutil.rmtree(split, ignore_errors=True)
-        regions = json.loads(run("vad", vad, "--format", "json", "--split", split, *detection, long).stdout)["regions"]
+        # speech asr runs its detection on the CPU, and speech vad there gives the same regions.
+        regions = json.loads(run("vad", vad, "--format", "json", "--split", split, "--device", "cpu", *detection, long).stdout)["regions"]
         names = sorted(os.listdir(split))
         assert len(names) == len(regions) > len(pcms), (names, regions)
         w = Worker(speech, model, options)
@@ -500,6 +502,80 @@ elif info["task"] == "recognition":
         assert got == {"file": silence, "text": "", "stop": "complete", **({"segments": [], "tokens": []} if timed else {})}, got
         print(f"asr --vad: {len(regions)} regions of {len(joined) / 2 / rate:.1f} s, the worker's ends of vad --split's files joined"
               f"{' with their times' if timed else ''}; a file of silence gives an empty text")
+        # The same samples as PCM on stdin: OpenAI's events of each region in order, its start and end in milliseconds, and
+        # its completed with the worker's text, stop and languages of the region's samples. Read all at once, a region
+        # may get no delta, and any it gets come before its completed.
+        streamed = run("asr", model, "--vad", vad, "--format", "json", "--rate", str(rate), *detection, *options, "-", input=joined)
+        events = [json.loads(line) for line in streamed.stdout.decode().splitlines()]
+        items = list(dict.fromkeys(e["item_id"] for e in events))
+        assert len(items) == len(regions), (len(items), regions)
+
+        def milliseconds(seconds):
+            """Milliseconds rounded half away from zero, as C's llround() rounds them."""
+            whole = math.floor(seconds * 1000)
+            return whole + (1 if seconds * 1000 - whole >= 0.5 else 0)
+
+        for item, region, (_, end) in zip(items, regions, parts):
+            mine = [e for e in events if e["item_id"] == item]
+            kinds = [e["type"].rsplit(".", 1)[1] for e in mine if not e["type"].endswith(".delta")]
+            assert kinds == ["speech_started", "speech_stopped", "committed", "completed"], kinds
+            first, last = round(region["start"] * rate), round(region["end"] * rate)
+            assert mine[0]["audio_start_ms"] == milliseconds(first / rate) and mine[1]["audio_end_ms"] == milliseconds(last / rate), (mine[:2], region)
+            assert all(e["delta"] for e in mine if e["type"].endswith(".delta")), mine
+            done = mine[-1]
+            assert done["transcript"] == end["text"] and done["stop"] == end["stop"], (done, end)
+            assert [x["code"] for x in done.get("languages", [])] == end.get("languages", []), (done, end)
+            assert done["usage"]["seconds"] == (last - first) / rate, (done, region)
+        print(f"asr --vad -: {len(items)} utterances, each speech_started and speech_stopped at its region's bounds, committed, and "
+              f"completed with the worker's text of the region")
+        # Fed as fast as it is said, the first of the longest dump's utterances gets deltas before it is committed.
+        longest = max(pcms, key=len)
+        process = subprocess.Popen([speech, "asr", model, "--vad", vad, "--format", "json", "--rate", str(rate), *options, "-"], stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        lines = []
+        reader = threading.Thread(target=lambda: lines.extend(process.stdout))
+        reader.start()
+        errors = []
+        threading.Thread(target=lambda: errors.extend(process.stderr), daemon=True).start()
+        while not any(b"reading 16-bit PCM" in line for line in errors):
+            assert process.poll() is None, b"".join(errors)
+            time.sleep(0.05)
+        started = time.perf_counter()
+        fed = longest + b"\0" * 4 * rate
+        piece = rate // 50 * 2
+        for k, at in enumerate(range(0, len(fed), piece)):
+            time.sleep(max(0.0, started + k * 0.02 - time.perf_counter()))
+            process.stdin.write(fed[at:at + piece])
+            process.stdin.flush()
+        process.stdin.close()
+        reader.join()
+        assert process.wait() == 0, b"".join(errors)
+        events = [json.loads(line) for line in lines]
+        first = events[0]["item_id"]
+        kinds = [e["type"].rsplit(".", 1)[1] for e in events if e["item_id"] == first]
+        deltas = [e["delta"] for e in events if e["item_id"] == first and e["type"].endswith(".delta")]
+        before = kinds[:kinds.index("committed")].count("delta")
+        assert before and all(deltas) and kinds[0] == "speech_started" and kinds[-1] == "completed", kinds
+        print(f"asr --vad - in real time: {before} deltas of {len(longest) / 2 / rate:.1f} s of speech before its commit, {''.join(deltas)[:30]!r}")
+        for command in (["--live"], ["-"], ["--vad", vad, "--live", long], ["--vad", vad, "-", long], ["--vad", vad, "--rate", "8000", long],
+                        ["--vad", vad, "--rate", "0", "-"], ["--vad", vad, "--timestamps", "-"], []):
+            r = run("asr", model, *command, *options, input=b"", code=2)
+            assert "Run speech asr --help" in r.stderr.decode(), (command, r.stderr)
+        failure(run("asr", model, "--vad", vad, *options, "-", input=joined[:4001], code=1), "invalid_argument", "audio")
+        # The recognition's options are refused before any audio, which no utterance may follow.
+        failure(run("asr", model, "--vad", vad, "--language", "zz", *options, "-", input=b"", code=1), "out_of_range", "language")
+        # Options that keep more audio uncommitted than the stream holds end it, where no recognition would free any:
+        # 27 MiB of silence with a padding of 1000 s.
+        r = subprocess.run([speech, "asr", model, "--vad", vad, "--speech-pad-ms", "1000000", "--max-speech-duration-s", "3000", *options, "-"],
+                           input=bytes(27 << 20), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
+        assert r.returncode == 1, (r.returncode, r.stderr[-300:])
+        failure(r, "out_of_memory", None)
+        # Below 8000 Hz the resampler holds back more audio than the assembly keeps for a region to come.
+        failure(run("asr", model, "--vad", vad, "--rate", "100", *options, "-", input=joined[:2 * rate], code=1), "invalid_argument", "audio")
+        print("asr --live and - without --vad, with files or --timestamps, --rate without - or of 0, and no audio: exit 2; an odd byte on "
+              "stdin and a rate of 100 Hz: exit 1, invalid_argument (audio); a language the model does not take, on stdin "
+              "without audio: exit 1, out_of_range (language); 27 MiB of silence kept uncommitted by a padding of 1000 s: exit 1, "
+              "out_of_memory")
         run("asr", model, "--vad", model, *options, long, code=2)
         failure(run("asr", model, "--vad", vad, "--threshold", "2", *options, long, code=1), "out_of_range", "threshold")
         failure(run("asr", model, "--threshold", "0.5", *options, long, code=1), "unsupported", "threshold")
