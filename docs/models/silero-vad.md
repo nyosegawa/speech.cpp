@@ -25,7 +25,8 @@ speech vad silero-vad --min-silence-duration-ms 1000 --max-speech-duration-s 10 
   ([c-api.md](../c-api.md#detections)), each as soon as it is certain: with the defaults, about 160 ms after the speech
   ends, once 100 ms of silence has ended the region.
 - The file is F32 alone: `speech quantize` writes no other type of it.
-- `speech worker` and `speech serve` do not take it; `speech vad` and the C API's `speech_detect()` and detections do.
+- `speech vad`, `speech asr --vad`, `speech serve` (for `chunking_strategy`) and the C API's `speech_detect()` and
+  detections take it; `speech worker` does not.
 
 ## Options
 

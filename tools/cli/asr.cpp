@@ -153,7 +153,7 @@ Command asr_command() {
         "the most the model writes, after writing every file's text.\n"
         "With --vad, a detection model finds where someone speaks in each file, each region is recognized alone and the\n"
         "texts are joined, the times of the whole file. The detection options are those of speech vad, with OpenAI's\n"
-        "server_vad defaults and a longest region: " + region_defaults() + ".\n"
+        "server_vad defaults and a longest region:\n" + region_defaults() + ".\n"
         "A file in which no one speaks gives an empty text.";
     c.flags = {
         {"--format", "text|json", false, "text (the default) or one JSON object per file and line"},
