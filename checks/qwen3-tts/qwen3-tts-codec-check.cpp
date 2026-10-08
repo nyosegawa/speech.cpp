@@ -4,7 +4,7 @@
 // the check fails when they part from the whole decode by more than the whole decode parts from the official one, with
 // 3 dB for the spread of rounding: F16 weights part both by about 60 dB, and F32 on the CPU the grouping by 132 dB.
 //
-// usage: codec-check <model.gguf> <reference dir> [gpu|cpu] [out.wav]
+// usage: qwen3-tts-codec-check <model.gguf> <reference dir> [gpu|cpu] [out.wav]
 
 #include <chrono>
 #include <cmath>

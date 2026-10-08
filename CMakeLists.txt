@@ -135,16 +135,17 @@ target_link_libraries(silerovad PUBLIC speechcommon)
 # The C API, include/speech.h, twice: static for the executables, so that each stays one file, and shared as
 # libspeech for bindings and other programs. On Windows the two would both write speech.lib, the static one as
 # the library and the shared one as its import library, hence speech-static.
-set(SPEECH_SOURCES src/speech.cpp src/info.cpp src/request.cpp src/detection.cpp src/voice.cpp src/qwen3-tts-engine.cpp
-    src/irodori-tts-engine.cpp src/fastconformer-engine.cpp src/qwen3-asr-engine.cpp src/silero-vad-engine.cpp)
+set(SPEECH_SOURCES src/api/speech.cpp src/api/info.cpp src/api/request.cpp src/api/detection.cpp src/api/voice.cpp
+    src/engines/qwen3-tts-engine.cpp src/engines/irodori-tts-engine.cpp src/engines/fastconformer-engine.cpp
+    src/engines/qwen3-asr-engine.cpp src/engines/silero-vad-engine.cpp)
 
 add_library(speech-static STATIC ${SPEECH_SOURCES})
-target_include_directories(speech-static PUBLIC include)
+target_include_directories(speech-static PUBLIC include PRIVATE src/engines)
 target_link_libraries(speech-static PUBLIC qwen3tts irodoritts fastconformer qwen3asr silerovad)
 target_compile_definitions(speech-static PRIVATE SPEECH_VERSION="${PROJECT_VERSION}")
 
 add_library(speech SHARED ${SPEECH_SOURCES})
-target_include_directories(speech PUBLIC include)
+target_include_directories(speech PUBLIC include PRIVATE src/engines)
 target_link_libraries(speech PRIVATE qwen3tts irodoritts fastconformer qwen3asr silerovad)
 target_compile_definitions(speech PRIVATE SPEECH_BUILD_SHARED SPEECH_VERSION="${PROJECT_VERSION}" INTERFACE SPEECH_SHARED)
 set_target_properties(speech PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
@@ -157,8 +158,8 @@ set_target_properties(speech PROPERTIES SOVERSION ${SPEECH_API_VERSION_MAJOR})
 if (APPLE)
     target_link_options(speech PRIVATE "LINKER:-exported_symbol,_speech_*")
 elseif (UNIX)
-    target_link_options(speech PRIVATE "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/speech.map")
-    set_property(TARGET speech APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/speech.map)
+    target_link_options(speech PRIVATE "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/api/speech.map")
+    set_property(TARGET speech APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/api/speech.map)
 endif()
 
 # Files that go into speech, the catalog of the models it fetches by name and the files of its page, as arrays of bytes
@@ -171,7 +172,7 @@ function(speech_embed NAME FILE OUT)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${FILE})
 endfunction()
 
-speech_embed(speech_catalog_json ${CMAKE_CURRENT_SOURCE_DIR}/tools/models/catalog.json SPEECH_CATALOG_SOURCE)
+speech_embed(speech_catalog_json ${CMAKE_CURRENT_SOURCE_DIR}/tools/catalog/catalog.json SPEECH_CATALOG_SOURCE)
 file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/catalog-json.cpp CONTENT "@SPEECH_CATALOG_SOURCE@" @ONLY)
 
 file(GLOB SPEECH_PAGE_FILES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/server/page/*.html
@@ -208,10 +209,10 @@ add_executable(speech-cli
     tools/cli/model.cpp
     tools/cli/models.cpp
     tools/cli/quantize.cpp
-    tools/models/catalog.cpp
-    tools/models/cache.cpp
-    tools/models/fetch.cpp
-    tools/models/sha256.cpp
+    tools/catalog/catalog.cpp
+    tools/catalog/cache.cpp
+    tools/catalog/fetch.cpp
+    tools/catalog/sha256.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/catalog-json.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/page-files.cpp
     tools/common/command-line.cpp
@@ -235,7 +236,7 @@ add_executable(speech-cli
     tools/server/realtime.cpp
 )
 set_target_properties(speech-cli PROPERTIES OUTPUT_NAME speech)
-target_include_directories(speech-cli PRIVATE tools/common tools/cli tools/models tools/server vendor/cpp-httplib vendor/miniaudio)
+target_include_directories(speech-cli PRIVATE tools/common tools/cli tools/catalog tools/server vendor/cpp-httplib vendor/miniaudio)
 target_link_libraries(speech-cli PRIVATE speech-static)
 # miniaudio captures audio and nothing else, so that its decoders, encoders and engine stay out of speech, and without its
 # null backend, which opens "NULL Capture Device" when no real one does and gives silence, where speech asr --live is to
@@ -258,62 +259,67 @@ else()
     target_link_libraries(speech-cli PRIVATE Threads::Threads)
 endif()
 
-# The checks compare each stage with the reference dumps; they are built but not released.
-add_executable(resample-check checks/resample-check.cpp)
+# The checks compare each stage with the reference dumps; they are built but not released. compare.h, npy.h and
+# reference-dumps.h at the top of checks/ are shared by the checks of several folders.
+add_executable(resample-check checks/common/resample-check.cpp)
+target_include_directories(resample-check PRIVATE checks)
 target_link_libraries(resample-check PRIVATE speechcommon)
 
-add_executable(unicode-check checks/unicode-check.cpp)
+add_executable(unicode-check checks/common/unicode-check.cpp)
 target_link_libraries(unicode-check PRIVATE speechcommon)
 
-add_executable(codec-check checks/codec-check.cpp)
-target_link_libraries(codec-check PRIVATE qwen3tts)
+add_executable(qwen3-tts-codec-check checks/qwen3-tts/qwen3-tts-codec-check.cpp)
+target_include_directories(qwen3-tts-codec-check PRIVATE checks)
+target_link_libraries(qwen3-tts-codec-check PRIVATE qwen3tts)
 
-add_executable(talker-check checks/talker-check.cpp tools/common/json-reader.cpp)
-target_include_directories(talker-check PRIVATE tools/common)
-target_link_libraries(talker-check PRIVATE qwen3tts)
+add_executable(qwen3-tts-talker-check checks/qwen3-tts/qwen3-tts-talker-check.cpp tools/common/json-reader.cpp)
+target_include_directories(qwen3-tts-talker-check PRIVATE checks tools/common)
+target_link_libraries(qwen3-tts-talker-check PRIVATE qwen3tts)
 
 # The sampler against transformers' logits processors, on the cases of reference/qwen3-tts/sampling_cases.py.
-add_executable(sampler-check checks/sampler-check.cpp tools/common/json-reader.cpp)
-target_include_directories(sampler-check PRIVATE tools/common)
-target_link_libraries(sampler-check PRIVATE qwen3tts)
+add_executable(qwen3-tts-sampler-check checks/qwen3-tts/qwen3-tts-sampler-check.cpp tools/common/json-reader.cpp)
+target_include_directories(qwen3-tts-sampler-check PRIVATE checks tools/common)
+target_link_libraries(qwen3-tts-sampler-check PRIVATE qwen3tts)
 
 # The tokenizer of a Qwen3-TTS or a Qwen3-ASR file, each its family's.
-add_executable(tokenizer-check checks/tokenizer-check.cpp)
+add_executable(tokenizer-check checks/common/tokenizer-check.cpp)
 target_link_libraries(tokenizer-check PRIVATE qwen3tts qwen3asr)
 
 # The decoder's runs in blocks, on the talker of a Qwen3-TTS file.
-add_executable(qwen3-decoder-check checks/qwen3-decoder-check.cpp)
+add_executable(qwen3-decoder-check checks/common/qwen3-decoder-check.cpp)
 target_link_libraries(qwen3-decoder-check PRIVATE qwen3tts)
 
-add_executable(irodori-text-check checks/irodori-text-check.cpp)
+add_executable(irodori-text-check checks/irodori-tts/irodori-text-check.cpp)
+target_include_directories(irodori-text-check PRIVATE checks)
 target_link_libraries(irodori-text-check PRIVATE irodoritts)
 
-add_executable(irodori-window-check checks/irodori-window-check.cpp)
+add_executable(irodori-window-check checks/irodori-tts/irodori-window-check.cpp)
 target_link_libraries(irodori-window-check PRIVATE irodoritts)
 
-add_executable(irodori-codec-check checks/irodori-codec-check.cpp tools/common/json-reader.cpp)
-target_include_directories(irodori-codec-check PRIVATE tools/common)
+add_executable(irodori-codec-check checks/irodori-tts/irodori-codec-check.cpp tools/common/json-reader.cpp)
+target_include_directories(irodori-codec-check PRIVATE checks tools/common)
 target_link_libraries(irodori-codec-check PRIVATE irodoritts)
 
 # These read the dump's meta.json with the JSON reader of `speech`.
-add_executable(irodori-condition-check checks/irodori-condition-check.cpp tools/common/json-reader.cpp)
-target_include_directories(irodori-condition-check PRIVATE tools/common)
+add_executable(irodori-condition-check checks/irodori-tts/irodori-condition-check.cpp tools/common/json-reader.cpp)
+target_include_directories(irodori-condition-check PRIVATE checks tools/common)
 target_link_libraries(irodori-condition-check PRIVATE irodoritts)
 
-add_executable(irodori-dit-check checks/irodori-dit-check.cpp tools/common/json-reader.cpp)
-target_include_directories(irodori-dit-check PRIVATE tools/common)
+add_executable(irodori-dit-check checks/irodori-tts/irodori-dit-check.cpp tools/common/json-reader.cpp)
+target_include_directories(irodori-dit-check PRIVATE checks tools/common)
 target_link_libraries(irodori-dit-check PRIVATE irodoritts)
 
-add_executable(irodori-synthesis-check checks/irodori-synthesis-check.cpp tools/common/json-reader.cpp)
-target_include_directories(irodori-synthesis-check PRIVATE tools/common)
+add_executable(irodori-synthesis-check checks/irodori-tts/irodori-synthesis-check.cpp tools/common/json-reader.cpp)
+target_include_directories(irodori-synthesis-check PRIVATE checks tools/common)
 target_link_libraries(irodori-synthesis-check PRIVATE irodoritts)
 
 # What speech quantize refuses of the weights it is given, on a model file of a layout of the check's own.
-add_executable(quantize-check checks/quantize-check.cpp)
+add_executable(quantize-check checks/common/quantize-check.cpp)
 target_link_libraries(quantize-check PRIVATE speechcommon)
 
-add_executable(speech-api-check checks/speech-api-check.c checks/speech-api-irodori.c checks/speech-api-recognition.c checks/speech-api-detection.c
-               checks/speech-api-detection-stream.c checks/speech-api-common.c checks/speech-api-platform.c)
+add_executable(speech-api-check checks/api/speech-api-check.c checks/api/speech-api-irodori.c checks/api/speech-api-recognition.c
+               checks/api/speech-api-detection.c checks/api/speech-api-detection-stream.c checks/api/speech-api-common.c
+               checks/api/speech-api-platform.c)
 target_link_libraries(speech-api-check PRIVATE speech)
 # The check compares the version the library reports with the one it was built against.
 target_compile_definitions(speech-api-check PRIVATE SPEECH_EXPECTED_VERSION="${PROJECT_VERSION}")
@@ -330,27 +336,29 @@ endif()
 
 # The checks of FastConformer's stages.
 foreach(stage frontend encoder transducer times)
-    add_executable(fastconformer-${stage}-check checks/fastconformer-${stage}-check.cpp)
+    add_executable(fastconformer-${stage}-check checks/fastconformer/fastconformer-${stage}-check.cpp)
+    target_include_directories(fastconformer-${stage}-check PRIVATE checks)
     target_link_libraries(fastconformer-${stage}-check PRIVATE fastconformer)
 endforeach()
 
 # The checks of Qwen3-ASR's stages.
 foreach(stage frontend encoder)
-    add_executable(qwen3-asr-${stage}-check checks/qwen3-asr-${stage}-check.cpp)
+    add_executable(qwen3-asr-${stage}-check checks/qwen3-asr/qwen3-asr-${stage}-check.cpp)
+    target_include_directories(qwen3-asr-${stage}-check PRIVATE checks)
     target_link_libraries(qwen3-asr-${stage}-check PRIVATE qwen3asr)
 endforeach()
 # They read each request's meta.json with the JSON reader of `speech`.
 foreach(stage decoder split)
-    add_executable(qwen3-asr-${stage}-check checks/qwen3-asr-${stage}-check.cpp tools/common/json-reader.cpp)
-    target_include_directories(qwen3-asr-${stage}-check PRIVATE tools/common)
+    add_executable(qwen3-asr-${stage}-check checks/qwen3-asr/qwen3-asr-${stage}-check.cpp tools/common/json-reader.cpp)
+    target_include_directories(qwen3-asr-${stage}-check PRIVATE checks tools/common)
     target_link_libraries(qwen3-asr-${stage}-check PRIVATE qwen3asr)
 endforeach()
-# Times the stages of a recognition on the dumps' audio, against checks/llama-server-timing.py.
-add_executable(qwen3-asr-timing checks/qwen3-asr-timing.cpp tools/common/json-reader.cpp)
-target_include_directories(qwen3-asr-timing PRIVATE tools/common)
+# Times the stages of a recognition on the dumps' audio, against measure/llama-server-timing.py.
+add_executable(qwen3-asr-timing measure/qwen3-asr-timing.cpp tools/common/json-reader.cpp)
+target_include_directories(qwen3-asr-timing PRIVATE checks tools/common)
 target_link_libraries(qwen3-asr-timing PRIVATE qwen3asr)
 
 # Silero VAD's stages and regions against the dumps of reference/silero-vad/dump.py, read with the JSON reader of `speech`.
-add_executable(silero-vad-check checks/silero-vad-check.cpp tools/common/json-reader.cpp)
-target_include_directories(silero-vad-check PRIVATE tools/common)
+add_executable(silero-vad-check checks/silero-vad/silero-vad-check.cpp tools/common/json-reader.cpp)
+target_include_directories(silero-vad-check PRIVATE checks tools/common)
 target_link_libraries(silero-vad-check PRIVATE silerovad)
