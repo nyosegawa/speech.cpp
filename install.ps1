@@ -46,7 +46,7 @@ param(
         $Version = (Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$Repository/releases/latest").tag_name -replace '^v', ''
     }
     if ($Version -notmatch '^\d+\.\d+\.\d+$') {
-        Stop-Install "`"$Version`" is not a release's version, such as 0.7.1"
+        Stop-Install "`"$Version`" is not a release's version, such as 0.8.0"
     }
 
     $root = Join-Path $env:LOCALAPPDATA 'Programs\speech.cpp'
