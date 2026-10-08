@@ -29,4 +29,4 @@ covers the whole input (local attention) recognizes it whole, as the official `t
 
 A model trained for streaming (cache-aware) carries its caches between chunks; check every chunk's stage and the
 carried caches bit for bit against the official streaming code. An offline model is not streamed by cutting it into
-overlapping windows, which changes its text; the worker's `peek` gives interim text instead.
+overlapping windows, which changes its text; a caller that wants interim text recognizes the audio so far again.

@@ -1,12 +1,12 @@
-"""Drives `speech worker` with a synthesis model through protocol 2 the way a caller does, with every line checked by
+"""Drives `speech worker` with a synthesis model through its protocol the way a caller does, with every line checked by
 worker_client.py: one JSON object per line, and one terminal message per request and nothing after it.
 
-It checks ready (protocol 2, the release, and the model information of `speech info --json` with the device, the
+It checks ready (the release, and the model information of `speech info --json` with the device, the
 threads and the voices of --add-voice), info and count_tokens, also answered while a synthesis runs; that a seed repeats the audio and a drawn seed is
 reported and repeats it too; cancels while a request waits, while it runs, of an unknown id, and after an end, whose id
 a later request then reuses; a second request under an id in flight; each error with its code and option (members the
 message does not have, values of the wrong type, out of range or not taken, a missing text, lines that are not JSON
-objects or have no id or type, the other task's messages); a peek and chunks to a synthesis model; add_voice; for
+objects or have no id or type, the other task's messages); chunks to a synthesis model; add_voice; for
 Irodori-TTS a fixed length and the progress of a long sampler, for Qwen3-TTS max_seconds and the sampling options, and
 an instruction where the model takes one and its refusal where it does not. Writes the first answer to a WAV.
 
@@ -26,14 +26,14 @@ added = [o.split("=", 1) for i, o in enumerate(options) if i > 0 and options[i -
 w = Worker(speech, model, options)
 ready = w.ready
 info = ready["model"]
-assert ready["protocol"] == 2 and isinstance(ready["version"], str) and info["task"] == "synthesis", short(ready)
+assert isinstance(ready["version"], str) and info["task"] == "synthesis", short(ready)
 w.check_model_information([name for name, _ in added])
 rate = info["sample_rate"]
 # An added voice where there is one: the voice an Irodori-TTS file has of its own, none, speaks without a reference.
 voice = added[0][0] if added else info["voices"][0]["name"]
 own = [v["name"] for v in info["voices"]][: len(info["voices"]) - len(added)]
 irodori = info["architecture"] == "irodori-tts"
-print(f"ready in {time.perf_counter() - w.started:.2f} s: {info['name']} on {info['device']}, protocol 2, speech.cpp {ready['version']}, "
+print(f"ready in {time.perf_counter() - w.started:.2f} s: {info['name']} on {info['device']}, protocol {ready['protocol']}, speech.cpp {ready['version']}, "
       f"{len(info['voices'])} voices, model information equal to speech info --json")
 
 TEXT = "明日の東京は晴れで、最高気温は二十四度の予報です。"
@@ -215,12 +215,9 @@ w.request({"type": "chunk", "id": "r", "seq": 0, "pcm": ""})
 w.terminal("r", "error", "unsupported", "type")
 w.send({"type": "chunk", "id": "r", "seq": 1, "pcm": ""})
 w.send({"type": "transcribe", "id": "r", "sample_rate": 16000})
-w.send({"type": "peek", "id": "r2", "sample_rate": 16000})
-m = w.next_for("r2")
-assert m["type"] == "partial" and m["error"]["code"] == "unsupported", short(m)
 w.request({"type": "transcribe", "id": "r3", "sample_rate": 16000})
 w.terminal("r3", "error", "unsupported", "type")
-print("chunk and transcribe: unsupported once, the request's later lines dropped; peek: a partial with the error")
+print("chunk and transcribe: unsupported once, the request's later lines dropped")
 
 # Lines that name no request are answered without an id.
 for line in ["this is not JSON", '["id", "h"]', '{"type": "synthesize", "text": "あ。"}', '{"type": "synthesize", "id": 5}',

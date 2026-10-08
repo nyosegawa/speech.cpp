@@ -13,7 +13,7 @@
 #include "inbox.h"
 #include "json.h"
 
-// speech worker: serves one model over the worker protocol 2, JSON Lines on stdin and stdout, for another program
+// speech worker: serves one model over the worker protocol, JSON Lines on stdin and stdout, for another program
 // that starts it, ASIST among them. Its stdout carries the protocol and nothing else. It loads the model, warmed up
 // unless --no-warmup, adds the voices of --add-voice and says `ready` with the model's information, or `fatal` when it
 // cannot; then it runs the requests one at a time in the order they become complete, but for info and count_tokens,
@@ -21,6 +21,12 @@
 // exits with 0 once stdin closes and every request is answered.
 
 namespace {
+
+/**
+ * The number of the worker protocol, in `ready`. It rises when a caller must change to keep working: a message or member
+ * removed, renamed or given another meaning.
+ */
+constexpr int kProtocol = 3;
 
 using Clock = std::chrono::steady_clock;
 
@@ -74,7 +80,7 @@ int on_progress(double done, void * user_data) {
     return 0;
 }
 
-/** The audio of transcribe or peek as the library takes it: 16-bit samples scaled as a 16-bit WAVE file is read. */
+/** The audio of transcribe as the library takes it: 16-bit samples scaled as a 16-bit WAVE file is read. */
 std::vector<float> samples_of(const Job & job) {
     std::vector<float> out(job.pcm.size());
     for (size_t i = 0; i < out.size(); i++) out[i] = (float) job.pcm[i] / 32768.0f;
@@ -105,35 +111,27 @@ void synthesize(Inbox & inbox, Protocol & protocol, speech_model * model, const 
     inbox.finish(job, terminal);
 }
 
-/**
- * Recognizes the audio of a transcribe, answered by its terminal message, or of a peek, answered by a `partial` that
- * sends no progress and that a cancel of its request drops.
- */
 void recognize(Inbox & inbox, Protocol & protocol, speech_model * model, const speech_model_info * info, const Job & job) {
-    const bool peek = job.kind == Job::Kind::Peek;
     const Request request = new_request(model);
     speech_request * r = request.get();
     if (!inbox.start(job, r)) return;
     Running running{protocol, job.id, Clock::now()};
-    std::string answer;
+    std::string terminal;
     try {
         const std::vector<float> samples = samples_of(job);
         check(speech_request_set_audio(r, samples.data(), samples.size(), job.sample_rate));
         apply_options(r, job.options);
-        if (!peek) check(speech_request_set_progress(r, on_progress, &running));
+        check(speech_request_set_progress(r, on_progress, &running));
         if (check(speech_transcribe(r)) == SPEECH_CANCELLED) {
-            answer = peek ? "" : cancelled_line(job.id);
+            terminal = cancelled_line(job.id);
         } else {
-            answer = std::string("{\"type\":\"") + (peek ? "partial" : "end") + "\",\"id\":" + json_string(job.id) +
-                     recognition_members(speech_request_result(r), timestamps_in_effect(info, job.options)) + "}";
+            terminal = "{\"type\":\"end\",\"id\":" + json_string(job.id) +
+                       recognition_members(speech_request_result(r), timestamps_in_effect(info, job.options)) + "}";
         }
     } catch (const std::exception & e) {
-        const Failure f = failure_of(e);
-        answer = peek ? "{\"type\":\"partial\",\"id\":" + json_string(job.id) + ",\"error\":" + error_object(f.code(), f.option(), f.what()) + "}"
-                      : error_line(job.id, e);
+        terminal = error_line(job.id, e);
     }
-    if (peek) inbox.finish_peek(job, answer);
-    else inbox.finish(job, answer);
+    inbox.finish(job, terminal);
 }
 
 /** Runs add_voice, which a cancel no longer stops once it runs. */
@@ -172,7 +170,7 @@ int run_worker(const CommandLine & line, FILE * out) {
     current = &protocol;
     const std::string path = model_file(line.args[0]);
     const Loading loading = line.loading(true);
-    // Protocol 2 has the messages of synthesis and recognition alone.
+    // The protocol has the messages of synthesis and recognition alone.
     if (speech_model_info_task(file_info(path).get()) == SPEECH_TASK_DETECTION) {
         throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "",
                       path + " is a model of speech detection, which the worker does not serve; use `speech vad` or the C API's speech_detect()");
@@ -180,7 +178,7 @@ int run_worker(const CommandLine & line, FILE * out) {
     const Model model = load_model(path, loading);
     const ModelInfo info = model_info(model.get());
     const speech_model_info * m = info.get();
-    protocol.line("{\"type\":\"ready\",\"protocol\":2,\"version\":" + json_string(speech_version()) + ",\"model\":" + speech_model_info_json(m) + "}");
+    protocol.line("{\"type\":\"ready\",\"protocol\":" + std::to_string(kProtocol) + ",\"version\":" + json_string(speech_version()) + ",\"model\":" + speech_model_info_json(m) + "}");
     std::fprintf(stderr, "speech worker: %s on %s, ready\n", speech_model_info_name(m), speech_model_info_device(m));
 
     const speech_model * loaded = model.get();
@@ -191,8 +189,7 @@ int run_worker(const CommandLine & line, FILE * out) {
     for (Job job; inbox.take(job);) {
         switch (job.kind) {
             case Job::Kind::Synthesize: synthesize(inbox, protocol, model.get(), job); break;
-            case Job::Kind::Transcribe:
-            case Job::Kind::Peek: recognize(inbox, protocol, model.get(), m, job); break;
+            case Job::Kind::Transcribe: recognize(inbox, protocol, model.get(), m, job); break;
             default: add_voice(inbox, model.get(), job); break;
         }
     }
@@ -215,11 +212,11 @@ Command worker_command() {
     Command c;
     c.name = "worker";
     c.usage = "worker MODEL [options]";
-    c.summary = "serve a model over JSON Lines on stdin and stdout (protocol 2)";
+    c.summary = "serve a model over JSON Lines on stdin and stdout (protocol " + std::to_string(kProtocol) + ")";
     c.description =
-        "Loads MODEL, warmed up unless --no-warmup, adds the voices of --add-voice, and serves it over the worker protocol\n"
-        "2: one JSON object per line on stdin and on stdout, and nothing else on stdout. speech.cpp's docs/worker.md gives\n"
-        "the messages.";
+        "Loads MODEL, warmed up unless --no-warmup, adds the voices of --add-voice, and serves it over the worker protocol\n" +
+        std::to_string(kProtocol) + ": one JSON object per line on stdin and on stdout, and nothing else on stdout. speech.cpp's\n"
+        "docs/worker.md gives the messages.";
     c.flags = {
         add_voice_flag(),
         device_flag("auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists"),

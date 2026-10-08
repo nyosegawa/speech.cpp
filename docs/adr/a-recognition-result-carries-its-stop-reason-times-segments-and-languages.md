@@ -51,8 +51,7 @@ of codes, empty where no language was detected.
 - **A name outside the model's languages gives no language**, and a warning in the log names it. The model wrote one of
   its 30 names on every dump, and a name the table does not hold has no tag to give.
 - **FastConformer gives none.** A language a request gives it is only checked, and the model did not hear it.
-- **The worker's `end` and `partial` and `speech asr --format json` carry `languages`**, left out where the list is
-  empty.
+- **The worker's `end` and `speech asr --format json` carry `languages`**, left out where the list is empty.
 - **The server's `verbose_json` carries `language`**: the tag, the form a request's `language` takes, and where the
   parts of long audio gave several, their tags joined with commas in order, as qwen-asr joins their names; left out
   where the list is empty, as the members of OpenAI's segment without a value are. `verbose_json` sets `timestamps` only

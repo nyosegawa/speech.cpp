@@ -37,7 +37,7 @@ recognition's result.
   resampler, so nothing would choose the 8 kHz model. `speech quantize` writes no other type of it: the layout keeps every
   tensor in F32, and a file of 1.2 MB gains nothing from a smaller type that the probabilities would pay for.
 - **`speech vad` is the command line's way in**; the worker and `speech serve` refuse a detection model when they start,
-  since protocol 2 and OpenAI's audio API have no messages for regions.
+  since the worker's protocol and OpenAI's audio API have no messages for regions.
 
 The alternatives were turned down:
 
