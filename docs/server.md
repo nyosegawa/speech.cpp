@@ -159,7 +159,10 @@ the client reads as a broken transfer, and an SSE stream with `{"type":"error","
   as a WAVE file or hand it to Transcribe. For Irodori-TTS it makes a voice from a recording dropped on it or recorded in
   the browser.
 - Transcribe takes an audio file in any format the browser decodes, or a recording, and shows the text, the language
-  heard, the time it took and the segments.
+  heard, the time it took and the segments. Set to Live, it shows the text while the recording goes on, updated every
+  second or as often as set.
+- The page sends audio in pieces of at most 20 s, or as long as set, each cut at a pause, so that a recording or a file
+  of an hour or more needs no more of the server's memory than a minute does. The texts of the pieces are joined.
 - The page is built into `speech` and needs nothing from the network.
 
 The server prints the page's address, `http://127.0.0.1:8080/#token=…`, with a token that changes each time it starts;

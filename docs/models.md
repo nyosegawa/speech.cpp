@@ -29,7 +29,7 @@ which one to start with:
 
 | Task | Model | Languages |
 |---|---|---|
-| synthesis | `qwen3-tts-0.6b` | de en es fr it ja ko pt ru zh: it speaks with its own named speakers, where Irodori-TTS needs a voice made from a recording |
+| synthesis | `qwen3-tts-0.6b` | de en es fr it ja ko pt ru zh, with its own named speakers, and as it makes the audio |
 | recognition | `reazonspeech-v2` | ja: it writes Japanese with punctuation and takes recordings of many minutes whole |
 | recognition | `qwen3-asr-0.6b` | the 29 other languages of Qwen3-ASR |
 | recognition | `parakeet-tdt-0.6b-v3` | bg et hr lt lv mt sk sl uk, the European languages Qwen3-ASR does not recognize |

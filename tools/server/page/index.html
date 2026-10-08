@@ -82,6 +82,25 @@
         <div class="picker-slot" data-task="recognition"></div>
         <form id="transcribe-form" novalidate>
           <div class="audio-slot" id="transcribe-audio"></div>
+          <div class="fields">
+            <div class="field">
+              <label for="transcribe-when">Transcribe a recording</label>
+              <select id="transcribe-when">
+                <option value="after">After it stops</option>
+                <option value="live">Live</option>
+              </select>
+            </div>
+            <div class="field" id="transcribe-every-field">
+              <label for="transcribe-every">Update every</label>
+              <input type="number" id="transcribe-every" min="0.5" max="10" step="0.5" value="1" inputmode="decimal" aria-describedby="transcribe-every-hint">
+              <p class="hint" id="transcribe-every-hint">seconds, longer while the model takes longer</p>
+            </div>
+            <div class="field">
+              <label for="transcribe-piece">Pieces of at most</label>
+              <input type="number" id="transcribe-piece" min="5" max="60" step="1" value="20" inputmode="numeric" aria-describedby="transcribe-piece-hint">
+              <p class="hint" id="transcribe-piece-hint">seconds; audio goes to the model in pieces, cut at a pause</p>
+            </div>
+          </div>
           <div class="fields" id="transcribe-options"></div>
           <div class="actions">
             <button type="submit" class="primary" id="transcribe-start" disabled>Transcribe</button>

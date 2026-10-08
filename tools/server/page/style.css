@@ -645,6 +645,10 @@ button[aria-pressed="true"] {
   line-height: 1.6;
 }
 
+.transcript-text .provisional {
+  color: var(--muted);
+}
+
 table {
   border-collapse: collapse;
   width: 100%;
