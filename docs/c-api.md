@@ -236,7 +236,7 @@ it concerns (an option's name, `text`, `audio`, `device`, `threads`, `name`, `pa
   other and for the pushes of its detections. A request is used by one thread at a time, but `speech_request_cancel()`
   may be called from any thread; a detection is used by one thread at a time. Information never changes once made and
   may be read from any thread. Separate models are independent.
-- **Versions.** `speech_version()` gives the release the library was built from (`"0.8.0"`). `SPEECH_API_VERSION_MAJOR`
+- **Versions.** `speech_version()` gives the release the library was built from (`"0.8.1"`). `SPEECH_API_VERSION_MAJOR`
   and `SPEECH_API_VERSION_MINOR`, and `speech_api_version_major()` and `speech_api_version_minor()` for a caller that
   loads the library at run time, give the API's version, 3.1. The major rises when a declaration changes in a way an
   existing caller notices, and the minor when a function, an option or an enum value is added. A program built against
