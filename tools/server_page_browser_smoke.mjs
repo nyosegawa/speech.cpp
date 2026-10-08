@@ -3,8 +3,9 @@
 // minute whole, as the API does, and asks for one for longer audio; the detection model chosen in its picker and loaded
 // from the catalog; longer audio then transcribed by its regions, giving the text chunking_strategy "auto" gives; and the
 // live panel, which waits for a detection model, transcribing a microphone that plays the dumps with pauses between
-// them over /v1/realtime: grey text while an utterance is said, and at the end a text within a CER of 10% of the API's
-// for the same audio (the browser resamples the microphone to 24 kHz, so the samples are not the file's). The audio is
+// them over /v1/realtime with the pause set in its options: grey text while an utterance is said, and at the end a text
+// within a CER of 10% of the API's for the same audio and pause (the browser resamples the microphone to 24 kHz, so the
+// samples are not the file's). The audio is
 // 16-bit WAVE made of the dumps of reference/fastconformer/dump.py or reference/qwen3-asr/dump.py. Chrome is the one at
 // $CHROME, or macOS's; the server and Chrome are stopped however the script ends.
 // usage: node tools/server_page_browser_smoke.mjs <speech> <work dir> <recognition model> <detection model's catalog name> <dump folder>...
@@ -151,6 +152,8 @@ try {
   const chrome = start(CHROME, [
     '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run',
     '--hide-scrollbars', '--lang=en-US', '--accept-lang=en-US', '--window-size=960,900',
+    // A click the script makes is no gesture of a person's, which an audio context needs to run.
+    '--autoplay-policy=no-user-gesture-required',
   ], { stdio: 'ignore' });
   running.push(chrome);
   const port = await racing((async () => {
@@ -236,6 +239,13 @@ try {
     };
   ` });
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `
+    window.__sessions = [];
+    const sent = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (data) {
+      const event = JSON.parse(data);
+      if (event.type === 'session.update') window.__sessions.push(event.session);
+      return sent.call(this, data);
+    };
     window.__transcriptions = [];
     const fetched = window.fetch;
     window.fetch = (url, init) => {
@@ -309,6 +319,8 @@ try {
   const live = await page(`
     $('tab-live').click();
     await until(() => !$('live-start').disabled, 'the live panel to start');
+    $('live-silence').value = '400';
+    $('live-silence').dispatchEvent(new Event('change'));
     $('live-start').click();
     const card = document.querySelector('#live-transcript .transcript');
     let grey = 0;
@@ -321,10 +333,14 @@ try {
     $('live-start').click();
     await until(() => !$('live-start').disabled && !$('live-status').textContent, 'the last words');
     if (!$('live-error').hidden) return { error: $('live-error').textContent };
-    return { text: card.querySelector('.transcript-text').textContent, grey, provisional: card.querySelector('.provisional')?.textContent ?? '' };
+    return {
+      text: card.querySelector('.transcript-text').textContent, grey, provisional: card.querySelector('.provisional')?.textContent ?? '',
+      turns: window.__sessions.map((s) => s.audio.input.turn_detection),
+    };
   `);
-  const wantLive = await api(microphone, { chunking_strategy: 'auto' });
-  if (live.error || !live.grey || live.provisional || cer(live.text, wantLive) > 0.1) {
+  const wantLive = await api(microphone, { 'chunking_strategy[type]': 'server_vad', 'chunking_strategy[silence_duration_ms]': '400' });
+  if (live.error || !live.grey || live.provisional || cer(live.text, wantLive) > 0.1
+      || JSON.stringify(live.turns) !== JSON.stringify([{ type: 'server_vad', silence_duration_ms: 400 }])) {
     throw new Error(`the live panel: ${JSON.stringify(live)}, where the API gives ${JSON.stringify(wantLive)} for the same audio`);
   }
   console.log(`live: ${(spoken.length / rate).toFixed(1)} s from the microphone, grey text in ${live.grey} of its looks, CER ${(100 * cer(live.text, wantLive)).toFixed(1)}% against the API: ${live.text.slice(0, 40)}`);

@@ -12,6 +12,13 @@ const $ = (id) => document.getElementById(id);
 const TICK_MS = 100;
 /** The options of the model that a Realtime transcription session carries. */
 const SESSION_OPTIONS = new Set(['language', 'prompt']);
+const SETTINGS_KEY = 'speech.cpp live settings';
+
+/** The value of a number field, within its bounds, or its default when it holds no number. */
+function bounded(input) {
+  const value = Number(input.value);
+  return Number.isFinite(value) ? Math.min(Number(input.max), Math.max(Number(input.min), value)) : Number(input.defaultValue);
+}
 
 export class LivePanel {
   #held = null;
@@ -32,6 +39,19 @@ export class LivePanel {
       event.preventDefault();
       if (this.#recorder) this.#stop();
       else this.#start();
+    });
+    try {
+      const kept = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}');
+      if (Number.isFinite(kept.silence)) $('live-silence').value = kept.silence;
+    } catch {
+      // Storage the browser refuses, or a value of another shape, leaves the setting as the page gives it.
+    }
+    $('live-silence').addEventListener('change', () => {
+      try {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify({ silence: bounded($('live-silence')) }));
+      } catch {
+        // Without storage the setting lasts as long as the page.
+      }
     });
   }
 
@@ -98,7 +118,7 @@ export class LivePanel {
     this.#starting = recorder;
     this.#ready();
     try {
-      await Promise.all([recorder.start(), live.open(model.name, this.#options.values())]);
+      await Promise.all([recorder.start(), live.open(model.name, this.#options.values(), bounded($('live-silence')))]);
     } catch (e) {
       live.abort();
       await recorder.stop();

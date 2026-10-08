@@ -45,9 +45,10 @@ export class RealtimeTranscription {
 
   /**
    * Opens a session that transcribes with `model`, given the form's `fields` (language, prompt), and finds speech with
-   * the server's detection model; it resolves once the server has taken the configuration.
+   * the server's detection model, an utterance ending at a pause of `silenceMs`; it resolves once the server has taken
+   * the configuration.
    */
-  async open(model, fields) {
+  async open(model, fields, silenceMs) {
     const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocket(`${scheme}//${location.host}/v1/realtime?model=${encodeURIComponent(model)}`);
     this.#socket = socket;
@@ -65,7 +66,13 @@ export class RealtimeTranscription {
         type: 'session.update',
         session: {
           type: 'transcription',
-          audio: { input: { format: { type: 'audio/pcm', rate: RATE }, transcription, turn_detection: { type: 'server_vad' } } },
+          audio: {
+            input: {
+              format: { type: 'audio/pcm', rate: RATE },
+              transcription,
+              turn_detection: { type: 'server_vad', silence_duration_ms: silenceMs },
+            },
+          },
         },
       }));
     });
