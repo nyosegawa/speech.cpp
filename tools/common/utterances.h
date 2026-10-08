@@ -124,7 +124,7 @@ private:
     std::unique_ptr<speech_detection, decltype(&speech_detection_free)> detection_{nullptr, speech_detection_free};
 };
 
-/** One thread calls an assembly's functions; its recognitions run on a thread of its own. */
+/** One thread at a time calls an assembly's functions; its recognitions run on a thread of its own. */
 class Assembly {
 public:
     /**
@@ -218,7 +218,7 @@ private:
     Recognizer & recognizer_;
     const int rate_;
     std::function<void(const Event &)> emit_;
-    /** The detection, used on the caller's thread alone, and whether the caller commits while there is none. */
+    /** The detection, used by the caller alone, and whether the caller commits while there is none. */
     std::unique_ptr<Detection> detection_;
     bool manual_ = true;
     double detecting_ = 0;

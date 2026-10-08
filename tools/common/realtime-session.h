@@ -1,9 +1,12 @@
 #pragma once
 
+#include <condition_variable>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "cancellation.h"
@@ -69,6 +72,8 @@ public:
      * and `model` names the recognition model the session starts with, or is "" for the one held.
      */
     Session(Models & models, std::function<void(const std::string &)> send, size_t limit, const std::string & model);
+    /** Stops the session's watch over the detection model, then its recognitions. */
+    ~Session();
     Session(const Session &) = delete;
     Session & operator=(const Session &) = delete;
 
@@ -76,12 +81,6 @@ public:
     void open();
     /** Handles a client event: one JSON object in a text message; a binary message is refused. */
     void receive(const std::string & message, bool text);
-    /**
-     * With server_vad, lets the detection model go once the host no longer holds it, the regions its detection gives at
-     * its end committed, and goes on with the one held next. The host calls it between messages, and often while none
-     * come, so that a session does not keep a model the host replaces.
-     */
-    void tick();
 
 private:
     /** The configuration a session.update changes. */
@@ -117,6 +116,17 @@ private:
     void commit();
     void clear();
     std::string session_json();
+    /**
+     * With server_vad, lets the detection model go once the host no longer holds it, the regions its detection gives at
+     * its end committed, and goes on with the one held next.
+     */
+    void tick();
+    /**
+     * Ticks every 0.2 s on a thread of its own, so that a session lets a detection model go soon after the host replaces
+     * it while the client sends nothing, and the carrier reads its messages whole, with its own timeout; each client event
+     * ticks first too.
+     */
+    void watch();
 
     Models & models_;
     Events events_;
@@ -125,8 +135,14 @@ private:
     const size_t limit_;
     /** Whether the session has said that turn detection waits for a detection model the host does not hold. */
     bool told_no_detection_ = false;
-    /** Declared last, so that its recognitions end before what they use goes. */
+    /** Declared after what its recognitions use, so that they end before it goes. */
     utterances::Assembly assembly_;
+
+    /** Taken by receive() and tick(), so that one thread at a time works the assembly. */
+    std::mutex mutex_;
+    std::condition_variable closing_changed_;
+    bool closing_ = false;
+    std::thread watcher_;
 };
 
 }  // namespace realtime

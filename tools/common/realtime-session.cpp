@@ -1,6 +1,7 @@
 #include "realtime-session.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <initializer_list>
 #include <stdexcept>
@@ -134,9 +135,25 @@ Session::Session(Models & models, std::function<void(const std::string &)> send,
       assembly_(reader_, kRate, [this](const utterances::Event & e) { events_.utterance(e); }) {
     if (!model.empty()) config_.model = model;
     assembly_.ask(config_.asked());
+    watcher_ = std::thread([this] { watch(); });
+}
+
+Session::~Session() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        closing_ = true;
+    }
+    closing_changed_.notify_all();
+    watcher_.join();
+}
+
+void Session::watch() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    while (!closing_changed_.wait_for(lock, std::chrono::milliseconds(200), [&] { return closing_; })) tick();
 }
 
 void Session::open() {
+    std::lock_guard<std::mutex> lock(mutex_);
     events_.emit("session.created", ",\"session\":" + session_json());
 }
 
@@ -185,6 +202,9 @@ void Session::tick() {
 }
 
 void Session::receive(const std::string & message, bool text) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // The audio of an append goes to the detection model held now, not one the host has let go since the last tick.
+    tick();
     std::string event_id;
     try {
         if (!text) {

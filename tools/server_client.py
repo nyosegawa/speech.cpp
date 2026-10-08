@@ -166,12 +166,23 @@ class WebSocket:
         out, self.buffer = self.buffer[:n], self.buffer[n:]
         return out
 
-    def _frame(self, opcode, payload):
+    @staticmethod
+    def _frame_bytes(opcode, payload):
         mask = os.urandom(4)
         n = len(payload)
         head = bytes([0x80 | opcode]) + (bytes([0x80 | n]) if n < 126 else bytes([0x80 | 126]) + struct.pack(">H", n) if n < 65536
                                          else bytes([0x80 | 127]) + struct.pack(">Q", n))
-        self.sock.sendall(head + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+        return head + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+
+    def _frame(self, opcode, payload):
+        self.sock.sendall(self._frame_bytes(opcode, payload))
+
+    def send_split(self, message, pause):
+        """Sends a JSON object as one text frame written in two pieces `pause` seconds apart, as a slow network delivers it."""
+        frame = self._frame_bytes(0x1, json.dumps(message, ensure_ascii=False).encode())
+        self.sock.sendall(frame[:len(frame) // 2])
+        time.sleep(pause)
+        self.sock.sendall(frame[len(frame) // 2:])
 
     def send(self, message):
         """Sends a text message, or a JSON object as one."""

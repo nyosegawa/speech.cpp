@@ -1,5 +1,6 @@
 """Speaks OpenAI's Realtime transcription to `speech serve` over the WebSocket at /v1/realtime, the way a client of OpenAI's
-API does, with the standard library alone: the session.created and session.updated of a transcription session, two
+API does, with the standard library alone: the session.created and session.updated of a transcription session, an
+event written in two pieces 350 ms apart, two
 commits of 24000 Hz PCM appended in pieces, each committed in order and transcribed into deltas that only add text and
 the completed of the text, the languages and the duration of the same samples sent as a WAV file of that rate, a
 cleared buffer, a commit with transcription null left untranscribed, an error event for each member and value it does
@@ -104,6 +105,10 @@ assert configured["audio"]["input"] == {"format": {"type": "audio/pcm", "rate": 
 ws.send(session({"model": name}))
 updated = ws.event()
 assert updated["type"] == "session.updated" and updated["session"] == configured, updated
+# An event whose frame arrives in two pieces 350 ms apart is read whole: the connection waits for the rest of a message.
+ws.send_split({"type": "input_audio_buffer.clear"}, 0.35)
+assert ws.event()["type"] == "input_audio_buffer.cleared", "an event written in two pieces was not answered"
+print("realtime: an event written in two pieces 350 ms apart, answered")
 # Two commits in a row, each of its appends: both are committed at once, the second after the first, and each is
 # transcribed in turn into one delta and its completed with the duration.
 items = []

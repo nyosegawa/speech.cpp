@@ -165,21 +165,12 @@ void Realtime::route(httplib::Server & http) {
         realtime::Session session(held, [&ws](const std::string & event) { ws.send(event); }, limit_, req.get_param_value("model"));
         std::fprintf(stderr, "%s realtime session opened\n", req.remote_addr.c_str());
         session.open();
-        // read() returns at least every 0.2 s, so that a session lets a detection model go soon after the page replaces
-        // it; a client silent for as long as the server's read timeout is still taken to be gone.
-        ws.set_read_timeout(std::chrono::milliseconds(200));
-        Clock::time_point heard = Clock::now();
         std::string message;
         for (;;) {
             const httplib::ws::ReadResult got = ws.read(message);
             if (got == httplib::ws::Fail) break;
-            if (got == httplib::ws::Timeout) {
-                if (seconds_between(heard, Clock::now()) > CPPHTTPLIB_WEBSOCKET_SERVER_READ_TIMEOUT_SECOND) break;
-            } else {
-                heard = Clock::now();
-                session.receive(message, got == httplib::ws::Text);
-            }
-            session.tick();
+            if (got == httplib::ws::Timeout) continue;
+            session.receive(message, got == httplib::ws::Text);
         }
         std::fprintf(stderr, "%s realtime session closed\n", req.remote_addr.c_str());
     });

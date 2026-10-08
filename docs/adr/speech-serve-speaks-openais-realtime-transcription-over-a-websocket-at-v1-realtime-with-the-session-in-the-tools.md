@@ -16,7 +16,8 @@ base URL followed by `/realtime`, with `model` in the query when it is given, an
 its own events at `/v1/audio/transcriptions/realtime`, under OpenAI's names.
 
 cpp-httplib 0.59, which `speech serve` already vendors, has `Server::WebSocket`, upgraded after the server's pre-routing
-handler has seen the request; its `read()` returns at a timeout the handler sets. A browser applies no CORS to a
+handler has seen the request; its `read()` returns at a timeout the handler sets only between messages, and fails
+within a message, so a timeout shorter than a slow client's message resets the connection. A browser applies no CORS to a
 WebSocket and sends its page's Origin with it. The library gives a recognition's text once the recognition has ended,
 and the assembly of utterances in the tools cuts audio that arrives a piece at a time into utterances, reads each again
 while it goes on and recognizes it whole once committed
@@ -77,8 +78,8 @@ while it goes on and recognizes it whole once committed
   fails with `model_loading`, and afterwards a session that named no model goes on with the new one while one that named
   the old, in the address or in `session.update`, fails with `model_not_found`. A session with `server_vad` lets the
   detection model go once the page replaces it, its detection ended and the utterance under way committed, and goes on
-  with the new model: the WebSocket's read returns at least every 0.2 s for this, so that the load does not wait for a
-  silent session.
+  with the new model. A thread of the session's looks every 0.2 s, so that the load does not wait for a silent session,
+  while the WebSocket reads each message whole with the transport's own timeout.
 
 The alternatives were turned down:
 
