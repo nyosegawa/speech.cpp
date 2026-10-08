@@ -55,18 +55,23 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   built but not released.
 - `tools/server/` holds `speech serve`, which serves a synthesis, a recognition and a detection model over HTTP with
   OpenAI's audio API (`POST /v1/audio/speech`, `POST /v1/audio/transcriptions`, `GET /v1/models`, `GET /health`)
-  for programs that speak HTTP. Like the worker it reaches the models only through the C API; `openai-api.cpp` reads
-  OpenAI's requests and writes its errors, mapped from the library's categories alone, and its stream events,
+  and OpenAI's Realtime transcription over a WebSocket at `/v1/realtime`, for programs that speak HTTP. Like the worker
+  it reaches the models only through the C API; `openai-api.cpp` reads OpenAI's requests and writes its stream events,
+  `tools/common/openai-error.cpp` OpenAI's error object, mapped from the library's categories alone,
+  `tools/common/realtime-session.cpp` a Realtime session, whose messages `realtime.cpp` carries over the WebSocket,
   `jobs.h` runs one request at a time in arrival order and cancels the request of a client that goes away, and
   `served-models.cpp` holds one model of each task and replaces it once its requests have ended. `page/` is the page
   of `speech serve --open`, plain HTML, CSS and JavaScript modules compiled into `speech`, which `page.cpp` serves
   with the endpoints that fetch and load models; `access.cpp` guards them with the token, the Host and the Origin.
 - The smoke scripts in `tools/` drive each entry point as its caller does and fail on a defect:
   `worker_smoke.py` and `worker_recognition_smoke.py` the worker protocol through `worker_client.py`, which checks
-  every line and one terminal message per request, `server_smoke.py` every endpoint and the mapping of errors and
-  `server_page_smoke.py` the page's endpoints and every guard, both through `server_client.py`, which stops the
-  server however the script ends, `speech_cli_smoke.py` the command line against the worker, and `models_smoke.py`
-  the naming, fetching and removing of models against a temporary model folder.
+  every line and one terminal message per request, `server_smoke.py` every HTTP endpoint and the mapping of errors,
+  `server_realtime_smoke.py` the Realtime sessions of `/v1/realtime` and `server_page_smoke.py` the page's endpoints and
+  every guard, all through `server_client.py`, which stops the
+  server however the script ends, `server_openai_smoke.py` the server through the official openai-python client,
+  `speech_cli_smoke.py` the command line against the worker, and `models_smoke.py` the naming, fetching and removing of
+  models against a temporary model folder. A script that needs packages outside the standard library is a uv script
+  with its dependencies pinned in the script and in a lock file beside it.
 - `reference/<model>/` holds, per model, a uv environment that pins the official code, PyTorch and the rest,
   `pins.py`, which pins the checkpoints by revision, the conversion of the official weights to one GGUF file per
   model, and the scripts that run the official implementation to dump reference tensors. Dumps go to
@@ -174,7 +179,8 @@ comment.
   `tools/worker_smoke.py` for both synthesis families, and `speech-api-check transcribe` and
   `tools/worker_recognition_smoke.py` for both recognition families, and `speech-api-check detect` with Silero VAD; a
   change to the server runs
-  `tools/server_smoke.py` and `tools/server_page_smoke.py`, one to the command line or the parser
+  `tools/server_smoke.py`, `tools/server_realtime_smoke.py` and `tools/server_page_smoke.py`, one to the command line or
+  the parser
   `tools/speech_cli_smoke.py`, with a model of each family, and one to `tools/models/` `tools/models_smoke.py`.
 - Never commit on main. Every change reaches main through a pull request, one coherent unit each: a
   model's stage, a fix, a refactor or a documentation change.

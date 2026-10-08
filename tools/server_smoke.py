@@ -28,11 +28,12 @@ endpoints answer that the server holds no model of their task.
 The audio goes as 16-bit samples, which move the near-silent input of reference/qwen3-asr/dump.py far enough to change
 the text a forced language makes of it; leave that dump out.
 
+A synthesis model refuses /v1/realtime, whose sessions tools/server_realtime_smoke.py checks.
+
 usage: python3 tools/server_smoke.py <speech> <model.gguf> [dump folder...] [--vad DETECTION.gguf] [-- serve options...]
 """
 
 import array
-import ast
 import base64
 import json
 import os
@@ -40,9 +41,8 @@ import struct
 import subprocess
 import sys
 import tempfile
-import uuid
 
-from server_client import Server, expect_error
+from server_client import Server, expect_error, read_npy
 from worker_client import check_model_information, dump_requests
 
 args = sys.argv[1:]
@@ -58,7 +58,7 @@ added = [o.split("=", 1)[0] for i, o in enumerate(options) if i > 0 and options[
 ORIGIN = "http://localhost:5173"
 
 server = Server(speech, [model, *([vad] if vad else []), "--cors-origin", ORIGIN, *options])
-call, post_json = server.call, server.post_json
+call, post_json, transcribe = server.call, server.post_json, server.transcribe
 status, _, body = call("GET", "/health")
 assert status == 200 and json.loads(body) == {"status": "ok"}, body
 status, _, body = call("GET", "/v1/models")
@@ -194,31 +194,10 @@ elif info["task"] == "synthesis":
 else:
     expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": "x"}), 404, None, None, "POST /v1/audio/speech to a recognition model")
 
-    def read_npy(path):
-        with open(path, "rb") as f:
-            data = f.read()
-        header_length = struct.unpack("<H", data[8:10])[0]
-        header = ast.literal_eval(data[10:10 + header_length].decode())
-        values = array.array("f")
-        values.frombytes(data[10 + header_length:])
-        assert header["descr"] == "<f4"
-        return values
-
     def wav_file(samples, at_rate):
         pcm = array.array("h", [max(-32768, min(32767, round(x * 32768))) for x in samples]).tobytes()
         return (b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, at_rate, at_rate * 2, 2, 16)
                 + b"data" + struct.pack("<I", len(pcm)) + pcm)
-
-    def transcribe(fields, files):
-        boundary = uuid.uuid4().hex
-        body = b""
-        for name, value in fields:
-            body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode()
-        for name, filename, content in files:
-            body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\n"
-                     f"Content-Type: audio/wav\r\n\r\n").encode() + content + b"\r\n"
-        body += f"--{boundary}--\r\n".encode()
-        return call("POST", "/v1/audio/transcriptions", body, {"Content-Type": f"multipart/form-data; boundary={boundary}"})
 
     takes = {o["name"] for o in info["options"]}
     first = None
@@ -350,6 +329,9 @@ else:
                 ([("chunking_strategy[type]", "server_vad"), ("chunking_strategy[create_response]", "true")], "unknown_parameter",
                  "chunking_strategy[create_response]", "a member of the Realtime API's server_vad")):
             expect_error(transcribe(form, [("file", "x.wav", wav)]), 400, code, param, what)
+
+if info["task"] == "synthesis":
+    expect_error(server.websocket("/v1/realtime"), 404, None, None, "/v1/realtime without a recognition model")
 
 out = server.stop()
 if out:

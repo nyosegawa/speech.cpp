@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "failure.h"
+#include "openai-error.h"
 #include "request-options.h"
 #include "transcript.h"
 
@@ -14,7 +15,7 @@ struct Response;
 }
 
 // OpenAI's audio API as speech.cpp reads and writes it: the create speech request, the create transcription request,
-// the error object with the library's categories mapped onto it, and the events of an SSE stream. The shapes follow
+// its errors as HTTP answers, and the events of an SSE stream. The shapes follow
 // OpenAI's API reference, components CreateSpeechRequest, CreateTranscriptionRequest, CreateTranscriptionResponseJson,
 // CreateTranscriptionResponseVerboseJson, TranscriptionSegment, Error, SpeechAudioDeltaEvent and SpeechAudioDoneEvent
 // and the path /audio/transcriptions of github.com/openai/openai-openapi at commit 31af4fc (2026-10-05), and its
@@ -22,47 +23,6 @@ struct Response;
 // openai-python 3.26.0 sends in a form as one field per member, chunking_strategy[type] and so on.
 
 namespace openai {
-
-/** A member of OpenAI's server_vad, which chunking_strategy and the Realtime API's turn_detection share, and the option it sets. */
-struct VadMember {
-    const char * name;
-    speech_option option;
-};
-
-/**
- * The members of server_vad that speech.cpp takes: threshold as threshold, prefix_padding_ms, the audio kept before
- * speech, as speech_pad_ms, and silence_duration_ms, the silence that ends speech, as min_silence_duration_ms.
- */
-constexpr VadMember kServerVad[] = {
-    {"threshold", SPEECH_OPT_THRESHOLD},
-    {"prefix_padding_ms", SPEECH_OPT_SPEECH_PAD_MS},
-    {"silence_duration_ms", SPEECH_OPT_MIN_SILENCE_DURATION_MS},
-};
-
-/** The member of server_vad that sets the detection option named `option`, or "". */
-std::string server_vad_member(const std::string & option);
-
-/** An answer that is not audio: an HTTP status and an error in OpenAI's shape, its type following from the status. */
-struct ApiError {
-    int status;
-    std::string message;
-    std::string param;
-    std::string code;
-};
-
-/**
- * The error of a failure of the library, by its category alone: invalid_argument, unsupported and out_of_range are
- * the request's (400, invalid_value, unsupported_parameter and unsupported_value), every other category the server's
- * (500, the category's name as the code). The param is the input at fault, "text" written as "input" and "audio" as
- * "file", the names OpenAI's requests give them.
- */
-ApiError library_error(const Failure & failure);
-
-/** The members of OpenAI's error object: {"message", "type", "param", "code"}. */
-std::string error_object(const ApiError & e);
-
-/** An error response's body: {"error": {...}}. */
-std::string error_json(const ApiError & e);
 
 /** Answers with the error's status and body. */
 void send_error(httplib::Response & res, const ApiError & e);

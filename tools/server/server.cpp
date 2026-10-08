@@ -21,13 +21,15 @@
 
 #include "access.h"
 #include "page.h"
+#include "realtime.h"
 #include "served-models.h"
 
 // speech serve: serves a model of each task over HTTP with OpenAI's audio API, so that a program that speaks HTTP (a web
 // app, Python with requests, curl) can use speech.cpp without starting the worker: the synthesis model answers
 // POST /v1/audio/speech and the recognition model POST /v1/audio/transcriptions, which with chunking_strategy recognizes
 // the regions where the detection model finds that someone speaks; GET /v1/models gives the models with their
-// information, and GET /health says the server is up, which it is once the models given are loaded. A failure of
+// information, and GET /health says the server is up, which it is once the models given are loaded. A WebSocket at
+// /v1/realtime carries OpenAI's Realtime transcription session (realtime.h). A failure of
 // the library becomes OpenAI's error object by its category alone (openai::library_error()). A model serves one request
 // at a time in the order they arrive, and a client that goes away while it waits or while its request runs cancels it.
 // On a loopback address the server also serves its page (page.h), which replaces the model of a task by one of the
@@ -97,7 +99,7 @@ std::string model_json(const Served & served) {
 
 class Server {
 public:
-    Server(ServedModels & models, const Access & access) : models_(models), access_(access) {}
+    Server(ServedModels & models, const Access & access, const Realtime & realtime) : models_(models), access_(access), realtime_(realtime) {}
 
     void route(httplib::Server & http) {
         http.set_pre_routing_handler([this](const httplib::Request & req, httplib::Response & res) { return admit(req, res); });
@@ -136,6 +138,7 @@ public:
 private:
     ServedModels & models_;
     const Access & access_;
+    const Realtime & realtime_;
 
     /**
      * The model of the task the endpoint asks for; otherwise answers a 404, as for a path the server does not have,
@@ -168,6 +171,13 @@ private:
         if (const auto refusal = access_.origin_refusal(req)) {
             send_error(res, *refusal);
             return httplib::Server::HandlerResponse::Handled;
+        }
+        // A WebSocket is answered by its handler only once it is upgraded, so a refusal of one is an HTTP answer here.
+        if (req.path == "/v1/realtime") {
+            if (const auto refusal = realtime_.refusal(req)) {
+                send_error(res, *refusal);
+                return httplib::Server::HandlerResponse::Handled;
+            }
         }
         const std::string origin = req.get_header_value("Origin");
         const bool allowed = access_.cross_origin_allowed(origin);
@@ -299,7 +309,7 @@ private:
                 job->detection = detection_request(job->detector->get(), asked.samples, asked.sample_rate, *asked.regions);
             } catch (const Failure & e) {
                 ApiError error = openai::library_error(e);
-                const std::string member = openai::server_vad_member(e.option());
+                const std::string member = server_vad_member(e.option());
                 if (!member.empty()) error.param = "chunking_strategy[" + member + "]";
                 send_error(res, error);
                 return;
@@ -442,15 +452,19 @@ int run_serve(const CommandLine & line, FILE *) {
     httplib::Server http;
     // Nagle's algorithm would hold a small chunk of a stream until the client acknowledges the previous one.
     http.set_tcp_nodelay(true);
-    // A file to recognize, or a recording to make a voice of, may take OpenAI's limit for an upload, 25 MB.
-    http.set_payload_max_length(25 << 20);
+    // A file to recognize, or a recording to make a voice of, may take OpenAI's limit for an upload, 25 MB, and a
+    // Realtime session may hold as much audio not yet transcribed, 546 s of its 16-bit PCM at 24000 Hz.
+    constexpr size_t kUpload = 25 << 20;
+    http.set_payload_max_length(kUpload);
     const int bound = port == 0 ? http.bind_to_any_port(host) : (http.bind_to_port(host, port) ? port : -1);
     if (bound < 0) {
         throw Failure(speech_status_name(SPEECH_ERROR_IO), "", "cannot listen on " + host + ":" + std::to_string(port) + "; choose another --port or --host");
     }
     const Access access(host, bound, line.values("--cors-origin"));
-    Server server(models, access);
+    Realtime realtime(models, access, kUpload);
+    Server server(models, access, realtime);
     server.route(http);
+    realtime.route(http);
     Page page(models, access, report);
     page.route(http);
     const std::string address = host.find(':') == std::string::npos ? host : "[" + host + "]";
@@ -474,7 +488,8 @@ Command serve_command() {
         "Loads each MODEL, a synthesis model, a recognition model and a detection model at most, warmed up unless\n"
         "--no-warmup, adds the voices of --add-voice to the synthesis model, and serves them over HTTP: POST\n"
         "/v1/audio/speech, POST /v1/audio/transcriptions, which with chunking_strategy recognizes the regions where the\n"
-        "detection model finds speech, GET /v1/models and GET /health. It has no authentication and no TLS, and refuses a\n"
+        "detection model finds speech, GET /v1/models, GET /health, and OpenAI's Realtime transcription over a WebSocket at\n"
+        "/v1/realtime, which transcribes each buffer the client commits. It has no authentication and no TLS, and refuses a\n"
         "request that a web page at another origin than --cors-origin's sends. On 127.0.0.1, ::1 or localhost it also\n"
         "serves a page on which to pick models of the catalog, fetch them and try them, at the address with a token\n"
         "that it prints; --open opens it, and starts the server without a model if none is given.";

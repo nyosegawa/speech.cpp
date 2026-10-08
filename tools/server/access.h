@@ -31,7 +31,7 @@ public:
     /** Whether the origin of a request is one --cors-origin gives, whose responses carry CORS headers. */
     bool cross_origin_allowed(const std::string & origin) const;
     bool any_origin() const;
-    /** The refusal of a request for the page whose Host is not the server's loopback address and port, or nothing. */
+    /** The refusal of a request for the page or its WebSocket whose Host is not the server's loopback address and port, or nothing. */
     std::optional<openai::ApiError> host_refusal(const httplib::Request & req) const;
     /** The refusal of a request for the page's endpoints without the token in its Authorization header, or nothing. */
     std::optional<openai::ApiError> token_refusal(const httplib::Request & req) const;
