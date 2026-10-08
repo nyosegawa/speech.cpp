@@ -117,13 +117,17 @@ export class LivePanel {
     const recorder = new Recorder(RATE);
     this.#starting = recorder;
     this.#ready();
-    try {
-      await Promise.all([recorder.start(), live.open(model.name, this.#options.values(), bounded($('live-silence')))]);
-    } catch (e) {
+    // Both are let to settle, so that a microphone the browser opens after the session failed is still turned off.
+    const [microphone, session] = await Promise.allSettled([
+      recorder.start(),
+      live.open(model.name, this.#options.values(), bounded($('live-silence'))),
+    ]);
+    if (microphone.status === 'rejected' || session.status === 'rejected') {
       live.abort();
       await recorder.stop();
       if (this.#starting !== recorder) return;
       this.#starting = null;
+      const e = microphone.status === 'rejected' ? microphone.reason : session.reason;
       this.#fail(e.name === 'NotAllowedError' ? new Error('The browser was not allowed to use the microphone.') : e);
       this.#ready();
       return;

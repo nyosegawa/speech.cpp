@@ -52,9 +52,7 @@ export class RealtimeTranscription {
     const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocket(`${scheme}//${location.host}/v1/realtime?model=${encodeURIComponent(model)}`);
     this.#socket = socket;
-    const configured = new Promise((resolve, reject) => {
-      this.#waiting = { resolve, reject, until: 'session.updated' };
-    });
+    const configured = this.#wait('session.updated');
     socket.addEventListener('message', (event) => this.#receive(JSON.parse(event.data)));
     let opened = false;
     socket.addEventListener('close', () =>
@@ -92,14 +90,13 @@ export class RealtimeTranscription {
    */
   async finish() {
     if (this.#failure) throw this.#failure;
+    // The server answers a session.update that changes nothing after the events of the audio sent before it, so once it
+    // has, every utterance of that audio is known, and one still under way is committed rather than dropped or waited for.
+    await this.#wait('session.updated', { type: 'session.update', session: { type: 'transcription' } });
     if ([...this.#items.values()].some((item) => !item.committed)) {
       this.#socket.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
     }
-    if (!this.#settled()) {
-      await new Promise((resolve, reject) => {
-        this.#waiting = { resolve, reject, until: 'settled' };
-      });
-    }
+    if (!this.#settled()) await this.#wait('settled');
     this.#close();
     return this.#transcript();
   }
@@ -116,6 +113,23 @@ export class RealtimeTranscription {
     if (this.#socket && this.#socket.readyState <= WebSocket.OPEN) this.#socket.close();
   }
 
+  /** Sends `event`, if given, and waits until `until`: the type of an event of the server's, or 'settled'. */
+  #wait(until, event = null) {
+    const done = new Promise((resolve, reject) => {
+      this.#waiting = { resolve, reject, until };
+    });
+    if (event) this.#socket.send(JSON.stringify(event));
+    return done;
+  }
+
+  /** Resolves what waits until `until`, and lets it go, so that a failure afterwards goes to `failed`. */
+  #resolve(until) {
+    if (this.#waiting?.until !== until) return;
+    const { resolve } = this.#waiting;
+    this.#waiting = null;
+    resolve();
+  }
+
   /** Whether every utterance heard has its final text, and none is under way. */
   #settled() {
     return [...this.#items.values()].every((item) => item.final);
@@ -129,7 +143,7 @@ export class RealtimeTranscription {
   #receive(event) {
     switch (event.type) {
       case 'session.updated':
-        if (this.#waiting?.until === 'session.updated') this.#waiting.resolve();
+        this.#resolve('session.updated');
         return;
       case 'input_audio_buffer.speech_started':
         this.#item(event.item_id);
@@ -158,7 +172,7 @@ export class RealtimeTranscription {
         return;
     }
     this.#show(this.#transcript(), this.#provisional());
-    if (this.#waiting?.until === 'settled' && this.#settled()) this.#waiting.resolve();
+    if (this.#settled()) this.#resolve('settled');
   }
 
   /** Ends what waits with `e`; the first failure is the one shown. */
