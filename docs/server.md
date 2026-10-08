@@ -61,6 +61,12 @@ A member speech.cpp does not take is refused rather than ignored, and so is `ins
 such as Qwen3-TTS 0.6B. A request without `seed` gets one drawn, which `X-Speech-Seed` returns; the same request with that
 seed gives the same audio on the same device.
 
+Irodori-TTS speaks at most 30 s at a time, so the server speaks an `input` of several sentences one sentence at a time,
+as `speech tts` does, with the same voice, options and seed, and a pause of 0.9 s between them. A `pcm` stream sends
+the first sentence's audio as soon as it is made. A sentence too long for one request is cut at its commas, or at its
+spaces; a run of text with neither that is too long is refused (400, `param` `input`). Qwen3-TTS speaks `input` whole,
+up to 24565 tokens.
+
 | Response | What it sends |
 |---|---|
 | `wav` | the whole file, 16-bit mono at the model's rate, once the speech is made, with the headers `X-Sample-Rate`, `X-Speech-Seed` and `X-Speech-Stop` (`complete`, `max_seconds` or `model_limit`) |

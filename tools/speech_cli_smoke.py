@@ -9,7 +9,11 @@ content and through a pipe into cat, where the header cannot be written again in
 0xFFFFFFFF; that nothing but the WAVE reaches stdout and a failed run leaves no file; for Qwen3-TTS a stop at
 --max-seconds reported on stderr, and boolean and sampling flags against the worker's members; --instructions against
 the worker's member where the model takes it and its refusal where it does not; with --reference a voice file made by
-`speech voice` that `speech tts` speaks with; and with --embedding one made of a speaker-inversion embedding. For a
+`speech voice` that `speech tts` speaks with; with --embedding one made of a speaker-inversion embedding; on a model
+that reads a text in one request, a text of two sentences as the worker's one request of it; and on a model that speaks
+a text a sentence at a time (Irodori-TTS), a paragraph of thirty sentences in one request a sentence, whose seed
+reported with -v repeats the WAVE byte for byte and which, with --asr a recognition model, is heard within
+worker_client.MOST_CER, and a run with no place to cut refused, naming it. For a
 recognition model: `speech asr` on WAVE files of the dumps of reference/fastconformer/dump.py or
 reference/qwen3-asr/dump.py against the worker's text of the same samples, as text and as JSON with the stop and the
 languages, the one qwen-asr parsed or none, and where the model takes timestamps as text with --timestamps one line per
@@ -27,7 +31,8 @@ name and of a file named as another's region in the folder, left as it was; and 
 --vad, refused on a file without speech.
 
 usage: python3 tools/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav]
-                                         [--embedding E.speaker.safetensors] [--vad DETECTION.gguf] [-- load options...]
+                                         [--embedding E.speaker.safetensors] [--vad DETECTION.gguf] [--asr RECOGNITION.gguf]
+                                         [-- load options...]
 """
 
 import array
@@ -43,7 +48,7 @@ import subprocess
 import sys
 import threading
 
-from worker_client import Worker, dump_requests, joined_transcript, short
+from worker_client import MOST_CER, PARAGRAPH, Worker, cer, dump_requests, heard, joined_transcript, short, speaks_by_sentence
 
 args = sys.argv[1:]
 options = args[args.index("--") + 1:] if "--" in args else []
@@ -62,6 +67,11 @@ vad = None
 if "--vad" in args:
     at = args.index("--vad")
     vad = args[at + 1]
+    del args[at:at + 2]
+recognizer = None
+if "--asr" in args:
+    at = args.index("--asr")
+    recognizer = args[at + 1]
     del args[at:at + 2]
 speech, work, model, *dumps = args
 os.makedirs(work, exist_ok=True)
@@ -238,6 +248,40 @@ if info["task"] == "synthesis":
         r = run("tts", model, "-o", path, "--voice", voice, "--do-sample=false", "--temperature", "0.5", *options, lines[0], code=1)
         failure(r, "invalid_argument", "temperature")
         print("--temperature with --do-sample=false: exit 1, speech: invalid_argument (temperature): ...")
+    if not speaks_by_sentence(info):
+        # A text of several sentences is one request on a model that reads a text in one request.
+        w = Worker(speech, model, options)
+        w.request({"type": "synthesize", "id": "two", "text": lines[0] + lines[1], "voice": voice, "seed": seed})
+        two = b"".join(base64.b64decode(m["pcm"]) for m in w.until("two") if m["type"] == "chunk")
+        w.close()
+        r = run("tts", model, "-o", path, "--voice", voice, "--seed", str(seed), *options, lines[0] + lines[1])
+        assert " requests:" not in r.stderr.decode(), r.stderr
+        with open(path, "rb") as f:
+            expect("a text of two sentences", f.read()[44:], two)
+        os.remove(path)
+    else:
+        # A paragraph is spoken one request a sentence, every one with the seed the first drew, which -v reports.
+        again = os.path.join(work, "speech-cli-smoke-again.wav")
+        r = run("tts", model, "-o", path, "--voice", voice, "-v", *options, "".join(PARAGRAPH))
+        said = re.search(r"([0-9.]+) s of audio in (\d+) requests: .*, seed (\d+), complete\n", r.stderr.decode())
+        assert said and int(said.group(2)) == len(PARAGRAPH), r.stderr.decode()[-400:]
+        run("tts", model, "-o", again, "--voice", voice, "--seed", said.group(3), *options, "".join(PARAGRAPH))
+        with open(path, "rb") as f, open(again, "rb") as g:
+            assert f.read() == g.read(), f"the reported seed {said.group(3)} does not repeat the paragraph"
+        heard_at = ""
+        if recognizer:
+            load = [o for i, o in enumerate(options) if o in ("--device", "--threads") or (i and options[i - 1] in ("--device", "--threads"))]
+            error = cer("".join(PARAGRAPH), heard(speech, recognizer, path, load))
+            assert error <= MOST_CER, f"the paragraph's speech is heard at a CER of {error:.2%}"
+            heard_at = f", heard by {os.path.basename(recognizer)} at a CER of {error:.2%}"
+        os.remove(path)
+        os.remove(again)
+        print(f"{len(PARAGRAPH)} sentences: {said.group(1)} s of audio in {said.group(2)} requests, the reported seed "
+              f"{said.group(3)} repeating it byte for byte{heard_at}")
+        run_text = "あいうえおかきくけこ" * 80
+        message = failure(run("tts", model, "-o", path, "--voice", voice, *options, run_text, code=1), "out_of_range", "text")
+        assert message.startswith('"' + run_text[:20]) and not os.path.exists(path), message
+        print(f"a run of {len(run_text)} characters with no place to cut: exit 1, {message[:100]}")
     if reference:
         made = os.path.join(work, "speech-cli-smoke.voice.gguf")
         run("voice", model, reference, made)

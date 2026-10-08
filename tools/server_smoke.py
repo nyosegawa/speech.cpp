@@ -18,6 +18,13 @@ granularity, and that granularity's refusal where it does not; WAV at three time
 file that is not WAV or cannot be read, a language, a prompt, a decoding, a member and a granularity it does not take,
 and audio the library cannot take.
 
+For a synthesis model, also a text of one sentence, and on a model that reads a text in one request a text of two,
+spoken as the worker speaks it in one request; and on a model that speaks a text a sentence at a time (Irodori-TTS),
+a paragraph of thirty sentences, past its tokens and four times its 30 s, as a pcm stream whose first bytes come before
+a quarter of the whole has passed, the samples of the wav of the same seed, one request a sentence in the log, a client
+that goes away stopping it before the rest is made, and with --asr a recognition model that hears it within
+worker_client.MOST_CER; and a run with no place to cut, refused.
+
 With --vad a detection model, which the server holds beside the model: /v1/models lists it after the model, and for a
 recognition model chunking_strategy "auto" on the dumps' audio joined with silences gives the text, the languages and
 the segments of `speech asr --vad` with its defaults, the members of server_vad give those of the flags they map to, a
@@ -30,20 +37,24 @@ the text a forced language makes of it; leave that dump out.
 
 A synthesis model refuses /v1/realtime, whose sessions tools/server_realtime_smoke.py checks.
 
-usage: python3 tools/server_smoke.py <speech> <model.gguf> [dump folder...] [--vad DETECTION.gguf] [-- serve options...]
+usage: python3 tools/server_smoke.py <speech> <model.gguf> [dump folder...] [--vad DETECTION.gguf] [--asr RECOGNITION.gguf]
+                                     [-- serve options...]
 """
 
 import array
 import base64
+import http.client
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
 import tempfile
+import time
 
 from server_client import Server, expect_error, read_npy
-from worker_client import check_model_information, dump_requests
+from worker_client import MOST_CER, PARAGRAPH, Worker, cer, check_model_information, dump_requests, heard, speaks_by_sentence
 
 args = sys.argv[1:]
 options = args[args.index("--") + 1:] if "--" in args else []
@@ -53,8 +64,14 @@ if "--vad" in args:
     at = args.index("--vad")
     vad = args[at + 1]
     del args[at:at + 2]
+recognizer = None
+if "--asr" in args:
+    at = args.index("--asr")
+    recognizer = args[at + 1]
+    del args[at:at + 2]
 speech, model, *dumps = args
 added = [o.split("=", 1)[0] for i, o in enumerate(options) if i > 0 and options[i - 1] == "--add-voice"]
+load = [o for i, o in enumerate(options) if o in ("--device", "--threads") or (i and options[i - 1] in ("--device", "--threads"))]
 ORIGIN = "http://localhost:5173"
 
 server = Server(speech, [model, *([vad] if vad else []), "--cors-origin", ORIGIN, *options])
@@ -140,6 +157,64 @@ elif info["task"] == "synthesis":
     drawn = int(headers["x-speech-seed"])
     assert 0 <= drawn < 2 ** 53 and wav_data(post_json("/v1/audio/speech", {"input": TEXT, "voice": voice, "seed": drawn})[2]) == wav_data(body)
     print(f"a request without a seed drew {drawn}, which repeats the audio")
+    # A text of one sentence is one request, and so is a text of several on a model that reads a text in one request.
+    by_sentence = speaks_by_sentence(info)
+    TWO = TEXT + "二つ目の文です。"
+    w = Worker(speech, model, options)
+    for id, text in [("one", TEXT)] + ([] if by_sentence else [("two", TWO)]):
+        w.request({"type": "synthesize", "id": id, "text": text, "voice": voice, "seed": 11})
+        spoken = b"".join(base64.b64decode(m["pcm"]) for m in w.until(id) if m["type"] == "chunk")
+        assert wav_data(post_json("/v1/audio/speech", {"input": text, "voice": voice, "seed": 11})[2]) == spoken, f"{id}: not the worker's audio"
+    w.close()
+    print("a text of one sentence" + ("" if by_sentence else ", and one of two,") + " gives the worker's audio of one request")
+    if by_sentence:
+        long = {"input": "".join(PARAGRAPH), "voice": voice, "seed": 5}
+        t0 = time.perf_counter()
+        r = call("POST", "/v1/audio/speech", json.dumps(long | {"response_format": "pcm"}, ensure_ascii=False).encode(),
+                 {"Content-Type": "application/json"}, stream=True)
+        assert r.status == 200 and r.getheader("X-Speech-Seed") == "5", r.getheaders()
+        first = r.read(2)
+        first_at = time.perf_counter() - t0
+        streamed = first + r.read()
+        whole_at = time.perf_counter() - t0
+        assert first_at < whole_at / 4, f"the first bytes came after {first_at:.2f} s of {whole_at:.2f} s"
+        status, headers, body = post_json("/v1/audio/speech", long)
+        assert status == 200 and headers["x-speech-stop"] == "complete" and wav_data(body) == streamed, "the wav differs from the pcm stream"
+        # The log's line of a request is written before its answer, and read from the server's stderr as it comes.
+        for _ in range(50):
+            logged = [line for line in server.lines if f"from {len(PARAGRAPH)} requests in" in line]
+            if len(logged) == 2:
+                break
+            time.sleep(0.1)
+        assert len(logged) == 2, "the paragraph was not one request a sentence"
+        said = ""
+        if recognizer:
+            with tempfile.TemporaryDirectory() as work:
+                path = os.path.join(work, "paragraph.wav")
+                with open(path, "wb") as f:
+                    f.write(body)
+                text = heard(speech, recognizer, path, load)
+            error = cer("".join(PARAGRAPH), text)
+            assert error <= MOST_CER, f"the paragraph's speech is heard at a CER of {error:.2%}: {text}"
+            said = f", which {os.path.basename(recognizer)} hears at a CER of {error:.2%}"
+        print(f"{len(PARAGRAPH)} sentences: a pcm stream's first bytes after {first_at:.2f} s of {whole_at:.2f} s, "
+              f"{len(streamed) / 2 / rate:.1f} s of audio, the wav's samples, one request a sentence{said}")
+        # A client that goes away stops the sentence under way, and no more are made.
+        before = len(server.lines)
+        connection = http.client.HTTPConnection("127.0.0.1", server.port, timeout=600)
+        connection.request("POST", "/v1/audio/speech", json.dumps(long | {"response_format": "pcm"}, ensure_ascii=False).encode(),
+                           {"Content-Type": "application/json"})
+        response = connection.getresponse()
+        assert response.status == 200 and response.read(2), response.status
+        connection.close()
+        for _ in range(600):
+            stopped = [line for line in server.lines[before:] if "after the client went away" in line]
+            if stopped:
+                break
+            time.sleep(0.1)
+        made = re.search(r"([0-9.]+) s of audio", stopped[0]) if stopped else None
+        assert made and float(made.group(1)) < len(streamed) / 2 / rate / 4, server.lines[before:]
+        print(f"a client that went away after the first bytes stopped the paragraph: {stopped[0].strip()}")
     if info["architecture"] == "qwen3-tts":
         status, headers, body = post_json("/v1/audio/speech", {"input": TEXT, "voice": voice, "max_seconds": 0.5})
         assert status == 200 and headers["x-speech-stop"] == "max_seconds" and len(wav_data(body)) <= rate, headers
@@ -186,10 +261,12 @@ elif info["task"] == "synthesis":
     expect_error(post_json("/v1/audio/speech", {"input": "", "voice": voice}), 400, "invalid_value", "input", "an empty input")
     expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": voice, "timestamps": True}), 400, "unsupported_parameter",
                  "timestamps", "timestamps")
+    # A model that speaks a sentence at a time refuses a run with no place to cut that is too long for a request.
+    too_long = "あいうえおかきくけこ" * 80 if by_sentence else TEXT * 2000
     for format in ("wav", "pcm"):
         expect_error(post_json("/v1/audio/speech", {"input": "あ。", "response_format": format}), 400, "invalid_value", "voice",
                      f"no voice, {format}")
-        expect_error(post_json("/v1/audio/speech", {"input": TEXT * 2000, "voice": voice, "response_format": format}), 400,
+        expect_error(post_json("/v1/audio/speech", {"input": too_long, "voice": voice, "response_format": format}), 400,
                      "unsupported_value", "input", f"an input too long, {format}")
 else:
     expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": "x"}), 404, None, None, "POST /v1/audio/speech to a recognition model")
@@ -284,7 +361,6 @@ else:
         # against the worker.
         joined = array.array("f", [x for d in dumps for x in list(read_npy(os.path.join(d, "audio.npy"))) + [0.0] * rate])
         long, silence = wav_file(joined, rate), wav_file([0.0] * (6 * rate), rate)
-        load = [o for i, o in enumerate(options) if o in ("--device", "--threads") or (i and options[i - 1] in ("--device", "--threads"))]
         with tempfile.TemporaryDirectory() as work:
             path = os.path.join(work, "long.wav")
             with open(path, "wb") as f:
