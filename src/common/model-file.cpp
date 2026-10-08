@@ -331,6 +331,10 @@ float ModelFile::f32(const std::string & key) const {
     return gguf_get_val_f32(gguf_.get(), key_id(key, GGUF_TYPE_FLOAT32));
 }
 
+double ModelFile::f64(const std::string & key) const {
+    return gguf_get_val_f64(gguf_.get(), key_id(key, GGUF_TYPE_FLOAT64));
+}
+
 bool ModelFile::boolean(const std::string & key) const {
     return gguf_get_val_bool(gguf_.get(), key_id(key, GGUF_TYPE_BOOL));
 }
@@ -473,16 +477,20 @@ ModelIdentity read_identity(const ModelFile & file) {
 
 void check_model_keys(const ModelFile & file, const char * task, const char * language_use) {
     read_identity(file);
-    const std::string file_task = file.one_of("speech.task", {"synthesis", "recognition"});
+    const std::string file_task = file.one_of("speech.task", {"synthesis", "recognition", "detection"});
     if (file_task != task) {
         throw file_error(file.path() + " says its speech.task is " + file_task + ", where its family does " + task + "; " + file.remedy());
     }
+    file.size("speech.sample_rate");
+    if ((file_task == "detection") != !language_use) {
+        throw std::logic_error(std::string("a family of ") + task + (language_use ? " gives a use of languages" : " gives no use of languages"));
+    }
+    if (!language_use) return;
     const std::string file_use = file.one_of("speech.language_use", {"steers", "checked"});
     if (file_use != language_use) {
         throw file_error(file.path() + " says its speech.language_use is " + file_use + ", where its family's is " + language_use + "; " +
                          file.remedy());
     }
-    file.size("speech.sample_rate");
     const std::vector<std::string> languages = file.str_array("general.languages");
     // BCP 47 names a language by its shortest ISO 639 code: two letters where ISO 639-1 has one, and three, from ISO 639-2
     // or 639-3, for a language it has none for, such as Cantonese (yue) and Filipino (fil). The GGUF specification asks

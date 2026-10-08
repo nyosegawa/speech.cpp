@@ -96,6 +96,7 @@ public:
     /** The number of tensors the file holds. */
     int64_t tensor_count() const;
     float f32(const std::string & key) const;
+    double f64(const std::string & key) const;
     bool boolean(const std::string & key) const;
     std::string str(const std::string & key) const;
     /** A string that names a kind; a value other than `values` throws. */
@@ -194,9 +195,11 @@ ModelIdentity read_identity(const ModelFile & file);
 
 
 /**
- * Reads and checks the keys every model file has: its identity (read_identity()), general.languages, ISO 639 codes of
- * two or three lowercase letters sorted without repeats, speech.sample_rate, and speech.task and speech.language_use,
- * which must be the family's `task` and `language_use`.
+ * Reads and checks the keys every model file has: its identity (read_identity()), speech.sample_rate and speech.task,
+ * which must be the family's `task`; and for a task that takes languages, synthesis and recognition,
+ * general.languages, ISO 639 codes of two or three lowercase letters sorted without repeats, and speech.language_use,
+ * which must be the family's `language_use`. A model of detection takes no language, and its file has neither key,
+ * which its family gives as a `language_use` of nullptr.
  */
 void check_model_keys(const ModelFile & file, const char * task, const char * language_use);
 

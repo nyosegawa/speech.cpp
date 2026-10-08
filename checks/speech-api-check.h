@@ -84,7 +84,22 @@ int record_progress(double done, void * user_data);
 /** Whether the recorded progress rose from 0 or more to `last` without falling; prints a failure when not. */
 int progress_rises(const Progress * p, double last, const char * what);
 
+/** A whole file, NUL-terminated, or NULL when it cannot be read; `size` is its length. The caller frees it. */
+char * read_whole(const char * path, size_t * size);
+
+/**
+ * The samples of a dump's audio.npy, a one-dimensional little-endian float32 array in NumPy's format 1.0, or NULL when
+ * the file is not one. The caller frees them.
+ */
+float * read_audio(const char * dump, size_t * n);
+
 /** The checks of a recognition model: `argv` is <model.gguf> <dump folder>... [--device NAME]. Returns the exit status. */
+
+/**
+ * The checks of a detection model: `argv` is <model.gguf> <dump folder of reference/silero-vad/dump.py>... [--device
+ * NAME]. Returns the exit status.
+ */
+int check_detection(int argc, char ** argv);
 int check_recognition(int argc, char ** argv);
 
 /** The sentence a synthesis model speaks in most checks. */

@@ -122,20 +122,30 @@ add_library(qwen3asr STATIC
 target_include_directories(qwen3asr PUBLIC src/families)
 target_link_libraries(qwen3asr PUBLIC speechcommon)
 
+# Silero VAD speech detection (Silero Team): the family.
+add_library(silerovad STATIC
+    src/families/silero-vad/layout.cpp
+    src/families/silero-vad/network.cpp
+    src/families/silero-vad/regions.cpp
+    src/families/silero-vad/detector.cpp
+)
+target_include_directories(silerovad PUBLIC src/families)
+target_link_libraries(silerovad PUBLIC speechcommon)
+
 # The C API, include/speech.h, twice: static for the executables, so that each stays one file, and shared as
 # libspeech for bindings and other programs. On Windows the two would both write speech.lib, the static one as
 # the library and the shared one as its import library, hence speech-static.
 set(SPEECH_SOURCES src/speech.cpp src/info.cpp src/request.cpp src/voice.cpp src/qwen3-tts-engine.cpp src/irodori-tts-engine.cpp
-    src/fastconformer-engine.cpp src/qwen3-asr-engine.cpp)
+    src/fastconformer-engine.cpp src/qwen3-asr-engine.cpp src/silero-vad-engine.cpp)
 
 add_library(speech-static STATIC ${SPEECH_SOURCES})
 target_include_directories(speech-static PUBLIC include)
-target_link_libraries(speech-static PUBLIC qwen3tts irodoritts fastconformer qwen3asr)
+target_link_libraries(speech-static PUBLIC qwen3tts irodoritts fastconformer qwen3asr silerovad)
 target_compile_definitions(speech-static PRIVATE SPEECH_VERSION="${PROJECT_VERSION}")
 
 add_library(speech SHARED ${SPEECH_SOURCES})
 target_include_directories(speech PUBLIC include)
-target_link_libraries(speech PRIVATE qwen3tts irodoritts fastconformer qwen3asr)
+target_link_libraries(speech PRIVATE qwen3tts irodoritts fastconformer qwen3asr silerovad)
 target_compile_definitions(speech PRIVATE SPEECH_BUILD_SHARED SPEECH_VERSION="${PROJECT_VERSION}" INTERFACE SPEECH_SHARED)
 set_target_properties(speech PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 # The shared library's SOVERSION is the C API's major version, which speech.h defines and nothing else repeats.
@@ -274,8 +284,8 @@ target_link_libraries(irodori-synthesis-check PRIVATE irodoritts)
 add_executable(quantize-check checks/quantize-check.cpp)
 target_link_libraries(quantize-check PRIVATE speechcommon)
 
-add_executable(speech-api-check checks/speech-api-check.c checks/speech-api-irodori.c checks/speech-api-recognition.c checks/speech-api-common.c
-               checks/speech-api-platform.c)
+add_executable(speech-api-check checks/speech-api-check.c checks/speech-api-irodori.c checks/speech-api-recognition.c checks/speech-api-detection.c
+               checks/speech-api-common.c checks/speech-api-platform.c)
 target_link_libraries(speech-api-check PRIVATE speech)
 # The check compares the version the library reports with the one it was built against.
 target_compile_definitions(speech-api-check PRIVATE SPEECH_EXPECTED_VERSION="${PROJECT_VERSION}")
@@ -311,3 +321,8 @@ endforeach()
 add_executable(qwen3-asr-timing checks/qwen3-asr-timing.cpp tools/common/json-reader.cpp)
 target_include_directories(qwen3-asr-timing PRIVATE tools/common)
 target_link_libraries(qwen3-asr-timing PRIVATE qwen3asr)
+
+# Silero VAD's stages and regions against the dumps of reference/silero-vad/dump.py, read with the JSON reader of `speech`.
+add_executable(silero-vad-check checks/silero-vad-check.cpp tools/common/json-reader.cpp)
+target_include_directories(silero-vad-check PRIVATE tools/common)
+target_link_libraries(silero-vad-check PRIVATE silerovad)

@@ -5,10 +5,11 @@
 #include <stdint.h>
 
 /*
- * The C API of speech.cpp on ggml: speech synthesis and speech recognition with the models of the families the
- * library runs. A model does one task (speech_model_info_task()): a synthesis model turns the text of a request into
- * audio through speech_synthesize(), and a recognition model turns the audio of a request into text through
- * speech_transcribe().
+ * The C API of speech.cpp on ggml: speech synthesis, speech recognition and the detection of speech with the models of
+ * the families the library runs. A model does one task (speech_model_info_task()): a synthesis model turns the text of
+ * a request into audio through speech_synthesize(), a recognition model turns the audio of a request into text through
+ * speech_transcribe(), and a detection model finds where someone speaks in the audio of a request through
+ * speech_detect().
  *
  * What a request may ask of a model is one vocabulary of options (speech_option), each with a fixed name that the
  * worker, the HTTP server and the command line use verbatim. Each family declares which options it takes, with their
@@ -365,7 +366,35 @@ typedef enum speech_option {
      * "cfg_scale_instructions", a number of 0 or more: how strongly a guided sampler follows the instructions, as
      * cfg_scale_text. Added in 3.1.
      */
-    SPEECH_OPT_CFG_SCALE_INSTRUCTIONS = 38
+    SPEECH_OPT_CFG_SCALE_INSTRUCTIONS = 38,
+    /**
+     * "threshold", a number from 0 to 1: the speech probability from which a chunk of a detection's audio counts as
+     * speech, as Silero VAD's get_speech_timestamps() names it. A region ends once the probability has stayed below the
+     * threshold less 0.15, or 0.01 at least, for min_silence_duration_ms. Added in 3.1.
+     */
+    SPEECH_OPT_THRESHOLD = 39,
+    /**
+     * "min_speech_duration_ms", an integer of 0 or more: the milliseconds a region of a detection must last, before its
+     * padding, to be kept. Added in 3.1.
+     */
+    SPEECH_OPT_MIN_SPEECH_DURATION_MS = 40,
+    /**
+     * "min_silence_duration_ms", an integer of 0 or more: the milliseconds the speech probability must stay below the
+     * threshold of a region's end before the region ends. Added in 3.1.
+     */
+    SPEECH_OPT_MIN_SILENCE_DURATION_MS = 41,
+    /**
+     * "speech_pad_ms", an integer of 0 or more: the milliseconds a detection adds before and after each region, where
+     * two regions closer than twice it share the silence between them half and half. Added in 3.1.
+     */
+    SPEECH_OPT_SPEECH_PAD_MS = 42,
+    /**
+     * "max_speech_duration_s", a number above 0: the longest a region of a detection may be, in seconds, its padding
+     * included. A region that would grow longer is cut at the longest silence within it that lasted longer than the
+     * model's least (98 ms for Silero VAD), the next region beginning where that silence ended, or, without one, at the
+     * chunk that reaches the limit. Without it a region has no limit. Added in 3.1.
+     */
+    SPEECH_OPT_MAX_SPEECH_DURATION_S = 43
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */
@@ -435,7 +464,9 @@ typedef enum speech_task {
     /** Text to audio, through speech_synthesize(). */
     SPEECH_TASK_SYNTHESIS = 0,
     /** Audio to text, through speech_transcribe(). */
-    SPEECH_TASK_RECOGNITION = 1
+    SPEECH_TASK_RECOGNITION = 1,
+    /** Audio to the regions where someone speaks, through speech_detect(). Added in 3.1. */
+    SPEECH_TASK_DETECTION = 2
 } speech_task;
 
 /*
@@ -522,23 +553,26 @@ SPEECH_API const char * speech_model_info_architecture(const speech_model_info *
 /** The version of the family's file layout that the file has. */
 SPEECH_API uint32_t speech_model_info_layout(const speech_model_info * info);
 
-/** Whether the model speaks or recognizes speech. */
+/** Whether the model speaks, recognizes speech or detects it. */
 SPEECH_API speech_task speech_model_info_task(const speech_model_info * info);
 
 /**
- * The sample rate in Hz of the audio a synthesis model makes, or of the audio a recognition model recognizes. Audio
- * given at another rate, to recognize or as a voice's reference, is resampled to it.
+ * The sample rate in Hz of the audio a synthesis model makes, or of the audio a recognition or detection model takes.
+ * Audio given at another rate, to recognize, to detect speech in or as a voice's reference, is resampled to it.
  */
 SPEECH_API int speech_model_info_sample_rate(const speech_model_info * info);
 
 /**
  * Whether a synthesis model passes audio while it is still generating the rest (1), so that its first audio does not
  * wait on the length of the text, or generates a request's whole speech before it decodes the speech into audio (0).
- * 0 for a recognition model.
+ * 0 for a recognition or detection model.
  */
 SPEECH_API int speech_model_info_incremental(const speech_model_info * info);
 
-/** The number of languages the model speaks or recognizes. */
+/**
+ * The number of languages the model speaks or recognizes; 0 for a detection model, whose file names no language and
+ * which takes the language "auto" alone.
+ */
 SPEECH_API size_t speech_model_info_language_count(const speech_model_info * info);
 
 /**
@@ -577,13 +611,13 @@ SPEECH_API int speech_model_info_voice_files(const speech_model_info * info);
  */
 SPEECH_API const char * speech_model_info_voice_codec(const speech_model_info * info);
 
-/** The most tokens of text a synthesis request may have, in the model's own tokens; 0 for a recognition model. */
+/** The most tokens of text a synthesis request may have, in the model's own tokens; 0 for a recognition or detection model. */
 SPEECH_API size_t speech_model_info_max_text_tokens(const speech_model_info * info);
 
 /**
  * The number of the model's tokens that `text` takes, counted as a synthesis request counts it against
- * speech_model_info_max_text_tokens(), so that a caller can split a long text before it sends it. A recognition model
- * is SPEECH_ERROR_UNSUPPORTED.
+ * speech_model_info_max_text_tokens(), so that a caller can split a long text before it sends it. A recognition or
+ * detection model is SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_model_info_text_tokens(const speech_model_info * info, const char * text,
                                                        size_t * n_tokens);
@@ -829,15 +863,15 @@ SPEECH_API speech_status speech_request_new(speech_model * model, speech_request
 SPEECH_API void speech_request_free(speech_request * request);
 
 /**
- * The text a synthesis request speaks, copied; it may not be empty. A recognition model is
+ * The text a synthesis request speaks, copied; it may not be empty. A recognition or detection model is
  * SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_request_set_text(speech_request * request, const char * text);
 
 /**
- * The audio a recognition request recognizes: `n_samples` mono samples, nominally within [-1, 1], at `sample_rate`
- * Hz, copied. Audio at a rate other than the model's is resampled to it when the request runs. At least one sample is
- * needed. A synthesis model is SPEECH_ERROR_UNSUPPORTED.
+ * The audio a recognition request recognizes, or a detection request finds speech in: `n_samples` mono samples,
+ * nominally within [-1, 1], at `sample_rate` Hz, copied. Audio at a rate other than the model's is resampled to it when
+ * the request runs. At least one sample is needed. A synthesis model is SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_request_set_audio(speech_request * request, const float * samples, size_t n_samples,
                                                   int sample_rate);
@@ -857,8 +891,9 @@ SPEECH_API speech_status speech_request_set_bool(speech_request * request, speec
 /**
  * Receives how far a request has come while it does work that passes no audio: `done` rises from 0 to 1 as the
  * family's steps finish (the sampler's steps of a speech made whole before its audio, the stages and the decoding of
- * a recognition). The time between two calls is that of one step, which for the encoder of a long recording can be
- * seconds. Returning nonzero stops the request. It runs on the thread that runs the request.
+ * a recognition, the blocks of chunks of a detection). The time between two calls is that of one step, which for the
+ * encoder of a long recording can be seconds. Returning nonzero stops the request. It runs on the thread that runs the
+ * request.
  */
 typedef int (*speech_progress_callback)(double done, void * user_data);
 
@@ -888,7 +923,8 @@ typedef int (*speech_audio_callback)(const float * samples, size_t n_samples, vo
  * after which no more audio comes. The request is checked as a whole before any work starts. Speech that comes out not
  * finite, as from a guidance scale that a float32 holds but whose products it does not, is never passed on: the request
  * fails with SPEECH_ERROR_OUT_OF_RANGE naming no option, since each value was within its range and none is known to be
- * at fault, and the caller makes a new request with smaller values. A recognition model is SPEECH_ERROR_UNSUPPORTED.
+ * at fault, and the caller makes a new request with smaller values. A recognition or detection model is
+ * SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_synthesize(speech_request * request, speech_audio_callback on_audio, void * user_data);
 
@@ -896,14 +932,25 @@ SPEECH_API speech_status speech_synthesize(speech_request * request, speech_audi
  * Recognizes the speech in a request's audio. It returns SPEECH_OK once the result holds the text, SPEECH_CANCELLED
  * once it was cancelled, or an error. The whole audio is recognized at once, or a model that takes a limited length
  * at once cuts it into parts it recognizes one after another and joins their texts, as Qwen3-ASR does past 1200 s;
- * how its time and memory grow with its length depends on the model. A synthesis model is
+ * how its time and memory grow with its length depends on the model. A synthesis or detection model is
  * SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_transcribe(speech_request * request);
 
+/**
+ * Finds the regions of a request's audio where someone speaks, which the result gives as its segments: each with its
+ * start and end in seconds from the start of the audio and an empty text, in order and apart. It returns SPEECH_OK once
+ * the result holds them, none where no one speaks, SPEECH_CANCELLED once it was cancelled, or an error. The model takes
+ * the audio in chunks, each after the one before, so that its time grows with the audio's length; the request's options
+ * (threshold, min_speech_duration_ms, min_silence_duration_ms, speech_pad_ms, max_speech_duration_s) only turn the
+ * chunks' speech probabilities into regions. A synthesis or recognition model is SPEECH_ERROR_UNSUPPORTED. Added in
+ * 3.1.
+ */
+SPEECH_API speech_status speech_detect(speech_request * request);
+
 /** Why a request ended. */
 typedef enum speech_stop {
-    /** It did all it was asked: the speech came to its end, or the audio was recognized whole. */
+    /** It did all it was asked: the speech came to its end, or the audio was recognized or searched whole. */
     SPEECH_STOP_COMPLETE = 0,
     /** The speech reached the request's max_seconds and was stopped there. */
     SPEECH_STOP_MAX_SECONDS = 1,
@@ -934,25 +981,30 @@ SPEECH_API const speech_result * speech_request_result(const speech_request * re
 /** Why the request ended. */
 SPEECH_API speech_stop speech_result_stop(const speech_result * result);
 
-/** The seed a synthesis used, the request's or the one the library drew; -1 for a recognition. */
+/** The seed a synthesis used, the request's or the one the library drew; -1 for a recognition and a detection. */
 SPEECH_API int64_t speech_result_seed(const speech_result * result);
 
-/** The number of samples a synthesis passed to its callback, whose length in seconds is this over the sample rate. */
+/**
+ * The number of samples a synthesis passed to its callback, whose length in seconds is this over the sample rate; 0 for
+ * a recognition and a detection.
+ */
 SPEECH_API uint64_t speech_result_samples(const speech_result * result);
 
-/** The text a recognition found, "" when it heard none or was cancelled; NULL for a synthesis. */
+/** The text a recognition found, "" when it heard none or was cancelled; NULL for a synthesis and a detection. */
 SPEECH_API const char * speech_result_text(const speech_result * result);
 
 /**
  * The number of segments of a recognition that set timestamps: runs of tokens that end where the model's file says a
  * sentence ends (a separator at the end of a word, as NeMo cuts, or a break after any token, for a language written
- * without spaces), or with the last token. 0 without timestamps and for a synthesis.
+ * without spaces), or with the last token. 0 without timestamps and for a synthesis. For a detection, the regions where
+ * someone speaks, 0 where no one does and for a cancelled request.
  */
 SPEECH_API size_t speech_result_segment_count(const speech_result * result);
 
 /**
  * The segment at `index`: the start of its first token and the end of its last in seconds from the start of the
- * audio, and its text. The texts of the segments, joined in order, are the result's text.
+ * audio, and its text. The texts of the segments, joined in order, are the result's text. A region of a detection has
+ * its start and end and the text "".
  */
 SPEECH_API speech_status speech_result_segment(const speech_result * result, size_t index, double * start, double * end,
                                                const char ** text);

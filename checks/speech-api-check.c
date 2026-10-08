@@ -12,11 +12,13 @@
  * progress, cut at the tail, guidance, voice none and instructions), cancels a request from another thread and one
  * before it runs, and runs requests from two threads at once. Irodori-TTS's own checks are in speech-api-irodori.c.
  *
- * With a recognition model (transcribe), speech-api-recognition.c, which takes F32 or F16 weights only.
+ * With a recognition model (transcribe), speech-api-recognition.c, which takes F32 or F16 weights only, and with a
+ * detection model (detect), speech-api-detection.c.
  *
  * usage: speech-api-check <model.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]...
  *                         [--make-voice <reference.wav> <voice.gguf>]
  *        speech-api-check transcribe <model.gguf> <dump folder>... [--device NAME]
+ *        speech-api-check detect <model.gguf> <dump folder>... [--device NAME]
  */
 
 #include <math.h>
@@ -434,20 +436,21 @@ int main(int argc, char ** argv) {
 #ifdef _WIN32
     argv = utf8_argv(&argc);
 #endif
-    const int recognition = argc > 1 && !strcmp(argv[1], "transcribe");
+    const int recognition = argc > 1 && !strcmp(argv[1], "transcribe"), detection = argc > 1 && !strcmp(argv[1], "detect");
     if (argc < 3) {
         fprintf(stderr,
                 "usage: %s <model.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]... "
                 "[--make-voice <reference.wav> <voice.gguf>]\n"
-                "       %s transcribe <model.gguf> <dump folder>... [--device NAME]\n",
-                argv[0], argv[0]);
+                "       %s transcribe <model.gguf> <dump folder>... [--device NAME]\n"
+                "       %s detect <model.gguf> <dump folder>... [--device NAME]\n",
+                argv[0], argv[0], argv[0]);
         return 2;
     }
     speech_log_set(on_log, NULL);
-    if (check_library() != 0 || check_load_refusals(argv[recognition ? 2 : 1]) != 0 || check_quantize_refusals(argv[recognition ? 2 : 1]) != 0) {
-        return 1;
-    }
+    const char * checked = argv[recognition || detection ? 2 : 1];
+    if (check_library() != 0 || check_load_refusals(checked) != 0 || check_quantize_refusals(checked) != 0) return 1;
     if (recognition) return check_recognition(argc - 2, argv + 2);
+    if (detection) return check_detection(argc - 2, argv + 2);
     const char * model_path = argv[1];
 
     speech_load_params * params = NULL;

@@ -19,6 +19,7 @@
 #include "quantize.h"
 #include "qwen3-asr/layout.h"
 #include "qwen3-tts/layout.h"
+#include "silero-vad/layout.h"
 
 // The C API's versions, statuses and errors, log, devices, load parameters, the table of families, the quantizing of
 // model files, and the models with their voices. The model information is in info.cpp, the requests in request.cpp
@@ -36,6 +37,7 @@ const Family families[] = {
     {SPEECH_TASK_SYNTHESIS, irodori::model_layout, describe_irodori_tts, load_irodori_tts, make_irodori_tts_voice},
     {SPEECH_TASK_RECOGNITION, fastconformer::layout, describe_fastconformer, load_fastconformer, nullptr},
     {SPEECH_TASK_RECOGNITION, qwen3_asr::layout, describe_qwen3_asr, load_qwen3_asr, nullptr},
+    {SPEECH_TASK_DETECTION, silero_vad::layout, describe_silero_vad, load_silero_vad, nullptr},
 };
 
 thread_local std::string last_error;
@@ -93,6 +95,11 @@ const OptionName vocabulary[] = {
     {"speaker_kv_min_t", SPEECH_TYPE_FLOAT},
     {"speaker_kv_max_layers", SPEECH_TYPE_INT},
     {"cfg_scale_instructions", SPEECH_TYPE_FLOAT},
+    {"threshold", SPEECH_TYPE_FLOAT},
+    {"min_speech_duration_ms", SPEECH_TYPE_INT},
+    {"min_silence_duration_ms", SPEECH_TYPE_INT},
+    {"speech_pad_ms", SPEECH_TYPE_INT},
+    {"max_speech_duration_s", SPEECH_TYPE_FLOAT},
 };
 constexpr size_t kOptions = sizeof vocabulary / sizeof vocabulary[0];
 
@@ -133,6 +140,10 @@ speech_stop Engine::speak(const std::string &, const RequestValues &, Run &) {
 
 Recognized Engine::transcribe(const std::vector<float> &, const RequestValues &, Run &) {
     throw std::logic_error("the family's engine does not recognize speech, though the table of families says it does");
+}
+
+std::vector<TimedText> Engine::detect(const std::vector<float> &, const RequestValues &, Run &) {
+    throw std::logic_error("the family's engine does not detect speech, though the table of families says it does");
 }
 
 void Engine::add_voice(const std::string &, const std::string &) {
@@ -217,7 +228,7 @@ std::shared_ptr<const FileInfo> read_file_info(const std::string & path) {
     const ModelFile & m = *info->file;
     info->identity = read_identity(m);
     info->sample_rate = (int) m.u32("speech.sample_rate");
-    info->languages = m.str_array("general.languages");
+    if (task_has_languages(family.task)) info->languages = m.str_array("general.languages");
     info->described = family.describe(info->file);
     for (size_t i = 1; i < info->described.options.size(); i++) {
         if (info->described.options[i - 1].option >= info->described.options[i].option) {
@@ -448,7 +459,8 @@ speech_status speech_voice_add(speech_model * model, const char * name, const ch
         const FileInfo & file = *model->file;
         if (!file.family->make_voice) {
             throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.identity.name + " takes no voices made from recordings; " +
-                                                         (file.family->task == SPEECH_TASK_SYNTHESIS ? "it speaks with its own voices" : "it recognizes speech"));
+                                                         (file.family->task == SPEECH_TASK_SYNTHESIS ? std::string("it speaks with its own voices")
+                                                                                                     : "it is a model of speech " + std::string(task_name(file.family->task))));
         }
         if (!*name) throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the voice's name is empty; give the voice a name", "name");
         std::lock_guard<std::mutex> lock(model->busy);

@@ -21,47 +21,6 @@
 
 #define MAX_DUMPS 16
 
-/** A whole file, NUL-terminated, or NULL when it cannot be read; `size` is its length. */
-static char * read_whole(const char * path, size_t * size) {
-    FILE * f = open_utf8(path, "rb");
-    if (!f) return NULL;
-    size_t capacity = 1 << 16, n = 0;
-    char * data = (char *) malloc(capacity);
-    for (;;) {
-        n += fread(data + n, 1, capacity - n - 1, f);
-        if (n < capacity - 1) break;
-        capacity *= 2;
-        data = (char *) realloc(data, capacity);
-    }
-    fclose(f);
-    data[n] = '\0';
-    *size = n;
-    return data;
-}
-
-/**
- * The samples of a dump's audio.npy, a one-dimensional little-endian float32 array in NumPy's format 1.0, or NULL
- * when the file is not one.
- */
-static float * read_audio(const char * dump, size_t * n) {
-    char path[4096];
-    snprintf(path, sizeof path, "%s/audio.npy", dump);
-    size_t size = 0;
-    char * data = read_whole(path, &size);
-    if (!data) return NULL;
-    const size_t header = size >= 10 ? (size_t) (unsigned char) data[8] | (size_t) (unsigned char) data[9] << 8 : 0;
-    if (size < 10 || memcmp(data, "\x93NUMPY\x01", 7) != 0 || 10 + header > size || !strstr(data + 10, "'<f4'") ||
-        !strstr(data + 10, "'fortran_order': False") || !strstr(data + 10, ",)")) {
-        free(data);
-        return NULL;
-    }
-    *n = (size - 10 - header) / sizeof(float);
-    float * samples = (float *) malloc(*n * sizeof(float));
-    memcpy(samples, data + 10 + header, *n * sizeof(float));
-    free(data);
-    return samples;
-}
-
 /**
  * What a recognition asks besides its audio: timestamps, and a language, a prompt and a decoding where they are not
  * NULL.

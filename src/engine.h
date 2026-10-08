@@ -170,8 +170,8 @@ struct Recognized {
 
 /**
  * One loaded model of a family behind the C API, which has checked each value of a request against the family's table
- * and the request as a whole for what the table shows. A synthesis family overrides speak() and a recognition family
- * transcribe(); a family that takes voice files overrides add_voice().
+ * and the request as a whole for what the table shows. A synthesis family overrides speak(), a recognition family
+ * transcribe() and a detection family detect(); a family that takes voice files overrides add_voice().
  */
 class Engine {
 public:
@@ -188,6 +188,13 @@ public:
      * family's rules ask of the request as a whole.
      */
     virtual Recognized transcribe(const std::vector<float> & samples, const RequestValues & values, Run & run);
+
+    /**
+     * The regions of mono samples at the model's sample rate where someone speaks, in seconds from the start and in
+     * order, each with an empty text, telling `run` how far it has come, after checking what the family's rules ask of
+     * the request as a whole.
+     */
+    virtual std::vector<TimedText> detect(const std::vector<float> & samples, const RequestValues & values, Run & run);
 
     /** Adds a voice from a voice file or a WAVE file under a name the C API has checked is new. */
     virtual void add_voice(const std::string & name, const std::string & path);
@@ -208,3 +215,6 @@ std::unique_ptr<Engine> load_fastconformer(const std::string & path, ggml_backen
 
 FamilyInfo describe_qwen3_asr(const std::shared_ptr<const ModelFile> & file);
 std::unique_ptr<Engine> load_qwen3_asr(const std::string & path, ggml_backend_t backend);
+
+FamilyInfo describe_silero_vad(const std::shared_ptr<const ModelFile> & file);
+std::unique_ptr<Engine> load_silero_vad(const std::string & path, ggml_backend_t backend);

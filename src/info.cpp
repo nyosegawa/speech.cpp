@@ -279,7 +279,8 @@ speech_status speech_model_info_text_tokens(const speech_model_info * info, cons
         require(text, "text", "text");
         require(n_tokens, "n_tokens");
         if (!info->file->described.count_tokens) {
-            throw ApiError(SPEECH_ERROR_UNSUPPORTED, info->file->identity.name + " recognizes speech and has no text to count");
+            throw ApiError(SPEECH_ERROR_UNSUPPORTED, info->file->identity.name + " is a model of speech " + task_name(info->file->family->task) +
+                                                         " and has no text to count");
         }
         *n_tokens = info->file->described.count_tokens(text);
         return SPEECH_OK;

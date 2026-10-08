@@ -28,10 +28,12 @@ writes the released F16 and Q8_0 files byte for byte (`tools/quantize_compare.py
 - **The layout tables decide each tensor's type.** A `TensorSpec` carries a `Storage`: for a file of each weight type,
   the types the tensor takes in order, of which the file holds it in the first whose blocks its rows are whole blocks
   of. The reader takes a tensor in any of its storage's types, so that the choice can change without refusing the files
-  made before; `speech quantize` writes the one the order gives. Three kinds of storage serve the four families:
+  made before; `speech quantize` writes the one the order gives. Three kinds of storage serve the families:
   `quantized_storage()` for a matrix or embedding that only `ggml_mul_mat()` and `ggml_get_rows()` read, `half_storage()`
   for Qwen3-TTS's codec and Qwen3-ASR's convolution kernels, F16 in every file but an F32 one, as the released files
-  hold them, and `float32_storage()` for the rest. Nothing else chooses a type.
+  hold them, and `float32_storage()` for the rest, every tensor of Silero VAD among them. Nothing else chooses a type,
+  and a type that would leave most of a file's bytes in another type, as every type does with Silero VAD's, is refused
+  ([the record of detection](detecting-speech-is-a-task-of-its-own-run-by-speech-detect-with-silero-vads-options-and-f32-files.md)).
 - **A tensor a type cannot hold takes the next wider type the storage lists.** In a K-quant file a matrix whose rows are
   not whole blocks of 256 values takes Q8_0, and F16 where they are not whole blocks of 32; the same F16 stands for Q8_0
   in a Q8_0 file. A weight whose operation reads F16 or F32 alone has no quantized type in its storage at all.

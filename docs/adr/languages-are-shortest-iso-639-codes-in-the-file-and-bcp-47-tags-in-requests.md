@@ -22,6 +22,8 @@ OpenAI's clients send `language` as a hint, also to a recognizer of one language
 - **A request's `language` is a BCP 47 tag** that names one of the model's languages, by itself or with a region or
   script (`ja-JP`, `zh-Hant`), compared without case, or `auto`, which leaves the language to the model. Anything else
   is `out_of_range`.
+- **A model of detection has no languages**: its file has neither `general.languages` nor `speech.language_use`, and
+  it takes the language `auto` alone ([the record of detection](detecting-speech-is-a-task-of-its-own-run-by-speech-detect-with-silero-vads-options-and-f32-files.md)).
 - **A language steers the model or is only checked**, as the file's `speech.language_use` and the model information
   say. Qwen3-TTS and Qwen3-ASR take it as an input; Irodori-TTS, which has one language, and FastConformer, whose models
   take no language, check it against their languages and do not use it.

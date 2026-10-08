@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <system_error>
@@ -239,10 +240,22 @@ void write_model_file(const std::string & in, const std::string & out, const Wei
         if (release_after(r, release)) release = r;
     };
     at_least(type.release);
+    std::map<ggml_type, uint64_t> bytes_of;
     for (int64_t i = 0; i < n; i++) {
         const TensorSpec & spec = specs.at(gguf_get_tensor_name(gguf.get(), i));
         types[i] = spec.type_in(type.type);
         at_least(spec.first_release(types[i]));
+        const ggml_tensor * t = ggml_get_tensor(meta_ctx.get(), spec.name.c_str());
+        bytes_of[types[i]] += ggml_row_size(types[i], t->ne[0]) * (uint64_t) (ggml_nelements(t) / t->ne[0]);
+    }
+    // general.file_type names the type that holds most of the bytes, which a layout that keeps its tensors in F32, as
+    // Silero VAD's does, would leave F32.
+    const auto most = std::max_element(bytes_of.begin(), bytes_of.end(), [](const auto & a, const auto & b) { return a.second < b.second; });
+    if (most != bytes_of.end() && most->first != type.type) {
+        throw Error(Fault::InvalidArgument, in + " is a model of " + layout.architecture + ", whose layout keeps most of its weights in " +
+                                                tensor_type_text(most->first) + " in a file of " + tensor_type_text(type.type) + ", so speech quantize writes no " +
+                                                tensor_type_text(type.type) + " file of it; use the " + tensor_type_text(most->first) + " file as it is",
+                    "type");
     }
 
     std::vector<uint8_t> bytes(gguf_get_data_offset(gguf.get()));
