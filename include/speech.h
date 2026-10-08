@@ -988,11 +988,11 @@ SPEECH_API speech_status speech_detection_end(speech_detection * detection);
 
 /**
  * The number of regions given so far. A region is given once the audio heard makes its padded start and end certain.
- * With min_silence_duration_ms at least twice speech_pad_ms, as with the defaults, that is the chunk where silence ends
- * the region, min_silence_duration_ms after it. With less, the region's end waits on whether speech resumes within twice
- * speech_pad_ms of it, for at most 2 · speech_pad_ms + min_speech_duration_ms + min_silence_duration_ms and two chunks
- * after the region. A region that max_speech_duration_s cuts is given at the cut at the earliest, and may wait as long
- * after it. Added in 3.1.
+ * With min_silence_duration_ms at least twice speech_pad_ms, as with the defaults, that is the chunk where the silence
+ * after the region has lasted min_silence_duration_ms and ends it. With less, the region's end waits on whether speech
+ * resumes within twice speech_pad_ms of it, for at most 2 · speech_pad_ms + min_speech_duration_ms +
+ * min_silence_duration_ms and two chunks after the region. A region that max_speech_duration_s cuts is given at the cut
+ * at the earliest, and may wait as long after it. Added in 3.1.
  */
 SPEECH_API size_t speech_detection_region_count(const speech_detection * detection);
 
@@ -1004,9 +1004,10 @@ SPEECH_API speech_status speech_detection_region(const speech_detection * detect
 
 /**
  * Whether a region has begun that is not given yet (1), with the start it will have in `*start` unless that is NULL:
- * someone speaks at the end of the audio heard, or, with min_silence_duration_ms below twice speech_pad_ms, a region has
- * ended whose end waits on what follows. A region under way that ends no longer than min_speech_duration_ms is dropped,
- * and none is then given from that start. 0 when neither, and after speech_detection_end(). Added in 3.1.
+ * a region that has ended and whose end waits on what follows, as with min_silence_duration_ms below twice speech_pad_ms
+ * or after a cut at max_speech_duration_s, or else the region under way, where someone speaks at the end of the audio
+ * heard. A region under way that ends no longer than min_speech_duration_ms is dropped, and none is then given from that
+ * start. 0 when neither, and after speech_detection_end(). Added in 3.1.
  */
 SPEECH_API int speech_detection_speaking(const speech_detection * detection, double * start);
 

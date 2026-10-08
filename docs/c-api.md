@@ -189,8 +189,9 @@ A detection finds the regions of audio that arrives a piece at a time, with a de
   2 × `speech_pad_ms` + `min_speech_duration_ms` + `min_silence_duration_ms` and two of the model's chunks (64 ms for
   Silero VAD). A region that `max_speech_duration_s` cuts at an earlier silence is given at the cut at the earliest.
 - **`speech_detection_speaking()`** says whether a region has begun that is not given yet, and the start it will have:
-  someone speaks at the end of the audio heard, or, with `min_silence_duration_ms` below twice `speech_pad_ms`, a region
-  has ended whose end waits. Speech that ends no longer than `min_speech_duration_ms` makes no region.
+  a region that has ended and whose end waits, as with `min_silence_duration_ms` below twice `speech_pad_ms` or after a
+  cut at `max_speech_duration_s`, or else the region under way, where someone speaks at the end of the audio heard.
+  Speech that ends no longer than `min_speech_duration_ms` makes no region.
 - **Any rate.** The audio is resampled to the model's rate a piece at a time, which holds back the last 4.3 ms of the
   audio pushed from 24, 44.1 or 48 kHz (8.6 ms from 8 kHz) until more arrives. The model computes a chunk (32 ms for
   Silero VAD) once its samples have arrived.

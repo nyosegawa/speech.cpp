@@ -186,9 +186,8 @@ public:
     virtual const std::vector<TimedText> & regions() const = 0;
 
     /**
-     * The start, in seconds, of the earliest region begun but not given yet: one that someone speaks in at the end of
-     * the audio heard, or one that has ended whose end waits on what follows, which the family's rule describes; none
-     * when there is neither.
+     * The start, in seconds, of the earliest region begun but not given yet: one that has ended whose end waits on what
+     * follows, or else the one under way at the end of the audio heard, if it is kept; none when there is neither.
      */
     virtual std::optional<double> open() const = 0;
 };
