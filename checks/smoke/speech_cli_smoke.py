@@ -82,6 +82,8 @@ SUBCOMMANDS = ["tts", "asr", "vad", "voice", "info", "devices", "models", "pull"
 
 def run(*command, input=None, stdout=subprocess.PIPE, code=0):
     r = subprocess.run([speech, *command], input=input, stdout=stdout, stderr=subprocess.PIPE)
+    # stderr is text, whose lines end in CRLF on Windows.
+    r.stderr = r.stderr.replace(b"\r\n", b"\n")
     if r.returncode != code:
         raise SystemExit(f"speech {' '.join(command)[:120]} exited with {r.returncode}, not {code}: {r.stderr.decode()[-600:]}")
     return r
