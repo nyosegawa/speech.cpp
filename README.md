@@ -1,16 +1,43 @@
 <p align="center"><img src="docs/images/banner.png" alt="speech.cpp" width="768"></p>
 
-speech.cpp runs speech synthesis, speech recognition and voice activity detection models for voice conversation in C++
-on [ggml](https://github.com/ggml-org/ggml), behind one C API, on the CPU, Metal and Vulkan.
+<p align="center">
+  Speech synthesis, speech recognition and voice activity detection for voice conversation, in C++ on ggml
+</p>
 
-[Models](#models) | [Install](#install) | [Quick start](#quick-start) | [Documentation](#documentation) |
-[C API](docs/c-api.md)
+<p align="center">
+  <a href="#models">Models</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#documentation">Documentation</a> ·
+  <a href="docs/c-api.md">C API</a>
+</p>
 
-It is one command, `speech`, and one shared library, `libspeech`. The command speaks text, writes the text of
-recordings, finds where someone speaks in them, transcribes the microphone as someone speaks (`speech asr --live`),
-serves OpenAI's audio API and its Realtime transcription over HTTP, and runs a worker process for any program that keeps
-models loaded between requests, [ASIST](https://github.com/nyosegawa/asist) among them. Every stage of every model is
-checked against the model's official implementation.
+<p align="center">
+  <a href="https://github.com/nyosegawa/speech.cpp/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/nyosegawa/speech.cpp/build.yml?branch=main&style=flat-square&label=CI" alt="CI"></a>
+  <a href="https://github.com/nyosegawa/speech.cpp/releases/latest"><img src="https://img.shields.io/github/v/release/nyosegawa/speech.cpp?style=flat-square" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20%C2%B7%20Metal-lightgrey?style=flat-square" alt="macOS on Apple Silicon, with Metal">
+  <img src="https://img.shields.io/badge/Windows-x64%20%C2%B7%20Vulkan-lightgrey?style=flat-square" alt="Windows on x64, with Vulkan">
+  <img src="https://img.shields.io/badge/Linux-x64%20%C2%B7%20Vulkan%20or%20CPU-lightgrey?style=flat-square" alt="Linux on x64, with Vulkan or the CPU">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License"></a>
+</p>
+
+speech.cpp is one command, `speech`, and one shared library, `libspeech`, behind one C API, on the CPU, Metal and
+Vulkan through [ggml](https://github.com/ggml-org/ggml). The command speaks text, writes the text of recordings, finds
+where someone speaks in them, transcribes the microphone as someone speaks (`speech asr --live`), serves OpenAI's audio
+API and its Realtime transcription over HTTP, and runs a worker process for any program that keeps models loaded between
+requests, [ASIST](https://github.com/nyosegawa/asist) among them.
+
+**The first audio in a quarter of a second or less.** On an Apple M5, Qwen3-TTS 0.6B sends its first audio 0.04 s
+after the text and Irodori-TTS 0.25 s after it, and the rest follows while it plays.
+
+**One executable, nothing else to install.** No Python and no CUDA: `speech` fetches each model by name, one GGUF file
+with its codec, and runs it on Metal, Vulkan or the CPU.
+
+**OpenAI's API on your own computer.** `speech serve` answers OpenAI's audio API and its Realtime transcription, so an
+OpenAI client works by changing its base URL.
+
+**Checked against the official implementations.** Every stage of every model is compared with the model's official
+implementation, from the same inputs.
 
 ## Models
 
