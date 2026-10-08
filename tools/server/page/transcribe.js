@@ -110,13 +110,15 @@ export class TranscribePanel {
     this.#controller = new AbortController();
     this.#ready();
     const model = this.#held.model;
-    const fields = { ...this.#options.values(), ...(this.#detection ? { chunking_strategy: 'auto' } : {}) };
+    // A detection model loaded while the audio is read does not change how this transcription goes.
+    const byRegions = this.#detection !== null;
+    const fields = { ...this.#options.values(), ...(byRegions ? { chunking_strategy: 'auto' } : {}) };
     const transcript = new Transcript();
     const started = performance.now();
     try {
       this.#status('Preparing the audio');
       for await (const piece of this.#audio.pieces(model.sample_rate, MAX_BYTES)) {
-        if (!this.#detection && piece.total > MAX_WHOLE_SECONDS) {
+        if (!byRegions && piece.total > MAX_WHOLE_SECONDS) {
           throw new Error(`This audio is ${length(piece.total)} long. Without a detection model, audio up to ${MAX_WHOLE_SECONDS} s is ` +
                           'transcribed whole; choose one, such as silero-vad, to transcribe longer audio by the regions where someone speaks.');
         }

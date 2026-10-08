@@ -33,8 +33,9 @@ function start(command, args, options) {
 
 /** `promise`, or the first failure of `processes`, or a timeout. */
 function racing(promise, processes, ms, what) {
-  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error(`timed out waiting for ${what}`)), ms));
-  return Promise.race([promise, timeout, ...processes.map((p) => p.failed)]);
+  let timer;
+  const timeout = new Promise((_, reject) => (timer = setTimeout(() => reject(new Error(`timed out waiting for ${what}`)), ms)));
+  return Promise.race([promise, timeout, ...processes.map((p) => p.failed)]).finally(() => clearTimeout(timer));
 }
 
 async function freePort() {
@@ -182,18 +183,39 @@ try {
     const input = await send('Runtime.evaluate', { expression: "document.querySelector('#transcribe-audio .audio-file')" });
     await send('DOM.setFileInputFiles', { files: [path.resolve(file)], objectId: input.result.result.objectId });
   };
-  /** Transcribes the audio given in the transcribe panel and returns the card's text, or the panel's error. */
+  /**
+   * Transcribes the audio given in the transcribe panel and returns the card's text, or that the panel refused it, with
+   * the requests it sent.
+   */
   const transcribe = () => page(`
     await until(() => !$('transcribe-start').disabled, 'the transcribe button');
+    window.__transcriptions.length = 0;
     $('transcribe-start').click();
     const card = document.querySelector('#transcribe-transcript .transcript');
     await until(() => !$('transcribe-start').disabled && !$('transcribe-status').textContent, 'the transcription');
-    return $('transcribe-error').hidden ? { text: card.querySelector('.transcript-text').textContent } : { error: $('transcribe-error').textContent };
+    const requests = [...window.__transcriptions];
+    return $('transcribe-error').hidden ? { text: card.querySelector('.transcript-text').textContent, requests } : { refused: true, requests };
   `);
 
   await send('Runtime.enable');
+  await send('Page.enable');
+  // The page's transcription requests, each with the fields of its form other than the file.
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: `
+    window.__transcriptions = [];
+    const fetched = window.fetch;
+    window.fetch = (url, init) => {
+      if (String(url).endsWith('/v1/audio/transcriptions') && init?.body instanceof FormData) {
+        window.__transcriptions.push(Object.fromEntries([...init.body].filter(([name]) => name !== 'file')));
+      }
+      return fetched(url, init);
+    };
+  ` });
   await send('Page.navigate', { url: address.replace('127.0.0.1', 'localhost') });
-  await page(`await until(() => $('transcribe-options').children.length, 'the models');`);
+  // A picker sits only in the panel in view.
+  await page(`
+    $('tab-transcribe').click();
+    await until(() => document.querySelector('#transcribe .picker-slot[data-task="recognition"] .picker-button:not(.empty)'), 'the recognition model');
+  `);
 
   // The tabs: each picker sits in the panel in view, and the transcribe panel has the detection model's, empty.
   const tabs = await page(`
@@ -205,24 +227,26 @@ try {
     }
     $('tab-transcribe').click();
     const picker = document.querySelector('#transcribe .picker-slot[data-task="detection"] .picker');
-    return { seen, detection: picker.querySelector('.picker-name').textContent, hint: $('transcribe-detection-hint').textContent };
+    return { seen, empty: picker.querySelector('.picker-button').classList.contains('empty') };
   `);
   if (tabs.seen.transcribe.recognition !== 'transcribe' || tabs.seen.live.recognition !== 'live' || tabs.seen.transcribe.detection !== 'transcribe'
       || tabs.seen.speak.synthesis !== 'speak' || Object.values(tabs.seen).some((s) => s.hidden)) {
     throw new Error(`the pickers did not follow the tabs: ${JSON.stringify(tabs.seen)}`);
   }
-  if (tabs.detection !== 'None' || !/longer audio needs one/.test(tabs.hint)) throw new Error(`the detection picker without a model: ${JSON.stringify(tabs)}`);
+  if (!tabs.empty) throw new Error('the detection picker shows a model the server does not hold');
   console.log('tabs: the recognition picker in the transcribe and live panels, the detection picker in the transcribe panel, empty');
 
   // Without a detection model: audio under a minute whole, as the API transcribes it; longer audio refused.
   await choose(short);
   const whole = await transcribe();
   const wantWhole = await api(short);
-  if (whole.text !== wantWhole) throw new Error(`the page's text without a detection model, ${JSON.stringify(whole)}, is not the API's ${JSON.stringify(wantWhole)}`);
+  if (whole.text !== wantWhole || whole.requests.length !== 1 || 'chunking_strategy' in whole.requests[0]) {
+    throw new Error(`the page without a detection model: ${JSON.stringify(whole)}, where the API gives ${JSON.stringify(wantWhole)} for one request without chunking_strategy`);
+  }
   console.log(`transcribe without a detection model: ${(first.length / rate).toFixed(1)} s whole, the API's text: ${wantWhole.slice(0, 40)}`);
   await choose(long);
   const refused = await transcribe();
-  if (!/Without a detection model/.test(refused.error ?? '')) throw new Error(`audio over a minute without a detection model: ${JSON.stringify(refused)}`);
+  if (!refused.refused || refused.requests.length) throw new Error(`audio over a minute without a detection model: ${JSON.stringify(refused)}`);
   console.log(`transcribe without a detection model: ${(joined.length / rate).toFixed(1)} s refused, asking for one`);
 
   // The detection model chosen in its picker, fetched already, and loaded in its place.
@@ -233,15 +257,17 @@ try {
     if (!use) throw new Error('the detection picker does not list ${detection}');
     use.click();
     await until(() => picker.querySelector('.picker-name').textContent === ${JSON.stringify(detection)} && picker.querySelector('.picker-progress').hidden, 'the detection model');
-    return $('transcribe-detection-hint').textContent;
+    return !picker.querySelector('.picker-button').classList.contains('empty');
   `);
-  if (!/a region at a time/.test(loaded)) throw new Error(`the hint with a detection model: ${loaded}`);
+  if (!loaded) throw new Error('the detection picker shows no model after loading one');
   console.log(`the detection picker loaded ${detection}`);
 
   // With it, the longer audio by its regions, as chunking_strategy "auto" gives it.
   const regions = await transcribe();
   const wantRegions = await api(long, { chunking_strategy: 'auto' });
-  if (regions.text !== wantRegions) throw new Error(`the page's text by regions, ${JSON.stringify(regions)}, is not the API's ${JSON.stringify(wantRegions)}`);
+  if (regions.text !== wantRegions || !regions.requests.length || regions.requests.some((r) => r.chunking_strategy !== 'auto')) {
+    throw new Error(`the page by regions: ${JSON.stringify(regions)}, where the API gives ${JSON.stringify(wantRegions)} with chunking_strategy "auto"`);
+  }
   console.log(`transcribe with ${detection}: ${(joined.length / rate).toFixed(1)} s by its regions, the text of chunking_strategy "auto": ${wantRegions.slice(0, 40)}`);
   if (errors.length) throw new Error(`the page threw: ${errors.join('; ')}`);
   console.log('ok');
