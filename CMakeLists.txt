@@ -10,7 +10,7 @@ if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# One executable per tool, with ggml linked in, so that a release is a single file per tool.
+# ggml is linked in statically, so that a release is speech beside the shared libspeech and needs no library of ggml.
 option(BUILD_SHARED_LIBS "Build ggml as shared libraries" OFF)
 # The shared libspeech links the same static libraries as the executables.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)

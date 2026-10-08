@@ -356,4 +356,4 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" dist/*.zip dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" --generate-notes \
-            --notes "speech, speech.cpp's one executable (tts, asr, voice, info, devices, serve and worker), and the shared library libspeech with its C API, speech.h, in one archive for each of macOS arm64 (Metal), Windows x64 (Vulkan) and Linux x64 (Vulkan, and the CPU alone; glibc 2.34 or later). The README lists the model families and where their converted weights are on Hugging Face."
+            --notes "speech, speech.cpp's one executable (tts, asr, voice, info, devices, models, pull, rm, quantize, serve and worker), and the shared library libspeech with its C API, speech.h, in one archive for each of macOS arm64 (Metal), Windows x64 (Vulkan) and Linux x64 (Vulkan, and the CPU alone; glibc 2.34 or later). The README lists the model families and where their converted weights are on Hugging Face."
