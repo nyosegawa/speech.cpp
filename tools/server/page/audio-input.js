@@ -93,21 +93,23 @@ export class AudioInput {
    * file is decoded whole at `rate`, the model's.
    */
   async *pieces(rate, maxSeconds) {
-    const layout = this.#recorded ?? (await pcmLayout(this.#file));
+    // Audio given while the pieces are read does not change what they are read from.
+    const file = this.#file;
+    const layout = this.#recorded ?? (await pcmLayout(file));
     if (layout) {
       const { rate: own, channels, offset, count } = layout;
       const cutter = new PieceCutter(own, maxSeconds);
       const frame = 2 * channels;
       for (let at = 0; at < count; at += 10 * own) {
         const end = Math.min(count, at + 10 * own);
-        const samples = floats(await this.#file.slice(offset + frame * at, offset + frame * end).arrayBuffer(), channels);
+        const samples = floats(await file.slice(offset + frame * at, offset + frame * end).arrayBuffer(), channels);
         for (const piece of cutter.push(samples)) yield { ...piece, rate: own, total: count / own };
       }
       const last = cutter.finish();
       if (last) yield { ...last, rate: own, total: count / own };
       return;
     }
-    const samples = await decode(await this.#file.arrayBuffer(), rate);
+    const samples = await decode(await file.arrayBuffer(), rate);
     const cutter = new PieceCutter(rate, maxSeconds);
     const total = samples.length / rate;
     // Pushed a slice at a time, so that each piece is copied out only when it is wanted.

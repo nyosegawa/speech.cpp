@@ -59,8 +59,9 @@ export async function pcmLayout(file) {
       const extensible = code === 0xfffe && size >= 40 && at + 34 <= head.byteLength;
       const pcm = code === 1 || (extensible && head.getUint16(at + 32, true) === 1);
       const channels = head.getUint16(at + 10, true);
-      if (!pcm || head.getUint16(at + 22, true) !== 16 || channels === 0) return null;
-      format = { rate: head.getUint32(at + 12, true), channels };
+      const rate = head.getUint32(at + 12, true);
+      if (!pcm || head.getUint16(at + 22, true) !== 16 || channels === 0 || rate === 0) return null;
+      format = { rate, channels };
     } else if (tag(at) === 'data') {
       if (!format) return null;
       // A file written to a pipe gives its data's size as 0xFFFFFFFF; the data then runs to the end of the file.
