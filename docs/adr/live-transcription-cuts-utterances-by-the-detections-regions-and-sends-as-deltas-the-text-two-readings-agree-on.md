@@ -47,8 +47,11 @@ on the CPU with one thread, 0.17 s with the performance cores and 0.52 s on Meta
   committed, and a reading's when it starts, with the assembly's lock held, so that a commit accepted before the reading
   runs before it and one accepted after it runs after it. A reading takes no place while it waits for audio, since it
   starts only once the audio is there, and it holds its place no longer than its run.
-- **The assembly holds the buffer and the utterances committed and not yet recognized**, which a host bounds; a reading
-  hands its copy of the buffer to the library's request and holds none of its own. With a detection, the buffer keeps
+- **The assembly holds the buffer and the utterances committed and not yet recognized**, which a host bounds, at 25 MiB
+  of 16-bit PCM in both, and never by dropping audio: `speech serve` refuses an append past it, `speech asr -` reads
+  stdin no further until the recognitions catch up, so that a writer faster than the recognizer waits, and
+  `speech asr --live`, whose microphone cannot wait, ends with `out_of_memory`. A reading hands its copy of the buffer
+  to the library's request and holds none of its own. With a detection, the buffer keeps
   only what a region may still need: from the start of the region under way, or without one the last `speech_pad_ms`
   and 0.1 s, a chunk and the resampler's delay, so that silence does not pile up. The resampler holds back more as the
   rate falls, 0.68 s at 100 Hz, so a detection takes audio at 8000 Hz or more, telephony's rate, which it covers.
