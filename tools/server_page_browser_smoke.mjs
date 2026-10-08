@@ -255,7 +255,13 @@ try {
       return fetched(url, init);
     };
   ` });
+  const pageLoaded = new Promise((resolve) => ws.addEventListener('message', (event) => {
+    if (JSON.parse(event.data).method === 'Page.loadEventFired') resolve();
+  }));
   await send('Page.navigate', { url: address.replace('127.0.0.1', 'localhost') });
+  // Page.navigate answers once the new document is committed, which can be before the page's modules have run and
+  // given the tabs their clicks; a click then is lost.
+  await racing(pageLoaded, running, 60000, 'the page to load');
   // A picker sits only in the panel in view.
   await page(`
     $('tab-transcribe').click();
@@ -335,7 +341,8 @@ try {
     if (!$('live-error').hidden) return { error: $('live-error').textContent };
     return {
       text: card.querySelector('.transcript-text').textContent, grey, provisional: card.querySelector('.provisional')?.textContent ?? '',
-      turns: window.__sessions.map((s) => s.audio.input.turn_detection),
+      // Stop's session.update changes nothing and carries no audio.
+      turns: window.__sessions.filter((s) => s.audio).map((s) => s.audio.input.turn_detection),
     };
   `);
   const wantLive = await api(microphone, { 'chunking_strategy[type]': 'server_vad', 'chunking_strategy[silence_duration_ms]': '400' });
