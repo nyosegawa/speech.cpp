@@ -14,8 +14,8 @@ speech serve qwen3-tts-0.6b qwen3-asr-0.6b            # speech and transcription
 speech serve irodori-tts-mf --add-voice me=me.voice.gguf --cors-origin http://localhost:5173
 ```
 
-The server holds at most one model of each task. It loads the models given, listens once they are ready, and logs to
-stderr.
+The server holds at most one synthesis model and one recognition model, and refuses a detection model (Silero VAD). It
+loads the models given, listens once they are ready, and logs to stderr.
 
 | Option | Meaning |
 |---|---|

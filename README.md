@@ -1,13 +1,13 @@
 <p align="center"><img src="docs/images/banner.png" alt="speech.cpp" width="768"></p>
 
-speech.cpp runs speech synthesis and speech recognition models for voice conversation in C++ on
-[ggml](https://github.com/ggml-org/ggml), behind one C API, on the CPU, Metal and Vulkan.
+speech.cpp runs speech synthesis, speech recognition and voice activity detection models for voice conversation in C++
+on [ggml](https://github.com/ggml-org/ggml), behind one C API, on the CPU, Metal and Vulkan.
 
 [Models](#models) | [Install](#install) | [Quick start](#quick-start) | [Documentation](#documentation) |
 [C API](docs/c-api.md)
 
 It is one command, `speech`, and one shared library, `libspeech`. The command speaks text, writes the text of
-recordings, serves OpenAI's audio API over HTTP, and runs the worker process that
+recordings, finds where someone speaks in them, serves OpenAI's audio API over HTTP, and runs the worker process that
 [ASIST](https://github.com/nyosegawa/asist) starts. Every stage of every model is checked against the model's official
 implementation.
 
@@ -21,11 +21,13 @@ implementation.
 | Recognition | [`reazonspeech-v2`](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) | ja | Japanese with punctuation, in recordings of many minutes |
 | Recognition | [`parakeet-tdt_ctc-0.6b-ja`](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | ja | short Japanese utterances, fast, with times |
 | Recognition | [`parakeet-tdt-0.6b-v3`](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) | 25 European languages | finds the language itself, with punctuation, capitals and times |
+| Detection | [`silero-vad`](https://huggingface.co/sakasegawa/silero-vad-GGUF) | any | where someone speaks, to give a recognizer one utterance at a time; 1.2 MB |
 
 A command takes a model by its name and fetches its converted file from Hugging Face, from the repository the name links
 to, the first time. [docs/models.md](docs/models.md) lists the models with their sizes, voices and languages, and each
 family has a page: [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md),
-[FastConformer](docs/models/fastconformer.md) and [Qwen3-ASR](docs/models/qwen3-asr.md).
+[FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md) and
+[Silero VAD](docs/models/silero-vad.md).
 
 ## Install
 
@@ -78,6 +80,7 @@ uninstall, and what each platform needs. On an Intel Mac or another system, [bui
 |---|---|
 | `speech tts` | speaks text into a WAVE file or to stdout |
 | `speech asr` | writes the text of WAVE files |
+| `speech vad` | writes where someone speaks in WAVE files |
 | `speech voice` | makes an Irodori-TTS voice file from reference recordings |
 | `speech info` | prints what a model file says of its model |
 | `speech devices` | lists the devices a model can run on |
@@ -91,6 +94,7 @@ speech voice irodori-tts-mf me.wav me.voice.gguf
 speech tts irodori-tts-mf --add-voice me=me.voice.gguf --voice me -o - < story.txt | ffplay -nodisp -autoexit -
 speech asr reazonspeech-v2 --timestamps meeting.wav
 speech asr qwen3-asr-1.7b --language ja --prompt "Claude Code、渋谷" meeting.wav
+speech vad silero-vad --max-speech-duration-s 10 meeting.wav
 ```
 
 Every request option is a flag, and `speech info MODEL` lists the ones a model takes. [docs/cli.md](docs/cli.md) lists
@@ -167,7 +171,7 @@ Each model's page has more.
 | [Install](docs/install.md) | installers, updating, uninstalling, requirements, release archives and building from source |
 | [Command line](docs/cli.md) | every subcommand and option |
 | [Models](docs/models.md) | the catalog, names, where models are kept, voices and languages |
-| [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md), [FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md) | each family: what it does, its options, accuracy and speed |
+| [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md), [FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md), [Silero VAD](docs/models/silero-vad.md) | each family: what it does, its options, accuracy and speed |
 | [Server and page](docs/server.md) | `speech serve` and OpenAI's audio API |
 | [Worker protocol](docs/worker.md) | `speech worker` for programs |
 | [C API](docs/c-api.md) | `speech.h` |
@@ -184,3 +188,4 @@ MIT, see [LICENSE](LICENSE). The model weights are their authors':
   names was corrected to Apache-2.0 in facebookresearch/dacvae on 2025-12-19.
 - The parakeet models are NVIDIA's, under CC-BY-4.0, and reazonspeech-nemo-v2 is reazon-research's, under the Apache
   License 2.0.
+- Silero VAD is the Silero Team's, under the MIT License.

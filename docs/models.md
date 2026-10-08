@@ -19,6 +19,7 @@ first time.
 | [`reazonspeech-v2`](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) | recognition | ja | `reazonspeech-nemo-619M-v2-F16.gguf`, 1.24 GB | [FastConformer](models/fastconformer.md) |
 | [`parakeet-tdt_ctc-0.6b-ja`](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | recognition | ja | `parakeet-tdt_ctc-0.6B-ja-F16.gguf`, 1.24 GB | [FastConformer](models/fastconformer.md) |
 | [`parakeet-tdt-0.6b-v3`](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) | recognition | 25 European languages | `parakeet-tdt-0.6B-v3-F16.gguf`, 1.26 GB | [FastConformer](models/fastconformer.md) |
+| [`silero-vad`](https://huggingface.co/sakasegawa/silero-vad-GGUF) | detection | any | `silero-vad-309K-v6.2-F32.gguf`, 1.2 MB | [Silero VAD](models/silero-vad.md) |
 
 `speech models` prints the same, with what is fetched. Each family's page links the upstream models.
 
@@ -34,10 +35,12 @@ which one to start with:
 | recognition | `qwen3-asr-0.6b` | the 29 other languages of Qwen3-ASR |
 | recognition | `parakeet-tdt-0.6b-v3` | bg et hr lt lv mt sk sl uk, the European languages Qwen3-ASR does not recognize |
 
+A detection model takes no language, and `speech vad` without a model lists every detection model.
+
 ## Names
 
-Every subcommand that takes a model (`tts`, `asr`, `voice`, `info`, `serve`, `worker`) takes a model file's path, which
-ends in `.gguf`, or `NAME[:TYPE]`:
+Every subcommand that takes a model (`tts`, `asr`, `vad`, `voice`, `info`, `serve`, `worker`) takes a model file's path,
+which ends in `.gguf`, or `NAME[:TYPE]`:
 
 - NAME is a name of the catalog, or the Hugging Face repository of its converted files.
 - TYPE is the file's weight type, `q8_0`, `f16` or `f32`, where the repository holds it. Without it, the name means the
@@ -98,7 +101,7 @@ A voice's name is case-sensitive, and may be neither a voice of the model nor `n
 - A request's `language` is one of them, a region or script of one (`ja-JP`, `zh-Hant`), or `auto`, the default, which
   leaves the choice to the model. Any other language is refused.
 - Qwen3-TTS and Qwen3-ASR are steered by the language. Irodori-TTS and the FastConformer models only check it against
-  their languages and do not use it.
+  their languages and do not use it. Silero VAD has no languages and takes `auto` alone.
 - Qwen3-ASR's results say which language it heard.
 
 ## Files on Hugging Face
