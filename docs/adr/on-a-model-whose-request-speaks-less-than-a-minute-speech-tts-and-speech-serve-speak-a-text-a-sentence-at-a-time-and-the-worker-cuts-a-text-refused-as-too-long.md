@@ -1,4 +1,4 @@
-# speech tts and speech serve speak a text a sentence at a time on a model whose request speaks less than a minute
+# On a model whose request speaks less than a minute, speech tts and speech serve speak a text a sentence at a time, and the worker cuts a text refused as too long
 
 ## Context
 
@@ -19,8 +19,13 @@ seeds 1 to 3, silence at or under -40 dBFS, Apple M5, 2026-10-08).
 
 ## Decision
 
-- **The tools split, in `tools/common`, for `speech tts` and `speech serve` alike**; the library's request stays one
-  text, and the worker one request a synthesize, since its callers split their texts themselves.
+- **The tools split, in `tools/common`, for `speech tts`, `speech serve` and the worker alike**; the library's request
+  stays one text.
+- **The worker speaks a synthesize as one request, since its caller chose the text, and cuts it only where the library
+  refuses it as too long**: after its sentences first, each join holding the pause below, then as a refused sentence is
+  cut. A text the worker spoke before sounds the same, and one it refused is spoken. ASIST cuts its replies into
+  sentences, and a sentence past 50 characters at its next comma, yet a sentence whose commas all come in its first 50
+  characters goes whole: 226 characters of Japanese were predicted at 33.0 s in one of ASIST's voices (2026-10-09).
 - **A model whose longest request is under 60 s speaks a text of several sentences one sentence at a time.** The longest
   request is the upper bound of its `seconds` or `max_seconds` option from the model information, so no family is told
   by its name: Irodori-TTS, at 30 s, speaks by sentence, and Qwen3-TTS, at 655 s, reads a text whole, its prosody
@@ -49,6 +54,10 @@ The alternatives were turned down:
   at 655 s with `model_limit` and end the text there.
 - Cutting every model's text into sentences. Qwen3-TTS would lose its prosody across the sentences of a paragraph, and
   a text it reads whole would sound otherwise than one request of it.
+- Speaking the worker's texts a sentence at a time, as `speech tts` does. A text of several sentences that the worker
+  spoke as one request would sound otherwise than it did, with no new option asking for it.
+- Leaving a refused text to the worker's caller. The caller learns that a text is too long only from the refusal, after
+  the library predicted its speech, and would have to rebuild these cuts.
 - Telling the models that speak by sentence by their family. A family added with a short request would read a
   paragraph whole and be refused.
 - Putting a refused sentence's pieces together as long as they fit. Whether a text fits is known only by running it,
@@ -63,4 +72,6 @@ The alternatives were turned down:
 `speech serve` speaks an `input` of any length on Irodori-TTS, its first audio after the first sentence's, as fast as
 one sentence alone; `speech tts` does the same, and reports how many requests a text took. A text of several sentences
 on Irodori-TTS is spoken otherwise than one request of it would be, which the library refuses past 30 s. The pauses at
-the joins depend on the silence the requests leave, so they differ by voice.
+the joins depend on the silence the requests leave, so they differ by voice. The worker answers a text it cut with one
+`end` for all its pieces, whose `samples` count the pauses at the joins, and runs its synthesis and its recognition
+through the same cancellation as the other tools.

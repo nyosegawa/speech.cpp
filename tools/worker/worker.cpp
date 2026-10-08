@@ -3,15 +3,18 @@
 #include <cmath>
 #include <cstdio>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "base64.h"
+#include "cancellation.h"
 #include "commands.h"
 #include "fetch.h"
 #include "inbox.h"
 #include "json.h"
+#include "sentences.h"
 
 // speech worker: serves one model over the worker protocol, JSON Lines on stdin and stdout, for another program
 // that starts it, ASIST among them. Its stdout carries the protocol and nothing else. It loads the model, warmed up
@@ -87,23 +90,23 @@ std::vector<float> samples_of(const Job & job) {
     return out;
 }
 
+/**
+ * Speaks the job's text as one request of the library, as its caller chose it; on a model that speaks by sentence, a
+ * text the library refuses as too long is cut and spoken in pieces, as speech tts speaks one.
+ */
 void synthesize(Inbox & inbox, Protocol & protocol, speech_model * model, const Job & job) {
-    const Request request = new_request(model);
-    speech_request * r = request.get();
-    if (!inbox.start(job, r)) return;
+    Cancellation cancellation;
+    if (!inbox.start(job, &cancellation)) return;
     Running running{protocol, job.id, Clock::now()};
     std::string terminal;
     try {
-        check(speech_request_set_text(r, job.text.c_str()));
-        apply_options(r, job.options);
-        check(speech_request_set_progress(r, on_progress, &running));
-        if (check(speech_synthesize(r, on_audio, &running)) == SPEECH_CANCELLED) {
+        const std::optional<Spoken> spoken =
+            speak_text(model, job.text, job.options, Split::Refused, on_audio, on_progress, &running, cancellation);
+        if (!spoken) {
             terminal = cancelled_line(job.id);
         } else {
-            const speech_result * result = speech_request_result(r);
-            terminal = "{\"type\":\"end\",\"id\":" + json_string(job.id) + ",\"seed\":" + std::to_string(speech_result_seed(result)) +
-                       ",\"samples\":" + std::to_string(speech_result_samples(result)) + ",\"stop\":\"" +
-                       speech_stop_name(speech_result_stop(result)) + "\"}";
+            terminal = "{\"type\":\"end\",\"id\":" + json_string(job.id) + ",\"seed\":" + std::to_string(spoken->seed) +
+                       ",\"samples\":" + std::to_string(spoken->samples) + ",\"stop\":\"" + speech_stop_name(spoken->stop) + "\"}";
         }
     } catch (const std::exception & e) {
         terminal = error_line(job.id, e);
@@ -114,7 +117,8 @@ void synthesize(Inbox & inbox, Protocol & protocol, speech_model * model, const 
 void recognize(Inbox & inbox, Protocol & protocol, speech_model * model, const speech_model_info * info, const Job & job) {
     const Request request = new_request(model);
     speech_request * r = request.get();
-    if (!inbox.start(job, r)) return;
+    Cancellation cancellation;
+    if (!inbox.start(job, &cancellation)) return;
     Running running{protocol, job.id, Clock::now()};
     std::string terminal;
     try {
@@ -122,7 +126,7 @@ void recognize(Inbox & inbox, Protocol & protocol, speech_model * model, const s
         check(speech_request_set_audio(r, samples.data(), samples.size(), job.sample_rate));
         apply_options(r, job.options);
         check(speech_request_set_progress(r, on_progress, &running));
-        if (check(speech_transcribe(r)) == SPEECH_CANCELLED) {
+        if (check(cancellation.run(r, [&] { return speech_transcribe(r); })) == SPEECH_CANCELLED) {
             terminal = cancelled_line(job.id);
         } else {
             terminal = "{\"type\":\"end\",\"id\":" + json_string(job.id) +

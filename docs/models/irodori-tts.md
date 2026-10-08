@@ -87,7 +87,8 @@ guidance's settings with both scales at 0.
 
 A request speaks at most 30 s. A text whose speech the model predicts to last longer is refused with `out_of_range`
 (`text`), with the predicted length in the message, and so is a text of more than 256 tokens. A few sentences can pass
-30 s, so a request should be one sentence; `speech tts` and `speech serve` speak a longer text a sentence at a time. A
+30 s, so a request should be one sentence; `speech tts` and `speech serve` speak a longer text a sentence at a time, and
+the worker cuts a text it is refused after its sentences, its commas or its spaces. A
 `speed` above 1 that brings the length within 30 s is followed.
 
 ## Instructions

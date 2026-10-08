@@ -47,16 +47,25 @@ struct Spoken {
     size_t requests = 0;
 };
 
+/** Where a model that speaks by sentence begins to cut a text into requests. */
+enum class Split {
+    /** Each sentence of a text of several is a request of its own: speech tts and speech serve. */
+    Sentences,
+    /** The text is one request, cut only when the library refuses it as too long: the worker, whose caller chose the text. */
+    Refused,
+};
+
 /**
  * Speaks `text` on `model` with `options`, passing the audio to `on_audio` with `user_data` as it is made, request
  * after request, and reporting each request's progress to `on_progress` where it is set. A model that speaks by
- * sentence speaks each sentence of a text of several as a request of its own; a text of one sentence, and any text on
- * another model, is one request, unchanged. A sentence that the library refuses as too long, before any audio, is cut
- * after its commas, or at its spaces where it has none, and each piece is spoken the same way in turn; a piece with no
- * place to cut that the library refuses fails, naming the piece. The options' seed, or the first request's, applies to
- * every request. A request that stops other than complete ends the synthesis. It returns nothing once cancelled, by
- * `cancellation` or by a callback returning nonzero; a failure of the library throws.
+ * sentence speaks each sentence of a text of several as a request of its own where `split` says Sentences; a text of
+ * one sentence, a text where it says Refused, and any text on another model, is one request, unchanged. On a model that
+ * speaks by sentence, a text the library refuses as too long, before any audio, is cut after its sentences, or after
+ * its commas where it is one sentence, or at its spaces where it has none, and each piece is spoken the same way in turn; a piece
+ * with no place to cut that the library refuses fails, naming the piece. The options' seed, or the first request's,
+ * applies to every request. A request that stops other than complete ends the synthesis. It returns nothing once
+ * cancelled, by `cancellation` or by a callback returning nonzero; a failure of the library throws.
  */
-std::optional<Spoken> speak_text(speech_model * model, const std::string & text, const std::vector<RequestOption> & options,
+std::optional<Spoken> speak_text(speech_model * model, const std::string & text, const std::vector<RequestOption> & options, Split split,
                                  speech_audio_callback on_audio, speech_progress_callback on_progress, void * user_data,
                                  Cancellation & cancellation);
