@@ -74,7 +74,7 @@ Storage float32_storage();
  * A matrix that only ggml_mul_mat() and ggml_get_rows() read, which ggml computes from every weight type on the CPU,
  * Metal and Vulkan: in the file's own type; in Q8_0 instead of a K-quant where its rows are not whole blocks of 256
  * values; and in F16 instead of Q8_0 where they are not whole blocks of 32; each type read from the release `since`
- * gives it, which differs from family to family (docs/adr/0040).
+ * gives it, which differs from family to family.
  */
 Storage quantized_storage(std::vector<Since> since);
 

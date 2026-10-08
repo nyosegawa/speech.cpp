@@ -33,7 +33,7 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   tensors the keys call for.
 - `src/common/` holds what two families use in the same role. Code moves there when a second family needs
   it, not before, and never as a framework for families that do not exist yet.
-- `tools/` holds `speech`, the one executable for users (docs/adr/0017), with a subcommand per program: `tts`,
+- `tools/` holds `speech`, the one executable for users, with a subcommand per program: `tts`,
   `asr`, `voice`, `info`, `devices` and `quantize` in `tools/cli/` (with `main.cpp`, which dispatches them), `worker` in
   `tools/worker/` and `serve` in `tools/server/`, and what they share in `tools/common/`: the one parser of every
   command line, which makes a flag of each option of the C API's vocabulary, the JSON reader, and the request options
@@ -41,7 +41,7 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   C API. `tools/models/` names models: the catalog of the release (`catalog.json`, which `update_catalog.py` writes
   from Hugging Face and the build compiles in), the cache folder, and the fetching of a named model with the system's
   curl, which `models`, `pull` and `rm` and every subcommand that takes a model share; the library never reaches the
-  network (docs/adr/0033 to 0036). The worker's protocol 2 is JSON Lines, one JSON object per line on stdin and
+  network. The worker's protocol 2 is JSON Lines, one JSON object per line on stdin and
   stdout, and is the contract of every program that starts it, ASIST among them: stdout carries the protocol and
   nothing else, every log goes to stderr, and every request gets exactly one terminal message. Its `ready` message
   carries the protocol's version, the release and the model's information.
@@ -58,8 +58,7 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   `jobs.h` runs one request at a time in arrival order and cancels the request of a client that goes away, and
   `served-models.cpp` holds one model of each task and replaces it once its requests have ended. `page/` is the page
   of `speech serve --open`, plain HTML, CSS and JavaScript modules compiled into `speech`, which `page.cpp` serves
-  with the endpoints that fetch and load models; `access.cpp` guards them with the token, the Host and the Origin
-  (docs/adr/0038, 0039).
+  with the endpoints that fetch and load models; `access.cpp` guards them with the token, the Host and the Origin.
 - The smoke scripts in `tools/` drive each entry point as its caller does and fail on a defect:
   `worker_smoke.py` and `worker_recognition_smoke.py` the worker protocol 2 through `worker_client.py`, which checks
   every line and one terminal message per request, `server_smoke.py` every endpoint and the mapping of errors and
@@ -79,12 +78,12 @@ another one.
 
 - C++17 with ggml as a git submodule and no other dependency, except cpp-httplib's single header, vendored in
   `vendor/cpp-httplib/` by commit for `speech serve` and compiled into `speech` with it; the library and `libspeech`
-  never include it (docs/adr/0008, 0017). `speech` has the library and ggml linked in statically, so that a release is
+  never include it. `speech` has the library and ggml linked in statically, so that a release is
   one executable beside the shared library `libspeech`, which exports the C API and nothing else, for bindings and
   other programs.
 - Anything the C API returns is owned by the library, and the header says for how long. A model serves one
   request at a time, and the header says which functions any thread may call.
-- The GGUF layout is this repository's own (docs/adr/0015): one file per model, its codec included, written by
+- The GGUF layout is this repository's own: one file per model, its codec included, written by
   `reference/<model>/convert.py` and read by the family's `layout.cpp`, with `speech.layout` naming its version.
   The model's identity and languages are in the GGUF specification's own `general.` keys (ggml's `docs/gguf.md`),
   under the names it gives them, and the converter names the file from them by its naming convention; no key of
@@ -120,7 +119,7 @@ another one.
   C++ stream through `std::filesystem::u8path()`: `fopen()` and a stream opened on a `std::string` read the
   path in the ANSI code page on Windows, so a path with any character outside ASCII is not found.
 - A Linux release runs on glibc 2.34 and needs no shared library but glibc's and, in the Vulkan build,
-  `libvulkan.so.1`; CI fails a build that needs more (docs/adr/0010). It is built on the oldest Ubuntu GitHub
+  `libvulkan.so.1`; CI fails a build that needs more. It is built on the oldest Ubuntu GitHub
   hosts, with libstdc++ linked in and ggml's OpenMP off.
 - Model weights, reference dumps and audio are never committed; `.gitignore` covers `models/`,
   `reference/*/out/`, `*.gguf` and `*.wav`.
@@ -159,10 +158,12 @@ another one.
 
 ## Decisions
 
-`docs/adr/` keeps the decisions the code cannot show, one file each, and the file names say which
-behavior each covers. Before changing a behavior, list the folder and read the records whose names cover
+`docs/adr/` keeps the decisions the code cannot show, one file each, named by what it decides and without a number;
+the file names are the index. Before changing a behavior, list the folder and read the records whose names cover
 it; if the change contradicts one, say so to the user first. Before committing, ask whether the work
-settled a choice or turned an approach down for good; if so, the record goes into the same commit.
+settled a choice or turned an approach down for good; if so, the record goes into the same commit (`adr` skill). A
+record states the decision as it stands, and nothing else names a record: not the docs, this file, a skill or a
+comment.
 
 ## Workflow
 
@@ -207,6 +208,8 @@ Skills live in `skills/`; `.claude/skills` and `.agents/skills` link to it. When
 holds steps these rules do not repeat.
 
 - `add-model`: porting a model or a family, updating one, or exposing an official option of one.
+- `adr`: a decision settled or an approach turned down for good, a change that contradicts a record, or tidying
+  `docs/adr/`.
 - `docs`: a change that alters what a user does or sees, or writing a page of README.md or `docs/`.
 - `pull-request`: starting a change, committing, opening a pull request, its review and CI, merging, cleaning up, and
   taking back a subagent's branch.

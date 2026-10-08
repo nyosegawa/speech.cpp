@@ -10,7 +10,7 @@ if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# One executable per tool, with ggml linked in, so that a release is a single file per tool.
+# ggml is linked in statically, so that a release is speech beside the shared libspeech and needs no library of ggml.
 option(BUILD_SHARED_LIBS "Build ggml as shared libraries" OFF)
 # The shared libspeech links the same static libraries as the executables.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -181,7 +181,7 @@ string(APPEND SPEECH_PAGE_SOURCE "extern const PageFile speech_page_files[] = {\
        "extern const size_t speech_page_file_count = ${SPEECH_PAGE_COUNT};\n")
 file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/page-files.cpp CONTENT "@SPEECH_PAGE_SOURCE@" @ONLY)
 
-# Every program on the library is one executable, speech, with a subcommand each (docs/adr/0017), the library and
+# Every program on the library is one executable, speech, with a subcommand each, the library and
 # ggml linked in. The target is speech-cli since the shared library holds the name speech. It has the one dependency
 # besides ggml, cpp-httplib's single header for `speech serve`, vendored in vendor/cpp-httplib from
 # yhirose/cpp-httplib at commit cf3693cb5cc0d39b0e6f4122ba89bda9edb5ac6b (v0.59.0), with its license.

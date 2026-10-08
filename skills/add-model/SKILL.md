@@ -28,7 +28,7 @@ names keys, files and layouts.
 - Dump every stage, with the noise fixed, for each new option and each setting a request can take. Use only audio
   that may be published (FLEURS, Common Voice); never a recording of a person who has not agreed to it.
 - `convert.py` writes F32, which the checks run on; `speech quantize` makes every other type, each tensor as the
-  family's `layout.cpp` table stores it (docs/adr/0040). Decide in that table which tensors a type may change.
+  family's `layout.cpp` table stores it. Decide in that table which tensors a type may change.
 
 ## 3. The port
 
@@ -77,6 +77,5 @@ implementation and the other runtimes on the same day, on a quiet machine.
 
 ## Working in parallel
 
-Several families can move at once in separate worktrees. ADR numbers collide; renumber at merge in the order the pull
-requests land. Commit as each part works, so that a stopped session loses nothing. Run the long CPU F32 checks one
-family at a time, and speed measurements only when nothing else runs.
+Several families can move at once in separate worktrees. Commit as each part works, so that a stopped session loses
+nothing. Run the long CPU F32 checks one family at a time, and speed measurements only when nothing else runs.

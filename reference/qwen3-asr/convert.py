@@ -6,12 +6,12 @@ Writes Qwen3-ASR-<0.6B|1.7B>-F32.gguf, named under GGUF's naming convention, in 
 filterbank, the encoder's convolutions and layers, the projector, the decoder and its tokenizer, with every constant the
 C++ reads and the model's identity in the GGUF specification's general keys. The constants come from the checkpoint's
 config.json, preprocessor_config.json, generation_config.json, chat_template.json and tokenizer files, and where it has
-none from the official code docs/adr/0018 takes as the reference: transformers 5.18's Qwen3-ASR (the feature extractor,
+none from the official code the port is checked against: transformers 5.18's Qwen3-ASR (the feature extractor,
 the encoder and the language tags) and qwen-asr 0.0.6's inference/utils.py (the limits of the audio, the prompt's forced
 language, and the parse of the output), both pinned by uv.lock.
 
 Every tensor is written in float32; `speech quantize` makes the other weight types of the file, each tensor in the type
-src/families/qwen3-asr/layout.cpp gives it (docs/adr/0040).
+src/families/qwen3-asr/layout.cpp gives it.
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [out, in] is stored as is (ne = [in, out])
 and a Conv2d weight [out, in, height, width] as is (ne = [width, height, in, out]), the layout ggml's 2D convolutions
@@ -47,7 +47,7 @@ BASENAME = "Qwen3-ASR"
 # The SPDX identifier of each checkpoint's license, from its model card.
 LICENSES = {"Qwen3-ASR-0.6B": "Apache-2.0", "Qwen3-ASR-1.7B": "Apache-2.0"}
 # The most tokens a request generates: the default of the model's generate() and of qwen-asr's vLLM backend, which
-# docs/adr/0018 takes.
+# covers the 1200 s the model recognizes at once.
 MAX_NEW_TOKENS = 4096
 # The template's place for the context, which no context contains.
 CONTEXT_MARK = "\x00context\x00"
@@ -176,7 +176,7 @@ with open(os.path.join(os.path.dirname(utils.__file__), "qwen3_asr.py"), encodin
 eos_ids = list(generation["eos_token_id"])
 
 # The languages: transformers' tags of the names the checkpoint supports, which qwen-asr's forced language writes.
-# general.languages holds each language's shortest ISO 639 code, as BCP 47 names it (docs/adr/0015): the ISO 639-1 code
+# general.languages holds each language's shortest ISO 639 code, as BCP 47 names it: the ISO 639-1 code
 # of two letters, and for Cantonese and Filipino, which have none, the three letters of ISO 639-3 (yue) and 639-2
 # (fil).
 names = processing_qwen3_asr.LANGUAGE_CODE_TO_NAME

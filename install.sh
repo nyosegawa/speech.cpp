@@ -65,7 +65,7 @@ command -v curl >/dev/null 2>&1 || fail "curl is needed to download the release;
 command -v unzip >/dev/null 2>&1 || fail "unzip is needed to unpack the release; install it (apt install unzip, dnf install unzip) and run this again"
 
 # The archive for this system: a release has one for macOS arm64 with Metal, and for Linux x86-64 one with Vulkan and
-# one for the CPU alone (docs/adr/0010).
+# one for the CPU alone.
 case "$(uname -s)" in
     Darwin)
         # A shell that runs under Rosetta says x86_64 on an Apple silicon Mac, which runs the arm64 build all the same.

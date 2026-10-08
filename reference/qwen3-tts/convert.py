@@ -5,7 +5,7 @@ usage: uv run python convert.py <0.6b|1.7b> <out dir>
 Writes Qwen3-TTS-12Hz-<0.6B|1.7B>-CustomVoice-F32.gguf, named under GGUF's naming convention, in layout 1: the talker,
 the code predictor, the text embedding, the tokenizer and the 12Hz codec's decoder, every tensor in float32, with every
 constant the C++ reads and the model's identity in the GGUF specification's general keys. `speech quantize` makes the
-other weight types of it, each tensor in the type src/families/qwen3-tts/layout.cpp gives it (docs/adr/0040).
+other weight types of it, each tensor in the type src/families/qwen3-tts/layout.cpp gives it.
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis. A Linear weight [out, in] is stored as is
 (ne = [in, out]). Every convolution weight is stored as numpy [k, out, in] (ne = [in, out, k]), so that tap k is

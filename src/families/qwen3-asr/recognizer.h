@@ -55,7 +55,7 @@ struct PartReport {
 constexpr ggml_type kCacheType = GGML_TYPE_F16;
 
 /**
- * Qwen3-ASR as qwen-asr's transcribe() runs it with the windowed encoder of transformers 5.18 (docs/adr/0018): the
+ * Qwen3-ASR as qwen-asr's transcribe() runs it with the windowed encoder of transformers 5.18: the
  * audio normalized and, when it is too long for the model, split into parts; for each part its features, the encoder
  * and the projector, the prompt with the request's context and forced language, the decoder's prefill and greedy
  * decoding, and the text parsed from what it wrote; and the parts' texts joined. It reads one GGUF file and computes

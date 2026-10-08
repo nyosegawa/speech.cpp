@@ -44,7 +44,7 @@ int main(int argc, char ** argv) {
             // ln_post magnify any rounding 10 to 30 dB: there torch's own float32 is 86.1 dB (0.6B) and 92.6 dB (1.7B) from a
             // float64 run of the official encoder, where this port's float32 is 100.8 and 107.4 dB from it. With F32
             // weights on the CPU, a feed-forward with tanh's GELU instead of erf's gives 43.1 dB, and attention over the
-            // whole utterance instead of its windows 7 to 11 dB (docs/adr/0018).
+            // whole utterance instead of its windows 7 to 11 dB.
             const ggml_type type = model.tensor("enc.blk.0.attn_q.weight")->type;
             const double threshold_db = type == GGML_TYPE_Q8_0 ? 12 : type == GGML_TYPE_F32 && ggml_backend_is_cpu(backend) ? 80 : 20;
             std::printf("projector output threshold: %.0f dB\n", threshold_db);

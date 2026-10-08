@@ -63,8 +63,9 @@ enum class Qwen3Attention {
 
 /**
  * The attention a stack of shape `shape` with a cache of `cache_type` runs on `backend`: flash attention on a GPU whose
- * backend computes it for those heads and that cache, and the two products on the CPU and on any other GPU
- * (docs/adr/0019).
+ * backend computes it for those heads and that cache, and the two products on the CPU, where flash attention took 51 ms
+ * against 22 ms for 8,000 positions of 28 layers on an Apple M5 (2026-10-07) and sums the values in half precision, and
+ * on any other GPU.
  */
 Qwen3Attention qwen3_attention(ggml_backend_t backend, const Qwen3Shape & shape, ggml_type cache_type);
 

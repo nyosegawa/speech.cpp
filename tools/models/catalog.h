@@ -11,7 +11,7 @@
 
 /** A file of a model in its repository at the catalog's revision. */
 struct CatalogFile {
-    /** The weight type in lower case, "q8_0", "f16" or "f32", which a model argument gives after ":". */
+    /** The weight type in lower case, such as "q8_0" or "f16", which a model argument gives after ":". */
     std::string type;
     /** The file's name in the repository. */
     std::string file;

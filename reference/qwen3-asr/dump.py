@@ -6,13 +6,13 @@ usage: uv run python dump.py <model> <out dir> [input...]
 inputs.py gives the model), goes to <out dir>/<model>/<input>/.
 
 The model is transformers 5.18's own Qwen3ASRForConditionalGeneration with the pinned checkpoint's configuration and
-weights. Its encoder attends within windows of 104 tokens (8 s) on every attention path, as qwen-asr's vLLM backend
-and its FlashAttention 2 path do, where qwen-asr 0.0.6 run on the CPU attends over the whole utterance
-(docs/adr/0018). What transformers does not do comes from qwen-asr's own code, as its transcribe() runs it: the
-normalization of the audio, the split of audio over 1200 s at its quietest point within 5 s, the prompt with its
-system turn and the forced language, and the parse of the output with its repetition fix. Decoding is greedy with
-the checkpoint's generation_config.json and at most 4096 new tokens, the default of the model's generate() and of
-qwen-asr's vLLM backend.
+weights. Its encoder attends within windows of 104 tokens (8 s) on every attention path, as qwen-asr's vLLM backend and
+its FlashAttention 2 path do, where qwen-asr 0.0.6 run on the CPU attends over the whole utterance, a fallback that
+drops the windows the model was trained with. What transformers does not do comes from qwen-asr's own code, as its
+transcribe() runs it: the normalization of the audio, the split of audio over 1200 s at its quietest point within 5 s,
+the prompt with its system turn and the forced language, and the parse of the output with its repetition fix. Decoding
+is greedy with the checkpoint's generation_config.json and at most 4096 new tokens, the default of the model's
+generate() and of qwen-asr's vLLM backend.
 
 Each input is run once without a language or a prompt, once with its language forced, and both again with its
 prompt (qwen-asr's context, which goes into the system turn): the variants auto, forced, auto-prompt and

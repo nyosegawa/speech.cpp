@@ -15,7 +15,7 @@ namespace irodori {
 namespace {
 
 /**
- * How the layout stores a tensor in a file of each weight type (docs/adr/0040): a matrix or embedding of the model,
+ * How the layout stores a tensor in a file of each weight type: a matrix or embedding of the model,
  * which ggml_mul_mat() and ggml_get_rows() alone read, in the file's type, which 0.7's reader of layout 1 took in Q8_0,
  * F16 and F32; and the codec, which encodes the voices' references and decodes the speech, the norms, the biases and
  * the rest in F32 in every file, as the released files hold them.
