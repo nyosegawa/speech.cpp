@@ -198,6 +198,11 @@ size_t Assembly::held() const {
     return audio_.size() + committed_;
 }
 
+size_t Assembly::committed() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return committed_;
+}
+
 double Assembly::heard() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return (double) heard_ / rate_;

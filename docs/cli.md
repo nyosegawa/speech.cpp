@@ -175,7 +175,9 @@ speech asr qwen3-asr-0.6b --vad silero-vad --live --format json > events.jsonl
   reports each utterance as it ends. A recognition that fails ends the run with exit 1, after the `failed` event in JSON.
 - `--timestamps` is refused: the times of an utterance are in its events.
 - Utterances wait for their recognition while the recognizer is behind, up to 13.1 million samples (13.6 min at 16 kHz).
-  Past that, `-` reads stdin no faster than the recognition goes, and `--live` ends with `out_of_memory`.
+  Past that, `-` reads stdin no faster than the recognition goes, and `--live` ends with `out_of_memory`. Options that
+  keep that much audio before an utterance is committed, such as a `--speech-pad-ms` of minutes, end either with
+  `out_of_memory`.
 
 On macOS, a program reaches the microphone through the app it runs in, such as Terminal or iTerm2. The first time,
 macOS asks whether that app may use the microphone; afterwards it is in System Settings, Privacy & Security,

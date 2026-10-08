@@ -44,6 +44,26 @@ double seconds_since(Clock::time_point t0) {
  */
 constexpr size_t kHeld = (25 << 20) / 2;
 
+/**
+ * The failure of a stream whose audio held has passed kHeld: the detection's options, which keep that much uncommitted
+ * where no recognition waits to free any, or else a recognition that has fallen behind the audio.
+ */
+Failure past_the_bound(const utterances::Assembly & assembly, int rate) {
+    char message[320];
+    if (assembly.committed() == 0) {
+        std::snprintf(message, sizeof message,
+                      "the detection's options keep %.0f s of audio before an utterance is committed, more than the %.0f s speech asr holds; "
+                      "lower --speech-pad-ms or --max-speech-duration-s",
+                      (double) assembly.held() / rate, (double) kHeld / rate);
+    } else {
+        std::snprintf(message, sizeof message,
+                      "the recognition has fallen %.0f s of audio behind, the most speech asr holds; recognize on a faster device or with a faster "
+                      "model",
+                      (double) assembly.held() / rate);
+    }
+    return Failure(speech_status_name(SPEECH_ERROR_OUT_OF_MEMORY), "", message);
+}
+
 std::atomic<bool> interrupted{false};
 
 /** The first Ctrl-C ends the audio, after which the utterances heard are written; a second ends the program. */
@@ -297,16 +317,8 @@ int transcribe_stream(const CommandLine & line, FILE * out, speech_model * recog
                 warned = true;
             }
             assembly.push(samples.data(), samples.size());
-            // The microphone cannot wait, and audio is not dropped, so a recognition that falls this far behind ends the
-            // run.
-            if (assembly.held() > kHeld) {
-                char message[256];
-                std::snprintf(message, sizeof message,
-                              "the recognition has fallen %.0f s of audio behind the microphone, the most speech asr holds; recognize on a faster "
-                              "device or with a faster model",
-                              (double) assembly.held() / rate);
-                throw Failure(speech_status_name(SPEECH_ERROR_OUT_OF_MEMORY), "", message);
-            }
+            // The microphone cannot wait, and audio is not dropped, so audio held past the bound ends the run.
+            if (assembly.held() > kHeld) throw past_the_bound(assembly, rate);
         }
         microphone.reset();
         std::signal(SIGINT, SIG_DFL);
@@ -316,8 +328,10 @@ int transcribe_stream(const CommandLine & line, FILE * out, speech_model * recog
         std::string pending;
         std::vector<float> samples;
         while (!failed()) {
-            // stdin waits while the audio held is at its bound, so that a fast writer is held back to the recognition's pace.
+            // stdin waits while the audio held is at its bound and recognitions to come will free some of it, so that a fast
+            // writer is held back to the recognition's pace; audio the options keep uncommitted is freed only by more audio.
             if (assembly.held() >= kHeld) {
+                if (assembly.committed() == 0) throw past_the_bound(assembly, rate);
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
             }

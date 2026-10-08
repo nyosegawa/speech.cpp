@@ -50,7 +50,9 @@ on the CPU with one thread, 0.17 s with the performance cores and 0.52 s on Meta
 - **The assembly holds the buffer and the utterances committed and not yet recognized**, which a host bounds, at 25 MiB
   of 16-bit PCM in both, and never by dropping audio: `speech serve` refuses an append past it, `speech asr -` reads
   stdin no further until the recognitions catch up, so that a writer faster than the recognizer waits, and
-  `speech asr --live`, whose microphone cannot wait, ends with `out_of_memory`. A reading hands its copy of the buffer
+  `speech asr --live`, whose microphone cannot wait, ends with `out_of_memory`. Where the audio held past the bound is
+  the buffer alone, which detection options of minutes keep uncommitted, no recognition will free it, and stdin ends with
+  `out_of_memory` too rather than wait for ever. A reading hands its copy of the buffer
   to the library's request and holds none of its own. With a detection, the buffer keeps
   only what a region may still need: from the start of the region under way, or without one the last `speech_pad_ms`
   and 0.1 s, a chunk and the resampler's delay, so that silence does not pile up. The resampler holds back more as the

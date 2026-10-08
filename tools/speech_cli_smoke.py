@@ -564,11 +564,18 @@ elif info["task"] == "recognition":
         failure(run("asr", model, "--vad", vad, *options, "-", input=joined[:4001], code=1), "invalid_argument", "audio")
         # The recognition's options are refused before any audio, which no utterance may follow.
         failure(run("asr", model, "--vad", vad, "--language", "zz", *options, "-", input=b"", code=1), "out_of_range", "language")
+        # Options that keep more audio uncommitted than the stream holds end it, where no recognition would free any:
+        # 27 MiB of silence with a padding of 1000 s.
+        r = subprocess.run([speech, "asr", model, "--vad", vad, "--speech-pad-ms", "1000000", "--max-speech-duration-s", "3000", *options, "-"],
+                           input=bytes(27 << 20), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
+        assert r.returncode == 1, (r.returncode, r.stderr[-300:])
+        failure(r, "out_of_memory", None)
         # Below 8000 Hz the resampler holds back more audio than the assembly keeps for a region to come.
         failure(run("asr", model, "--vad", vad, "--rate", "100", *options, "-", input=joined[:2 * rate], code=1), "invalid_argument", "audio")
         print("asr --live and - without --vad, with files or --timestamps, --rate without - or of 0, and no audio: exit 2; an odd byte on "
               "stdin and a rate of 100 Hz: exit 1, invalid_argument (audio); a language the model does not take, on stdin "
-              "without audio: exit 1, out_of_range (language)")
+              "without audio: exit 1, out_of_range (language); 27 MiB of silence kept uncommitted by a padding of 1000 s: exit 1, "
+              "out_of_memory")
         run("asr", model, "--vad", model, *options, long, code=2)
         failure(run("asr", model, "--vad", vad, "--threshold", "2", *options, long, code=1), "out_of_range", "threshold")
         failure(run("asr", model, "--threshold", "0.5", *options, long, code=1), "unsupported", "threshold")

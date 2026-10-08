@@ -167,6 +167,8 @@ public:
      * none of its own once it has handed its copy to the library's request.
      */
     size_t held() const;
+    /** The samples of held() that are utterances committed and not yet recognized, which their recognitions free. */
+    size_t committed() const;
     /** The seconds of audio taken, and the seconds the detections took to take them. */
     double heard() const;
     double detecting() const { return detecting_; }
