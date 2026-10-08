@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <functional>
 #include <iterator>
+#include <map>
+#include <optional>
 #include <stdexcept>
 
 #include "httplib.h"
@@ -11,6 +14,7 @@
 #include "error.h"
 #include "json-reader.h"
 #include "json.h"
+#include "regions.h"
 #include "wav.h"
 
 namespace openai {
@@ -21,6 +25,50 @@ ApiError unknown_member(const std::string & name, const std::string & takes) {
     return {400, "Unrecognized request argument supplied: " + name + ". speech.cpp takes " + takes + ".", name, "unknown_parameter"};
 }
 
+/**
+ * The detection options of a form's chunking_strategy, or nothing without one: "auto", or the members of server_vad as
+ * OpenAI's SDKs send an object in a form, chunking_strategy[type] "server_vad" and chunking_strategy[threshold] and the
+ * others, which take the defaults of transcription by regions where they are left out.
+ */
+std::optional<std::vector<RequestOption>> chunking_strategy(const std::function<const FormPart *(const std::string &)> & field) {
+    const FormPart * strategy = field("chunking_strategy"), * type = field("chunking_strategy[type]");
+    std::vector<RequestOption> given;
+    std::string members;
+    for (const VadMember & m : kServerVad) {
+        const std::string name = std::string("chunking_strategy[") + m.name + "]";
+        members += (members.empty() ? "" : ", ") + name;
+        const FormPart * part = field(name);
+        if (!part) continue;
+        try {
+            given.push_back({m.option, option_from_text(m.option, part->content)});
+        } catch (const std::invalid_argument &) {
+            throw ApiError{400, name + " is " + json_string(part->content) + "; it takes " +
+                                    (speech_option_type(m.option) == SPEECH_TYPE_INT ? "an integer" : "a number") + ".",
+                           name, "invalid_type"};
+        }
+    }
+    const std::string how = "give chunking_strategy \"auto\", or chunking_strategy[type] \"server_vad\" with any of " + members;
+    if (strategy && (type || !given.empty())) {
+        throw ApiError{400, "chunking_strategy is given both as a value and as members; " + how + ".", "chunking_strategy", "invalid_value"};
+    }
+    if (strategy) {
+        if (strategy->content != "auto") {
+            throw ApiError{400, "The chunking_strategy " + json_string(strategy->content) + " is not supported; " + how + ".", "chunking_strategy",
+                           "unsupported_value"};
+        }
+        return region_options({});
+    }
+    if (type) {
+        if (type->content != "server_vad") {
+            throw ApiError{400, "The chunking_strategy type " + json_string(type->content) + " is not supported; " + how + ".",
+                           "chunking_strategy[type]", "unsupported_value"};
+        }
+        return region_options(given);
+    }
+    if (!given.empty()) throw ApiError{400, "The members of chunking_strategy need its type; " + how + ".", "chunking_strategy[type]", "missing_required_parameter"};
+    return std::nullopt;
+}
+
 ApiError not_served(const std::string & asked, const std::string & model_name) {
     return {404, "The model " + json_string(asked) + " is not served here; this server serves " + json_string(model_name) +
                      ". Name it in \"model\" or leave \"model\" out.",
@@ -28,6 +76,13 @@ ApiError not_served(const std::string & asked, const std::string & model_name) {
 }
 
 }  // namespace
+
+std::string server_vad_member(const std::string & option) {
+    for (const VadMember & m : kServerVad) {
+        if (option == speech_option_name(m.option)) return m.name;
+    }
+    return "";
+}
 
 ApiError library_error(const Failure & failure) {
     const std::string & option = failure.option();
@@ -117,22 +172,27 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
         throw ApiError{400, "The body is not multipart/form-data. Send the audio as the form's \"file\", as OpenAI's create transcription takes it.",
                        "", ""};
     }
-    static const char * known[] = {"file", "model", "language", "prompt", "response_format", "decoding", "timestamp_granularities[]"};
-    constexpr std::ptrdiff_t kGranularities = 6;
-    const FormPart * given[kGranularities] = {};
+    std::vector<std::string> known = {"file", "model", "language", "prompt", "response_format", "decoding", "chunking_strategy", "chunking_strategy[type]"};
+    for (const VadMember & m : kServerVad) known.push_back(std::string("chunking_strategy[") + m.name + "]");
+    std::string listed;
+    for (const std::string & name : known) listed += name + ", ";
+    std::map<std::string, const FormPart *> given;
     std::vector<std::string> granularities;
     for (const FormPart & part : parts) {
-        const auto k = std::find_if(std::begin(known), std::end(known), [&](const char * name) { return part.name == name; });
-        if (k == std::end(known)) throw unknown_member(part.name, "file, model, language, prompt, response_format, decoding and timestamp_granularities[]");
-        if (k - std::begin(known) == kGranularities) {
+        if (part.name == "timestamp_granularities[]") {
             granularities.push_back(part.content);
             continue;
         }
-        const FormPart *& slot = given[k - std::begin(known)];
-        if (slot) throw ApiError{400, "\"" + part.name + "\" is given twice; give it once.", part.name, "invalid_value"};
-        slot = &part;
+        if (std::find(known.begin(), known.end(), part.name) == known.end()) throw unknown_member(part.name, listed + "and timestamp_granularities[]");
+        if (given.count(part.name)) throw ApiError{400, "\"" + part.name + "\" is given twice; give it once.", part.name, "invalid_value"};
+        given[part.name] = &part;
     }
-    const FormPart * file = given[0], * model = given[1], * language = given[2], * prompt = given[3], * format = given[4], * decoding = given[5];
+    const auto field = [&](const std::string & name) -> const FormPart * {
+        const auto found = given.find(name);
+        return found == given.end() ? nullptr : found->second;
+    };
+    const FormPart * file = field("file"), * model = field("model"), * language = field("language"), * prompt = field("prompt"),
+                   * format = field("response_format"), * decoding = field("decoding");
     if (model && model->content != model_name) throw not_served(model->content, model_name);
     if (!file) throw ApiError{400, "The request has no \"file\"; it is required.", "file", "missing_required_parameter"};
     if (!file->file) throw ApiError{400, "\"file\" is a field; send it as a file, with a filename.", "file", "invalid_type"};
@@ -153,6 +213,7 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
                            "timestamp_granularities[]", "invalid_value"};
         }
     }
+    r.regions = chunking_strategy(field);
     if (language) r.options.push_back({SPEECH_OPT_LANGUAGE, language->content});
     if (prompt) r.options.push_back({SPEECH_OPT_PROMPT, prompt->content});
     if (decoding) r.options.push_back({SPEECH_OPT_DECODING, decoding->content});
@@ -194,19 +255,17 @@ std::string transcription_json(const std::string & text) {
     return "{\"text\":" + json_string(text) + "}";
 }
 
-std::string transcription_verbose_json(const speech_result * result, double duration, bool timestamps) {
+std::string transcription_verbose_json(const Transcript & transcript, double duration, bool timestamps) {
     std::string language;
-    for (size_t i = 0; i < speech_result_language_count(result); i++) language += (i ? "," : "") + std::string(speech_result_language(result, i));
+    for (size_t i = 0; i < transcript.languages.size(); i++) language += (i ? "," : "") + transcript.languages[i];
     std::string out = "{\"task\":\"transcribe\"" + (language.empty() ? "" : ",\"language\":" + json_string(language)) +
-                      ",\"duration\":" + json_number(duration) + ",\"text\":" + json_string(speech_result_text(result));
+                      ",\"duration\":" + json_number(duration) + ",\"text\":" + json_string(transcript.text);
     if (!timestamps) return out + "}";
     out += ",\"segments\":[";
-    for (size_t i = 0; i < speech_result_segment_count(result); i++) {
-        double start = 0, end = 0;
-        const char * text = nullptr;
-        check(speech_result_segment(result, i, &start, &end, &text));
-        out += std::string(i ? "," : "") + "{\"id\":" + std::to_string(i) + ",\"start\":" + json_number(start) + ",\"end\":" + json_number(end) +
-               ",\"text\":" + json_string(text) + "}";
+    for (size_t i = 0; i < transcript.segments.size(); i++) {
+        const Timed & s = transcript.segments[i];
+        out += std::string(i ? "," : "") + "{\"id\":" + std::to_string(i) + ",\"start\":" + json_number(s.start) + ",\"end\":" + json_number(s.end) +
+               ",\"text\":" + json_string(s.text) + "}";
     }
     return out + "]}";
 }

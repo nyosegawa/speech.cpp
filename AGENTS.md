@@ -37,7 +37,8 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   `asr`, `vad`, `voice`, `info`, `devices` and `quantize` in `tools/cli/` (with `main.cpp`, which dispatches them), `worker` in
   `tools/worker/` and `serve` in `tools/server/`, and what they share in `tools/common/`: the one parser of every
   command line, which makes a flag of each option of the C API's vocabulary, the JSON reader, and the request options
-  read from text or JSON and set through the library's setters. Every subcommand reaches the models only through the
+  read from text or JSON and set through the library's setters, and transcription by regions, which `asr --vad` and
+  `serve` share. Every subcommand reaches the models only through the
   C API. `tools/models/` names models: the catalog of the release (`catalog.json`, which `update_catalog.py` writes
   from Hugging Face and the build compiles in), the cache folder, and the fetching of a named model with the system's
   curl, which `models`, `pull` and `rm` and every subcommand that takes a model share; the library never reaches the
@@ -52,7 +53,7 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   audio given a piece at a time in `speech-api-detection-stream.c`), what they share in `speech-api-common.c` and what
   differs by the operating system in `speech-api-platform.c`. Checks reach into `src/` for the stage they check; they are
   built but not released.
-- `tools/server/` holds `speech serve`, which serves a synthesis model and a recognition model over HTTP with
+- `tools/server/` holds `speech serve`, which serves a synthesis, a recognition and a detection model over HTTP with
   OpenAI's audio API (`POST /v1/audio/speech`, `POST /v1/audio/transcriptions`, `GET /v1/models`, `GET /health`)
   for programs that speak HTTP. Like the worker it reaches the models only through the C API; `openai-api.cpp` reads
   OpenAI's requests and writes its errors, mapped from the library's categories alone, and its stream events,

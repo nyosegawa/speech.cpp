@@ -15,7 +15,7 @@ parakeet-tdt-0.6b-v3's languages are those of its model card: `bg` `cs` `da` `de
 ```sh
 speech asr parakeet-tdt_ctc-0.6b-ja utterance.wav                  # the text on stdout
 speech asr parakeet-tdt-0.6b-v3 --timestamps utterance.wav         # with the times of its segments
-speech asr reazonspeech-v2 meeting.wav                             # a recording of minutes, whole
+speech asr reazonspeech-v2 --vad silero-vad meeting.wav            # a recording of minutes, by its regions of speech
 speech asr reazonspeech-v2 --decoding greedy meeting.wav           # faster, with greedy decoding
 speech worker parakeet-tdt_ctc-0.6b-ja                             # a recognition worker
 speech serve parakeet-tdt-0.6b-v3                                  # POST /v1/audio/transcriptions
@@ -25,9 +25,12 @@ speech serve parakeet-tdt-0.6b-v3                                  # POST /v1/au
 
 - Each model writes the text NeMo's `transcribe()` writes by default: ReazonSpeech with a beam search, the parakeet models
   with greedy decoding.
-- A recording is recognized whole, however long. ReazonSpeech's time and memory grow with the length. The parakeet
-  models attend over the whole recording, so theirs grow with its square, and a request to them should be one
-  utterance. For a long recording, use `reazonspeech-v2`.
+- A request is recognized whole, however long, but a stretch that holds several sentences loses whole sentences, as in
+  NeMo itself: on minutes of Common Voice ja clips joined with pauses, reazonspeech-v2 dropped 522 of 600 and
+  parakeet-ja 266. Recognize a long recording by the regions where someone speaks, with `--vad silero-vad` or
+  `chunking_strategy` (the [record](../adr/transcription-by-regions-recognizes-each-region-where-someone-speaks-alone-in-the-tools-and-joins-the-texts.md)
+  has the measurement). ReazonSpeech's time and memory grow with the length; the parakeet models attend over the whole
+  request, so theirs grow with its square.
 - parakeet-v3 finds the language of the audio itself. None of the models takes a language: a request's `language` is only
   checked against the model's languages.
 - With `timestamps`, the result also has the tokens and segments with their times in seconds. A segment ends at a full

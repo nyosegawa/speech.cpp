@@ -39,6 +39,9 @@ Where OpenAI's API leaves room or asks for what speech.cpp cannot do:
   `verbose_json`, which carries the languages the model heard and, from a model that gives times, the segments; the
   members of OpenAI's segment that the model has no value for are left out rather than made up. An upload may be 25 MB,
   OpenAI's limit.
+- **`chunking_strategy` takes the form OpenAI's SDKs send**: `"auto"`, or the members of its `server_vad` object as one
+  field each, `chunking_strategy[type]` and the rest, as openai-python 3.26.0 sends any object in a form.
+  A JSON object in the one field is refused, and so is a member the object does not have.
 - **The status and the error come from the library's category alone**, the same for the same mistake whenever it
   happens, with `param` from the input at fault: `invalid_argument`, `unsupported` and `out_of_range` are a 400, every
   other category a 500. The library checks a request before its work starts, so a refused request gets its error

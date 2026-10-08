@@ -10,9 +10,10 @@
 #include "jobs.h"
 #include "library.h"
 
-// The models the server holds: at most one for speech synthesis and one for speech recognition, so that a page can
-// speak and transcribe with one server while no more than one model of a task takes memory. A model given on the
-// command line is loaded before the server listens; the page replaces the one of a task by a model of the catalog.
+// The models the server holds: at most one for speech synthesis, one for speech recognition and one for the detection of
+// speech, which cuts the audio of a transcription into the regions where someone speaks, so that a page can speak and
+// transcribe with one server while no more than one model of a task takes memory. A model given on the command line is
+// loaded before the server listens; the page replaces the one of a task by a model of the catalog.
 
 namespace server {
 
@@ -55,13 +56,13 @@ public:
 
     /**
      * Loads a model given on the command line in the place of its task, which must be empty: a file, or the catalog's
-     * file of `catalog_name`, "" for a file named by its path. A model of speech detection is refused before it loads.
+     * file of `catalog_name`, "" for a file named by its path.
      */
     void load_given(const std::string & path, const std::string & catalog_name);
 
     /** The model of a task, or nullptr while there is none or one is being loaded in its place. */
     std::shared_ptr<Served> of(speech_task task) const;
-    /** Every model held, synthesis first. */
+    /** Every model held: synthesis, recognition, then detection. */
     std::vector<std::shared_ptr<Served>> all() const;
     /** The NAME[:TYPE] of the model the page is replacing a task's with, or "". */
     std::string replacing(speech_task task) const;
@@ -82,20 +83,19 @@ private:
         std::string replacing;
     };
 
-    /** The place of a task's model; there is none of speech detection, whose models load_given() refuses. */
     Place & place(speech_task task) {
         switch (task) {
             case SPEECH_TASK_SYNTHESIS: return synthesis_;
             case SPEECH_TASK_RECOGNITION: return recognition_;
-            case SPEECH_TASK_DETECTION: break;
+            case SPEECH_TASK_DETECTION: return detection_;
         }
-        throw std::logic_error("speech serve holds no model of speech " + std::string(task_name(task)));
+        throw std::logic_error("a task speech.h does not have");
     }
     const Place & place(speech_task task) const { return const_cast<ServedModels *>(this)->place(task); }
 
     Loading loading_;
     mutable std::mutex mutex_;
-    Place synthesis_, recognition_;
+    Place synthesis_, recognition_, detection_;
 };
 
 }  // namespace server

@@ -15,18 +15,26 @@ reference/qwen3-asr/dump.py against the worker's text of the same samples, as te
 languages, the one qwen-asr parsed or none, and where the model takes timestamps as text with --timestamps one line per
 segment and as JSON with them, the segments and tokens the worker's; and for a dump that holds requests with a forced
 language and a prompt, or with a decoding other than the default, `speech asr --language --prompt` or `speech asr
---decoding` against the worker's text of the same request, and as JSON its languages. For a detection model: `speech
-vad` on 32-bit float WAVE files of the dumps of reference/silero-vad/dump.py against the regions in each dump's
-regions.json, the official's, with the flags of each set of options, as text and as JSON.
+--decoding` against the worker's text of the same request, and as JSON its languages; and with --vad a detection model,
+`speech asr --vad` on the dumps' audio joined with silences between them against the worker's ends of the regions that
+`speech vad --split` writes, each of which holds the samples of its region, joined as transcription by regions joins
+them (as JSON, with times where the model takes timestamps), an empty text for a file of silence, and the refusals of a
+model of another task for --vad and of a detection option the model does not take. For a detection model: `speech vad`
+on 32-bit float WAVE files of the dumps of reference/silero-vad/dump.py against the regions in each dump's
+regions.json, the official's, with the flags of each set of options, as text and as JSON; with --split a WAVE file of
+each region holding its samples as 16-bit PCM, named so that they sort in order, and the refusals of two files of one
+name and of a file named as another's region in the folder, left as it was; and `speech asr` of the detection model with
+--vad, refused on a file without speech.
 
 usage: python3 tools/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav]
-                                         [--embedding E.speaker.safetensors] [-- load options...]
+                                         [--embedding E.speaker.safetensors] [--vad DETECTION.gguf] [-- load options...]
 """
 
 import array
 import ast
 import base64
 import json
+import math
 import os
 import re
 import shutil
@@ -35,7 +43,7 @@ import subprocess
 import sys
 import threading
 
-from worker_client import Worker, dump_requests, short
+from worker_client import Worker, dump_requests, joined_transcript, short
 
 args = sys.argv[1:]
 options = args[args.index("--") + 1:] if "--" in args else []
@@ -49,6 +57,11 @@ embedding = None
 if "--embedding" in args:
     at = args.index("--embedding")
     embedding = args[at + 1]
+    del args[at:at + 2]
+vad = None
+if "--vad" in args:
+    at = args.index("--vad")
+    vad = args[at + 1]
     del args[at:at + 2]
 speech, work, model, *dumps = args
 os.makedirs(work, exist_ok=True)
@@ -293,6 +306,60 @@ if info["task"] == "detection":
         assert [g["file"] for g in got] == files, got
         assert all([[round(r["start"] * rate), round(r["end"] * rate)] for r in g["regions"]] == s[name]["regions"] for g, s in zip(got, sets)), name
     print(f"vad: {len(files)} files with {len(sets[0])} sets of options, the official's regions as text and as JSON")
+    # --split writes each region of the first set of options as a 16-bit WAVE file holding the region's samples, scaled
+    # by 32768 and rounded half away from zero, as the reader scales them.
+    split = os.path.join(work, "speech-cli-smoke-split")
+    shutil.rmtree(split, ignore_errors=True)
+    flags = [x for k, v in sets[0][next(iter(sets[0]))]["options"].items() for x in (f"--{k.replace('_', '-')}", str(v))]
+    got = [json.loads(line) for line in run("vad", model, "--format", "json", "--split", split, *flags, *options, *files).stdout.decode().splitlines()]
+    names = sorted(os.listdir(split))
+    # Each file's regions sort in their order; the files' own names sort as they will.
+    for g in got:
+        stem = os.path.splitext(os.path.basename(g["file"]))[0]
+        want_names = [f"{stem}-{str(k + 1).zfill(len(str(len(g['regions']))))}.wav" for k in range(len(g["regions"]))]
+        assert sorted(want_names) == want_names and all(n in names for n in want_names), (stem, want_names[:3])
+    assert len(names) == sum(len(g["regions"]) for g in got), names[:5]
+    for g, d in zip(got, dumps):
+        samples = read_npy(os.path.join(d, "audio.npy"))
+        stem = os.path.splitext(os.path.basename(g["file"]))[0]
+        for k, region in enumerate(g["regions"]):
+            name = os.path.join(split, f"{stem}-{str(k + 1).zfill(len(str(len(g['regions']))))}.wav")
+            with open(name, "rb") as f:
+                data = f.read()
+            assert data[:4] == b"RIFF" and struct.unpack("<HHIIHH", data[20:36]) == (1, 1, rate, rate * 2, 2, 16), name
+            cut = samples[round(region["start"] * rate):round(region["end"] * rate)]
+            want = [max(-32768, min(32767, int(math.copysign(math.floor(abs(x) * 32768 + 0.5), x)))) for x in cut]
+            assert array.array("h", data[44:]).tolist() == want, name
+    print(f"vad --split: {len(names)} WAVE files holding the regions' samples, named so that they sort in order")
+    shutil.rmtree(split)
+    twin = os.path.join(work, "speech-cli-smoke-twin")
+    os.makedirs(twin, exist_ok=True)
+    shutil.copy(files[0], os.path.join(twin, os.path.basename(files[0])))
+    run("vad", model, "--split", split, *options, files[0], os.path.join(twin, os.path.basename(files[0])), code=2)
+    shutil.rmtree(twin)
+    # A file named as another's region, in the folder of --split, is refused before it is written over.
+    g = next(g for g in got if g["regions"])
+    alias = os.path.join(work, "speech-cli-smoke-alias")
+    os.makedirs(alias, exist_ok=True)
+    first = os.path.join(alias, "a.wav")
+    second = os.path.join(alias, f"a-{'1'.zfill(len(str(len(g['regions']))))}.wav")
+    shutil.copy(g["file"], first)
+    shutil.copy(g["file"], second)
+    with open(second, "rb") as f:
+        kept = f.read()
+    run("vad", model, "--split", alias, *flags, *options, first, second, code=2)
+    with open(second, "rb") as f:
+        assert f.read() == kept, "vad --split wrote over a file it was given"
+    shutil.rmtree(alias)
+    print("vad --split with two files of one name, and with a file named as another's region in its folder: exit 2")
+    silence = os.path.join(work, "speech-cli-smoke-silence.wav")
+    with open(silence, "wb") as f:
+        data = bytes(4 * rate)
+        f.write(b"RIFF" + struct.pack("<I", 36 + len(data)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 3, 1, rate, rate * 4, 4, 32)
+                + b"data" + struct.pack("<I", len(data)) + data)
+    failure(run("asr", model, "--vad", model, *options, silence, code=1), "unsupported", None)
+    os.remove(silence)
+    print("asr of a detection model with --vad, on a file without speech: exit 1, unsupported")
     failure(run("vad", model, "--threshold", "2", *options, files[0], code=1), "out_of_range", "threshold")
     failure(run("vad", model, "--language", "ja", *options, files[0], code=1), "unsupported", "language")
     failure(run("vad", model, *options, os.path.join(work, "no-such.wav"), code=1), "io", "audio")
@@ -354,6 +421,44 @@ elif info["task"] == "recognition":
     print(f"asr: {len(files)} files, the worker's texts as text and as JSON with the stop and the dumps' languages"
           + (", as segments with --timestamps and as JSON with times" if timed else "")
           + f"; {len(asked_ends)} with the flags of their options, --language and --prompt or --decoding, as the worker's requests with them")
+    if vad:
+        # The dumps' audio joined with a second of silence after each, which the detection cuts into regions again.
+        joined = b"".join(pcm + b"\0" * 2 * rate for pcm in pcms)
+        long = os.path.join(work, "speech-cli-smoke-long.wav")
+        silence = os.path.join(work, "speech-cli-smoke-silence.wav")
+        for path, pcm in ((long, joined), (silence, b"\0" * 6 * rate)):
+            with open(path, "wb") as f:
+                f.write(b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+                        + b"data" + struct.pack("<I", len(pcm)) + pcm)
+        detection = ["--threshold", "0.5", "--speech-pad-ms", "300", "--min-silence-duration-ms", "500", "--max-speech-duration-s", "8"]
+        split = os.path.join(work, "speech-cli-smoke-split")
+        shutil.rmtree(split, ignore_errors=True)
+        regions = json.loads(run("vad", vad, "--format", "json", "--split", split, *detection, long).stdout)["regions"]
+        names = sorted(os.listdir(split))
+        assert len(names) == len(regions) > len(pcms), (names, regions)
+        w = Worker(speech, model, options)
+        parts = []
+        for k, (name, region) in enumerate(zip(names, regions)):
+            with open(os.path.join(split, name), "rb") as f:
+                pcm = f.read()[44:]
+            first = round(region["start"] * rate)
+            assert pcm == joined[2 * first:2 * round(region["end"] * rate)], name
+            parts.append((first / rate, worker_end(f"region-{k}", pcm, **timed)))
+        w.close()
+        shutil.rmtree(split)
+        want = {"file": long, **joined_transcript(parts, bool(timed))}
+        got = json.loads(run("asr", model, "--vad", vad, "--format", "json", *detection, *(["--timestamps"] if timed else []), *options, long).stdout)
+        assert got == want, (got, want)
+        got = json.loads(run("asr", model, "--vad", vad, "--format", "json", *(["--timestamps"] if timed else []), *options, silence).stdout)
+        assert got == {"file": silence, "text": "", "stop": "complete", **({"segments": [], "tokens": []} if timed else {})}, got
+        print(f"asr --vad: {len(regions)} regions of {len(joined) / 2 / rate:.1f} s, the worker's ends of vad --split's files joined"
+              f"{' with their times' if timed else ''}; a file of silence gives an empty text")
+        run("asr", model, "--vad", model, *options, long, code=2)
+        failure(run("asr", model, "--vad", vad, "--threshold", "2", *options, long, code=1), "out_of_range", "threshold")
+        failure(run("asr", model, "--threshold", "0.5", *options, long, code=1), "unsupported", "threshold")
+        print("asr --vad of a recognition model: exit 2; a threshold above 1 with --vad and a threshold without it: exit 1")
+        os.remove(long)
+        os.remove(silence)
     r = run("asr", model, "--language", "zz", *options, files[0], code=1)
     failure(r, "out_of_range", "language")
     r = run("asr", model, *options, os.path.join(work, "no-such.wav"), code=1)

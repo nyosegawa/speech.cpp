@@ -37,8 +37,12 @@ speech asr parakeet-tdt_ctc-0.6b-ja --timestamps --format json one.wav two.wav >
 # The text of a recording in Japanese, told the names it holds
 speech asr qwen3-asr-1.7b --language ja --prompt "Claude Code、渋谷" meeting.wav
 
-# Where someone speaks in a recording, in regions of 10 s at most
+# The text of a long recording, recognized region by region where someone speaks
+speech asr reazonspeech-v2 --vad silero-vad meeting.wav
+
+# Where someone speaks in a recording, in regions of 10 s at most, and each region as a WAVE file of its own
 speech vad silero-vad --max-speech-duration-s 10 meeting.wav
+speech vad silero-vad --split regions/ meeting.wav       # regions/meeting-01.wav, regions/meeting-02.wav, ...
 
 # What a model file holds, without loading it
 speech info irodori-tts-mf
@@ -97,6 +101,7 @@ speech tts MODEL -o FILE|- [options] [TEXT]
 ```
 speech asr MODEL [options] AUDIO.wav...
   --format text|json       text (the default) or one JSON object per file and line
+  --vad MODEL              transcribe by the regions where this detection model finds speech
   --device NAME --threads N
   -v                       also report the release, the sample rate and the model's languages
   --language TAG --timestamps --prompt TEXT --decoding beam|greedy ... every request option
@@ -114,11 +119,35 @@ speech asr MODEL [options] AUDIO.wav...
   with 3 once every file's text is written.
 - A failure names the file. The lines of the files before it are already on stdout.
 
+### Transcribing by regions
+
+`--vad MODEL` names a detection model ([models/silero-vad.md](models/silero-vad.md)). It finds where someone speaks in
+each file, each region is recognized alone, and the texts are joined in order: with a space between two regions, unless
+either side is Japanese or Chinese text or already has one. Segments and tokens have the times of the whole file, and
+`languages` lists the languages heard in order. A file in which no one speaks gives an empty text.
+
+A recognizer given a long stretch with several sentences can drop whole sentences, and can write words for audio in
+which no one speaks; by regions it hears one or a few sentences at a time.
+
+The detection takes the flags of `speech vad` with these defaults, which are OpenAI's for its `server_vad` and a longest
+region:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--threshold X` | 0.5 | the speech probability from which audio counts as speech |
+| `--speech-pad-ms N` | 300 | the audio kept before and after each region |
+| `--min-silence-duration-ms N` | 500 | the silence that ends a region |
+| `--max-speech-duration-s S` | 10 | the longest region; a longer one is cut at its longest silence |
+| `--min-speech-duration-ms N` | 250 | the shortest region kept |
+
+`speech vad --split` with the same flags writes the regions that `speech asr --vad` recognizes.
+
 ## speech vad
 
 ```
 speech vad MODEL [options] AUDIO.wav...
   --format text|json       text (the default) or one JSON object per file and line
+  --split DIR              also write each region as a WAVE file in DIR
   --device NAME --threads N
   -v                       also report the release and the sample rate
   --threshold X --min-speech-duration-ms N --min-silence-duration-ms N --speech-pad-ms N
@@ -130,6 +159,9 @@ speech vad MODEL [options] AUDIO.wav...
 - `text` writes one line per region, `FILE<TAB>START<TAB>END`, with the times in seconds and three decimals. A file
   without speech writes no line.
 - `json` writes `{"file":…,"regions":[{"start":…,"end":…}]}` for each file.
+- `--split DIR` also writes each region as a mono 16-bit WAVE file at the file's rate in DIR, which it makes if it is not
+  there: `meeting-1.wav`, `meeting-2.wav` and so on, numbered with as many digits as the last number so that they sort
+  in order. Files of one name in different folders are refused, since their regions would take the same names.
 - stderr reports the load and, for each file, its seconds of audio, the time to its regions, the real-time factor and
   the number of regions.
 
@@ -270,9 +302,10 @@ implementation:
 ## speech serve and speech worker
 
 ```
-speech serve [MODEL [MODEL]] [--open] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
+speech serve [MODEL [MODEL [MODEL]]] [--open] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
              [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup]
 speech worker MODEL [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup]
 ```
 
-[server.md](server.md) and [worker.md](worker.md) describe them. Neither takes a detection model.
+[server.md](server.md) and [worker.md](worker.md) describe them. `speech serve` takes a detection model beside a
+synthesis and a recognition model, for transcriptions by regions; the worker takes none.

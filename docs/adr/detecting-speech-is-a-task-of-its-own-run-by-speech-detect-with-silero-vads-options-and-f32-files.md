@@ -36,8 +36,9 @@ recognition's result.
 - **The file holds the 16 kHz model alone, in F32 alone.** Every input reaches the model at 16 kHz through the library's
   resampler, so nothing would choose the 8 kHz model. `speech quantize` writes no other type of it: the layout keeps every
   tensor in F32, and a file of 1.2 MB gains nothing from a smaller type that the probabilities would pay for.
-- **`speech vad` is the command line's way in**; the worker and `speech serve` refuse a detection model when they start,
-  since the worker's protocol and OpenAI's audio API have no messages for regions.
+- **`speech vad` is the command line's way in**; `speech asr --vad` and `speech serve`'s `chunking_strategy` transcribe
+  by its regions in the tools. The worker refuses a detection model when it starts, since its protocol has no messages
+  for regions.
 
 The alternatives were turned down:
 
@@ -56,5 +57,5 @@ The alternatives were turned down:
 
 ## Consequences
 
-A caller that wants utterances runs a detection model and gives each region to a recognizer. The worker's protocol and
-the server's endpoints change before they carry detection.
+A caller that wants utterances runs a detection model and gives each region to a recognizer. The worker's protocol
+changes before it carries detection.
