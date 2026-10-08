@@ -158,10 +158,12 @@ another one.
 
 ## Decisions
 
-`docs/adr/` keeps the decisions the code cannot show, one file each, and the file names say which
-behavior each covers. Before changing a behavior, list the folder and read the records whose names cover
+`docs/adr/` keeps the decisions the code cannot show, one file each, named by what it decides and without a number;
+the file names are the index. Before changing a behavior, list the folder and read the records whose names cover
 it; if the change contradicts one, say so to the user first. Before committing, ask whether the work
-settled a choice or turned an approach down for good; if so, the record goes into the same commit.
+settled a choice or turned an approach down for good; if so, the record goes into the same commit (`adr` skill). A
+record states the decision as it stands, and nothing else names a record: not the docs, this file, a skill or a
+comment.
 
 ## Workflow
 
@@ -206,6 +208,8 @@ Skills live in `skills/`; `.claude/skills` and `.agents/skills` link to it. When
 holds steps these rules do not repeat.
 
 - `add-model`: porting a model or a family, updating one, or exposing an official option of one.
+- `adr`: a decision settled or an approach turned down for good, a change that contradicts a record, or tidying
+  `docs/adr/`.
 - `docs`: a change that alters what a user does or sees, or writing a page of README.md or `docs/`.
 - `pull-request`: starting a change, committing, opening a pull request, its review and CI, merging, cleaning up, and
   taking back a subagent's branch.
