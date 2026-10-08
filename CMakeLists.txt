@@ -212,6 +212,8 @@ add_executable(speech-cli
     tools/common/command-line.cpp
     tools/common/json-reader.cpp
     tools/common/request-options.cpp
+    tools/common/openai-error.cpp
+    tools/common/realtime-session.cpp
     tools/common/regions.cpp
     tools/common/transcript.cpp
     tools/worker/worker.cpp
@@ -221,6 +223,7 @@ add_executable(speech-cli
     tools/server/served-models.cpp
     tools/server/access.cpp
     tools/server/page.cpp
+    tools/server/realtime.cpp
 )
 set_target_properties(speech-cli PROPERTIES OUTPUT_NAME speech)
 target_include_directories(speech-cli PRIVATE tools/common tools/cli tools/models tools/server vendor/cpp-httplib)

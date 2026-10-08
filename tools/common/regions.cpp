@@ -15,6 +15,13 @@ constexpr double kLongestRegion = 10;
 
 }  // namespace
 
+std::string server_vad_member(const std::string & option) {
+    for (const VadMember & m : kServerVad) {
+        if (option == speech_option_name(m.option)) return m.name;
+    }
+    return "";
+}
+
 std::pair<size_t, size_t> region_samples(const Region & region, int rate, size_t n) {
     const auto at = [&](double seconds) { return std::min(n, (size_t) std::max(0.0, std::round(seconds * rate))); };
     return {at(region.start), at(region.end)};

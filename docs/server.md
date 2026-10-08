@@ -1,7 +1,7 @@
 # Server and page
 
 This page describes `speech serve`, which serves a synthesis model, a recognition model and a detection model over HTTP
-with a subset of OpenAI's audio API, and a page on which to try models.
+with a subset of OpenAI's audio API and its Realtime transcription, and a page on which to try models.
 
 ```
 speech serve [MODEL [MODEL [MODEL]]] [--open] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
@@ -36,6 +36,7 @@ transcriptions with `chunking_strategy` use. It loads the models given, listens 
 | `GET /v1/models/{id}` | one model; another id is a 404 (`model_not_found`) |
 | `POST /v1/audio/speech` | speaks a text, as [OpenAI's create speech](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create) does |
 | `POST /v1/audio/transcriptions` | recognizes the speech in a WAV file, as [OpenAI's create transcription](https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create) does |
+| `GET /v1/realtime` | a WebSocket that transcribes audio as it is sent, as [OpenAI's Realtime transcription](https://developers.openai.com/api/reference/resources/realtime/client-events) does ([below](#realtime-transcription)) |
 
 An endpoint of a task the server holds no model of answers a 404 whose message says so. One whose model the page is
 replacing answers a 503 (`model_loading`) with `Retry-After`.
@@ -163,6 +164,63 @@ client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="unused")
 with open("meeting.wav", "rb") as f:
     print(client.audio.transcriptions.create(model="reazonspeech-nemo-v2", file=f, chunking_strategy="auto").text)
 ```
+
+## Realtime transcription
+
+`/v1/realtime` speaks OpenAI's Realtime API over a WebSocket, for a transcription session: the client appends audio as
+it records it and commits each utterance, and the server answers with its text. OpenAI's client connects to it by its
+base URL alone:
+
+```python
+import base64
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="unused")
+with client.realtime.connect(model="reazonspeech-nemo-v2") as connection:
+    connection.session.update(session={"type": "transcription", "audio": {"input": {
+        "format": {"type": "audio/pcm", "rate": 24000}, "transcription": {"language": "ja"}, "turn_detection": None}}})
+    pcm = open("utterance.raw", "rb").read()   # 16-bit little-endian mono PCM at 24000 Hz
+    connection.input_audio_buffer.append(audio=base64.b64encode(pcm).decode())
+    connection.input_audio_buffer.commit()
+    for event in connection:
+        if event.type == "conversation.item.input_audio_transcription.completed":
+            print(event.transcript)
+            break
+```
+
+The address is `ws://127.0.0.1:8080/v1/realtime`, with `?model=` the recognition model's `id` or nothing. The
+session transcribes with the recognition model held; the client commits each utterance itself.
+
+| Client event | What it does |
+|---|---|
+| `session.update` | sets `session.audio.input.transcription`: `model` (the recognition model's `id`), `language`, or `languages` with one tag, and `prompt`; or `null`, after which commits are not transcribed. `session.type` is `"transcription"`, the format `{"type": "audio/pcm", "rate": 24000}`, and `turn_detection` and `noise_reduction` `null` |
+| `input_audio_buffer.append` | adds `audio`, base64 of 16-bit little-endian mono PCM at 24000 Hz |
+| `input_audio_buffer.commit` | transcribes what was appended since the last commit or clear |
+| `input_audio_buffer.clear` | drops what was appended |
+
+| Server event | When |
+|---|---|
+| `session.created`, `session.updated` | on connecting, and after each `session.update`, with the whole configuration |
+| `input_audio_buffer.committed` | at once for a commit, with its `item_id` and the `previous_item_id` |
+| `input_audio_buffer.cleared` | for a clear |
+| `conversation.item.input_audio_transcription.delta` | once the commit's text is recognized, with all of it: the model gives its text when it ends |
+| `conversation.item.input_audio_transcription.completed` | then, with the `transcript`, `usage` `{"type": "duration", "seconds": …}`, `languages` where the model names them (Qwen3-ASR), and speech.cpp's own `stop`, `complete` or `model_limit` |
+| `conversation.item.input_audio_transcription.failed` | a commit the model could not transcribe, with OpenAI's error object |
+| `error` | an event the server does not take, with OpenAI's error object and the client's `event_id` |
+
+Commits are transcribed one after another, in their turn among the server's other transcriptions. A member or a value
+speech.cpp does not take is an `error` event rather than ignored: a conversation session (`session.type: "realtime"`),
+`turn_detection` (`server_vad` and `semantic_vad`; commit each utterance instead), `noise_reduction`, the formats
+`audio/pcmu` and `audio/pcma` and rates other than 24000, `include` (log probabilities), `keywords`, `delay`, more than
+one language, and every other client event.
+
+A connection that the server refuses gets an HTTP error before the WebSocket opens: a server without a recognition
+model (404, or 503 while the page loads one), a model other than the recognition model held (404), a query member other
+than `model` (400), a web page of an origin `--cors-origin` does not allow (403),
+and, while the server listens on 127.0.0.1, `::1` or `localhost`, a Host other than those names with the server's port
+(403), as for the page. While the page loads another recognition model, a commit fails with `model_loading`; once it is
+loaded, a session that named no model goes on with it, and one that named the previous model fails with
+`model_not_found`.
 
 ## Errors
 

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -14,6 +15,25 @@
 // each region alone, and the texts are joined. A FastConformer model given 15 to 20 s that hold several sentences drops
 // whole sentences, as NeMo's own implementation does, and writes words for audio in which no one speaks; given one
 // region at a time it hears one or a few sentences and nothing where no one speaks.
+
+/** A member of OpenAI's server_vad, which chunking_strategy and the Realtime API's turn_detection share, and the option it sets. */
+struct VadMember {
+    const char * name;
+    speech_option option;
+};
+
+/**
+ * The members of server_vad that speech.cpp takes: threshold as threshold, prefix_padding_ms, the audio kept before
+ * speech, as speech_pad_ms, and silence_duration_ms, the silence that ends speech, as min_silence_duration_ms.
+ */
+constexpr VadMember kServerVad[] = {
+    {"threshold", SPEECH_OPT_THRESHOLD},
+    {"prefix_padding_ms", SPEECH_OPT_SPEECH_PAD_MS},
+    {"silence_duration_ms", SPEECH_OPT_MIN_SILENCE_DURATION_MS},
+};
+
+/** The member of server_vad that sets the detection option named `option`, or "". */
+std::string server_vad_member(const std::string & option);
 
 /** A region where someone speaks, in seconds from the start of the audio. */
 struct Region {
