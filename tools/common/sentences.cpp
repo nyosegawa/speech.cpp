@@ -212,7 +212,7 @@ private:
             if (!cut || !too_long(e) || joiner_.received() > 0) throw;
             return speak_pieces(text, *cut, e);
         }
-        if (joiner_.finish() != 0 || status == SPEECH_CANCELLED) {
+        if (status == SPEECH_CANCELLED || joiner_.finish() != 0) {
             cancelled_ = true;
             return false;
         }
