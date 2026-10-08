@@ -2,8 +2,8 @@
  * Checks that the C API alone, through the shared libspeech, does what a program needs. It is written in C so that
  * speech.h is checked to be plain C.
  *
- * In every mode: the versions, the names of the statuses, the stop reasons and the options, the devices, and the load
- * parameters and loads it refuses. With a synthesis model: optionally makes an Irodori-TTS voice file, and voice files
+ * In every mode: the versions, the names of the statuses, the stop reasons and the options, the devices, the load
+ * parameters and loads it refuses, and the quantizing it refuses. With a synthesis model: optionally makes an Irodori-TTS voice file, and voice files
  * of several references, of another loudness and of an embedding, loads the model without a warm-up, compares the
  * information read without loading with the loaded model's, adds the voices, refuses each option's values with the
  * category and the option's name and accepts the neutral ones, speaks one sentence into a WAVE file, repeats a drawn
@@ -444,7 +444,9 @@ int main(int argc, char ** argv) {
         return 2;
     }
     speech_log_set(on_log, NULL);
-    if (check_library() != 0 || check_load_refusals(argv[recognition ? 2 : 1]) != 0) return 1;
+    if (check_library() != 0 || check_load_refusals(argv[recognition ? 2 : 1]) != 0 || check_quantize_refusals(argv[recognition ? 2 : 1]) != 0) {
+        return 1;
+    }
     if (recognition) return check_recognition(argc - 2, argv + 2);
     const char * model_path = argv[1];
 

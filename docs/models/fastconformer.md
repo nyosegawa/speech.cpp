@@ -77,6 +77,9 @@ Every stage is checked against NeMo's tensors on utterances of FLEURS' test spli
 | reazonspeech-nemo-v2 | 8 ja_jp utterances and 2 joined inputs of 65 s and 311 s | NeMo's text on all ten, with beam search and with greedy decoding |
 
 The times of tokens and segments are NeMo's exactly on every dump of the three models, from the dump's encoder output.
+In Q8_0 and the smaller types that `speech quantize` makes, the texts begin to part from NeMo's: reazonspeech-nemo-v2
+writes 0.9% of its characters otherwise in Q8_0 and 1.5% to 3.5% in Q6_K to Q4_K
+([checks](../development/checks.md#lower-bit-widths)).
 
 ## Speed
 

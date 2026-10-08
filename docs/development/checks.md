@@ -19,6 +19,20 @@ check's results, the evidence for each bound, and the timings behind the numbers
   `worker_recognition_smoke.py` the worker, `server_smoke.py` and `server_page_smoke.py` the server and its page,
   `speech_cli_smoke.py` the command line, and `models_smoke.py` the naming, fetching and removing of models. AGENTS.md
   says which to run for which change.
+- `tools/quantize_compare.py` runs `speech quantize` on F32 files and compares what it writes with the converted file of
+  the same type, a released one, tensor by tensor, key by key and byte for byte, or with what gguf-py makes of each F32
+  tensor ([gguf.md](../gguf.md#convert-a-model)).
+- `quantize-check` quantizes a small model file of a layout of its own and checks the release it names in
+  `speech.requires` and its refusal of weights that are not finite. `tools/quantize_releases.py` quantizes F32 files to
+  every type and checks that `speech` of each earlier release reads a file exactly when it is at or after the file's
+  `speech.requires`; an earlier release is built from its tag, with the submodule's ggml:
+
+  ```sh
+  mkdir -p /tmp/v0.7.1 && git archive v0.7.1 | tar -x -C /tmp/v0.7.1 && rmdir /tmp/v0.7.1/ggml && ln -s "$PWD/ggml" /tmp/v0.7.1/ggml
+  cmake -S /tmp/v0.7.1 -B /tmp/v0.7.1/build && cmake --build /tmp/v0.7.1/build --target speech-cli -j
+  build/quantize-check /tmp/quantize-check
+  python3 tools/quantize_releases.py build/speech /tmp/quantize-releases models/*-F32.gguf --release /tmp/v0.7.0/build/speech /tmp/v0.7.1/build/speech
+  ```
 - The checks need weights and dumps that are not in the repository, so CI builds them but does not run them.
 
 The measurements below are on an Apple M5 unless they say otherwise; the Vulkan ones are on an RTX 2080.
@@ -118,7 +132,7 @@ That latent lies 30.6 dB from the 48 kHz reference's at 44.1 kHz and 10.7 dB at 
 The audio may end before the length where the latent goes flat, as in the runtime. The frames are the
 official runtime's for every combination the dumps cover (`irodori-condition-check`, `irodori-synthesis-check`).
 
-Of the types the converter writes, Qwen3-ASR 1.7B transcribed the 20 sentences of the speed table
+Of the F32, F16 and Q8_0 files, Qwen3-ASR 1.7B transcribed the 20 sentences of the speed table
 ([models/irodori-tts.md](../models/irodori-tts.md#speed)) with 2.99% CER in F32 and in F16, and 3.81% in Q8_0, which
 garbled one phrase.
 
@@ -411,6 +425,135 @@ its padding, so its prompt differs from the official one, and it writes another 
 The 1338.42 s input takes 120 s with the 0.6B model, nearly all of it its first part: an encoder of 5.3 s, a prefill
 of 15,654 rows in 15 s, and 4096 tokens in 94 s, 43 a second, as each reads a cache of up to 19,750 positions. The
 process's peak memory footprint is 2.03 GB: the memory is that of the longest part.
+
+## Lower bit widths
+
+`speech quantize` makes Q6_K, Q5_K and Q4_K files of every model beside F16 and Q8_0
+([gguf.md](../gguf.md#weight-types)). Each family's stage checks ran with them on 2026-10-08, on Metal and on the CPU,
+against the same dumps as above, with F32, F16 where it is released and Q8_0 for comparison: all inputs for Qwen3-TTS
+1.7B (the dumps are of 1.7B), Irodori-TTS v4.1-Small-MF, the three FastConformer models and Qwen3-ASR 0.6B, and on the
+CPU for Qwen3-ASR 1.7B the three short utterances (en_us 5.76 s, ja_jp 6.36 s, cmn_hans_cn 6.66 s), and for v4.1-Small
+the dumps rf-hai, rf-weather and rf-weather-caption with the text and caption cases. The checks keep the bounds they
+hold for F32, F16 and Q8_0, and most of them fail with these files; the tables give what they print. A cell gives the
+CPU's result, then Metal's where it differs, and a range runs over the dumps.
+
+The matrices whose rows are not whole blocks of 256 values stay Q8_0 in a K-quant file: FastConformer's prediction
+network and joint, Qwen3-ASR 0.6B's encoder and projector, and Irodori-TTS's AdaLN and its DiT's feed-forward output.
+Qwen3-TTS's codec is F16 in every type but F32, so `codec-check` prints the same with a Q4_K file as with Q8_0 (55.8 dB
+from the official on the CPU, 62.8 dB on Metal), and Irodori-TTS's codec is F32 in every type, so
+`irodori-codec-check` was not run with them.
+
+### FastConformer
+
+`fastconformer-encoder-check` and `fastconformer-transducer-check`; the texts are those from the dump's audio with each
+decoding of the model, against NeMo's (ReazonSpeech's beam search and greedy decoding on its 10 inputs):
+
+| Model | Type | Encoder output SNR, dB | Joint SNR, dB | Texts from the audio equal to NeMo's | CER against NeMo |
+|---|---|---|---|---|---|
+| parakeet-tdt_ctc-0.6b-ja | F32 | 113.8–117.5 / 63.1–64.0 | 140.0–140.5 / 85.2–86.6 | 3 of 3 | 0.00% |
+| parakeet-tdt_ctc-0.6b-ja | F16 | 54.6–56.2 / 63.1–64.0 | 75.9–76.2 / 85.2–86.6 | 3 of 3 | 0.00% |
+| parakeet-tdt_ctc-0.6b-ja | Q8_0 | 35.2–36.5 / 38.5–40.6 | 46.7–48.3 / 50.7–51.2 | 3 of 3 | 0.00% |
+| parakeet-tdt_ctc-0.6b-ja | Q6_K | 26.3–27.6 / 27.5–29.5 | 46.3–46.6 / 49.8–50.5 | 3 of 3 | 0.00% |
+| parakeet-tdt_ctc-0.6b-ja | Q5_K | 22.1–23.5 / 20.2–24.3 | 45.8–46.5 / 47.1–48.1 | 2 of 3 / 1 of 3 | 0.54% / 1.08% |
+| parakeet-tdt_ctc-0.6b-ja | Q4_K | 16.6–18.1 / 15.7–18.2 | 42.8–44.2 / 45.3–45.7 | 2 of 3 | 1.08% |
+| parakeet-tdt-0.6b-v3 | F32 | 105.9–113.8 / 52.0–60.8 | 140.8–142.2 / 87.7–88.5 | 12 of 12 | 0.00% |
+| parakeet-tdt-0.6b-v3 | F16 | 31.4–54.6 / 52.0–60.8 | 76.6–77.3 / 87.7–88.5 | 12 of 12 | 0.00% |
+| parakeet-tdt-0.6b-v3 | Q8_0 | 17.4–32.4 / 27.3–36.8 | 53.0–56.3 / 57.6–60.3 | 10 of 12 / 8 of 12 | 0.10% / 0.21% |
+| parakeet-tdt-0.6b-v3 | Q6_K | 12.5–23.7 / 13.7–26.4 | 51.9–54.9 / 54.5–57.2 | 10 of 12 / 11 of 12 | 0.84% / 0.16% |
+| parakeet-tdt-0.6b-v3 | Q5_K | 13.0–19.6 / 13.7–20.2 | 49.7–51.2 / 50.5–51.9 | 7 of 12 | 1.00% |
+| parakeet-tdt-0.6b-v3 | Q4_K | 6.2–14.7 / 6.2–14.8 | 44.9–46.1 / 45.0–46.6 | 8 of 12 / 9 of 12 | 1.10% / 0.94% |
+| reazonspeech-nemo-v2 | F32 | 95.9–119.0 / 37.7–71.0 | 124.1–125.6 / 82.7–88.4 | 20 of 20 | 0.00% |
+| reazonspeech-nemo-v2 | F16 | 29.7–55.6 / 37.7–71.0 | 71.2–71.9 / 82.7–88.4 | 20 of 20 | 0.00% |
+| reazonspeech-nemo-v2 | Q8_0 | 22.4–37.1 / 20.2–45.5 | 45.2–51.1 / 47.6–55.6 | 17 of 20 / 18 of 20 | 0.86% / 0.94% |
+| reazonspeech-nemo-v2 | Q6_K | 12.1–28.3 / 12.0–35.6 | 44.3–49.8 / 47.2–54.7 | 16 of 20 / 18 of 20 | 1.83% / 1.58% |
+| reazonspeech-nemo-v2 | Q5_K | 10.3–26.3 / 10.7–26.5 | 43.7–48.9 / 45.7–52.5 | 14 of 20 / 15 of 20 | 3.48% / 2.85% |
+| reazonspeech-nemo-v2 | Q4_K | 7.5–22.9 / 7.5–22.7 | 42.0–47.3 / 43.0–48.9 | 14 of 20 | 1.60% / 1.47% |
+
+FastConformer loses the most of the four families: its encoder's output lies 17 to 46 dB from NeMo's in Q8_0 already,
+and its texts part from NeMo's from Q8_0 on, where F16 keeps NeMo's text on every input.
+
+### Qwen3-ASR
+
+`qwen3-asr-encoder-check` and `qwen3-asr-decoder-check`, over the four requests of each input (auto, forced,
+auto-prompt, forced-prompt), the texts from the audio against transformers':
+
+| Model | Type | Projector output SNR, dB | Teacher-forced steps ours, worst top logits' SNR | Texts from the audio equal to the official | CER against the official |
+|---|---|---|---|---|---|
+| 0.6B | F32 | 85.6–111.0 / 44.4–70.6 | 1176 of 1176, 103.8 dB / 1176 of 1176, 56.9 dB | 40 of 40 | 0.00% |
+| 0.6B | F16 | 27.0–52.5 / 49.8–66.7 | 1176 of 1176, 44.5 dB / 1176 of 1176, 57.4 dB | 40 of 40 | 0.00% |
+| 0.6B | Q8_0 | 20.2–33.2 / 20.4–38.2 | 1168 of 1176, 27.9 dB / 1171 of 1176, 33.4 dB | 37 of 40 | 0.09% / 0.04% |
+| 0.6B | Q6_K | 23.2–28.1 / 20.2–31.0 | 1164 of 1176, 20.7 dB / 1170 of 1176, 23.8 dB | 34 of 40 | 0.12% / 0.09% |
+| 0.6B | Q5_K | 18.3–25.1 / 19.3–26.4 | 1150 of 1176, 16.7 dB / 1145 of 1176, 17.9 dB | 25 of 40 / 27 of 40 | 0.53% |
+| 0.6B | Q4_K | 17.0–19.9 / 16.7–20.5 | 1129 of 1176, 11.4 dB / 1133 of 1176, 11.9 dB | 21 of 40 | 1.49% / 1.39% |
+| 1.7B | F32 | 94.4–111.6 / 50.2–68.6 | 222 of 222, 109.7 dB / 1184 of 1184, 60.8 dB | 12 of 12 / 40 of 40 | 0.00% |
+| 1.7B | F16 | 47.8–50.0 / 50.7–64.8 | 222 of 222, 48.3 dB / 1184 of 1184, 60.0 dB | 12 of 12 / 40 of 40 | 0.00% |
+| 1.7B | Q8_0 | 26.8–33.0 / 17.1–38.3 | 222 of 222, 27.5 dB / 1183 of 1184, 29.6 dB | 12 of 12 / 40 of 40 | 0.00% |
+| 1.7B | Q6_K | 22.6–26.1 / 23.3–28.3 | 222 of 222, 18.9 dB / 1179 of 1184, 21.3 dB | 12 of 12 / 36 of 40 | 0.00% / 3.17% |
+| 1.7B | Q5_K | 20.0–20.9 / 18.3–22.1 | 221 of 222, 13.9 dB / 1170 of 1184, 13.5 dB | 12 of 12 / 30 of 40 | 0.00% / 1.98% |
+| 1.7B | Q4_K | 13.5–15.8 / 13.5–16.5 | 218 of 222, 5.8 dB / 1158 of 1184, 5.0 dB | 12 of 12 / 28 of 40 | 0.00% / 2.20% |
+
+Most of 1.7B's 3.17% in Q6_K on Metal is one request: for the 0.6 s near-silent input with its language forced it writes
+a sentence where the official writes は。.
+
+### Qwen3-TTS
+
+`talker-check` with 1.7B; greedy decoding departs from the reference's codes within the first frame in every quantized
+type, Q8_0 included, where the reference's two best codes lie closer than the error of the logits:
+
+| Type | Dump | Talker logits: worst relative error, argmax differs | Code predictor logits: worst relative error, argmax differs | Greedy decode |
+|---|---|---|---|---|
+| F32 | 1.7b-ja-weather | 0.00095, 0 of 55 / 0.00064, 0 of 55 | 0.0014, 0 of 810 / 0.00061, 0 of 810 | the reference's 54 frames |
+| F32 | 1.7b-ja-weather-instruct | 0.0015, 0 of 58 / 0.0013, 0 of 58 | 0.0019, 1 of 855 / 0.00096, 1 of 855 | 56 frames (reference 57), from frame 14 / 54 frames (reference 57), from frame 14 |
+| Q8_0 | 1.7b-ja-weather | 0.02, 1 of 55 / 0.013, 1 of 55 | 0.051, 78 of 810 / 0.029, 37 of 810 | 61 frames (reference 54), from frame 1 / 59 frames (reference 54), from frame 1 |
+| Q8_0 | 1.7b-ja-weather-instruct | 0.016, 2 of 58 / 0.015, 1 of 58 | 0.048, 69 of 855 / 0.03, 46 of 855 | 56 frames (reference 57), from frame 1 / 55 frames (reference 57), from frame 1 |
+| Q6_K | 1.7b-ja-weather | 0.059, 0 of 55 / 0.05, 0 of 55 | 0.17, 191 of 810 / 0.12, 163 of 810 | 64 frames (reference 54), from frame 1 / 63 frames (reference 54), from frame 1 |
+| Q6_K | 1.7b-ja-weather-instruct | 0.068, 4 of 58 / 0.05, 4 of 58 | 0.13, 187 of 855 / 0.12, 143 of 855 | 54 frames (reference 57), from frame 1 / 53 frames (reference 57), from frame 1 |
+| Q5_K | 1.7b-ja-weather | 0.12, 5 of 55 / 0.13, 3 of 55 | 0.26, 294 of 810 / 0.21, 294 of 810 | 64 frames (reference 54), from frame 1 / 59 frames (reference 54), from frame 1 |
+| Q5_K | 1.7b-ja-weather-instruct | 0.12, 5 of 58 / 0.11, 3 of 58 | 0.23, 294 of 855 / 0.21, 274 of 855 | 54 frames (reference 57), from frame 1 / 63 frames (reference 57), from frame 1 |
+| Q4_K | 1.7b-ja-weather | 0.16, 7 of 55 | 0.42, 470 of 810 / 0.38, 463 of 810 | 68 frames (reference 54), from frame 1 / 63 frames (reference 54), from frame 1 |
+| Q4_K | 1.7b-ja-weather-instruct | 0.16, 9 of 58 / 0.15, 9 of 58 | 0.44, 486 of 855 / 0.43, 481 of 855 | 64 frames (reference 57), from frame 1 / 69 frames (reference 57), from frame 1 |
+
+### Irodori-TTS
+
+`irodori-text-check`, `irodori-condition-check`, `irodori-dit-check` and `irodori-synthesis-check`. The lengths are the
+duration predictor's against the official's; where a length differs, the synthesis cannot start from the dump's noise
+and its audio is not compared:
+
+| Model | Type | Text condition SNR, dB | Speaker condition SNR, dB | Lengths the official's | Worst DiT step SNR, dB | Audio against the official, dB (dumps of the official length) |
+|---|---|---|---|---|---|---|
+| v4.1-Small-MF | F32 | 117.6–123.3 / 64.6–123.4 | 106.2–112.4 / 50.2–58.7 | 31 of 31 | 98.6–116.0 / 47.9–65.5 | 73.8–110.1 (21 of 22) / 21.8–60.7 (21 of 22) |
+| v4.1-Small-MF | F16 | 56.9–61.4 / 65.2–74.7 | 49.8–53.9 / 50.2–58.7 | 31 of 31 | 48.4–54.5 / 48.6–64.2 | 19.7–53.7 (21 of 22) / 22.4–56.2 (21 of 22) |
+| v4.1-Small-MF | Q8_0 | 36.7–39.7 / 40.6–44.9 | 24.8–26.1 / 30.5–37.8 | 29 of 31 | 30.2–37.3 / 32.8–40.5 | 5.3–31.7 (13 of 22) / 10.6–31.2 (16 of 22) |
+| v4.1-Small-MF | Q6_K | 26.7–30.6 / 28.9–34.4 | 20.6–24.4 / 21.9–27.6 | 22 of 31 / 28 of 31 | 20.2–30.3 / 20.3–31.7 | 4.2–24.7 (18 of 22) / 3.5–17.5 (15 of 22) |
+| v4.1-Small-MF | Q5_K | 23.5–27.8 / 23.9–28.6 | 15.5–22.1 / 18.0–22.7 | 25 of 31 / 28 of 31 | 19.6–25.3 / 19.8–25.6 | -2.7–14.1 (13 of 22) / -1.0–14.7 (12 of 22) |
+| v4.1-Small-MF | Q4_K | 17.8–22.4 / 17.9–22.8 | 11.2–14.8 / 10.9–14.7 | 3 of 31 | 9.3–18.2 / 9.2–18.5 | 1.1–9.9 (7 of 22) / 1.1–10.1 (7 of 22) |
+| v4.1-Small | F32 | 117.6–123.3 / 64.6–123.4 | 111.5 / 50.9 | 2 of 2 | 92.9–97.5 / 44.1–49.3 | 87.6–98.5 (3 of 4) / 11.8–56.3 (3 of 4) |
+| v4.1-Small | F16 | 56.9–61.4 / 65.2–74.7 | 49.8 / 50.9 | 2 of 2 | 31.6–36.6 / 42.9–49.2 | 13.5–37.1 (3 of 4) / 12.1–50.4 (3 of 4) |
+| v4.1-Small | Q8_0 | 36.7–39.7 / 40.6–44.9 | 25.0 / 33.9 | 2 of 2 | 17.0–20.1 / 29.6–32.1 | 19.2 (1 of 4) / 21.7–24.5 (2 of 4) |
+| v4.1-Small | Q6_K | 26.7–30.6 / 28.9–34.4 | 20.6 / 21.9 | 1 of 2 / 2 of 2 | 10.6–16.1 / 18.5–24.3 | 4.8–6.4 (2 of 4) / 3.1 (1 of 4) |
+| v4.1-Small | Q5_K | 23.5–27.8 / 23.9–28.6 | 15.5 / 18.0 | 2 of 2 | 11.4–12.9 / 14.1–15.8 | -0.0 (1 of 4) / -0.2 (1 of 4) |
+| v4.1-Small | Q4_K | 17.8–22.4 / 17.9–22.8 | 11.9 / 10.9 | 0 of 2 | 7.1–9.3 / 8.0–11.0 | 3.5 (1 of 4) / 3.7 (1 of 4) |
+
+### Whether the speech says the text
+
+The 20 Japanese sentences of speech-bench's prompts/speak-ja-JP.json, spoken through `speech worker` on Metal with the
+seed 1 (Qwen3-TTS in ono_anna's voice with its sampling, Irodori-TTS in its voice `none` with its default steps), and
+transcribed by Qwen3-ASR 1.7B in Q8_0 with the language ja. The CER is against the sentences after NFKC, without
+punctuation, symbols and spaces; numbers written in digits where the sentence writes them in kanji count in every type
+alike:
+
+| Model | F32 | F16 | Q8_0 | Q6_K | Q5_K | Q4_K |
+|---|---|---|---|---|---|---|
+| Qwen3-TTS 0.6B | 11.75% | | 14.24% | 7.78% | 11.26% | 19.04% |
+| Qwen3-TTS 1.7B | 4.97% | | 9.44% | 6.79% | 12.25% | 13.25% |
+| Irodori-TTS v4.1-Small-MF | 4.80% | 6.13% | 6.13% | 7.12% | 3.97% | 4.80% |
+| Irodori-TTS v4.1-Small | 3.97% | 3.97% | 4.14% | 4.47% | 3.64% | 3.64% |
+
+Qwen3-TTS draws its codes, and each type draws other ones with the same seed, so one seed's CER moves by several points
+from type to type for the draw alone; F32 0.6B spoke うんうん。 as a babble of other words. Q4_K 0.6B spoke the weather
+sentence as other words entirely, and 1.7B in Q5_K added a babble after うんうん。. Irodori-TTS speaks the text in every
+type, though its duration predictor parts from the official's lengths on some inputs from Q8_0 on and on nearly all in
+Q4_K.
 
 ## Resampling
 

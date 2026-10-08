@@ -15,12 +15,18 @@ namespace irodori {
 namespace {
 
 /**
- * The types reference/irodori-tts/convert.py stores a tensor in by its --type: a matrix of the model in Q8_0, F16 or
- * F32, F16 standing for Q8_0 where a matrix's rows are no multiple of 32; and the codec, the norms, the biases and the
- * rest in F32.
+ * How the layout stores a tensor in a file of each weight type (docs/adr/0040): a matrix or embedding of the model,
+ * which ggml_mul_mat() and ggml_get_rows() alone read, in the file's type, which 0.7's reader of layout 1 took in Q8_0,
+ * F16 and F32; and the codec, which encodes the voices' references and decodes the speech, the norms, the biases and
+ * the rest in F32 in every file, as the released files hold them.
  */
-const std::vector<ggml_type> kMatrix = {GGML_TYPE_Q8_0, GGML_TYPE_F16, GGML_TYPE_F32};
-const std::vector<ggml_type> kF32 = {GGML_TYPE_F32};
+const Storage kMatrix = quantized_storage({{GGML_TYPE_F32, kFirstLayoutRelease},
+                                           {GGML_TYPE_F16, kFirstLayoutRelease},
+                                           {GGML_TYPE_Q8_0, kFirstLayoutRelease},
+                                           {GGML_TYPE_Q6_K, "0.8.0"},
+                                           {GGML_TYPE_Q5_K, "0.8.0"},
+                                           {GGML_TYPE_Q4_K, "0.8.0"}});
+const Storage kF32 = float32_storage();
 
 /**
  * The widths DACVAE fixes in its code rather than in its configuration: 7 for the first and the last convolution and

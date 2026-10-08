@@ -122,8 +122,9 @@ SPEECH_API const char * speech_last_error(void);
 /**
  * The input the last failed call on the calling thread concerns: an option's name as speech_option_name() gives it,
  * "text" or "audio" for a request's input, "device", "threads" or "warmup" for a load parameter, "name" or "path"
- * for a voice being added, or "model_path", "reference_path", "references", "loudness", "embedding" or "voice_path" for
- * a voice file being made ("references", "loudness" and "embedding" added in 3.1). NULL when the failure concerns no
+ * for a voice being added, "model_path", "reference_path", "references", "loudness", "embedding" or "voice_path" for
+ * a voice file being made ("references", "loudness" and "embedding" added in 3.1), or "model_path", "type" or "out_path"
+ * for a model file being quantized (added in 3.1). NULL when the failure concerns no
  * single input. It stays valid until the next call into the library on the same thread.
  */
 SPEECH_API const char * speech_last_error_option(void);
@@ -507,7 +508,8 @@ SPEECH_API speech_status speech_model_info_source(const speech_model_info * info
 
 /**
  * The type that holds most of the bytes of the model's weights (general.file_type), as ggml names it in capitals:
- * "F32", "F16" or "Q8_0". The rest, such as the norms and the biases, is in other types.
+ * "F32", "F16" or "Q8_0", or "Q6_K", "Q5_K" or "Q4_K" (added in 3.1). The rest, such as the norms and the biases, is in
+ * other types.
  */
 SPEECH_API const char * speech_model_info_weight_type(const speech_model_info * info);
 
@@ -690,6 +692,24 @@ SPEECH_API const char * speech_model_info_meta_key(const speech_model_info * inf
  * long array, such as a tokenizer's vocabulary, is written whole.
  */
 SPEECH_API const char * speech_model_info_meta_value(const speech_model_info * info, size_t index);
+
+/**
+ * Writes the model file at `model_path`, whose weights are F32, to `out_path` with its weights in `type`: "F16", "Q8_0",
+ * "Q6_K", "Q5_K" or "Q4_K", compared without case, the names speech_model_info_weight_type() gives. Each tensor takes
+ * the type the family's layout gives it in a file of that type: a matrix that the model only multiplies by or looks
+ * rows up in takes `type`, Q8_0 instead of a K-quant (Q6_K, Q5_K, Q4_K) where its rows are not whole blocks of 256
+ * values, and F16 instead of Q8_0 where they are not whole blocks of 32; a codec's or a convolution's weights that the
+ * family keeps out of quantization take F16; and the rest stays F32. Every key and tensor of the file is kept, in its
+ * order, but general.file_type, general.quantization_version, which a quantized file has, and speech.requires, which
+ * names the first release that reads the file: 0.8.0 for Q6_K, Q5_K and Q4_K and for FastConformer's Q8_0, which
+ * releases before it refuse. A file
+ * whose weights are not F32 is SPEECH_ERROR_INVALID_ARGUMENT naming "model_path": a quantized file is not quantized
+ * again, and a type made of F16 weights would hold other bytes than the same type made of the F32 weights. A weight that
+ * is not finite, NaN or an infinity, is SPEECH_ERROR_MODEL_FILE naming "model_path". `out_path`, which may not be the
+ * model file itself, is replaced, and removed again when the writing fails. It runs on the CPU, with the machine's
+ * threads; a thread that the host cannot start is SPEECH_ERROR_OUT_OF_MEMORY. Added in 3.1.
+ */
+SPEECH_API speech_status speech_quantize(const char * model_path, const char * type, const char * out_path);
 
 /** A loaded model on its device, with its voices. */
 typedef struct speech_model speech_model;

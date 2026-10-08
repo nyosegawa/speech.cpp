@@ -12,34 +12,75 @@ tools that read GGUF metadata show them. The rest is under `speech.` and the fam
 
 ## Convert a model
 
-`reference/<model>/convert.py` writes a file from the official checkpoint, which `reference/<model>/pins.py` pins by
-revision, in a uv environment that pins the official code. `--type` chooses the weight type.
+`reference/<model>/convert.py` writes a model's F32 file from the official checkpoint, which `reference/<model>/pins.py`
+pins by revision, in a uv environment that pins the official code. `speech quantize` makes every other weight type of
+that file ([cli.md](cli.md#speech-quantize)), each tensor in the type its family's layout gives it
+([Weight types](#weight-types); [ADR 0040](adr/0040-speech-quantize-makes-every-weight-type-from-the-f32-file-as-the-layout-tables-store-each-tensor.md)).
 
 ```sh
 cd reference/qwen3-tts
-uv run python convert.py 0.6b ../../models --type q8_0    # Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf, 1.2 GB
-uv run python convert.py 1.7b ../../models --type q8_0    # Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf, 2.3 GB
+uv run python convert.py 0.6b ../../models       # Qwen3-TTS-12Hz-0.6B-CustomVoice-F32.gguf, 4.1 GB
+uv run python convert.py 1.7b ../../models       # Qwen3-TTS-12Hz-1.7B-CustomVoice-F32.gguf, 8.1 GB
 
 cd ../irodori-tts
-uv run python convert.py mf ../../models --type f16       # Irodori-TTS-866M-MF-v4.1-F16.gguf, 1.9 GB
-uv run python convert.py rf ../../models --type f16       # Irodori-TTS-859M-v4.1-F16.gguf, 1.9 GB
+uv run python convert.py mf ../../models         # Irodori-TTS-866M-MF-v4.1-F32.gguf, 3.5 GB
+uv run python convert.py rf ../../models         # Irodori-TTS-859M-v4.1-F32.gguf, 3.4 GB
 
 cd ../fastconformer
-uv run python convert.py parakeet-tdt_ctc-0.6b-ja ../../models --type f16   # parakeet-tdt_ctc-0.6B-ja-F16.gguf, 1.2 GB
-uv run python convert.py parakeet-tdt-0.6b-v3 ../../models --type f16       # parakeet-tdt-0.6B-v3-F16.gguf, 1.3 GB
-uv run python convert.py reazonspeech-nemo-v2 ../../models --type f16       # reazonspeech-nemo-619M-v2-F16.gguf, 1.2 GB
+uv run python convert.py parakeet-tdt_ctc-0.6b-ja ../../models   # parakeet-tdt_ctc-0.6B-ja-F32.gguf, 2.5 GB
+uv run python convert.py parakeet-tdt-0.6b-v3 ../../models       # parakeet-tdt-0.6B-v3-F32.gguf, 2.5 GB
+uv run python convert.py reazonspeech-nemo-v2 ../../models       # reazonspeech-nemo-619M-v2-F32.gguf, 2.5 GB
 
 cd ../qwen3-asr
-uv run python convert.py Qwen3-ASR-0.6B ../../models --type q8_0   # Qwen3-ASR-0.6B-Q8_0.gguf, 0.84 GB
-uv run python convert.py Qwen3-ASR-1.7B ../../models --type q8_0   # Qwen3-ASR-1.7B-Q8_0.gguf, 2.18 GB
+uv run python convert.py Qwen3-ASR-0.6B ../../models   # Qwen3-ASR-0.6B-F32.gguf, 3.14 GB
+uv run python convert.py Qwen3-ASR-1.7B ../../models   # Qwen3-ASR-1.7B-F32.gguf, 8.16 GB
+
+cd ../..
+build/speech quantize models/Qwen3-TTS-12Hz-0.6B-CustomVoice-F32.gguf models --type q8_0   # ...-Q8_0.gguf
+build/speech quantize models/Irodori-TTS-866M-MF-v4.1-F32.gguf models --type f16           # ...-F16.gguf
 ```
 
-| Family | Types | Notes |
-|---|---|---|
-| qwen3-tts | `q8_0`, `f16` (4.1 GB for 0.6B, 8.1 GB for 1.7B), `f32` | the codec's large weights are float16 in a Q8_0 or F16 file and float32 in an F32 file |
-| irodori-tts | `f16`, `q8_0` (1.2 GB), `f32` (3.5 GB) | the codec stays float32 in every type. The converter writes layout 2; the files the catalog's names fetch are of layout 1 |
-| fastconformer | `f16`, `f32` (2.5 GB) | `reference/fastconformer/` pins NeMo 3.0.0 and PyTorch 2.10.0. The converter refuses a checkpoint with an option the C++ does not run (another subsampling, attention or decoding, a prompt, a language tag to strip, a tokenizer piece it cannot write) rather than write a file that would recognize differently from NeMo |
-| qwen3-asr | `q8_0`, `f16` (1.57 and 4.08 GB), `f32` (3.14 and 8.16 GB) | `reference/qwen3-asr/` pins transformers 5.18.0, qwen-asr 0.0.6 and PyTorch 2.10.0. The token embeddings, which are also the output matrix, are stored once, where the checkpoint holds them twice |
+Of the F32 file a released file was converted from, `speech quantize` writes the released F16 or Q8_0 file byte for
+byte, which `tools/quantize_compare.py` checks tensor by tensor and key by key. The files of each type, in GB:
+
+| Model | F16 | Q8_0 | Q6_K | Q5_K | Q4_K | Notes |
+|---|---|---|---|---|---|---|
+| Qwen3-TTS 0.6B | 2.06 | 1.21 | 0.99 | 0.87 | 0.76 | the codec's large weights are F16 in every type but F32 |
+| Qwen3-TTS 1.7B | 4.08 | 2.29 | 1.82 | 1.57 | 1.33 | |
+| Irodori-TTS v4.1-Small-MF | 1.92 | 1.21 | 1.04 | 0.95 | 0.86 | the codec stays F32 in every type. The converter writes layout 2; the files the catalog's names fetch are of layout 1 |
+| Irodori-TTS v4.1-Small | 1.91 | 1.20 | 1.03 | 0.94 | 0.86 | |
+| parakeet-tdt_ctc-0.6b-ja, parakeet-tdt-0.6b-v3, reazonspeech-nemo-v2 | 1.24 to 1.26 | 0.66 to 0.67 | 0.51 to 0.52 | 0.43 to 0.44 | 0.36 | `reference/fastconformer/` pins NeMo 3.0.0 and PyTorch 2.10.0. The converter refuses a checkpoint with an option the C++ does not run (another subsampling, attention or decoding, a prompt, a language tag to strip, a tokenizer piece it cannot write) rather than write a file that would recognize differently from NeMo |
+| Qwen3-ASR 0.6B | 1.57 | 0.84 | 0.68 | 0.59 | 0.51 | `reference/qwen3-asr/` pins transformers 5.18.0, qwen-asr 0.0.6 and PyTorch 2.10.0. The token embeddings, which are also the output matrix, are stored once, where the checkpoint holds them twice |
+| Qwen3-ASR 1.7B | 4.08 | 2.18 | 1.68 | 1.41 | 1.16 | |
+
+## Weight types
+
+A file's weight type is the type that holds most of its tensors' bytes, which `general.file_type` names. Each family's
+`layout.cpp` gives every tensor the types it takes in a file of each weight type, in order: the file holds it in the
+first whose blocks its rows are whole blocks of. The reader takes a tensor in any of the types its layout lists for it,
+whatever the file's weight type, and `speech quantize` writes the one the order gives.
+
+| Tensors | F32 file | F16 file | Q8_0 file | Q6_K, Q5_K or Q4_K file |
+|---|---|---|---|---|
+| The matrices and embeddings that only `ggml_mul_mat()` and `ggml_get_rows()` read: every family's linear layers, Qwen3-TTS's talker and code predictor with their embeddings and heads, Irodori-TTS's text encoder, speaker encoder, duration predictor and DiT, FastConformer's subsampling output, encoder, prediction network and joint, Qwen3-ASR's encoder, projector and decoder with its token embeddings | F32 | F16 | Q8_0, or F16 where a row is not whole blocks of 32 values | the type, or Q8_0 where a row is not whole blocks of 256 values, and F16 where it is not whole blocks of 32 either |
+| Qwen3-TTS's codec's convolutions and matrices, and Qwen3-ASR's convolution kernels, which `ggml_im2col()` reads in F16 or F32 alone | F32 | F16 | F16 | F16 |
+| The norms, biases, codebooks, Irodori-TTS's codec, its DiT's input projection and its duration predictor's output, FastConformer's convolution kernels and the rest | F32 | F32 | F32 | F32 |
+
+The rows that are not whole blocks: Qwen3-ASR 0.6B's encoder and projector, 896 wide, and FastConformer's prediction
+network and joint, 640 wide, take Q8_0 in a K-quant file; so do Irodori-TTS's AdaLN, of rank 192, its DiT's
+feed-forward output, rows of 3680, and its speaker encoder's input, rows of 128, while the speaker encoder's
+feed-forward output, rows of 1996, takes F16 in a Q8_0 file as well.
+
+`general.file_type` is 0 for F32, 1 for F16, 7 for Q8_0, 18 for Q6_K (`MOSTLY_Q6_K`), 16 for Q5_K (`MOSTLY_Q5_K_S`) and
+14 for Q4_K (`MOSTLY_Q4_K_S`), the one of gguf-py's two values for each of these two that names no mix of wider types.
+
+`speech quantize` writes in `speech.requires` the latest of the F32 file's own, the first release that reads the
+`general.file_type`, and the first release whose reader of the family takes each tensor in its type, which each family's
+`layout.cpp` gives with its storages. A Q6_K, Q5_K or Q4_K file names 0.8.0, which releases before refuse as a
+`general.file_type` they do not know, and so does a FastConformer file in Q8_0, whose matrices 0.7's reader took in F16
+and F32 alone. The F16 and Q8_0 files of the other families keep the F32 file's own: 0.7.0 for layout 1, which 0.7.0 and
+0.7.1 read, and 0.8.0 for Irodori-TTS's layout 2. `tools/quantize_releases.py` checks each against `speech` of earlier
+releases built from their tags.
 
 ## File names
 
@@ -77,8 +118,9 @@ Hugging Face recognize and speak as they did:
 - irodori-tts's layout 1 gets the keys that say it holds neither the null speaker nor the caption's encoder
   ([irodori-tts](#irodori-tts)).
 
-The model information lists such a key among the file's metadata, beside the file's own `speech.layout`. A newer layout
-is refused with a message that names `speech.requires`. A file without `speech.layout`, converted for a release before
+The model information lists such a key among the file's metadata, beside the file's own `speech.layout`. A newer layout,
+a weight type the reader does not know and a tensor in a type its layout does not list are refused with a message that
+names `speech.requires` where it names a later release. A file without `speech.layout`, converted for a release before
 0.7.0, is refused as such; convert it again. Such files remain in the history of the Hugging Face repositories.
 
 ## What a reader checks
@@ -86,12 +128,9 @@ is refused with a message that names `speech.requires`. A file without `speech.l
 - Every key below is required in its family's layout, unless the table says when it is present, and has exactly the
   type listed. A key that is missing or of another type is refused with a message that names it, and so is a string
   that names a kind other than the ones listed.
-- The tensors are exactly the ones the keys call for, each of the shape the keys give it and of a type its converter
-  writes. A tensor that is missing, one not called for, and one of another shape or type are refused before any weight
+- The tensors are exactly the ones the keys call for, each of the shape the keys give it and of a type its layout
+  lists ([Weight types](#weight-types)). A tensor that is missing, one not called for, and one of another shape or type are refused before any weight
   is loaded, naming the tensor and the shape or type expected and found.
-- The types are the ones each converter's `--type` gives: the matrices in Q8_0, F16 or F32 (F16 or F32 for
-  FastConformer), Qwen3-TTS's codec's large weights and Qwen3-ASR's convolutions in F16 or F32, and the norms, biases,
-  codebooks and the rest in F32.
 - A width that no key gives, listed with each family's tensors, is taken from one tensor, and every other tensor of that
   width is checked against it.
 - A key that sizes the model is refused when it is 0, and so is a value the model cannot run with: heads that do not
@@ -113,11 +152,11 @@ is refused with a message that names `speech.requires`. A file without `speech.l
 | `general.license` | string | SPDX expression | the model card |
 | `general.source.repo_url` | string | the repository converted, `https://huggingface.co/<repository>` | the pin |
 | `general.source.url` | string | the revision converted: `<general.source.repo_url>/tree/<revision>`, since the specification has no key of its own for a revision | the pin |
-| `general.file_type` | u32 | the type that holds most of the tensors' bytes, as gguf-py's `LlamaFileType` numbers it: 0 (F32), 1 (F16) or 7 (Q8_0); a file whose tensors say otherwise is refused | the converter's `--type` |
-| `general.quantization_version` | u32 | the version of ggml's quantized blocks (2); present when the file holds a quantized tensor | gguf-py's `GGML_QUANT_VERSION` |
+| `general.file_type` | u32 | the type that holds most of the tensors' bytes, as gguf-py's `LlamaFileType` numbers it: 0 (F32), 1 (F16), 7 (Q8_0), 18 (Q6_K), 16 (Q5_K) or 14 (Q4_K); a file whose tensors say otherwise is refused | 0 from the converter; `speech quantize --type` |
+| `general.quantization_version` | u32 | the version of ggml's quantized blocks (2); present when the file holds a quantized tensor | ggml's `GGML_QNT_VERSION`, through `speech quantize` (gguf-py's `GGML_QUANT_VERSION` in the files the converters quantized before 0.8.0) |
 | `general.languages` | [string] | each language's shortest ISO 639 code, sorted, which requests and the model information give as BCP 47 tags: two letters, or three for a language that has no two-letter code (`yue`, `fil`), where the GGUF specification asks for two letters | Qwen3-TTS: the names of `codec_language_id` through the converter's table of codes, dialects left out; Qwen3-ASR: the tags of transformers' `LANGUAGE_CODE_TO_NAME`; the others: the model card |
 | `speech.layout` | u32 | the version of the family's layout: 2 for fastconformer and irodori-tts, 1 for the others | the converter |
-| `speech.requires` | string | the first release whose reader takes this layout: `0.8.0` for layout 2, `0.7.0` for layout 1 | the converter's table of layouts |
+| `speech.requires` | string | the first release whose reader takes this file: `0.8.0` for layout 2, for Q6_K, Q5_K and Q4_K, and for FastConformer's Q8_0, `0.7.0` for the other files of layout 1 | the converter's table of layouts, and `speech quantize`, which writes the later of the F32 file's and the weight type's |
 | `speech.task` | string | `synthesis` or `recognition`; must be the family's | the converter |
 | `speech.sample_rate` | u32 | the rate of the audio made or recognized | Qwen3-TTS: `speech_tokenizer/config.json` `output_sample_rate`; Irodori-TTS: the DACVAE's `sample_rate`; FastConformer: the featurizer's `sample_rate`; Qwen3-ASR: qwen-asr's `SAMPLE_RATE`, the feature extractor's rate |
 | `speech.language_use` | string | `steers` or `checked`; must be what the family does | `steers` for qwen3-tts and qwen3-asr, `checked` for the others |

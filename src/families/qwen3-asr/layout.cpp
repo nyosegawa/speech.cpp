@@ -14,13 +14,23 @@ namespace qwen3_asr {
 namespace {
 
 /**
- * The types reference/qwen3-asr/convert.py stores a tensor in by its --type: a matrix of a linear layer or the token
- * embeddings in Q8_0, F16 or F32, a convolution kernel in F16 or F32, and the norms, the biases and the frontend in
- * F32.
+ * How the layout stores a tensor in a file of each weight type (docs/adr/0040): a matrix of a linear layer or the token
+ * embeddings, which are also the decoder's output matrix and which ggml_mul_mat() and ggml_get_rows() alone read, in
+ * the file's type, which 0.7's reader took in Q8_0, F16 and F32; a convolution kernel, which ggml_im2col() reads in F16
+ * or F32 alone, in F16, or F32 in an F32 file; and the norms, the biases and the frontend in F32. The encoder holds in
+ * Q8_0: with the decoder's weights of the Q8_0 file, teacher-forced on the dumps' ids of every input of up to 30 s
+ * (requests auto and auto-prompt), its output from a Q8_0 file moved the argmax of 1 or 2 of 605 steps with the 0.6B
+ * model and of none of 604 with the 1.7B, on the CPU and on Metal of an Apple M5, where the official encoder's output
+ * moved 2 and none (2026-10-06); each step it moved had a margin of 0.13 or less in the official model.
  */
-const std::vector<ggml_type> kMatrix = {GGML_TYPE_Q8_0, GGML_TYPE_F16, GGML_TYPE_F32};
-const std::vector<ggml_type> kConv = {GGML_TYPE_F16, GGML_TYPE_F32};
-const std::vector<ggml_type> kF32 = {GGML_TYPE_F32};
+const Storage kMatrix = quantized_storage({{GGML_TYPE_F32, kFirstLayoutRelease},
+                                           {GGML_TYPE_F16, kFirstLayoutRelease},
+                                           {GGML_TYPE_Q8_0, kFirstLayoutRelease},
+                                           {GGML_TYPE_Q6_K, "0.8.0"},
+                                           {GGML_TYPE_Q5_K, "0.8.0"},
+                                           {GGML_TYPE_Q4_K, "0.8.0"}});
+const Storage kConv = half_storage();
+const Storage kF32 = float32_storage();
 
 void require(bool condition, const ModelFile & m, const std::string & what) {
     if (!condition) throw Error(Fault::File, m.path() + ": " + what + "; " + m.remedy());

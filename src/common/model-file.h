@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <initializer_list>
 #include <map>
@@ -13,22 +14,9 @@
 #include "ggml-backend.h"
 #include "ggml.h"
 #include "gguf.h"
+#include "storage.h"
 
 class ModelFile;
-
-/** A tensor's shape as ggml gives it, ne[0] first; the axes past the ones given are 1. */
-struct Shape {
-    int64_t ne[GGML_MAX_DIMS] = {1, 1, 1, 1};
-
-    Shape(std::initializer_list<int64_t> axes);
-};
-
-/** A tensor a layout calls for: its name, its shape, and the ggml types its converter may store it in. */
-struct TensorSpec {
-    std::string name;
-    Shape shape;
-    std::vector<ggml_type> types;
-};
 
 /**
  * What a reader takes of a GGUF file: the general.architecture it reads, the speech.layout it knows, what to tell
@@ -50,6 +38,12 @@ struct Layout {
      */
     std::function<void(ModelFile & file)> upgrade = {};
 };
+
+/** The bytes of one value of a GGUF type that is neither a string nor an array. */
+size_t gguf_scalar_size(gguf_type type);
+
+/** Moves `f` to `offset` from its start, which fseek() cannot do past 2 GiB on Windows, whose long is 32 bits. */
+bool seek_file(FILE * f, uint64_t offset);
 
 /**
  * The general.architecture of a GGUF file, read without loading its tensors. A file without speech.layout, written
@@ -125,6 +119,11 @@ public:
     const std::string & path() const { return path_; }
     /** The layout's remedy, for a message about the file that a family's reader throws. */
     const std::string & remedy() const { return remedy_; }
+    /**
+     * What to tell the owner of a file that holds what this release does not know, such as a weight type: the release
+     * that the file's speech.requires names, where it comes after this one, or else the layout's remedy.
+     */
+    std::string remedy_for_unknown() const;
     /** The file's own speech.layout, which an upgrade does not change. */
     uint32_t layout_version() const { return version_; }
 
@@ -182,16 +181,17 @@ struct ModelIdentity {
     std::string license;
     /** general.source.repo_url, and the revision that general.source.url, `<repository>/tree/<revision>`, names. */
     std::string repository, revision;
-    /** The type general.file_type names, which holds most of the tensors' bytes: "F32", "F16" or "Q8_0". */
+    /** The type general.file_type names, which holds most of the tensors' bytes: "F32", "F16", "Q8_0", "Q6_K", "Q5_K" or "Q4_K". */
     std::string weight_type;
 };
 
 /**
  * Reads and checks the general keys of a model file's identity: every one but general.finetune and general.version
- * is required, and none is an empty string. general.file_type must name the type that holds most of the tensors'
- * bytes, and a file with a quantized tensor must have general.quantization_version.
+ * is required, and none is an empty string. general.file_type must name one of weight_types() and the type that holds
+ * most of the tensors' bytes, and a file with a quantized tensor must have general.quantization_version.
  */
 ModelIdentity read_identity(const ModelFile & file);
+
 
 /**
  * Reads and checks the keys every model file has: its identity (read_identity()), general.languages, ISO 639 codes of

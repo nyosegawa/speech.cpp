@@ -37,6 +37,8 @@ endif()
 
 add_library(speechcommon STATIC
     src/common/model-file.cpp
+    src/common/storage.cpp
+    src/common/quantize.cpp
     src/common/backend.cpp
     src/common/wav.cpp
     src/common/args.cpp
@@ -189,6 +191,7 @@ add_executable(speech-cli
     tools/cli/asr.cpp
     tools/cli/model.cpp
     tools/cli/models.cpp
+    tools/cli/quantize.cpp
     tools/models/catalog.cpp
     tools/models/cache.cpp
     tools/models/fetch.cpp
@@ -266,6 +269,10 @@ target_link_libraries(irodori-dit-check PRIVATE irodoritts)
 add_executable(irodori-synthesis-check checks/irodori-synthesis-check.cpp tools/common/json-reader.cpp)
 target_include_directories(irodori-synthesis-check PRIVATE tools/common)
 target_link_libraries(irodori-synthesis-check PRIVATE irodoritts)
+
+# What speech quantize refuses of the weights it is given, on a model file of a layout of the check's own.
+add_executable(quantize-check checks/quantize-check.cpp)
+target_link_libraries(quantize-check PRIVATE speechcommon)
 
 add_executable(speech-api-check checks/speech-api-check.c checks/speech-api-irodori.c checks/speech-api-recognition.c checks/speech-api-common.c
                checks/speech-api-platform.c)

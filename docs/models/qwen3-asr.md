@@ -83,7 +83,9 @@ and de_de, and two near-silent cuts), each with four requests, on an Apple M5
 | Q8_0 on the CPU | the official text on 37 and 35 of 40 |
 | Q8_0 on Metal | the official text on 37 and 40 of 40 |
 
-Where a Q8_0 text differs, the official choice between two tokens was within the arithmetic's error of a tie.
+Where a Q8_0 text differs, the official choice between two tokens was within the arithmetic's error of a tie. In the
+smaller types that `speech quantize` makes, the 0.6B model keeps the official text on 34 (Q6_K) to 21 (Q4_K) of 40
+requests and the 1.7B on Metal on 36 to 28 ([checks](../development/checks.md#lower-bit-widths)).
 
 ## Speed
 

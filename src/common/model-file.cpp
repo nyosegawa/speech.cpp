@@ -16,18 +16,6 @@
 
 namespace {
 
-/** The first release whose files carry speech.layout; a file without it was written for a release before. */
-constexpr const char * kFirstLayoutRelease = "0.7.0";
-
-/** fseek() takes a long, which is 32 bits on Windows, so it cannot reach a tensor past 2 GiB there. */
-bool seek(FILE * f, uint64_t offset) {
-#ifdef _WIN32
-    return _fseeki64(f, (int64_t) offset, SEEK_SET) == 0;
-#else
-    return fseeko(f, (off_t) offset, SEEK_SET) == 0;
-#endif
-}
-
 using Gguf = std::unique_ptr<gguf_context, decltype(&gguf_free)>;
 
 Error file_error(const std::string & message) {
@@ -78,38 +66,11 @@ std::string shape_text(const int64_t * ne) {
     return out + "]";
 }
 
-/** A ggml type as docs/gguf.md writes it: F32, F16, Q8_0. */
-std::string tensor_type_text(ggml_type type) {
-    std::string name = ggml_type_name(type);
-    for (char & c : name) c = (char) std::toupper((unsigned char) c);
-    return name;
-}
-
 /** "F32", or "Q8_0, F16 or F32". */
 std::string types_text(const std::vector<ggml_type> & types) {
     std::string out;
     for (size_t i = 0; i < types.size(); i++) out += (i == 0 ? "" : i + 1 == types.size() ? " or " : ", ") + tensor_type_text(types[i]);
     return out;
-}
-
-/** A value of general.file_type, as gguf-py's LlamaFileType numbers it, and the type it names. */
-struct FileType {
-    uint32_t value;
-    ggml_type type;
-};
-
-/** The values of general.file_type that speech.cpp's converters write: ALL_F32, MOSTLY_F16 and MOSTLY_Q8_0. */
-constexpr FileType kFileTypes[] = {{0, GGML_TYPE_F32}, {1, GGML_TYPE_F16}, {7, GGML_TYPE_Q8_0}};
-
-/** The bytes of one value of a type that is neither a string nor an array. */
-size_t scalar_size(gguf_type type) {
-    switch (type) {
-        case GGUF_TYPE_UINT8: case GGUF_TYPE_INT8: case GGUF_TYPE_BOOL: return 1;
-        case GGUF_TYPE_UINT16: case GGUF_TYPE_INT16: return 2;
-        case GGUF_TYPE_UINT32: case GGUF_TYPE_INT32: case GGUF_TYPE_FLOAT32: return 4;
-        case GGUF_TYPE_UINT64: case GGUF_TYPE_INT64: case GGUF_TYPE_FLOAT64: return 8;
-        default: throw std::logic_error("scalar_size() was given a string or an array");
-    }
 }
 
 /** One value of type `type` at `data` as JSON. */
@@ -131,6 +92,24 @@ std::string scalar_json(gguf_type type, const void * data) {
 }
 
 }  // namespace
+
+size_t gguf_scalar_size(gguf_type type) {
+    switch (type) {
+        case GGUF_TYPE_UINT8: case GGUF_TYPE_INT8: case GGUF_TYPE_BOOL: return 1;
+        case GGUF_TYPE_UINT16: case GGUF_TYPE_INT16: return 2;
+        case GGUF_TYPE_UINT32: case GGUF_TYPE_INT32: case GGUF_TYPE_FLOAT32: return 4;
+        case GGUF_TYPE_UINT64: case GGUF_TYPE_INT64: case GGUF_TYPE_FLOAT64: return 8;
+        default: throw std::logic_error("gguf_scalar_size() was given a string or an array");
+    }
+}
+
+bool seek_file(FILE * f, uint64_t offset) {
+#ifdef _WIN32
+    return _fseeki64(f, (int64_t) offset, SEEK_SET) == 0;
+#else
+    return fseeko(f, (off_t) offset, SEEK_SET) == 0;
+#endif
+}
 
 std::string gguf_architecture(const std::string & path) {
     const Gguf gguf = open_gguf(path, nullptr);
@@ -208,9 +187,10 @@ void ModelFile::check_tensors(const Layout & layout) const {
             throw file_error("the tensor " + spec.name + " of " + path_ + " has the shape " + shape_text(t->ne) + ", where " + layout_name() +
                              " gives it the shape " + shape_text(spec.shape.ne) + "; " + remedy_);
         }
-        if (std::find(spec.types.begin(), spec.types.end(), t->type) == spec.types.end()) {
+        const std::vector<ggml_type> types = spec.types();
+        if (std::find(types.begin(), types.end(), t->type) == types.end()) {
             throw file_error("the tensor " + spec.name + " of " + path_ + " has the type " + tensor_type_text(t->type) + ", where " + layout_name() +
-                             " stores it in " + types_text(spec.types) + "; " + remedy_);
+                             " stores it in " + types_text(types) + "; " + remedy_for_unknown());
         }
     }
 }
@@ -243,7 +223,7 @@ void ModelFile::load(ggml_backend_t backend, const std::function<bool(const std:
         if (!t) continue;
         const size_t size = ggml_nbytes(t);
         staging.resize(size);
-        if (!seek(f.get(), data_offset + gguf_get_tensor_offset(gguf_.get(), i)) || std::fread(staging.data(), 1, size, f.get()) != size) {
+        if (!seek_file(f.get(), data_offset + gguf_get_tensor_offset(gguf_.get(), i)) || std::fread(staging.data(), 1, size, f.get()) != size) {
             throw file_error(std::string("cannot read the tensor ") + name + " of " + path_ + "; the file is shorter than its header says");
         }
         ggml_backend_tensor_set(t, staging.data(), 0, size);
@@ -252,6 +232,16 @@ void ModelFile::load(ggml_backend_t backend, const std::function<bool(const std:
 
 std::string ModelFile::layout_name() const {
     return version_ ? "layout " + std::to_string(version_) + " of " + architecture_ : architecture_;
+}
+
+std::string ModelFile::remedy_for_unknown() const {
+    const int64_t id = gguf_find_key(gguf_.get(), "speech.requires");
+    if (id >= 0 && gguf_get_kv_type(gguf_.get(), id) == GGUF_TYPE_STRING) {
+        const std::string release = gguf_get_val_str(gguf_.get(), id);
+        const auto numbers = release_numbers(release), own = release_numbers(SPEECH_VERSION);
+        if (numbers && own && *numbers > *own) return "speech.cpp " + release + " and later read it, and this is " + SPEECH_VERSION;
+    }
+    return remedy_;
 }
 
 ggml_tensor * ModelFile::tensor(const std::string & name) const {
@@ -429,7 +419,7 @@ std::string ModelFile::meta_json(size_t index) const {
         throw file_error("the key " + meta_key(index) + " of " + path_ + " holds arrays of arrays, which no layout has; " + remedy_);
     } else {
         const auto * data = (const uint8_t *) gguf_get_arr_data(g, id);
-        const size_t width = scalar_size(element);
+        const size_t width = gguf_scalar_size(element);
         for (size_t i = 0; i < n; i++) out += (i ? "," : "") + scalar_json(element, data + i * width);
     }
     return out + "]";
@@ -459,15 +449,15 @@ ModelIdentity read_identity(const ModelFile & file) {
     }
 
     const uint32_t value = file.u32("general.file_type");
-    const FileType * named = nullptr;
+    const WeightType * named = nullptr;
     std::string known;
-    for (const FileType & t : kFileTypes) {
-        if (t.value == value) named = &t;
-        known += (known.empty() ? "" : ", ") + std::to_string(t.value) + " (" + tensor_type_text(t.type) + ")";
+    for (const WeightType & t : weight_types()) {
+        if (t.file_type == value) named = &t;
+        known += (known.empty() ? "" : ", ") + std::to_string(t.file_type) + " (" + tensor_type_text(t.type) + ")";
     }
     if (!named) {
         throw file_error("the key general.file_type of " + file.path() + " is " + std::to_string(value) +
-                         ", which names none of the types speech.cpp's converters write, " + known + "; " + file.remedy());
+                         ", which names none of the weight types this release reads, " + known + "; " + file.remedy_for_unknown());
     }
     const std::map<ggml_type, uint64_t> bytes = file.type_bytes();
     const auto most = std::max_element(bytes.begin(), bytes.end(), [](const auto & a, const auto & b) { return a.second < b.second; });
@@ -508,19 +498,14 @@ void check_model_keys(const ModelFile & file, const char * task, const char * la
     }
 }
 
-Shape::Shape(std::initializer_list<int64_t> axes) {
-    if (axes.size() > GGML_MAX_DIMS) throw std::logic_error("a shape has more axes than ggml's tensors");
-    std::copy(axes.begin(), axes.end(), ne);
-}
-
 void add_block(std::vector<TensorSpec> & tensors, const std::string & prefix, std::initializer_list<TensorSpec> parts) {
-    for (const TensorSpec & part : parts) tensors.push_back({prefix + part.name, part.shape, part.types});
+    for (const TensorSpec & part : parts) tensors.push_back({prefix + part.name, part.shape, part.storage});
 }
 
 void add_numbered(std::vector<TensorSpec> & tensors, const std::string & prefix, int count, std::initializer_list<TensorSpec> parts) {
     for (int i = 0; i < count; i++) {
         for (const TensorSpec & part : parts) {
-            tensors.push_back({prefix + std::to_string(i) + (part.name.empty() ? "" : "." + part.name), part.shape, part.types});
+            tensors.push_back({prefix + std::to_string(i) + (part.name.empty() ? "" : "." + part.name), part.shape, part.storage});
         }
     }
 }

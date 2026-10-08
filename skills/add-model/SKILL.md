@@ -27,7 +27,8 @@ names keys, files and layouts.
 
 - Dump every stage, with the noise fixed, for each new option and each setting a request can take. Use only audio
   that may be published (FLEURS, Common Voice); never a recording of a person who has not agreed to it.
-- Write every type the family publishes (docs/gguf.md, Convert a model), F32 first, which the checks run on.
+- `convert.py` writes F32, which the checks run on; `speech quantize` makes every other type, each tensor as the
+  family's `layout.cpp` table stores it (docs/adr/0040). Decide in that table which tensors a type may change.
 
 ## 3. The port
 

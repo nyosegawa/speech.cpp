@@ -1,12 +1,11 @@
 """Converts a pinned official Qwen3-TTS 12Hz CustomVoice checkpoint to the one GGUF file the C++ port reads.
 
-usage: uv run python convert.py <0.6b|1.7b> <out dir> [--type f32|f16|q8_0]
+usage: uv run python convert.py <0.6b|1.7b> <out dir>
 
-Writes Qwen3-TTS-12Hz-<0.6B|1.7B>-CustomVoice-<F32|F16|Q8_0>.gguf, named under GGUF's naming convention, in layout 1:
-the talker, the code predictor, the text embedding, the tokenizer and the 12Hz codec's decoder, with every constant the
-C++ reads and the model's identity in the GGUF specification's general keys. --type applies to the talker's and the code
-predictor's matrices; the codec's large weights are float16 in an F16 or Q8_0 file and float32 in an F32 one, and
-norms, biases and the rest stay float32.
+Writes Qwen3-TTS-12Hz-<0.6B|1.7B>-CustomVoice-F32.gguf, named under GGUF's naming convention, in layout 1: the talker,
+the code predictor, the text embedding, the tokenizer and the 12Hz codec's decoder, every tensor in float32, with every
+constant the C++ reads and the model's identity in the GGUF specification's general keys. `speech quantize` makes the
+other weight types of it, each tensor in the type src/families/qwen3-tts/layout.cpp gives it (docs/adr/0040).
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis. A Linear weight [out, in] is stored as is
 (ne = [in, out]). Every convolution weight is stored as numpy [k, out, in] (ne = [in, out, k]), so that tap k is
@@ -22,8 +21,7 @@ import re
 
 import numpy as np
 import yaml
-from gguf import GGML_QUANT_VERSION, GGMLQuantizationType, GGUFValueType, GGUFWriter, LlamaFileType, naming_convention
-from gguf.quants import quantize
+from gguf import GGUFValueType, GGUFWriter, LlamaFileType, naming_convention
 from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSForConditionalGeneration
 from safetensors import safe_open
 
@@ -44,13 +42,10 @@ LICENSES = {"apache-2.0": "Apache-2.0"}
 # The parts of the models' names under GGUF's naming convention (ggml's docs/gguf.md) besides the size: 12Hz, the
 # codec's frame rate, belongs to the line, and CustomVoice is what the line was fine-tuned toward.
 BASENAME, FINETUNE = "Qwen3-TTS-12Hz", "CustomVoice"
-# The type of most of a file's weights by its --type, as general.file_type gives it.
-FILE_TYPES = {"f32": LlamaFileType.ALL_F32, "f16": LlamaFileType.MOSTLY_F16, "q8_0": LlamaFileType.MOSTLY_Q8_0}
 
 parser = argparse.ArgumentParser()
 parser.add_argument("model", choices=sorted(MODELS))
 parser.add_argument("out_dir")
-parser.add_argument("--type", choices=["f16", "q8_0", "f32"], default="q8_0")
 args = parser.parse_args()
 os.makedirs(args.out_dir, exist_ok=True)
 
@@ -107,7 +102,7 @@ def load(path):
     return {k: f.get_tensor(k).float().numpy() for k in f.keys()}
 
 
-path = os.path.join(args.out_dir, naming_convention(None, BASENAME, FINETUNE, None, size_label, args.type) + ".gguf")
+path = os.path.join(args.out_dir, naming_convention(None, BASENAME, FINETUNE, None, size_label, "f32") + ".gguf")
 w = GGUFWriter(path, ARCH)
 
 
@@ -131,9 +126,7 @@ w.add_finetune(FINETUNE)
 w.add_license(LICENSES[license_id])
 w.add_source_url(f"{repository}/tree/{pin['revision']}")
 w.add_source_repo_url(repository)
-w.add_file_type(FILE_TYPES[args.type])
-if args.type == "q8_0":
-    w.add_quantization_version(GGML_QUANT_VERSION)
+w.add_file_type(LlamaFileType.ALL_F32)
 w.add_languages([tag for tag, _ in tags])
 w.add_uint32("speech.layout", LAYOUT)
 w.add_string("speech.requires", RELEASES[LAYOUT])
@@ -208,68 +201,58 @@ add_array(f"{p}codec.upsample_rates", [int(r) for r in codec_cfg["upsample_rates
 add_array(f"{p}codec.upsampling_ratios", [int(r) for r in codec_cfg["upsampling_ratios"]], GGUFValueType.INT32)
 
 
-def add(name, data, kind):
-    """kind: 'matrix' is quantized to the requested type, 'f16' or 'f32' is stored as is."""
-    data = np.ascontiguousarray(data, dtype=np.float32)
-    if kind == "matrix" and args.type == "q8_0" and data.ndim == 2 and data.shape[-1] % 32 == 0:
-        w.add_tensor(name, quantize(data, GGMLQuantizationType.Q8_0), raw_dtype=GGMLQuantizationType.Q8_0)
-    elif kind == "matrix" and args.type in ("f16", "q8_0"):
-        w.add_tensor(name, data.astype(np.float16))
-    elif kind == "f16":
-        w.add_tensor(name, data.astype(np.float16))
-    else:
-        w.add_tensor(name, data)
+def add(name, data):
+    w.add_tensor(name, np.ascontiguousarray(data, dtype=np.float32))
 
 
 # ---------------------------------------------------------------- talker
 weights = load(os.path.join(model_dir, "model.safetensors"))
 t = "talker."
-add("talker.text_embd", weights[t + "model.text_embedding.weight"], "matrix")
-add("talker.text_proj.fc1.weight", weights[t + "text_projection.linear_fc1.weight"], "matrix")
-add("talker.text_proj.fc1.bias", weights[t + "text_projection.linear_fc1.bias"], "f32")
-add("talker.text_proj.fc2.weight", weights[t + "text_projection.linear_fc2.weight"], "matrix")
-add("talker.text_proj.fc2.bias", weights[t + "text_projection.linear_fc2.bias"], "f32")
-add("talker.codec_embd", weights[t + "model.codec_embedding.weight"], "matrix")
-add("talker.codec_head", weights[t + "codec_head.weight"], "matrix")
-add("talker.norm", weights[t + "model.norm.weight"], "f32")
+add("talker.text_embd", weights[t + "model.text_embedding.weight"])
+add("talker.text_proj.fc1.weight", weights[t + "text_projection.linear_fc1.weight"])
+add("talker.text_proj.fc1.bias", weights[t + "text_projection.linear_fc1.bias"])
+add("talker.text_proj.fc2.weight", weights[t + "text_projection.linear_fc2.weight"])
+add("talker.text_proj.fc2.bias", weights[t + "text_projection.linear_fc2.bias"])
+add("talker.codec_embd", weights[t + "model.codec_embedding.weight"])
+add("talker.codec_head", weights[t + "codec_head.weight"])
+add("talker.norm", weights[t + "model.norm.weight"])
 
 
 def add_layers(prefix_in, prefix_out, n):
     for i in range(n):
         a = f"{prefix_in}.layers.{i}."
         b = f"{prefix_out}.blk.{i}."
-        add(b + "attn_norm", weights[a + "input_layernorm.weight"], "f32")
-        add(b + "ffn_norm", weights[a + "post_attention_layernorm.weight"], "f32")
-        add(b + "attn_q", weights[a + "self_attn.q_proj.weight"], "matrix")
-        add(b + "attn_k", weights[a + "self_attn.k_proj.weight"], "matrix")
-        add(b + "attn_v", weights[a + "self_attn.v_proj.weight"], "matrix")
-        add(b + "attn_o", weights[a + "self_attn.o_proj.weight"], "matrix")
-        add(b + "attn_q_norm", weights[a + "self_attn.q_norm.weight"], "f32")
-        add(b + "attn_k_norm", weights[a + "self_attn.k_norm.weight"], "f32")
-        add(b + "ffn_gate", weights[a + "mlp.gate_proj.weight"], "matrix")
-        add(b + "ffn_up", weights[a + "mlp.up_proj.weight"], "matrix")
-        add(b + "ffn_down", weights[a + "mlp.down_proj.weight"], "matrix")
+        add(b + "attn_norm", weights[a + "input_layernorm.weight"])
+        add(b + "ffn_norm", weights[a + "post_attention_layernorm.weight"])
+        add(b + "attn_q", weights[a + "self_attn.q_proj.weight"])
+        add(b + "attn_k", weights[a + "self_attn.k_proj.weight"])
+        add(b + "attn_v", weights[a + "self_attn.v_proj.weight"])
+        add(b + "attn_o", weights[a + "self_attn.o_proj.weight"])
+        add(b + "attn_q_norm", weights[a + "self_attn.q_norm.weight"])
+        add(b + "attn_k_norm", weights[a + "self_attn.k_norm.weight"])
+        add(b + "ffn_gate", weights[a + "mlp.gate_proj.weight"])
+        add(b + "ffn_up", weights[a + "mlp.up_proj.weight"])
+        add(b + "ffn_down", weights[a + "mlp.down_proj.weight"])
 
 
 add_layers(t + "model", "talker", talker_cfg["num_hidden_layers"])
 c = t + "code_predictor."
 add_layers(c + "model", "cp", cp_cfg["num_hidden_layers"])
-add("cp.norm", weights[c + "model.norm.weight"], "f32")
+add("cp.norm", weights[c + "model.norm.weight"])
 for i in range(talker_cfg["num_code_groups"] - 1):
-    add(f"cp.codec_embd.{i}", weights[c + f"model.codec_embedding.{i}.weight"], "matrix")
-    add(f"cp.head.{i}", weights[c + f"lm_head.{i}.weight"], "matrix")
+    add(f"cp.codec_embd.{i}", weights[c + f"model.codec_embedding.{i}.weight"])
+    add(f"cp.head.{i}", weights[c + f"lm_head.{i}.weight"])
 # The official model makes small_to_mtp_projection a Linear exactly when the two widths differ, and an identity
 # otherwise.
 projected = cp_cfg["hidden_size"] != talker_cfg["hidden_size"]
 assert (c + "small_to_mtp_projection.weight" in weights) == projected
 if projected:
-    add("cp.in_proj.weight", weights[c + "small_to_mtp_projection.weight"], "matrix")
-    add("cp.in_proj.bias", weights[c + "small_to_mtp_projection.bias"], "f32")
+    add("cp.in_proj.weight", weights[c + "small_to_mtp_projection.weight"])
+    add("cp.in_proj.bias", weights[c + "small_to_mtp_projection.bias"])
 
 # ---------------------------------------------------------------- codec decoder
 cw = {k[len("decoder."):]: v for k, v in load(os.path.join(codec_dir, "model.safetensors")).items()
       if k.startswith("decoder.")}
-big = "f32" if args.type == "f32" else "f16"
 
 
 def codebook(prefix):
@@ -278,91 +261,91 @@ def codebook(prefix):
 
 
 # The first quantizer and the other fifteen each project 256 -> 512 with their own 1x1 conv.
-add("codec.vq.first.codebook.0", codebook("quantizer.rvq_first.vq.layers.0"), "f32")
-add("codec.vq.first.out_proj", cw["quantizer.rvq_first.output_proj.weight"][:, :, 0], "f32")
+add("codec.vq.first.codebook.0", codebook("quantizer.rvq_first.vq.layers.0"))
+add("codec.vq.first.out_proj", cw["quantizer.rvq_first.output_proj.weight"][:, :, 0])
 for i in range(codec_cfg["num_quantizers"] - 1):
-    add(f"codec.vq.rest.codebook.{i}", codebook(f"quantizer.rvq_rest.vq.layers.{i}"), "f32")
-add("codec.vq.rest.out_proj", cw["quantizer.rvq_rest.output_proj.weight"][:, :, 0], "f32")
+    add(f"codec.vq.rest.codebook.{i}", codebook(f"quantizer.rvq_rest.vq.layers.{i}"))
+add("codec.vq.rest.out_proj", cw["quantizer.rvq_rest.output_proj.weight"][:, :, 0])
 
 
 def conv(name, weight):
     """Conv1d weight [out, in, k] -> [k, out, in]."""
-    add(name, np.transpose(weight, (2, 0, 1)), big)
+    add(name, np.transpose(weight, (2, 0, 1)))
 
 
 def tconv(name, weight):
     """ConvTranspose1d weight [in, out, k] -> [k, out, in]."""
-    add(name, np.transpose(weight, (2, 1, 0)), big)
+    add(name, np.transpose(weight, (2, 1, 0)))
 
 
 conv("codec.pre_conv.weight", cw["pre_conv.conv.weight"])
-add("codec.pre_conv.bias", cw["pre_conv.conv.bias"], "f32")
+add("codec.pre_conv.bias", cw["pre_conv.conv.bias"])
 
 tf = "pre_transformer."
-add("codec.tf.in_proj.weight", cw[tf + "input_proj.weight"], big)
-add("codec.tf.in_proj.bias", cw[tf + "input_proj.bias"], "f32")
-add("codec.tf.out_proj.weight", cw[tf + "output_proj.weight"], big)
-add("codec.tf.out_proj.bias", cw[tf + "output_proj.bias"], "f32")
-add("codec.tf.norm", cw[tf + "norm.weight"], "f32")
+add("codec.tf.in_proj.weight", cw[tf + "input_proj.weight"])
+add("codec.tf.in_proj.bias", cw[tf + "input_proj.bias"])
+add("codec.tf.out_proj.weight", cw[tf + "output_proj.weight"])
+add("codec.tf.out_proj.bias", cw[tf + "output_proj.bias"])
+add("codec.tf.norm", cw[tf + "norm.weight"])
 for i in range(codec_cfg["num_hidden_layers"]):
     a = f"{tf}layers.{i}."
     b = f"codec.tf.blk.{i}."
-    add(b + "attn_norm", cw[a + "input_layernorm.weight"], "f32")
-    add(b + "ffn_norm", cw[a + "post_attention_layernorm.weight"], "f32")
-    add(b + "attn_q", cw[a + "self_attn.q_proj.weight"], big)
-    add(b + "attn_k", cw[a + "self_attn.k_proj.weight"], big)
-    add(b + "attn_v", cw[a + "self_attn.v_proj.weight"], big)
-    add(b + "attn_o", cw[a + "self_attn.o_proj.weight"], big)
-    add(b + "attn_scale", cw[a + "self_attn_layer_scale.scale"], "f32")
-    add(b + "ffn_gate", cw[a + "mlp.gate_proj.weight"], big)
-    add(b + "ffn_up", cw[a + "mlp.up_proj.weight"], big)
-    add(b + "ffn_down", cw[a + "mlp.down_proj.weight"], big)
-    add(b + "ffn_scale", cw[a + "mlp_layer_scale.scale"], "f32")
+    add(b + "attn_norm", cw[a + "input_layernorm.weight"])
+    add(b + "ffn_norm", cw[a + "post_attention_layernorm.weight"])
+    add(b + "attn_q", cw[a + "self_attn.q_proj.weight"])
+    add(b + "attn_k", cw[a + "self_attn.k_proj.weight"])
+    add(b + "attn_v", cw[a + "self_attn.v_proj.weight"])
+    add(b + "attn_o", cw[a + "self_attn.o_proj.weight"])
+    add(b + "attn_scale", cw[a + "self_attn_layer_scale.scale"])
+    add(b + "ffn_gate", cw[a + "mlp.gate_proj.weight"])
+    add(b + "ffn_up", cw[a + "mlp.up_proj.weight"])
+    add(b + "ffn_down", cw[a + "mlp.down_proj.weight"])
+    add(b + "ffn_scale", cw[a + "mlp_layer_scale.scale"])
 
 for i in range(len(codec_cfg["upsampling_ratios"])):
     a = f"upsample.{i}."
     b = f"codec.up.{i}."
     tconv(b + "tconv.weight", cw[a + "0.conv.weight"])
-    add(b + "tconv.bias", cw[a + "0.conv.bias"], "f32")
-    add(b + "dwconv.weight", np.transpose(cw[a + "1.dwconv.conv.weight"][:, 0, :]), "f32")
-    add(b + "dwconv.bias", cw[a + "1.dwconv.conv.bias"], "f32")
-    add(b + "norm.weight", cw[a + "1.norm.weight"], "f32")
-    add(b + "norm.bias", cw[a + "1.norm.bias"], "f32")
-    add(b + "pw1.weight", cw[a + "1.pwconv1.weight"], big)
-    add(b + "pw1.bias", cw[a + "1.pwconv1.bias"], "f32")
-    add(b + "pw2.weight", cw[a + "1.pwconv2.weight"], big)
-    add(b + "pw2.bias", cw[a + "1.pwconv2.bias"], "f32")
-    add(b + "gamma", cw[a + "1.gamma"], "f32")
+    add(b + "tconv.bias", cw[a + "0.conv.bias"])
+    add(b + "dwconv.weight", np.transpose(cw[a + "1.dwconv.conv.weight"][:, 0, :]))
+    add(b + "dwconv.bias", cw[a + "1.dwconv.conv.bias"])
+    add(b + "norm.weight", cw[a + "1.norm.weight"])
+    add(b + "norm.bias", cw[a + "1.norm.bias"])
+    add(b + "pw1.weight", cw[a + "1.pwconv1.weight"])
+    add(b + "pw1.bias", cw[a + "1.pwconv1.bias"])
+    add(b + "pw2.weight", cw[a + "1.pwconv2.weight"])
+    add(b + "pw2.bias", cw[a + "1.pwconv2.bias"])
+    add(b + "gamma", cw[a + "1.gamma"])
 
 
 def snake(prefix, name):
     """SnakeBeta: x + inv_beta * sin(alpha * x)^2, with alpha = exp(a) and inv_beta = 1 / (exp(b) + 1e-9)."""
-    add(name + ".alpha", np.exp(cw[prefix + ".alpha"]), "f32")
-    add(name + ".inv_beta", 1.0 / (np.exp(cw[prefix + ".beta"]) + 1e-9), "f32")
+    add(name + ".alpha", np.exp(cw[prefix + ".alpha"]))
+    add(name + ".inv_beta", 1.0 / (np.exp(cw[prefix + ".beta"]) + 1e-9))
 
 
 conv("codec.dec.in_conv.weight", cw["decoder.0.conv.weight"])
-add("codec.dec.in_conv.bias", cw["decoder.0.conv.bias"], "f32")
+add("codec.dec.in_conv.bias", cw["decoder.0.conv.bias"])
 n_blocks = len(codec_cfg["upsample_rates"])
 for i in range(n_blocks):
     a = f"decoder.{i + 1}.block."
     b = f"codec.dec.blk.{i}."
     snake(a + "0", b + "snake")
     tconv(b + "tconv.weight", cw[a + "1.conv.weight"])
-    add(b + "tconv.bias", cw[a + "1.conv.bias"], "f32")
+    add(b + "tconv.bias", cw[a + "1.conv.bias"])
     # The three residual units of dilations 1, 3 and 9, which the C++ runs as the architecture's.
     for j in range(3):
         r = f"{a}{j + 2}."
         s = f"{b}res.{j}."
         snake(r + "act1", s + "snake1")
         conv(s + "conv1.weight", cw[r + "conv1.conv.weight"])
-        add(s + "conv1.bias", cw[r + "conv1.conv.bias"], "f32")
+        add(s + "conv1.bias", cw[r + "conv1.conv.bias"])
         snake(r + "act2", s + "snake2")
         conv(s + "conv2.weight", cw[r + "conv2.conv.weight"])
-        add(s + "conv2.bias", cw[r + "conv2.conv.bias"], "f32")
+        add(s + "conv2.bias", cw[r + "conv2.conv.bias"])
 snake(f"decoder.{n_blocks + 1}", "codec.dec.out_snake")
 conv("codec.dec.out_conv.weight", cw[f"decoder.{n_blocks + 2}.conv.weight"])
-add("codec.dec.out_conv.bias", cw[f"decoder.{n_blocks + 2}.conv.bias"], "f32")
+add("codec.dec.out_conv.bias", cw[f"decoder.{n_blocks + 2}.conv.bias"])
 
 w.write_header_to_file()
 w.write_kv_data_to_file()

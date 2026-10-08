@@ -12,6 +12,7 @@ This page lists the subcommands of `speech` and their options. `speech <subcomma
 | [`speech models`](#speech-models) | lists the models a name fetches, what is fetched, and which model to start with |
 | [`speech pull`](#speech-pull) | fetches models ahead of their use |
 | [`speech rm`](#speech-rm) | removes fetched models, or the files of earlier releases |
+| [`speech quantize`](#speech-quantize) | writes a model file of F32 weights in another weight type |
 | [`speech serve`](server.md) | serves a model of each task over HTTP with OpenAI's audio API, and a page to try models on |
 | [`speech worker`](worker.md) | serves a model over JSON Lines on stdin and stdout, for programs such as ASIST |
 
@@ -220,6 +221,28 @@ speech rm NAME[:TYPE]... | speech rm --old
 Removes each model's file, with what was fetched of it and the folders that this leaves empty. `--old` removes every
 file that no model of this release names. `speech rm` waits for a process that fetches the same file. A model that is not
 in the folder is refused with exit 1, before anything is removed.
+
+## speech quantize
+
+```
+speech quantize MODEL OUT --type f16|q8_0|q6_k|q5_k|q4_k
+```
+
+- Writes MODEL, a model file of F32 weights as the converters write it ([gguf.md](gguf.md#convert-a-model)), in another
+  weight type, on the CPU with the machine's threads. Each tensor takes the type its family's layout gives it in a file
+  of that type ([gguf.md](gguf.md#weight-types)), and every other key and tensor is kept as MODEL has it.
+- OUT is the file to write, or a folder, in which the file takes the name GGUF's naming convention gives it, such as
+  `Qwen3-ASR-0.6B-Q8_0.gguf`. A file OUT names is replaced, and removed again when the writing fails.
+- Of the F32 file a released file was converted from, `--type f16` or `--type q8_0` writes the released file byte for
+  byte.
+- `q6_k`, `q5_k` and `q4_k` make smaller files that compute less exactly
+  ([checks.md](development/checks.md#lower-bit-widths) gives what each loses), which speech.cpp 0.8.0 and later read, as
+  they read a FastConformer file in `q8_0`, which 0.7 reads in `f16` and `f32` alone.
+- MODEL is a path, and its weights must be F32: a quantized file is not quantized again, and a type made of F16 weights
+  would hold other bytes than the same type made of the F32 weights. Either is refused with exit 1
+  (`speech: invalid_argument (model_path): ...`), before anything is written.
+- A weight that is not finite, NaN or an infinity, is refused with exit 1 (`speech: model_file (model_path): ...`),
+  naming the tensor, and nothing is left at OUT.
 
 ## speech serve and speech worker
 

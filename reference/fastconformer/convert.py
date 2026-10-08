@@ -1,22 +1,21 @@
 """Converts a pinned NeMo FastConformer checkpoint with an RNN-T or TDT decoder to the one GGUF file the C++ port reads.
 
-usage: uv run python convert.py <model> <out dir> [--type f32|f16]
+usage: uv run python convert.py <model> <out dir>
 
-Writes parakeet-tdt_ctc-0.6B-ja-<F32|F16>.gguf, parakeet-tdt-0.6B-v3-<F32|F16>.gguf or
-reazonspeech-nemo-619M-v2-<F32|F16>.gguf, named under GGUF's naming convention, in layout 2: the frontend's window and
-mel filterbank, the subsampling, the conformer layers, the prediction network and the joint, with the SentencePiece
-pieces the token ids name, the settings of the decoding transcribe() runs (greedy TDT's durations and limit, or the
-beam and length of RNN-T's alignment-length synchronous beam search) and, for RNN-T, the limit of the greedy decoding
-NeMo also runs on it, every other constant the C++ reads and the model's identity in the GGUF specification's general
-keys. A hybrid checkpoint's CTC head is left out, since
-NeMo decodes with its transducer.
+Writes parakeet-tdt_ctc-0.6B-ja-F32.gguf, parakeet-tdt-0.6B-v3-F32.gguf or reazonspeech-nemo-619M-v2-F32.gguf, named
+under GGUF's naming convention, in layout 2: the frontend's window and mel filterbank, the subsampling, the conformer
+layers, the prediction network and the joint, with the SentencePiece pieces the token ids name, the settings of the
+decoding transcribe() runs (greedy TDT's durations and limit, or the beam and length of RNN-T's alignment-length
+synchronous beam search) and, for RNN-T, the limit of the greedy decoding NeMo also runs on it, every other constant the
+C++ reads and the model's identity in the GGUF specification's general keys. A hybrid checkpoint's CTC head is left out,
+since NeMo decodes with its transducer.
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [out, in] is stored as is
-(ne = [in, out]). --type f16 applies to the matrices of the linear layers; convolution kernels, norms, biases,
-the frontend and the rest stay float32. The batch norm of each convolution module is folded into its
-depthwise convolution, which it follows in evaluation, and each LSTM layer's two biases are summed. A checkpoint
-whose conformer layers have no biases (ConformerEncoder's use_bias false) is written without them, and
-fastconformer.encoder.use_bias says so.
+(ne = [in, out]). Every tensor is written in float32; `speech quantize` makes the other weight types of the file, each
+tensor in the type src/families/fastconformer/layout.cpp gives it (docs/adr/0040). The batch norm of each convolution
+module is folded into its depthwise convolution, which it follows in evaluation, and each LSTM layer's two biases are
+summed. A checkpoint whose conformer layers have no biases (ConformerEncoder's use_bias false) is written without them,
+and fastconformer.encoder.use_bias says so.
 """
 
 import argparse
@@ -54,8 +53,6 @@ NAMES = {
     "parakeet-tdt-0.6b-v3": {"basename": "parakeet-tdt", "size_label": "0.6B", "finetune": None, "version": "v3"},
     "reazonspeech-nemo-v2": {"basename": "reazonspeech-nemo", "size_label": None, "finetune": None, "version": "v2"},
 }
-# The type of most of a file's weights by its --type, as general.file_type gives it.
-FILE_TYPES = {"f32": LlamaFileType.ALL_F32, "f16": LlamaFileType.MOSTLY_F16}
 # speech.cpp's addition to NeMo's segments: the marks that end a segment wherever they stand, for a model whose
 # languages are written without spaces. NeMo ends a segment at one of its separators only where a word ends, which
 # text without spaces between its words never reaches.
@@ -75,7 +72,6 @@ class Writer(GGUFWriter):
 parser = argparse.ArgumentParser()
 parser.add_argument("model", choices=sorted(MODELS))
 parser.add_argument("out_dir")
-parser.add_argument("--type", choices=["f32", "f16"], default="f16")
 args = parser.parse_args()
 os.makedirs(args.out_dir, exist_ok=True)
 
@@ -238,9 +234,8 @@ assert not decoding.strip_lang_tags
 sd = {k: v.detach().float().numpy() for k, v in model.state_dict().items()}
 
 
-def add(name, data, matrix=False):
-    data = np.ascontiguousarray(data, dtype=np.float32)
-    w.add_tensor(name, data.astype(np.float16) if matrix and args.type == "f16" else data)
+def add(name, data):
+    w.add_tensor(name, np.ascontiguousarray(data, dtype=np.float32))
 
 
 add("frontend.window", sd["preprocessor.featurizer.window"])
@@ -254,9 +249,9 @@ for i in range(1, int(np.log2(enc.subsampling_factor))):
     dw, pw = 3 * i - 1, 3 * i
     add(f"sub.conv.{i}.dw.weight", sd[s + f"conv.{dw}.weight"])
     add(f"sub.conv.{i}.dw.bias", sd[s + f"conv.{dw}.bias"])
-    add(f"sub.conv.{i}.pw.weight", sd[s + f"conv.{pw}.weight"][:, :, 0, 0], True)
+    add(f"sub.conv.{i}.pw.weight", sd[s + f"conv.{pw}.weight"][:, :, 0, 0])
     add(f"sub.conv.{i}.pw.bias", sd[s + f"conv.{pw}.bias"])
-add("sub.out.weight", sd[s + "out.weight"], True)
+add("sub.out.weight", sd[s + "out.weight"])
 add("sub.out.bias", sd[s + "out.bias"])
 
 d = int(enc.d_model)
@@ -264,7 +259,7 @@ for l in range(int(enc.n_layers)):
     a, o = f"encoder.layers.{l}.", f"blk.{l}."
 
     def linear(src, dst, bias=use_bias):
-        add(dst + ".weight", sd[a + src + ".weight"], True)
+        add(dst + ".weight", sd[a + src + ".weight"])
         if bias:
             add(dst + ".bias", sd[a + src + ".bias"])
 
@@ -286,8 +281,8 @@ for l in range(int(enc.n_layers)):
     norm("norm_conv", o + "conv_norm")
     # GLU keeps the first half of the pointwise convolution's channels and gates them with the second.
     pw1 = sd[a + "conv.pointwise_conv1.weight"][:, :, 0]
-    add(o + "conv_pw1_a.weight", pw1[:d], True)
-    add(o + "conv_pw1_gate.weight", pw1[d:], True)
+    add(o + "conv_pw1_a.weight", pw1[:d])
+    add(o + "conv_pw1_gate.weight", pw1[d:])
     if use_bias:
         add(o + "conv_pw1_a.bias", sd[a + "conv.pointwise_conv1.bias"][:d])
         add(o + "conv_pw1_gate.bias", sd[a + "conv.pointwise_conv1.bias"][d:])
@@ -296,23 +291,23 @@ for l in range(int(enc.n_layers)):
     dw_bias = sd[a + "conv.depthwise_conv.bias"] if use_bias else 0
     add(o + "conv_dw.weight", sd[a + "conv.depthwise_conv.weight"][:, 0, :] * scale[:, None])
     add(o + "conv_dw.bias", (dw_bias - sd[bn + "running_mean"]) * scale + sd[bn + "bias"])
-    add(o + "conv_pw2.weight", sd[a + "conv.pointwise_conv2.weight"][:, :, 0], True)
+    add(o + "conv_pw2.weight", sd[a + "conv.pointwise_conv2.weight"][:, :, 0])
     if use_bias:
         add(o + "conv_pw2.bias", sd[a + "conv.pointwise_conv2.bias"])
     norm("norm_out", o + "out_norm")
 
 # The prediction network: an embedding of the tokens and the blank, then LSTM layers whose gates are stacked as
 # PyTorch stacks them, input, forget, cell and output.
-add("pred.embed.weight", sd["decoder.prediction.embed.weight"], True)
+add("pred.embed.weight", sd["decoder.prediction.embed.weight"])
 for l in range(int(dec.pred_rnn_layers)):
     r = "decoder.prediction.dec_rnn.lstm."
-    add(f"pred.lstm.{l}.ih.weight", sd[r + f"weight_ih_l{l}"], True)
-    add(f"pred.lstm.{l}.hh.weight", sd[r + f"weight_hh_l{l}"], True)
+    add(f"pred.lstm.{l}.ih.weight", sd[r + f"weight_ih_l{l}"])
+    add(f"pred.lstm.{l}.hh.weight", sd[r + f"weight_hh_l{l}"])
     add(f"pred.lstm.{l}.bias", sd[r + f"bias_ih_l{l}"] + sd[r + f"bias_hh_l{l}"])
 for x in ("enc", "pred"):
-    add(f"joint.{x}.weight", sd[f"joint.{x}.weight"], True)
+    add(f"joint.{x}.weight", sd[f"joint.{x}.weight"])
     add(f"joint.{x}.bias", sd[f"joint.{x}.bias"])
-add("joint.out.weight", sd["joint.joint_net.2.weight"], True)
+add("joint.out.weight", sd["joint.joint_net.2.weight"])
 add("joint.out.bias", sd["joint.joint_net.2.bias"])
 
 # The model's identity and languages in the GGUF specification's general keys, which name the file. They follow the
@@ -332,11 +327,11 @@ if parts["version"]:
 w.add_license(LICENSES[args.model])
 w.add_source_url(f"{repository}/tree/{pin['revision']}")
 w.add_source_repo_url(repository)
-w.add_file_type(FILE_TYPES[args.type])
+w.add_file_type(LlamaFileType.ALL_F32)
 w.add_languages(sorted(LANGUAGES[args.model]))
 w.kv_data[0] = dict(sorted(w.kv_data[0].items(), key=lambda item: not item[0].startswith("general.")))
 
-path = os.path.join(args.out_dir, naming_convention(None, parts["basename"], parts["finetune"], parts["version"], label, args.type) + ".gguf")
+path = os.path.join(args.out_dir, naming_convention(None, parts["basename"], parts["finetune"], parts["version"], label, "f32") + ".gguf")
 w.write_header_to_file(path)
 w.write_kv_data_to_file()
 w.write_tensors_to_file()

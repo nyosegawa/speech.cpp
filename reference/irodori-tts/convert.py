@@ -1,7 +1,7 @@
 """Converts a pinned official Irodori-TTS checkpoint, v4.1-Small-MF or v4.1-Small, with its codec to the one GGUF file
 the C++ port reads.
 
-usage: uv run python convert.py <mf|rf> <out dir> [--type f32|f16|q8_0]
+usage: uv run python convert.py <mf|rf> <out dir>
 
 Writes the model's file, named under GGUF's naming convention from its identity and the parameters of its tensors, in
 layout 2: the tokenizer, ModernBERT-ja and the projectors that make the text and the caption conditions from it, the
@@ -10,8 +10,8 @@ caption's keys and values, and Semantic-DACVAE-Japanese-32dim, the codec, with e
 of the codec's tensors, which voice files carry, and the model's identity in the GGUF specification's general keys.
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [out, in] is stored as is
-(ne = [in, out]). --type applies to the model's matrices whose rows are a multiple of 32; the codec stays float32,
-as the released files carry it, and norms, biases and the rest stay float32.
+(ne = [in, out]). Every tensor is written in float32; `speech quantize` makes the other weight types of the file, each
+tensor in the type src/families/irodori-tts/layout.cpp gives it (docs/adr/0040).
 
 The codec's weight normalization is folded by the dacvae library itself (remove_weight_norm). Every convolution
 weight is stored as numpy [k, out, in] (ne = [in, out, k]), so that tap k is a plain [in, out] matrix: the C++ side
@@ -33,9 +33,7 @@ import numpy as np
 import torch
 import yaml
 from dacvae import DACVAE
-from gguf import (GGML_QUANT_VERSION, GGMLQuantizationType, GGUFValueType, GGUFWriter, LlamaFileType, naming_convention,
-                  size_label)
-from gguf.quants import quantize
+from gguf import GGUFValueType, GGUFWriter, LlamaFileType, naming_convention, size_label
 from irodori_tts import inference_runtime
 from irodori_tts.model import precompute_freqs_cis
 from safetensors import safe_open
@@ -54,8 +52,6 @@ LICENSES = {"mit": "MIT"}
 # convention's size label is a number; MF is v4.1-Small distilled with MeanFlow.
 NAMES = {"mf": {"basename": "Irodori-TTS", "finetune": "MF", "version": "v4.1"},
          "rf": {"basename": "Irodori-TTS", "finetune": None, "version": "v4.1"}}
-# The type of most of a file's weights by its --type, as general.file_type gives it.
-FILE_TYPES = {"f32": LlamaFileType.ALL_F32, "f16": LlamaFileType.MOSTLY_F16, "q8_0": LlamaFileType.MOSTLY_Q8_0}
 # The bounds of OpenAI's speed, which Irodori-TTS-Server takes and divides the length by
 # (Aratako/Irodori-TTS-Server@61012c760f22f7b4a6c21c5c5f8f9e148120b6f9, src/irodori_openai_tts/app.py).
 MIN_SPEED, MAX_SPEED = 0.25, 4.0
@@ -63,7 +59,6 @@ MIN_SPEED, MAX_SPEED = 0.25, 4.0
 parser = argparse.ArgumentParser()
 parser.add_argument("model", choices=sorted(MODELS))
 parser.add_argument("out_dir")
-parser.add_argument("--type", choices=["f32", "f16", "q8_0"], default="q8_0")
 args = parser.parse_args()
 os.makedirs(args.out_dir, exist_ok=True)
 
@@ -226,14 +221,8 @@ def tensor(key):
     return checkpoint.get_tensor(key).astype(np.float32)
 
 
-def add(out_name, data, matrix):
-    data = np.ascontiguousarray(data, dtype=np.float32)
-    if matrix and args.type == "q8_0" and data.ndim == 2 and data.shape[-1] % 32 == 0:
-        w.add_tensor(out_name, quantize(data, GGMLQuantizationType.Q8_0), raw_dtype=GGMLQuantizationType.Q8_0)
-    elif matrix and args.type in ("f16", "q8_0"):
-        w.add_tensor(out_name, data.astype(np.float16))
-    else:
-        w.add_tensor(out_name, data)
+def add(out_name, data):
+    w.add_tensor(out_name, np.ascontiguousarray(data, dtype=np.float32))
 
 
 # ModernBERT-ja: the fused query, key and value projection is split, and so is the MLP's input projection
@@ -241,111 +230,111 @@ def add(out_name, data, matrix):
 b = "pretrained_text_backbone.backbone."
 hidden = int(text_config["hidden_size"])
 inner = int(text_config["intermediate_size"])
-add("text.embd", tensor(b + "embeddings.tok_embeddings.weight"), True)
-add("text.embd_norm", tensor(b + "embeddings.norm.weight"), False)
+add("text.embd", tensor(b + "embeddings.tok_embeddings.weight"))
+add("text.embd_norm", tensor(b + "embeddings.norm.weight"))
 for i in range(int(text_config["num_hidden_layers"])):
     a, o = f"{b}layers.{i}.", f"text.blk.{i}."
     if i > 0:
-        add(o + "attn_norm", tensor(a + "attn_norm.weight"), False)
+        add(o + "attn_norm", tensor(a + "attn_norm.weight"))
     qkv = tensor(a + "attn.Wqkv.weight")
-    add(o + "attn_q", qkv[:hidden], True)
-    add(o + "attn_k", qkv[hidden : 2 * hidden], True)
-    add(o + "attn_v", qkv[2 * hidden :], True)
-    add(o + "attn_out", tensor(a + "attn.Wo.weight"), True)
-    add(o + "ffn_norm", tensor(a + "mlp_norm.weight"), False)
+    add(o + "attn_q", qkv[:hidden])
+    add(o + "attn_k", qkv[hidden : 2 * hidden])
+    add(o + "attn_v", qkv[2 * hidden :])
+    add(o + "attn_out", tensor(a + "attn.Wo.weight"))
+    add(o + "ffn_norm", tensor(a + "mlp_norm.weight"))
     wi = tensor(a + "mlp.Wi.weight")
-    add(o + "ffn_act", wi[:inner], True)
-    add(o + "ffn_gate", wi[inner:], True)
-    add(o + "ffn_down", tensor(a + "mlp.Wo.weight"), True)
-add("text.final_norm", tensor(b + "final_norm.weight"), False)
+    add(o + "ffn_act", wi[:inner])
+    add(o + "ffn_gate", wi[inner:])
+    add(o + "ffn_down", tensor(a + "mlp.Wo.weight"))
+add("text.final_norm", tensor(b + "final_norm.weight"))
 
 def projector(source, out):
     """A PretrainedConditionProjector of ModernBERT's output: a linear map plus an RMS-normed residual MLP."""
-    add(out + ".weight", tensor(source + "projector.weight"), True)
-    add(out + ".bias", tensor(source + "projector.bias"), False)
-    add(out + ".res_norm", tensor(source + "residual_norm.weight"), False)
-    add(out + ".res_up.weight", tensor(source + "residual_up.weight"), True)
-    add(out + ".res_up.bias", tensor(source + "residual_up.bias"), False)
-    add(out + ".res_down.weight", tensor(source + "residual_down.weight"), True)
-    add(out + ".res_down.bias", tensor(source + "residual_down.bias"), False)
+    add(out + ".weight", tensor(source + "projector.weight"))
+    add(out + ".bias", tensor(source + "projector.bias"))
+    add(out + ".res_norm", tensor(source + "residual_norm.weight"))
+    add(out + ".res_up.weight", tensor(source + "residual_up.weight"))
+    add(out + ".res_up.bias", tensor(source + "residual_up.bias"))
+    add(out + ".res_down.weight", tensor(source + "residual_down.weight"))
+    add(out + ".res_down.bias", tensor(source + "residual_down.bias"))
 
 
 projector("text_encoder.", "text.proj")
-add("text.norm", tensor("text_norm.weight"), False)
+add("text.norm", tensor("text_norm.weight"))
 if caption:
     projector("caption_encoder.", "caption.proj")
-    add("caption.norm", tensor("caption_norm.weight"), False)
+    add("caption.norm", tensor("caption_norm.weight"))
 
 
 def swiglu(prefix_in, prefix_out):
-    add(prefix_out + "ffn_gate", tensor(prefix_in + "w1.weight"), True)
-    add(prefix_out + "ffn_up", tensor(prefix_in + "w3.weight"), True)
-    add(prefix_out + "ffn_down", tensor(prefix_in + "w2.weight"), True)
+    add(prefix_out + "ffn_gate", tensor(prefix_in + "w1.weight"))
+    add(prefix_out + "ffn_up", tensor(prefix_in + "w3.weight"))
+    add(prefix_out + "ffn_down", tensor(prefix_in + "w2.weight"))
 
 
 # The speaker encoder: a pre-norm transformer on the reference latent in patches of four frames.
-add("speaker.in_proj.weight", tensor("speaker_encoder.in_proj.weight"), True)
-add("speaker.in_proj.bias", tensor("speaker_encoder.in_proj.bias"), False)
+add("speaker.in_proj.weight", tensor("speaker_encoder.in_proj.weight"))
+add("speaker.in_proj.bias", tensor("speaker_encoder.in_proj.bias"))
 for i in range(int(config["speaker_layers"])):
     a, o = f"speaker_encoder.blocks.{i}.", f"speaker.blk.{i}."
-    add(o + "attn_norm", tensor(a + "attention_norm.weight"), False)
+    add(o + "attn_norm", tensor(a + "attention_norm.weight"))
     for x in ("q", "k", "v", "o"):
-        add(o + f"attn_{x}", tensor(a + f"attention.w{x}.weight"), True)
-    add(o + "attn_gate", tensor(a + "attention.gate.weight"), True)
-    add(o + "q_norm", tensor(a + "attention.q_norm.weight"), False)
-    add(o + "k_norm", tensor(a + "attention.k_norm.weight"), False)
-    add(o + "ffn_norm", tensor(a + "mlp_norm.weight"), False)
+        add(o + f"attn_{x}", tensor(a + f"attention.w{x}.weight"))
+    add(o + "attn_gate", tensor(a + "attention.gate.weight"))
+    add(o + "q_norm", tensor(a + "attention.q_norm.weight"))
+    add(o + "k_norm", tensor(a + "attention.k_norm.weight"))
+    add(o + "ffn_norm", tensor(a + "mlp_norm.weight"))
     swiglu(a + "mlp.", o)
-add("speaker.norm", tensor("speaker_norm.weight"), False)
+add("speaker.norm", tensor("speaker_norm.weight"))
 
 # The duration predictor; without a caption its caption vector is the learned null one, and without a reference its
 # speaker vector.
 d = "duration_predictor."
-add("duration.in_proj.weight", tensor(d + "token_input_proj.weight"), True)
-add("duration.in_proj.bias", tensor(d + "token_input_proj.bias"), False)
+add("duration.in_proj.weight", tensor(d + "token_input_proj.weight"))
+add("duration.in_proj.bias", tensor(d + "token_input_proj.bias"))
 for i in range(int(config["duration_layers"])):
     a, o = f"{d}token_blocks.{i}.", f"duration.blk.{i}."
-    add(o + "norm", tensor(a + "norm.weight"), False)
-    add(o + "mod.weight", tensor(a + "modulation.weight"), True)
-    add(o + "mod.bias", tensor(a + "modulation.bias"), False)
-    add(o + "caption_mod.weight", tensor(a + "caption_modulation.weight"), True)
-    add(o + "caption_mod.bias", tensor(a + "caption_modulation.bias"), False)
+    add(o + "norm", tensor(a + "norm.weight"))
+    add(o + "mod.weight", tensor(a + "modulation.weight"))
+    add(o + "mod.bias", tensor(a + "modulation.bias"))
+    add(o + "caption_mod.weight", tensor(a + "caption_modulation.weight"))
+    add(o + "caption_mod.bias", tensor(a + "caption_modulation.bias"))
     swiglu(a + "mlp.", o)
-add("duration.out_norm", tensor(d + "token_out_norm.weight"), False)
-add("duration.out_proj.weight", tensor(d + "token_out_proj.weight"), False)
-add("duration.out_proj.bias", tensor(d + "token_out_proj.bias"), False)
-add("duration.null_caption", tensor(d + "null_caption"), False)
+add("duration.out_norm", tensor(d + "token_out_norm.weight"))
+add("duration.out_proj.weight", tensor(d + "token_out_proj.weight"))
+add("duration.out_proj.bias", tensor(d + "token_out_proj.bias"))
+add("duration.null_caption", tensor(d + "null_caption"))
 if null_speaker:
-    add("duration.null_speaker", tensor(d + "null_speaker"), False)
+    add("duration.null_speaker", tensor(d + "null_speaker"))
 
 # The DiT.
 for i, layer in enumerate((0, 2, 4)):
-    add(f"dit.cond.{i}", tensor(f"cond_module.{layer}.weight"), True)
+    add(f"dit.cond.{i}", tensor(f"cond_module.{layer}.weight"))
     if meanflow:
-        add(f"dit.delta_cond.{i}", tensor(f"delta_cond_module.{layer}.weight"), True)
-add("dit.in_proj.weight", tensor("in_proj.weight"), False)
-add("dit.in_proj.bias", tensor("in_proj.bias"), False)
+        add(f"dit.delta_cond.{i}", tensor(f"delta_cond_module.{layer}.weight"))
+add("dit.in_proj.weight", tensor("in_proj.weight"))
+add("dit.in_proj.bias", tensor("in_proj.bias"))
 for i in range(int(config["num_layers"])):
     a, o = f"blocks.{i}.", f"dit.blk.{i}."
     for x in ("q", "k", "v", "o"):
-        add(o + f"attn_{x}", tensor(a + f"attention.w{x}.weight"), True)
-    add(o + "attn_gate", tensor(a + "attention.gate.weight"), True)
+        add(o + f"attn_{x}", tensor(a + f"attention.w{x}.weight"))
+    add(o + "attn_gate", tensor(a + "attention.gate.weight"))
     for x in ("k", "v"):
-        add(o + f"attn_{x}_text", tensor(a + f"attention.w{x}_text.weight"), True)
-        add(o + f"attn_{x}_speaker", tensor(a + f"attention.w{x}_speaker.weight"), True)
+        add(o + f"attn_{x}_text", tensor(a + f"attention.w{x}_text.weight"))
+        add(o + f"attn_{x}_speaker", tensor(a + f"attention.w{x}_speaker.weight"))
         if caption:
-            add(o + f"attn_{x}_caption", tensor(a + f"attention.w{x}_caption.weight"), True)
-    add(o + "q_norm", tensor(a + "attention.q_norm.weight"), False)
-    add(o + "k_norm", tensor(a + "attention.k_norm.weight"), False)
+            add(o + f"attn_{x}_caption", tensor(a + f"attention.w{x}_caption.weight"))
+    add(o + "q_norm", tensor(a + "attention.q_norm.weight"))
+    add(o + "k_norm", tensor(a + "attention.k_norm.weight"))
     swiglu(a + "mlp.", o)
     for ada, out in (("attention_adaln", "attn_ada"), ("mlp_adaln", "ffn_ada")):
         for part in ("shift", "scale", "gate"):
-            add(o + f"{out}.{part}.down", tensor(a + f"{ada}.{part}_down.weight"), True)
-            add(o + f"{out}.{part}.up.weight", tensor(a + f"{ada}.{part}_up.weight"), True)
-            add(o + f"{out}.{part}.up.bias", tensor(a + f"{ada}.{part}_up.bias"), False)
-add("dit.out_norm", tensor("out_norm.weight"), False)
-add("dit.out_proj.weight", tensor("out_proj.weight"), True)
-add("dit.out_proj.bias", tensor("out_proj.bias"), False)
+            add(o + f"{out}.{part}.down", tensor(a + f"{ada}.{part}_down.weight"))
+            add(o + f"{out}.{part}.up.weight", tensor(a + f"{ada}.{part}_up.weight"))
+            add(o + f"{out}.{part}.up.bias", tensor(a + f"{ada}.{part}_up.bias"))
+add("dit.out_norm", tensor("out_norm.weight"))
+add("dit.out_proj.weight", tensor("out_proj.weight"))
+add("dit.out_proj.bias", tensor("out_proj.bias"))
 
 
 # ---------------------------------------------------------------- the codec, in float32
@@ -441,13 +430,11 @@ w.add_version(parts["version"])
 w.add_license(LICENSES[card["license"]])
 w.add_source_url(f"{repository}/tree/{pin['revision']}")
 w.add_source_repo_url(repository)
-w.add_file_type(FILE_TYPES[args.type])
-if args.type == "q8_0":
-    w.add_quantization_version(GGML_QUANT_VERSION)
+w.add_file_type(LlamaFileType.ALL_F32)
 w.add_languages(sorted(card["language"]))
 w.kv_data[0] = dict(sorted(w.kv_data[0].items(), key=lambda item: not item[0].startswith("general.")))
 
-path = os.path.join(args.out_dir, naming_convention(None, parts["basename"], parts["finetune"], parts["version"], label, args.type) + ".gguf")
+path = os.path.join(args.out_dir, naming_convention(None, parts["basename"], parts["finetune"], parts["version"], label, "f32") + ".gguf")
 w.write_header_to_file(path)
 w.write_kv_data_to_file()
 w.write_tensors_to_file()

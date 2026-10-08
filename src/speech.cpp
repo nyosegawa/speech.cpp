@@ -1,5 +1,6 @@
 #include "speech.h"
 
+#include <cctype>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -15,12 +16,13 @@
 #include "fastconformer/layout.h"
 #include "irodori-tts/layout.h"
 #include "log.h"
+#include "quantize.h"
 #include "qwen3-asr/layout.h"
 #include "qwen3-tts/layout.h"
 
-// The C API's versions, statuses and errors, log, devices, load parameters, the table of families, and the models
-// with their voices. The model information is in info.cpp, the requests in request.cpp and the making of voice files
-// in voice.cpp.
+// The C API's versions, statuses and errors, log, devices, load parameters, the table of families, the quantizing of
+// model files, and the models with their voices. The model information is in info.cpp, the requests in request.cpp
+// and the making of voice files in voice.cpp.
 
 namespace {
 
@@ -98,6 +100,21 @@ const char * const status_names[] = {"internal", "io", "out_of_memory", "device"
                                      "invalid_argument", "ok", "cancelled"};
 
 const char * const stop_names[] = {"complete", "max_seconds", "model_limit", "cancelled"};
+
+/** The weight type speech_quantize() writes that `name` names, compared without case. */
+const WeightType & quantized_type(const std::string & name) {
+    const auto lower = [](std::string s) {
+        for (char & c : s) c = (char) std::tolower((unsigned char) c);
+        return s;
+    };
+    std::string names;
+    for (const WeightType & t : weight_types()) {
+        if (t.type == GGML_TYPE_F32) continue;
+        if (lower(name) == lower(tensor_type_text(t.type))) return t;
+        names += (names.empty() ? "" : ", ") + tensor_type_text(t.type);
+    }
+    throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "\"" + name + "\" is not a type speech quantize writes; give one of " + names, "type");
+}
 
 ggml_backend_dev_t device_at(size_t index) {
     const auto & list = devices();
@@ -407,6 +424,18 @@ speech_status speech_model_get_info(const speech_model * model, speech_model_inf
         require(model, "model");
         require(info, "info");
         *info = make_info(model->file, model->added(), model->device, model->threads);
+        return SPEECH_OK;
+    });
+}
+
+speech_status speech_quantize(const char * model_path, const char * type, const char * out_path) {
+    return guarded([&] {
+        require(model_path, "model_path", "model_path");
+        require(type, "type", "type");
+        require(out_path, "out_path", "out_path");
+        const WeightType & target = quantized_type(type);
+        const Family & family = naming("model_path", [&]() -> const Family & { return family_of(model_path); });
+        quantize_model_file(model_path, out_path, target, family.layout);
         return SPEECH_OK;
     });
 }

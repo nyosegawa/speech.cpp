@@ -34,11 +34,10 @@ struct Qwen3Shape {
 Qwen3Shape read_qwen3_shape(const ModelFile & m, const std::string & prefix);
 
 /**
- * Appends to `t` the tensors of the stack `tensors` of shape `s` that Qwen3Decoder reads, its matrices in one of
- * `matrix_types` and its norms in F32.
+ * Appends to `t` the tensors of the stack `tensors` of shape `s` that Qwen3Decoder reads, its matrices stored as
+ * `matrix` says and its norms in F32.
  */
-void add_qwen3_tensors(std::vector<TensorSpec> & t, const std::string & tensors, const Qwen3Shape & s,
-                       const std::vector<ggml_type> & matrix_types);
+void add_qwen3_tensors(std::vector<TensorSpec> & t, const std::string & tensors, const Qwen3Shape & s, const Storage & matrix);
 
 /** Builds rows [from, from + rows) of a run's input, [hidden, rows], in the graph `g` of the block that holds them. */
 using Qwen3Rows = std::function<ggml_tensor *(Graph & g, int64_t from, int64_t rows)>;

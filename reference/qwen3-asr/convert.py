@@ -1,22 +1,17 @@
 """Converts a pinned Qwen3-ASR checkpoint to the one GGUF file the C++ port reads.
 
-usage: uv run python convert.py <Qwen3-ASR-0.6B|Qwen3-ASR-1.7B> <out dir> [--type f32|f16|q8_0]
+usage: uv run python convert.py <Qwen3-ASR-0.6B|Qwen3-ASR-1.7B> <out dir>
 
-Writes Qwen3-ASR-<0.6B|1.7B>-<F32|F16|Q8_0>.gguf, named under GGUF's naming convention, in layout 1: the frontend's
-window and mel filterbank, the encoder's convolutions and layers, the projector, the decoder and its tokenizer, with
-every constant the C++ reads and the model's identity in the GGUF specification's general keys. The constants come
-from the checkpoint's config.json, preprocessor_config.json, generation_config.json, chat_template.json and tokenizer
-files, and where it has none from the official code docs/adr/0018 takes as the reference: transformers 5.18's
-Qwen3-ASR (the feature extractor, the encoder and the language tags) and qwen-asr 0.0.6's inference/utils.py (the
-limits of the audio, the prompt's forced language, and the parse of the output), both pinned by uv.lock.
+Writes Qwen3-ASR-<0.6B|1.7B>-F32.gguf, named under GGUF's naming convention, in layout 1: the frontend's window and mel
+filterbank, the encoder's convolutions and layers, the projector, the decoder and its tokenizer, with every constant the
+C++ reads and the model's identity in the GGUF specification's general keys. The constants come from the checkpoint's
+config.json, preprocessor_config.json, generation_config.json, chat_template.json and tokenizer files, and where it has
+none from the official code docs/adr/0018 takes as the reference: transformers 5.18's Qwen3-ASR (the feature extractor,
+the encoder and the language tags) and qwen-asr 0.0.6's inference/utils.py (the limits of the audio, the prompt's forced
+language, and the parse of the output), both pinned by uv.lock.
 
---type applies to the matrices of the encoder's and the decoder's linear layers, the projector and the token
-embeddings, which are also the decoder's output matrix; the convolution kernels are float16 in an F16 or Q8_0 file and
-float32 in an F32 one, and the norms, the biases and the frontend stay float32. The encoder holds in Q8_0: with the
-decoder's weights of the Q8_0 file, teacher-forced on the dumps' ids of every input of up to 30 s (requests auto and
-auto-prompt), its output from a Q8_0 file moved the argmax of 1 or 2 of 605 steps with the 0.6B model and of none of 604
-with the 1.7B, on the CPU and on Metal of an Apple M5, where the official encoder's output moved 2 and none
-(2026-10-06); each step it moved had a margin of 0.13 or less in the official model.
+Every tensor is written in float32; `speech quantize` makes the other weight types of the file, each tensor in the type
+src/families/qwen3-asr/layout.cpp gives it (docs/adr/0040).
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [out, in] is stored as is (ne = [in, out])
 and a Conv2d weight [out, in, height, width] as is (ne = [width, height, in, out]), the layout ggml's 2D convolutions
@@ -32,8 +27,7 @@ import re
 import numpy as np
 import torch
 import torch.nn.functional as F
-from gguf import GGML_QUANT_VERSION, GGMLQuantizationType, GGUFValueType, GGUFWriter, LlamaFileType, naming_convention
-from gguf.quants import quantize
+from gguf import GGUFValueType, GGUFWriter, LlamaFileType, naming_convention
 from safetensors import safe_open
 from transformers import AutoTokenizer, Qwen3ASREncoderConfig, Qwen3ASRFeatureExtractor
 from transformers.activations import ACT2FN
@@ -52,8 +46,6 @@ LAYOUT = max(RELEASES)
 BASENAME = "Qwen3-ASR"
 # The SPDX identifier of each checkpoint's license, from its model card.
 LICENSES = {"Qwen3-ASR-0.6B": "Apache-2.0", "Qwen3-ASR-1.7B": "Apache-2.0"}
-# The type of most of a file's weights by its --type, as general.file_type gives it.
-FILE_TYPES = {"f32": LlamaFileType.ALL_F32, "f16": LlamaFileType.MOSTLY_F16, "q8_0": LlamaFileType.MOSTLY_Q8_0}
 # The most tokens a request generates: the default of the model's generate() and of qwen-asr's vLLM backend, which
 # docs/adr/0018 takes.
 MAX_NEW_TOKENS = 4096
@@ -66,7 +58,6 @@ CHECKED_CONTEXTS = ["", "群島、湖、ヨット", "Dr. Malar Balasubramanian, 
 parser = argparse.ArgumentParser()
 parser.add_argument("model", choices=sorted(MODELS))
 parser.add_argument("out_dir")
-parser.add_argument("--type", choices=["f32", "f16", "q8_0"], default="q8_0")
 args = parser.parse_args()
 os.makedirs(args.out_dir, exist_ok=True)
 
@@ -255,7 +246,7 @@ def weight(key):
     return weights.pop(key).get_tensor(key).float().numpy()
 
 
-path = os.path.join(args.out_dir, naming_convention(None, BASENAME, None, None, size_label, args.type) + ".gguf")
+path = os.path.join(args.out_dir, naming_convention(None, BASENAME, None, None, size_label, "f32") + ".gguf")
 # Tensors go to a temporary file as they are added, so that the 1.7B model in float32 is never held whole.
 w = GGUFWriter(path, ARCH, use_temp_file=True)
 
@@ -273,9 +264,7 @@ w.add_size_label(size_label)
 w.add_license(LICENSES[args.model])
 w.add_source_url(f"{repository}/tree/{pin['revision']}")
 w.add_source_repo_url(repository)
-w.add_file_type(FILE_TYPES[args.type])
-if args.type == "q8_0":
-    w.add_quantization_version(GGML_QUANT_VERSION)
+w.add_file_type(LlamaFileType.ALL_F32)
 w.add_languages(tags)
 w.add_uint32("speech.layout", LAYOUT)
 w.add_string("speech.requires", RELEASES[LAYOUT])
@@ -324,61 +313,45 @@ add_array(p + "tokenizer.merges", merges, GGUFValueType.STRING)
 add_array(p + "tokenizer.added_ids", added_ids, GGUFValueType.INT32)
 add_array(p + "tokenizer.special_ids", special_ids, GGUFValueType.INT32)
 
-conv_type = np.float32 if args.type == "f32" else np.float16
+def add(name, data):
+    w.add_tensor(name, np.ascontiguousarray(data, dtype=np.float32))
 
 
-def add(name, data, kind):
-    """kind: 'matrix' is stored in the requested type, 'conv' as float16 or float32 by it, 'f32' as float32."""
-    data = np.ascontiguousarray(data, dtype=np.float32)
-    if kind == "matrix" and args.type == "q8_0":
-        assert data.ndim == 2 and data.shape[-1] % 32 == 0, f"{name}'s rows are no whole Q8_0 blocks"
-        w.add_tensor(name, quantize(data, GGMLQuantizationType.Q8_0), raw_dtype=GGMLQuantizationType.Q8_0)
-    elif kind == "matrix" and args.type == "f16":
-        w.add_tensor(name, data.astype(np.float16))
-    elif kind == "conv":
-        w.add_tensor(name, data.astype(conv_type))
-    else:
-        w.add_tensor(name, data)
-
-
-add("frontend.window", window, "f32")
-add("frontend.filterbank", filterbank, "f32")
+add("frontend.window", window)
+add("frontend.filterbank", filterbank)
 
 a = "thinker.audio_tower."
 for i in (1, 2, 3):
-    add(f"enc.conv.{i}.weight", weight(f"{a}conv2d{i}.weight"), "conv")
-    add(f"enc.conv.{i}.bias", weight(f"{a}conv2d{i}.bias"), "f32")
-add("enc.conv_out.weight", weight(a + "conv_out.weight"), "matrix")
+    add(f"enc.conv.{i}.weight", weight(f"{a}conv2d{i}.weight"))
+    add(f"enc.conv.{i}.bias", weight(f"{a}conv2d{i}.bias"))
+add("enc.conv_out.weight", weight(a + "conv_out.weight"))
 for i in range(audio["encoder_layers"]):
     s, d = f"{a}layers.{i}.", f"enc.blk.{i}."
-    for source, target, kind in (("self_attn_layer_norm", "attn_norm", "f32"), ("self_attn.q_proj", "attn_q", "matrix"),
-                                 ("self_attn.k_proj", "attn_k", "matrix"), ("self_attn.v_proj", "attn_v", "matrix"),
-                                 ("self_attn.out_proj", "attn_out", "matrix"), ("final_layer_norm", "ffn_norm", "f32"),
-                                 ("fc1", "ffn_up", "matrix"), ("fc2", "ffn_down", "matrix")):
-        add(d + target + ".weight", weight(s + source + ".weight"), kind)
-        add(d + target + ".bias", weight(s + source + ".bias"), "f32")
-add("enc.norm.weight", weight(a + "ln_post.weight"), "f32")
-add("enc.norm.bias", weight(a + "ln_post.bias"), "f32")
+    for source, target in (("self_attn_layer_norm", "attn_norm"), ("self_attn.q_proj", "attn_q"), ("self_attn.k_proj", "attn_k"),
+                           ("self_attn.v_proj", "attn_v"), ("self_attn.out_proj", "attn_out"), ("final_layer_norm", "ffn_norm"),
+                           ("fc1", "ffn_up"), ("fc2", "ffn_down")):
+        add(d + target + ".weight", weight(s + source + ".weight"))
+        add(d + target + ".bias", weight(s + source + ".bias"))
+add("enc.norm.weight", weight(a + "ln_post.weight"))
+add("enc.norm.bias", weight(a + "ln_post.bias"))
 for i in (1, 2):
-    add(f"proj.{i}.weight", weight(f"{a}proj{i}.weight"), "matrix")
-    add(f"proj.{i}.bias", weight(f"{a}proj{i}.bias"), "f32")
+    add(f"proj.{i}.weight", weight(f"{a}proj{i}.weight"))
+    add(f"proj.{i}.bias", weight(f"{a}proj{i}.bias"))
 
 t = "thinker.model."
 # The checkpoint stores the tied output matrix a second time, as lm_head.
 embeddings = weight(t + "embed_tokens.weight")
 assert np.array_equal(embeddings, weight("thinker.lm_head.weight"))
-add("dec.token_embd", embeddings, "matrix")
+add("dec.token_embd", embeddings)
 del embeddings
 for i in range(text["num_hidden_layers"]):
     s, d = f"{t}layers.{i}.", f"dec.blk.{i}."
-    for source, target, kind in (("input_layernorm", "attn_norm", "f32"), ("post_attention_layernorm", "ffn_norm", "f32"),
-                                 ("self_attn.q_proj", "attn_q", "matrix"), ("self_attn.k_proj", "attn_k", "matrix"),
-                                 ("self_attn.v_proj", "attn_v", "matrix"), ("self_attn.o_proj", "attn_o", "matrix"),
-                                 ("self_attn.q_norm", "attn_q_norm", "f32"), ("self_attn.k_norm", "attn_k_norm", "f32"),
-                                 ("mlp.gate_proj", "ffn_gate", "matrix"), ("mlp.up_proj", "ffn_up", "matrix"),
-                                 ("mlp.down_proj", "ffn_down", "matrix")):
-        add(d + target, weight(s + source + ".weight"), kind)
-add("dec.norm", weight(t + "norm.weight"), "f32")
+    for source, target in (("input_layernorm", "attn_norm"), ("post_attention_layernorm", "ffn_norm"), ("self_attn.q_proj", "attn_q"),
+                           ("self_attn.k_proj", "attn_k"), ("self_attn.v_proj", "attn_v"), ("self_attn.o_proj", "attn_o"),
+                           ("self_attn.q_norm", "attn_q_norm"), ("self_attn.k_norm", "attn_k_norm"), ("mlp.gate_proj", "ffn_gate"),
+                           ("mlp.up_proj", "ffn_up"), ("mlp.down_proj", "ffn_down")):
+        add(d + target, weight(s + source + ".weight"))
+add("dec.norm", weight(t + "norm.weight"))
 assert not weights, f"the checkpoint holds tensors the converter does not write: {sorted(weights)[:5]}"
 
 w.write_header_to_file()
