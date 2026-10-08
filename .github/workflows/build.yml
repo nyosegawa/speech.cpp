@@ -135,8 +135,7 @@ jobs:
           retention-days: 7
 
   # Linux x64 twice: with Vulkan, for a GPU of any vendor, and for the CPU alone, which needs no Vulkan loader
-  # to start. The binaries are built on the oldest Ubuntu GitHub hosts and run on glibc 2.34 or later
-  # (docs/adr/0010).
+  # to start. The binaries are built on the oldest Ubuntu GitHub hosts and run on glibc 2.34 or later.
   linux:
     runs-on: ubuntu-22.04
     strategy:

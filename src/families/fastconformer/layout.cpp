@@ -12,7 +12,7 @@ namespace fastconformer {
 namespace {
 
 /**
- * How the layout stores a tensor in a file of each weight type (docs/adr/0040): a matrix of a linear layer or the
+ * How the layout stores a tensor in a file of each weight type: a matrix of a linear layer or the
  * prediction network's embedding, which ggml_mul_mat() and ggml_get_rows() alone read, in the file's type, which 0.7's
  * reader took in F16 and F32 alone, so that a file of it in Q8_0 is read from 0.8.0; and the convolution kernels, which
  * ggml's direct and depthwise convolutions and ggml_ssm_conv() read in F32 alone, the norms, the biases, the frontend and

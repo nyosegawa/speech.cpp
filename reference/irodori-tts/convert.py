@@ -11,7 +11,7 @@ of the codec's tensors, which voice files carry, and the model's identity in the
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [out, in] is stored as is
 (ne = [in, out]). Every tensor is written in float32; `speech quantize` makes the other weight types of the file, each
-tensor in the type src/families/irodori-tts/layout.cpp gives it (docs/adr/0040).
+tensor in the type src/families/irodori-tts/layout.cpp gives it.
 
 The codec's weight normalization is folded by the dacvae library itself (remove_weight_norm). Every convolution
 weight is stored as numpy [k, out, in] (ne = [in, out, k]), so that tap k is a plain [in, out] matrix: the C++ side

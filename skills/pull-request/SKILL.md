@@ -53,4 +53,4 @@ branches pushed for CI runs (`git push origin --delete <branch>`).
 A subagent commits on its own branch and never pushes or merges. Read its report, then its diff yourself
 (`git diff origin/main...<branch>`), and check that the diff is what the report says before you push it. Send fixes back
 to the same subagent rather than finishing its work in its worktree. When main moves under it, have it rebase onto
-`origin/main` and renumber its ADRs after the ones that landed.
+`origin/main`.

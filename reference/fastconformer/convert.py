@@ -12,7 +12,7 @@ since NeMo decodes with its transducer.
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [out, in] is stored as is
 (ne = [in, out]). Every tensor is written in float32; `speech quantize` makes the other weight types of the file, each
-tensor in the type src/families/fastconformer/layout.cpp gives it (docs/adr/0040). The batch norm of each convolution
+tensor in the type src/families/fastconformer/layout.cpp gives it. The batch norm of each convolution
 module is folded into its depthwise convolution, which it follows in evaluation, and each LSTM layer's two biases are
 summed. A checkpoint whose conformer layers have no biases (ConformerEncoder's use_bias false) is written without them,
 and fastconformer.encoder.use_bias says so.

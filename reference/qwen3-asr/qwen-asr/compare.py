@@ -4,7 +4,7 @@ gives beside them.
 usage: uv run python compare.py <model> <out dir> [input...]
 
 On the CPU, qwen-asr's encoder attends over the whole utterance, where the reference of the dumps attends within
-windows of 104 tokens (8 s) as qwen-asr's FlashAttention 2 path and vLLM backend do (docs/adr/0018); for audio of one
+windows of 104 tokens (8 s) as qwen-asr's FlashAttention 2 path and vLLM backend do; for audio of one
 window the two attend alike, and audio shorter than one chunk of 1 s differs in its padding (../dump.py). For each dump
 under <out dir>/<model>/ (all of them when no input is given)
 this asserts that qwen-asr's own processor gives the dump's features, the prompt ids of each variant of the request,

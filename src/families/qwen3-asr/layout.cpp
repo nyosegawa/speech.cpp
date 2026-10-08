@@ -14,7 +14,7 @@ namespace qwen3_asr {
 namespace {
 
 /**
- * How the layout stores a tensor in a file of each weight type (docs/adr/0040): a matrix of a linear layer or the token
+ * How the layout stores a tensor in a file of each weight type: a matrix of a linear layer or the token
  * embeddings, which are also the decoder's output matrix and which ggml_mul_mat() and ggml_get_rows() alone read, in
  * the file's type, which 0.7's reader took in Q8_0, F16 and F32; a convolution kernel, which ggml_im2col() reads in F16
  * or F32 alone, in F16, or F32 in an F32 file; and the norms, the biases and the frontend in F32. The encoder holds in

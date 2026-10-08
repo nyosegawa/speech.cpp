@@ -14,7 +14,7 @@
 namespace {
 
 /**
- * How the layout stores a tensor in a file of each weight type (docs/adr/0040). A matrix or embedding of the talker or
+ * How the layout stores a tensor in a file of each weight type. A matrix or embedding of the talker or
  * the code predictor, which ggml_mul_mat() and ggml_get_rows() alone read, takes the file's type; 0.7's reader took it in
  * Q8_0, F16 and F32. A convolution or matrix of the codec takes F16, or F32 in an F32 file: the codec turns codes into
  * samples, and the released Q8_0 files hold it in F16. The rest is F32.

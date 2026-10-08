@@ -26,7 +26,7 @@ reproducible, and to write the GGUF file the C++ reads.
 
 ## Conversion
 
-`convert.py` writes one GGUF file per model, its codec or frontend included (docs/adr/0015).
+`convert.py` writes one GGUF file per model, its codec or frontend included.
 
 - The model's identity and languages go in the GGUF specification's `general.*` keys, under the names it gives them;
   no key of speech.cpp's own holds a fact the specification has a key for.
