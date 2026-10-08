@@ -12,8 +12,8 @@ reachable that way.
 
 - **The page is plain HTML, CSS and JavaScript in `tools/server/page/`, built into `speech` as the catalog is**, with no
   framework, no build step and nothing from the network. Its scripts are ES modules, one per responsibility: the
-  server's endpoints, the model picker of each panel, the option form built from the model information, the names of
-  languages, playback and the waveform, recording and WAVE files, each panel. Colours and radii are CSS variables in one
+  server's endpoints, the tabs, the model picker of each task, the option form built from the model information, the
+  names of languages, playback and the waveform, recording and WAVE files, the text transcribed, each panel. Colours and radii are CSS variables in one
   place, light and dark as the system sets it. It is served with a Content-Security-Policy that allows the server's own
   scripts, styles and connections alone, and that no other page frames it.
 - **The page speaks and transcribes through OpenAI's endpoints**, as any client does: speech as SSE, played through Web

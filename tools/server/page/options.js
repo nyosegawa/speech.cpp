@@ -125,7 +125,7 @@ export class OptionForm {
       if (!groups.has(language)) groups.set(language, []);
       groups.get(language).push(choice);
     }
-    const ordered = [...groups.keys()].sort((a, b) => (a && b ? languageName(a).localeCompare(languageName(b)) : a ? 1 : -1));
+    const ordered = [...groups.keys()].sort((a, b) => (a && b ? languageName(a).localeCompare(languageName(b), 'en') : a ? 1 : -1));
     for (const language of ordered) {
       const parent = language ? Object.assign(document.createElement('optgroup'), { label: languageName(language) }) : select;
       for (const choice of groups.get(language)) parent.append(new Option(choice, choice));

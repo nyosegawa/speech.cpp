@@ -1,10 +1,11 @@
 // Takes the README's screenshot of the page of speech serve: starts the server with a synthesis and a recognition
-// model, opens the page in a headless Chrome in English, speaks the text with the voice, hands the speech to Transcribe,
-// transcribes it, and saves the whole page at twice its CSS pixels. Chrome is the one at $CHROME, or macOS's. The server
+// model on a free port, opens the page in a headless Chrome in English, speaks the text with the voice, hands the speech
+// to the Transcribe tab, transcribes it, and saves the whole page at twice its CSS pixels. Chrome is the one at $CHROME, or macOS's. The server
 // and Chrome are stopped however the script ends.
 // usage: node skills/release/scripts/page-screenshot.mjs <speech> <out.png> <synthesis model> <recognition model> <text> <voice>
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -30,11 +31,21 @@ function racing(promise, processes, ms, what) {
   return Promise.race([promise, timeout, ...processes.map((p) => p.failed)]);
 }
 
+/** A port that nothing listens on now. */
+async function freePort() {
+  const server = net.createServer();
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+
+const WIDTH = 960;
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'shot-chrome-'));
 const running = [];
 let ws = null;
 try {
-  const server = start(speech, ['serve', synthesis, recognition, '--port', '8080'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const server = start(speech, ['serve', synthesis, recognition, '--port', String(await freePort())], { stdio: ['ignore', 'pipe', 'pipe'] });
   running.push(server);
   let log = '';
   const address = await racing(new Promise((resolve) => {
@@ -52,8 +63,7 @@ try {
 
   const chrome = start(CHROME, [
     '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run',
-    // The page names languages in navigator.languages, which --accept-lang sets; --lang alone leaves macOS's.
-    '--hide-scrollbars', '--lang=en-US', '--accept-lang=en-US', '--window-size=1280,900',
+    '--hide-scrollbars', '--lang=en-US', '--accept-lang=en-US', `--window-size=${WIDTH},900`,
     '--autoplay-policy=no-user-gesture-required',
   ], { stdio: 'ignore' });
   running.push(chrome);
@@ -90,7 +100,7 @@ try {
     return r.result?.result?.value;
   };
 
-  await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 2, mobile: false });
+  await send('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 2, mobile: false });
   await send('Page.navigate', { url: address.replace('127.0.0.1', 'localhost') });
   // The page builds each model's fields once it has asked the server for the models, after the load event.
   console.log(await evaluate(`(async () => {
@@ -113,13 +123,14 @@ try {
     $('speech-transcribe').click();
     await until(() => !$('transcribe-start').disabled, 'the transcription form');
     $('transcribe-start').click();
-    await until(() => !$('transcript').hidden && !$('transcribe-status').textContent, 'the text');
+    const card = document.querySelector('#transcribe-transcript .transcript');
+    await until(() => !card.hidden && !$('transcribe-status').textContent, 'the text');
     window.scrollTo(0, 0);
-    return $('transcript-text').textContent + ' | ' + $('transcript-meta').textContent;
+    return card.querySelector('.transcript-text').textContent + ' | ' + card.querySelector('.meta').textContent;
   })()`));
   await wait(500);
   const height = await evaluate('Math.ceil(document.documentElement.scrollHeight)');
-  await send('Emulation.setDeviceMetricsOverride', { width: 1280, height, deviceScaleFactor: 2, mobile: false });
+  await send('Emulation.setDeviceMetricsOverride', { width: WIDTH, height, deviceScaleFactor: 2, mobile: false });
   await wait(300);
   const shot = await send('Page.captureScreenshot', { format: 'png' });
   fs.writeFileSync(out, Buffer.from(shot.result.data, 'base64'));
