@@ -61,6 +61,23 @@ if (check(speech_model_load("parakeet-tdt_ctc-0.6B-ja-F16.gguf", NULL, &model)) 
 }
 ```
 
+The regions of a recording where someone speaks, each a segment with an empty text, of 10 s at most:
+
+```c
+if (check(speech_model_load("silero-vad-309K-v6.2-F32.gguf", NULL, &model)) &&
+    check(speech_request_new(model, &request)) &&
+    check(speech_request_set_audio(request, samples, n_samples, 48000)) &&
+    check(speech_request_set_float(request, SPEECH_OPT_MAX_SPEECH_DURATION_S, 10)) &&
+    check(speech_detect(request))) {
+    const speech_result * result = speech_request_result(request);
+    for (size_t i = 0; i < speech_result_segment_count(result); i++) {
+        double start, end;
+        speech_result_segment(result, i, &start, &end, NULL);
+        printf("%.3f %.3f\n", start, end);
+    }
+}
+```
+
 The library loads files and never reaches the network: a program passes a model file's path. `speech pull NAME` prints
 the path of a model of the catalog.
 
@@ -87,7 +104,7 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
   text, so that a caller can split a long text first. `speech_model_info_json()` writes the whole as one JSON object
   (below).
 - **Quantizing.** `speech_quantize()` writes a model file of F32 weights in F16, Q8_0, Q6_K, Q5_K or Q4_K, on the CPU,
-  as `speech quantize` does ([cli.md](cli.md#speech-quantize)).
+  as `speech quantize` does ([cli.md](cli.md#speech-quantize)). Silero VAD's file is F32 alone, and is refused.
 - **Voices.** `speech_voice_add()` adds a voice to a loaded model from a voice file or a reference WAVE file at any rate.
   `speech_voice_make()` writes a voice file from a reference, reading only the codec's encoder from the model file.
   `speech_voice_make_from()` writes one from the parameters `speech_voice_params_new()` makes: several references
@@ -97,13 +114,16 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
   `SPEECH_ERROR_UNSUPPORTED` ([models/irodori-tts.md](models/irodori-tts.md#voices)).
 - **Requests.** `speech_request_new()` makes a request for one model. It takes a text (`speech_request_set_text()`) or
   audio (`speech_request_set_audio()`), and options through the setter of each option's type. `speech_synthesize()`
-  passes the audio to its callback as it is made, and `speech_transcribe()` recognizes the whole audio at once.
+  passes the audio to its callback as it is made, `speech_transcribe()` recognizes the whole audio at once, and
+  `speech_detect()` finds where someone speaks in it. A model does one task, and the calls of the others are
+  `unsupported`.
   `speech_request_set_progress()` gives a callback that hears how far a request has come while it passes no audio.
   `speech_request_cancel()` stops a request, from any thread, at the next audio, step or stage; a request cancelled
   before it runs returns at once. Either returns `SPEECH_CANCELLED`.
 - **Results.** `speech_request_result()` gives what a request that returned `SPEECH_OK` or `SPEECH_CANCELLED` did: why it
   stopped (`complete`, `max_seconds`, `model_limit` or `cancelled`), the seed of a synthesis, the samples it passed, and
-  the text of a recognition with its segments and tokens when the request set `timestamps`, and the languages it heard
+  the regions of a detection as its segments, each with an empty text and no result text, the text of a recognition with
+  its segments and tokens when the request set `timestamps`, and the languages it heard
   (`speech_result_language_count()`, `speech_result_language()`), none for a model that names none, such as
   FastConformer, and none for a cancelled request. The seed is the request's, or one the library drew
   from 0 to 2^53 - 1, with which the same request repeats its audio on the same device.
@@ -117,8 +137,8 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
 - Each value is checked against what the model declares as it is set, and the request as a whole when it runs, before
   any work. A refused value or request is left as it was, to be fixed and run again. A request that has started its work
   runs once.
-- Audio may be at any common rate. The library resamples a recording to recognize, and a reference recording of a voice,
-  to the model's rate (`speech_model_info_sample_rate()`); the audio it makes is at the model's rate.
+- Audio may be at any common rate. The library resamples a recording to recognize or to detect speech in, and a reference
+  recording of a voice, to the model's rate (`speech_model_info_sample_rate()`); the audio it makes is at the model's rate.
 - Text is normalized as each model's official code normalizes it, so Japanese copied from a macOS file name gets the
   same tokens as typed text.
 - A text longer than `speech_model_info_max_text_tokens()` is `out_of_range`, option `text`.
@@ -177,7 +197,7 @@ Each model takes some of them, with ranges and defaults from its file, and `spee
 | Option | Type | Neutral | Taken by |
 |---|---|---|---|
 | `voice` | string | none | [Qwen3-TTS](models/qwen3-tts.md#options), [Irodori-TTS](models/irodori-tts.md#options); required |
-| `language` | string | `auto` | every model |
+| `language` | string | `auto` | every model but Silero VAD, which takes `auto` alone |
 | `seed` | int | none | Qwen3-TTS, Irodori-TTS |
 | `speed`, `seconds`, `duration_scale`, `steps` | float, float, float, int | 1, none, 1, none | Irodori-TTS |
 | `max_seconds` | float | none | Qwen3-TTS |
@@ -189,6 +209,7 @@ Each model takes some of them, with ranges and defaults from its file, and `spee
 | `instructions` | string | `""` | Qwen3-TTS 1.7B, Irodori-TTS |
 | `cfg_scale_text`, `cfg_scale_speaker`, `cfg_guidance_mode`, `cfg_min_t`, `cfg_max_t`, `truncation_factor`, `rescale_k`, `rescale_sigma`, `speaker_uncond_mode`, `sway_coeff`, `speaker_kv_scale`, `speaker_kv_min_t`, `speaker_kv_max_layers`, `cfg_scale_instructions` | float, but `cfg_guidance_mode` and `speaker_uncond_mode` string and `speaker_kv_max_layers` int | none | Irodori-TTS v4.1-Small (RF) |
 | `keep_tail`, `tail_window_size`, `tail_std_threshold`, `tail_mean_threshold` | bool, int, float, float | none | Irodori-TTS |
+| `threshold`, `min_speech_duration_ms`, `min_silence_duration_ms`, `speech_pad_ms`, `max_speech_duration_s` | float, int, int, int, float | none | [Silero VAD](models/silero-vad.md#options) |
 
 - A value at an option's neutral value is accepted by every model. Any other value of an option a model does not take is
   `unsupported`. An option whose neutral value is "none" has none.
@@ -244,13 +265,14 @@ loaded on Metal, with two of its nine voices and four of its options shown:
 - `organization` to `weight_type` are the model's identity, from the general keys of its file.
   `finetune` and `version` are left out for a model whose name has none. `source` is the repository the file was
   converted from and the revision. `weight_type` is the type that holds most of the weights: `F32`, `F16`, `Q8_0`, `Q6_K`, `Q5_K` or `Q4_K`.
-- `architecture` is the family: `qwen3-tts`, `irodori-tts`, `fastconformer` or `qwen3-asr`. `layout` is the version of
-  the family's file layout.
+- `architecture` is the family: `qwen3-tts`, `irodori-tts`, `fastconformer`, `qwen3-asr` or `silero-vad`. `layout` is
+  the version of the family's file layout. `task` is `synthesis`, `recognition` or `detection`; a detection model's
+  `languages` is empty.
 - `incremental` is true for a model that passes audio while it still makes the rest (Qwen3-TTS), so that its first
   audio does not wait on the length of the text, and false for one that makes a request's whole speech before it decodes
   it (Irodori-TTS).
 - Each voice's `language`, `gender` and `description` are `""` where the file does not say; a voice added from a voice
-  file or a recording says none. A recognition model has no `voices`, `incremental` or `max_text_tokens`.
+  file or a recording says none. A recognition or detection model has no `voices`, `incremental` or `max_text_tokens`.
 - `voice_files` is true for a model that takes voices made from recordings; `voice_codec` then follows it, the hash a
   voice file must carry.
 - An option has `type` (`string`, `int`, `float`, `bool`), `required`, `steers`, and where they apply `default`,

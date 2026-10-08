@@ -6,6 +6,7 @@ This page lists the subcommands of `speech` and their options. `speech <subcomma
 |---|---|
 | [`speech tts`](#speech-tts) | speaks text into a WAVE file or to stdout |
 | [`speech asr`](#speech-asr) | writes the text of WAVE files |
+| [`speech vad`](#speech-vad) | writes where someone speaks in WAVE files |
 | [`speech voice`](#speech-voice) | makes an Irodori-TTS voice file from reference recordings |
 | [`speech info`](#speech-info) | prints what a model file says of its model, without loading it |
 | [`speech devices`](#speech-devices) | lists the devices a model can run on |
@@ -36,6 +37,9 @@ speech asr parakeet-tdt_ctc-0.6b-ja --timestamps --format json one.wav two.wav >
 # The text of a recording in Japanese, told the names it holds
 speech asr qwen3-asr-1.7b --language ja --prompt "Claude Code、渋谷" meeting.wav
 
+# Where someone speaks in a recording, in regions of 10 s at most
+speech vad silero-vad --max-speech-duration-s 10 meeting.wav
+
 # What a model file holds, without loading it
 speech info irodori-tts-mf
 ```
@@ -46,9 +50,9 @@ speech info irodori-tts-mf
   fetched the first time it is used ([models.md](models.md)).
 - **`--device NAME`** is `auto` (the default: the first GPU, or the CPU on a machine without one), `gpu`, `cpu`, or a
   name that `speech devices` lists. **`--threads N`** is the CPU's threads; by default the machine's performance cores.
-- **Request options.** `speech tts` and `speech asr` take every option of the C API's vocabulary as a flag of its name in
-  kebab-case: `duration_scale` is `--duration-scale` ([c-api.md](c-api.md#options)). The model refuses an option it does
-  not take, as the C API does: Qwen3-TTS answers `--speed 1.5` with `speech: unsupported (speed): ...`.
+- **Request options.** `speech tts`, `speech asr` and `speech vad` take every option of the C API's vocabulary as a flag
+  of its name in kebab-case: `duration_scale` is `--duration-scale` ([c-api.md](c-api.md#options)). The model refuses
+  an option it does not take, as the C API does: Qwen3-TTS answers `--speed 1.5` with `speech: unsupported (speed): ...`.
   `speech info MODEL` lists the options a model takes, with their defaults and ranges.
 - A value follows its flag or an `=`: `--seed 7` or `--seed=7`. A number is read whole: `--steps 4x` is a usage error.
 - A boolean flag alone means true, and takes `true` or `false` only after an `=`: `--timestamps`, `--do-sample=false`.
@@ -109,6 +113,25 @@ speech asr MODEL [options] AUDIO.wav...
   reports a recognition that stopped at the most tokens the model writes (4096 for Qwen3-ASR); the command then exits
   with 3 once every file's text is written.
 - A failure names the file. The lines of the files before it are already on stdout.
+
+## speech vad
+
+```
+speech vad MODEL [options] AUDIO.wav...
+  --format text|json       text (the default) or one JSON object per file and line
+  --device NAME --threads N
+  -v                       also report the release and the sample rate
+  --threshold X --min-speech-duration-ms N --min-silence-duration-ms N --speech-pad-ms N
+  --max-speech-duration-s S ... every request option
+```
+
+- Finds where someone speaks in each WAVE file in the order given, with a detection model
+  ([models/silero-vad.md](models/silero-vad.md)). It reads the files as `speech asr` does.
+- `text` writes one line per region, `FILE<TAB>START<TAB>END`, with the times in seconds and three decimals. A file
+  without speech writes no line.
+- `json` writes `{"file":…,"regions":[{"start":…,"end":…}]}` for each file.
+- stderr reports the load and, for each file, its seconds of audio, the time to its regions, the real-time factor and
+  the number of regions.
 
 ## speech voice
 
@@ -221,7 +244,7 @@ speech quantize MODEL OUT --type f16|q8_0|q6_k|q5_k|q4_k
 ```
 
 - Writes MODEL, a model file of F32 weights, in another weight type, on the CPU. Some tensors stay in a wider type, as
-  each family needs. A file in another type is refused.
+  each family needs. A file in another type is refused, and so is Silero VAD's, which is F32 alone.
 - OUT is the file to write, or a folder, in which the file takes its usual name, such as `Qwen3-ASR-0.6B-Q4_K.gguf`.
 - The F32 file comes from the official checkpoint through the model's converter, in a clone of this repository with
   [uv](https://docs.astral.sh/uv/):
@@ -252,4 +275,4 @@ speech serve [MODEL [MODEL]] [--open] [--host 127.0.0.1] [--port 8080] [--cors-o
 speech worker MODEL [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup]
 ```
 
-[server.md](server.md) and [worker.md](worker.md) describe them.
+[server.md](server.md) and [worker.md](worker.md) describe them. Neither takes a detection model.

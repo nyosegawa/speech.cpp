@@ -158,5 +158,15 @@ inline void require(const void * pointer, const char * what, const char * input 
 
 /** The name of a task as messages and the information write it. */
 inline const char * task_name(speech_task task) {
-    return task == SPEECH_TASK_SYNTHESIS ? "synthesis" : "recognition";
+    switch (task) {
+        case SPEECH_TASK_SYNTHESIS: return "synthesis";
+        case SPEECH_TASK_RECOGNITION: return "recognition";
+        case SPEECH_TASK_DETECTION: return "detection";
+    }
+    throw std::logic_error("a task the library does not know");
+}
+
+/** Whether a model of `task` has languages, which its file names in general.languages: a detection model takes none. */
+inline bool task_has_languages(speech_task task) {
+    return task != SPEECH_TASK_DETECTION;
 }

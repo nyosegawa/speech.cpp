@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -36,6 +37,26 @@ using openai::ApiError;
 using openai::send_error;
 
 namespace {
+
+/** The endpoint of a task's model; speech serve holds no model of speech detection. */
+const char * endpoint_of(speech_task task) {
+    switch (task) {
+        case SPEECH_TASK_SYNTHESIS: return "/v1/audio/speech";
+        case SPEECH_TASK_RECOGNITION: return "/v1/audio/transcriptions";
+        case SPEECH_TASK_DETECTION: break;
+    }
+    throw std::logic_error("speech serve has no endpoint of speech " + std::string(task_name(task)));
+}
+
+/** The task of the other of the two endpoints that take a model. */
+speech_task other_task(speech_task task) {
+    switch (task) {
+        case SPEECH_TASK_SYNTHESIS: return SPEECH_TASK_RECOGNITION;
+        case SPEECH_TASK_RECOGNITION: return SPEECH_TASK_SYNTHESIS;
+        case SPEECH_TASK_DETECTION: break;
+    }
+    throw std::logic_error("speech serve has no endpoint of speech " + std::string(task_name(task)));
+}
 
 std::string wav_header(size_t data_bytes, int sample_rate) {
     std::string h;
@@ -129,10 +150,10 @@ private:
             return nullptr;
         }
         std::string message = "This server holds no " + task + " model, which " + req.path + " is for";
-        const speech_task other = wanted == SPEECH_TASK_SYNTHESIS ? SPEECH_TASK_RECOGNITION : SPEECH_TASK_SYNTHESIS;
+        const speech_task other = other_task(wanted);
         if (const auto served = models_.of(other)) {
             message += "; it holds " + std::string(speech_model_info_name(served->info().get())) + ", a speech " + task_name(other) +
-                       " model, " + (other == SPEECH_TASK_SYNTHESIS ? "which /v1/audio/speech is for" : "which /v1/audio/transcriptions is for");
+                       " model, which " + endpoint_of(other) + " is for";
         }
         send_error(res, {404, message + ". Give speech serve a " + task + " model" + (access_.loopback() ? ", or pick one on its page." : "."), "", ""});
         return nullptr;
@@ -351,7 +372,7 @@ void report(const Served & served) {
     const auto info = served.info();
     std::fprintf(stderr, "speech serve: %s (%s) on %s, %d Hz, for %s\n", speech_model_info_name(info.get()), speech_model_info_architecture(info.get()),
                  speech_model_info_device(info.get()), speech_model_info_sample_rate(info.get()),
-                 speech_model_info_task(info.get()) == SPEECH_TASK_SYNTHESIS ? "/v1/audio/speech" : "/v1/audio/transcriptions");
+                 endpoint_of(speech_model_info_task(info.get())));
 }
 
 int run_serve(const CommandLine & line, FILE *) {

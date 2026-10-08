@@ -23,7 +23,7 @@ import urllib.request
 
 CATALOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "catalog.json")
 CHOSEN = ["name", "repository", "type", "start"]
-TASKS = ["synthesis", "recognition"]
+TASKS = ["synthesis", "recognition", "detection"]
 
 
 def fetch_json(url):

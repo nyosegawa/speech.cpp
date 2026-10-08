@@ -31,9 +31,11 @@ std::string list(size_t count, const std::function<std::string(size_t)> & get) {
     return out;
 }
 
+/** A size in gigabytes, or in megabytes below 10 MB, which two decimals of a gigabyte would show as 0.00 GB. */
 std::string gigabytes(uint64_t bytes) {
     char s[32];
-    std::snprintf(s, sizeof s, "%.2f GB", bytes / 1e9);
+    if (bytes < 10000000) std::snprintf(s, sizeof s, "%.1f MB", bytes / 1e6);
+    else std::snprintf(s, sizeof s, "%.2f GB", bytes / 1e9);
     return s;
 }
 
@@ -221,7 +223,8 @@ void print_info(const speech_model_info * m, bool meta, FILE * out) {
     row("architecture", std::string(speech_model_info_architecture(m)) + ", layout " + std::to_string(speech_model_info_layout(m)));
     row("task", std::string(task_name(speech_model_info_task(m))) + " at " + std::to_string(speech_model_info_sample_rate(m)) + " Hz" +
                     (synthesis ? speech_model_info_incremental(m) ? ", passing audio while it makes the rest" : ", making the whole speech before its audio" : ""));
-    row("languages", list(speech_model_info_language_count(m), [&](size_t i) { return std::string(speech_model_info_language(m, i)); }));
+    const size_t languages = speech_model_info_language_count(m);
+    row("languages", languages ? list(languages, [&](size_t i) { return std::string(speech_model_info_language(m, i)); }) : "none");
     if (synthesis) {
         const size_t n = speech_model_info_voice_count(m);
         if (n == 0) row("voices", "none of its own; add them with --add-voice");

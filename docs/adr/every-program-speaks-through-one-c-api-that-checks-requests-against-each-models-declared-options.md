@@ -24,9 +24,10 @@ bind their imports up front.
   object and string the library returns owned by it. Every program and binding speaks through it, the worker, the
   server and the command line included, so the API they run every day is the one others get. The library is built
   statically into `speech` and as the shared `libspeech`, which exports the `speech_*` functions alone.
-- **A model does one task**, synthesis or recognition, and the same handles serve both: a model is loaded, described
-  and freed alike, and a request is made, set, cancelled and freed alike, `speech_synthesize()` or `speech_transcribe()`
-  running it. The call of the other task is `unsupported`. The families are one table in `src/speech.cpp`, with each
+- **A model does one task**, synthesis, recognition or detection
+  ([the record of detection](detecting-speech-is-a-task-of-its-own-run-by-speech-detect-with-silero-vads-options-and-f32-files.md)), and the same handles serve every task: a model is loaded, described and freed
+  alike, and a request is made, set, cancelled and freed alike, `speech_synthesize()`, `speech_transcribe()` or
+  `speech_detect()` running it. The call of another task is `unsupported`. The families are one table in `src/speech.cpp`, with each
   family's task, layout, information, engine and maker of voice files.
 - **One vocabulary, declared per family.** Every request option is a value of `speech_option` with a fixed snake_case
   name, which the worker, the server and the command line use as it is. Each family declares in one table which options

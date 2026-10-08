@@ -1,0 +1,221 @@
+// Checks Silero VAD against the official silero-vad package on each dump of reference/silero-vad/dump.py, in the order
+// data flows, each stage from the dump's own input: each chunk's input with its context, cut from the dump's audio; the
+// STFT's magnitude; each encoder block; the LSTM cell's h and c over every chunk from the dump's encoder output; the
+// decoder's probabilities from the dump's h; then the probabilities from the audio alone, and the regions of every set of
+// options in the dump's regions.json, which must equal the official's sample for sample, both from the official's
+// probabilities and from the ones computed here. The dumps are those in <reference out dir>/<the file's general.name>/.
+//
+// usage: silero-vad-check <model.gguf> <reference out dir> [gpu|cpu|device name]
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <filesystem>
+#include <string>
+#include <vector>
+
+#include "args.h"
+#include "backend.h"
+#include "compare.h"
+#include "ggml-cpu.h"
+#include "json-reader.h"
+#include "npy.h"
+#include "reference-dumps.h"
+#include "silero-vad/detector.h"
+#include "silero-vad/regions.h"
+
+using namespace silero_vad;
+
+namespace {
+
+/** The folders under <root>/<general.name>/ that hold probs.npy, sorted. */
+std::vector<std::filesystem::path> dumps(const std::string & root, const ModelFile & model) {
+    const std::filesystem::path dir = std::filesystem::u8path(root) / std::filesystem::u8path(model.str("general.name"));
+    std::vector<std::filesystem::path> out;
+    if (std::filesystem::is_directory(dir)) {
+        for (const auto & e : std::filesystem::directory_iterator(dir, std::filesystem::directory_options::follow_directory_symlink)) {
+            if (std::filesystem::is_regular_file(e.path() / "probs.npy")) out.push_back(e.path());
+        }
+    }
+    std::sort(out.begin(), out.end());
+    if (out.empty()) throw std::runtime_error("no dump of reference/silero-vad/dump.py is under " + dir.u8string());
+    return out;
+}
+
+Npy load(const std::filesystem::path & dump, const std::string & name) {
+    return read_npy((dump / (name + ".npy")).u8string());
+}
+
+/** A dump of PyTorch's [n, channels, frames] in ggml's order, [channels, frames, n]. */
+std::vector<float> by_channel(const Npy & a) {
+    const int64_t n = a.shape[0], channels = a.shape[1], frames = a.shape[2];
+    std::vector<float> out(a.f32.size());
+    for (int64_t k = 0; k < n; k++) {
+        for (int64_t c = 0; c < channels; c++) {
+            for (int64_t f = 0; f < frames; f++) out[(size_t) ((k * frames + f) * channels + c)] = a.f32[(size_t) ((k * channels + c) * frames + f)];
+        }
+    }
+    return out;
+}
+
+/** The rule of a set of options in regions.json: the file's defaults with the set's options. */
+RegionRule rule_of(const ModelFile & m, const JsonValue & options) {
+    RegionRule r = default_rule(m);
+    for (const auto & [name, value] : options.members) {
+        const double v = std::stod(value.text);
+        if (name == "threshold") r.threshold = v;
+        else if (name == "min_speech_duration_ms") r.min_speech_duration_ms = (int64_t) v;
+        else if (name == "min_silence_duration_ms") r.min_silence_duration_ms = (int64_t) v;
+        else if (name == "speech_pad_ms") r.speech_pad_ms = (int64_t) v;
+        else if (name == "max_speech_duration_s") r.max_speech_duration_s = v;
+        else throw std::runtime_error("regions.json sets " + name + ", which the check does not know");
+    }
+    return r;
+}
+
+std::string regions_text(const std::vector<Region> & regions) {
+    std::string out;
+    for (const Region & r : regions) out += (out.empty() ? "" : " ") + std::to_string(r.start) + "-" + std::to_string(r.end);
+    return out.empty() ? "none" : out;
+}
+
+}  // namespace
+
+int main(int argc, char ** argv) {
+    const std::vector<std::string> args = utf8_args(argc, argv);
+    if (args.size() < 3) {
+        std::fprintf(stderr, "usage: %s <model.gguf> <reference out dir> [gpu|cpu|device name]\n", args[0].c_str());
+        return 2;
+    }
+    try {
+        ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
+        std::printf("backend: %s\n", ggml_backend_name(backend));
+        // Measured on an Apple M5 on 2026-10-08 over the six dumps: on the CPU in F32 every stage lies 125 to 164 dB from
+        // the official, and the probabilities from the audio within 3.6e-6 of it; on Metal, whose matrix kernel rounds
+        // its inputs to half precision where it multiplies more than a few columns, 62 to 113 dB and within 6.2e-3. The
+        // dump of one chunk lies 120 dB or more from it on both, Metal multiplying a single column in float32. A wrong
+        // window, padding, stride or gate gives a few dB.
+        const bool cpu = ggml_backend_is_cpu(backend);
+        const double stage_db = cpu ? 100 : 50, probs_abs = cpu ? 1e-5 : 2e-2;
+        bool ok = true;
+        {
+            Detector detector(args[1], backend);
+            const Network & net = detector.network();
+            const ModelFile & model = detector.model();
+            ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+            for (const auto & d : dumps(args[2], model)) {
+                const Npy audio = load(d, "audio"), input = load(d, "input"), probs = load(d, "probs");
+                const int64_t n = probs.shape[0];
+                std::printf("%s (%.2f s, %lld chunks)\n", d.filename().u8string().c_str(), (double) audio.f32.size() / detector.sample_rate(), (long long) n);
+                const std::vector<float> inputs = detector.inputs(audio.f32, 0, detector.chunks(audio.f32));
+                const bool same_inputs = inputs == input.f32;
+                std::printf("  %-32s %s\n", "inputs", same_inputs ? "equal" : "DIFFER");
+                ok = ok && same_inputs;
+
+                // The stages whose chunks are independent, all chunks in one graph.
+                {
+                    Graph g;
+                    ggml_context * ctx = g.ctx();
+                    ggml_tensor * magnitude = net.stft(ctx, g.input(input.f32, net.context() + net.chunk(), n));
+                    g.output(magnitude);
+                    std::vector<ggml_tensor *> blocks;
+                    std::vector<Npy> wanted;
+                    for (int i = 0; i < net.blocks(); i++) {
+                        const Npy before = load(d, i == 0 ? std::string("stft") : "block" + std::to_string(i - 1));
+                        ggml_tensor * x = g.input(by_channel(before), before.shape[1], before.shape[2], n);
+                        blocks.push_back(net.block(ctx, i, x));
+                        g.output(blocks.back());
+                        wanted.push_back(load(d, "block" + std::to_string(i)));
+                    }
+                    g.compute(backend, allocr);
+                    const Diff ds = compare(Graph::read(magnitude), by_channel(load(d, "stft")));
+                    print_diff("  stft", ds);
+                    ok = ok && ds.snr_db > stage_db;
+                    for (int i = 0; i < net.blocks(); i++) {
+                        const Diff db = compare(Graph::read(blocks[i]), by_channel(wanted[i]));
+                        print_diff("  block " + std::to_string(i), db);
+                        ok = ok && db.snr_db > stage_db;
+                    }
+                }
+
+                // The cell from the dump's encoder output, in the detector's blocks of chunks, and the decoder from the
+                // dump's h.
+                {
+                    const Npy encoded = load(d, "block" + std::to_string(net.blocks() - 1));
+                    const Npy want_h = load(d, "lstm_h"), want_c = load(d, "lstm_c");
+                    const int64_t channels = encoded.shape[1];
+                    std::vector<float> got_h, got_c, h((size_t) net.hidden(), 0.0f), c((size_t) net.hidden(), 0.0f), part;
+                    for (int64_t first = 0; first < n; first += Detector::kBlock) {
+                        const int64_t count = std::min(Detector::kBlock, n - first);
+                        Graph g;
+                        ggml_tensor * x = g.input(std::vector<float>(encoded.f32.begin() + first * channels, encoded.f32.begin() + (first + count) * channels),
+                                                  channels, count);
+                        const Network::Steps steps = net.lstm(g.ctx(), x, g.input(h, net.hidden()), g.input(c, net.hidden()), true);
+                        g.output(steps.h);
+                        g.output(steps.c);
+                        g.output(steps.last_h);
+                        g.output(steps.last_c);
+                        g.compute(backend, allocr);
+                        Graph::read(steps.h, part);
+                        got_h.insert(got_h.end(), part.begin(), part.end());
+                        Graph::read(steps.c, part);
+                        got_c.insert(got_c.end(), part.begin(), part.end());
+                        Graph::read(steps.last_h, h);
+                        Graph::read(steps.last_c, c);
+                    }
+                    const Diff dh = compare(got_h, want_h.f32), dc = compare(got_c, want_c.f32);
+                    print_diff("  lstm h", dh);
+                    print_diff("  lstm c", dc);
+                    ok = ok && got_h.size() == want_h.f32.size() && dh.snr_db > stage_db && dc.snr_db > stage_db;
+
+                    Graph g;
+                    ggml_tensor * p = net.decode(g.ctx(), g.input(want_h.f32, net.hidden(), n));
+                    g.output(p);
+                    g.compute(backend, allocr);
+                    const Diff dp = compare(Graph::read(p), probs.f32);
+                    print_diff("  decoder", dp);
+                    ok = ok && dp.max_abs < probs_abs;
+                }
+
+                const std::vector<float> got = detector.probabilities(audio.f32);
+                const Diff dp = compare(got, probs.f32);
+                print_diff("  probabilities from the audio", dp);
+                ok = ok && got.size() == probs.f32.size() && dp.max_abs < probs_abs;
+
+                const JsonValue sets = parse_json(dump_text(d / "regions.json"));
+                for (const auto & [name, set] : sets.members) {
+                    std::vector<Region> want;
+                    for (const JsonValue & r : set.member("regions")->items) want.push_back({std::stoll(r.items[0].text), std::stoll(r.items[1].text)});
+                    const RegionRule rule = rule_of(model, *set.member("options"));
+                    const auto same = [&](const std::vector<Region> & a) {
+                        return a.size() == want.size() && std::equal(a.begin(), a.end(), want.begin(), [](const Region & x, const Region & y) {
+                                   return x.start == y.start && x.end == y.end;
+                               });
+                    };
+                    const std::vector<Region> official = speech_regions(probs.f32, (int64_t) audio.f32.size(), detector.sample_rate(), net.chunk(), rule);
+                    const std::vector<Region> own = speech_regions(got, (int64_t) audio.f32.size(), detector.sample_rate(), net.chunk(), rule);
+                    // A probability within the backend's error of a threshold the rule compares it with may fall on the other
+                    // side, which moves a region by a chunk or more; on the CPU none lies so near on these dumps.
+                    const double neg = std::max(rule.threshold - rule.neg_threshold_offset, rule.neg_threshold_floor);
+                    const bool near = !cpu && std::any_of(probs.f32.begin(), probs.f32.end(), [&](float p) {
+                        return std::fabs(p - rule.threshold) < probs_abs || std::fabs(p - neg) < probs_abs;
+                    });
+                    std::printf("  regions %-24s %zu, %s from the official probabilities, %s from these\n", name.c_str(), want.size(),
+                                same(official) ? "equal" : "DIFFER", same(own) ? "equal" : near ? "other, a probability lying near a threshold," : "DIFFER");
+                    if (!same(official) || !same(own)) {
+                        std::printf("    want %s\n    from the official %s\n    from these %s\n", regions_text(want).c_str(), regions_text(official).c_str(),
+                                    regions_text(own).c_str());
+                    }
+                    ok = ok && same(official) && (same(own) || near);
+                }
+            }
+            ggml_gallocr_free(allocr);
+        }
+        ggml_backend_free(backend);
+        std::printf("%s\n", ok ? "ok" : "FAIL");
+        return ok ? 0 : 1;
+    } catch (const std::exception & e) {
+        std::fprintf(stderr, "error: %s\n", e.what());
+        return 1;
+    }
+}

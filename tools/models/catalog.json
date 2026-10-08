@@ -116,6 +116,19 @@
       "files": [
         {"type": "f16", "file": "parakeet-tdt-0.6B-v3-F16.gguf", "size": 1255370688, "sha256": "7b74de31ac48427934104f0d074613f8d759d7d108777c114476346789d94426"}
       ]
+    },
+    {
+      "name": "silero-vad",
+      "repository": "sakasegawa/silero-vad-GGUF",
+      "type": "f32",
+      "start": [],
+      "revision": "7fcb7aa2a70c312f8579fc987b3e1cdecf9321ca",
+      "task": "detection",
+      "languages": [],
+      "voice_files": false,
+      "files": [
+        {"type": "f32", "file": "silero-vad-309K-v6.2-F32.gguf", "size": 1238624, "sha256": "2fc312514e5fc4fa4ffd02b25c76a4853fa4130e8fb9777d01502183b01238cb"}
+      ]
     }
   ]
 }

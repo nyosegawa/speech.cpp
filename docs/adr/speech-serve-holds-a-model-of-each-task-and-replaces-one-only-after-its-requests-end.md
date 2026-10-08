@@ -12,7 +12,8 @@ the machines speech.cpp runs on include laptops with 8 GB.
 - **The server holds at most one synthesis model and one recognition model.** `speech serve` takes up to two models, one
   of each task, and `--open` starts it with none. `/v1/audio/speech` uses the synthesis model and
   `/v1/audio/transcriptions` the recognition model; `/v1/models` lists both. A request to a task without a model is a
-  404 that says which model the server holds.
+  404 that says which model the server holds. A model of detection, which no endpoint takes, is refused when the server
+  starts, and the page loads none.
 - **The page replaces the model of a task by a model of the catalog.** While its file is fetched, the model held keeps
   serving. Then the server lets that model go, waits until the last request on it has ended, and only then loads the new
   one, so that two models of a task never take memory together; meanwhile the endpoint of that task answers a 503

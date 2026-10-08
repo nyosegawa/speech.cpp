@@ -1,0 +1,16 @@
+[project]
+name = "speech-cpp-silero-vad-reference"
+version = "0"
+description = "Runs Silero VAD's 16 kHz model through the official silero-vad package to dump reference tensors and regions, and converts its weights to GGUF"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  # The package ships the model's weights; it reads no audio here, so neither torchaudio nor torchcodec is needed.
+  "silero-vad==6.2.3",
+  "torch==2.10.0",
+  "numpy",
+  "soundfile",
+  "gguf",
+]
+
+[tool.uv]
+package = false

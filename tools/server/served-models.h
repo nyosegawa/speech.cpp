@@ -3,6 +3,7 @@
 #include <ctime>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -54,7 +55,7 @@ public:
 
     /**
      * Loads a model given on the command line in the place of its task, which must be empty: a file, or the catalog's
-     * file of `catalog_name`, "" for a file named by its path.
+     * file of `catalog_name`, "" for a file named by its path. A model of speech detection is refused before it loads.
      */
     void load_given(const std::string & path, const std::string & catalog_name);
 
@@ -81,8 +82,16 @@ private:
         std::string replacing;
     };
 
-    Place & place(speech_task task) { return task == SPEECH_TASK_SYNTHESIS ? synthesis_ : recognition_; }
-    const Place & place(speech_task task) const { return task == SPEECH_TASK_SYNTHESIS ? synthesis_ : recognition_; }
+    /** The place of a task's model; there is none of speech detection, whose models load_given() refuses. */
+    Place & place(speech_task task) {
+        switch (task) {
+            case SPEECH_TASK_SYNTHESIS: return synthesis_;
+            case SPEECH_TASK_RECOGNITION: return recognition_;
+            case SPEECH_TASK_DETECTION: break;
+        }
+        throw std::logic_error("speech serve holds no model of speech " + std::string(task_name(task)));
+    }
+    const Place & place(speech_task task) const { return const_cast<ServedModels *>(this)->place(task); }
 
     Loading loading_;
     mutable std::mutex mutex_;

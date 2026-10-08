@@ -170,7 +170,14 @@ int run_worker(const CommandLine & line, FILE * out) {
     // so the protocol and the inbox it uses are never freed.
     Protocol & protocol = *new Protocol(out);
     current = &protocol;
-    const Model model = load_model(model_file(line.args[0]), line.loading(true));
+    const std::string path = model_file(line.args[0]);
+    const Loading loading = line.loading(true);
+    // Protocol 2 has the messages of synthesis and recognition alone.
+    if (speech_model_info_task(file_info(path).get()) == SPEECH_TASK_DETECTION) {
+        throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "",
+                      path + " is a model of speech detection, which the worker does not serve; use `speech vad` or the C API's speech_detect()");
+    }
+    const Model model = load_model(path, loading);
     const ModelInfo info = model_info(model.get());
     const speech_model_info * m = info.get();
     protocol.line("{\"type\":\"ready\",\"protocol\":2,\"version\":" + json_string(speech_version()) + ",\"model\":" + speech_model_info_json(m) + "}");

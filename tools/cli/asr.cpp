@@ -5,10 +5,9 @@
 #include <vector>
 
 #include "commands.h"
-#include "error.h"
 #include "fetch.h"
 #include "json.h"
-#include "wav.h"
+#include "wave-input.h"
 
 // speech asr: recognizes the speech in WAVE files and writes each file's text to stdout in the order the files are
 // given, as text or as one JSON object per file, and reports on stderr the load and, for each file, its seconds of
@@ -20,18 +19,6 @@ using Clock = std::chrono::steady_clock;
 
 double seconds_since(Clock::time_point t0) {
     return std::chrono::duration<double>(Clock::now() - t0).count();
-}
-
-/**
- * The mono samples of a WAVE file. A file that cannot be read is an io failure, and one whose content is not WAVE
- * audio speech.cpp reads is the audio's invalid_argument, as the library calls audio it cannot take.
- */
-Wav read_audio(const std::string & path) {
-    try {
-        return read_wav(path);
-    } catch (const Error & e) {
-        throw Failure(speech_status_name(e.fault() == Fault::Io ? SPEECH_ERROR_IO : SPEECH_ERROR_INVALID_ARGUMENT), "audio", e.what());
-    }
 }
 
 int run_asr(const CommandLine & line, FILE * out) {

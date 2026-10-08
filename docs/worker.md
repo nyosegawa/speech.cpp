@@ -37,7 +37,7 @@ first request, and has the voices of `--add-voice`. `version` is the release, an
 JSON ([c-api.md](c-api.md#model-information-as-json)), with the device, the threads and the voices added.
 
 `fatal` comes instead when the worker cannot start. The worker then exits with 1, or with 2 for a command line it cannot
-run.
+run. A detection model (Silero VAD) is `unsupported`: the worker serves synthesis and recognition models.
 
 `protocol` rises when a caller must change to keep working: a message or member removed, renamed or given another
 meaning. A member or message added, an option added to the vocabulary, or a member added to the model information does

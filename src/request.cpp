@@ -21,7 +21,7 @@
 // cancellation from any thread, and its result.
 
 struct speech_result {
-    bool synthesis = true;
+    speech_task task = SPEECH_TASK_SYNTHESIS;
     speech_stop stop = SPEECH_STOP_COMPLETE;
     int64_t seed = -1;
     uint64_t samples = 0;
@@ -252,21 +252,54 @@ void spend(speech_request & request, const RequestRun & run, Body && body) {
     request.ran = true;
 }
 
+/** The call that runs a request of a model of `task`, for a message that names it. */
+const char * call_of(speech_task task) {
+    switch (task) {
+        case SPEECH_TASK_SYNTHESIS: return "speech_synthesize() to speak with it";
+        case SPEECH_TASK_RECOGNITION: return "speech_transcribe() to recognize speech with it";
+        case SPEECH_TASK_DETECTION: return "speech_detect() to find where someone speaks";
+    }
+    throw std::logic_error("a task the library does not know");
+}
+
 /** Checks that a request can run its one run of `task`, and returns its options. */
-RequestValues take(speech_request * request, speech_task task, const char * other) {
+RequestValues take(speech_request * request, speech_task task) {
     require(request, "request");
     const FileInfo & file = *request->model->file;
     if (file.family->task != task) {
-        throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.identity.name + " is a model of speech " + task_name(file.family->task) + "; use " + other);
+        throw ApiError(SPEECH_ERROR_UNSUPPORTED,
+                       file.identity.name + " is a model of speech " + task_name(file.family->task) + "; use " + call_of(file.family->task));
     }
     if (request->ran) throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the request has run; make a new one for the next");
     if (task == SPEECH_TASK_SYNTHESIS && !request->text) {
         throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the request has no text; set it with speech_request_set_text()", "text");
     }
-    if (task == SPEECH_TASK_RECOGNITION && request->audio.empty()) {
+    if (task != SPEECH_TASK_SYNTHESIS && request->audio.empty()) {
         throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the request has no audio; set it with speech_request_set_audio()", "audio");
     }
     return run_values(*request);
+}
+
+/**
+ * Runs a request of `task` on its audio, resampled to the model's rate, with `work`, which fills the result from the
+ * samples unless the run stops; a request that stops has no more in its result than its stop reason.
+ */
+template <typename Work>
+speech_status hear(speech_request * request, speech_task task, Work && work) {
+    const RequestValues values = take(request, task);
+    auto result = std::make_unique<speech_result>();
+    result->task = task;
+    RequestRun run(*request, [](const float *, size_t, void *) { return 0; }, nullptr);
+    std::lock_guard<std::mutex> lock(request->model->busy);
+    spend(*request, run, [&] {
+        if (run.stopped()) return;
+        const std::vector<float> samples = Resampler(request->sample_rate, request->model->file->sample_rate)(request->audio);
+        work(samples, values, run, *result);
+    });
+    if (run.stopped()) result->stop = SPEECH_STOP_CANCELLED;
+    const speech_status status = run.stopped() ? SPEECH_CANCELLED : SPEECH_OK;
+    request->result = std::move(result);
+    return status;
 }
 
 /** A token or a segment of a result, whose list is `list`; `what` names it in a message. */
@@ -311,7 +344,8 @@ speech_status speech_request_set_text(speech_request * request, const char * tex
         require(request, "request");
         const FileInfo & file = *request->model->file;
         if (file.family->task != SPEECH_TASK_SYNTHESIS) {
-            throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.identity.name + " recognizes speech and takes no text; give it audio", "text");
+            throw ApiError(SPEECH_ERROR_UNSUPPORTED,
+                           file.identity.name + " is a model of speech " + task_name(file.family->task) + " and takes no text; give it audio", "text");
         }
         require(text, "text", "text");
         if (!*text) throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the text is empty; give a text to speak", "text");
@@ -325,7 +359,7 @@ speech_status speech_request_set_audio(speech_request * request, const float * s
     return guarded([&] {
         require(request, "request");
         const FileInfo & file = *request->model->file;
-        if (file.family->task != SPEECH_TASK_RECOGNITION) {
+        if (file.family->task == SPEECH_TASK_SYNTHESIS) {
             throw ApiError(SPEECH_ERROR_UNSUPPORTED, file.identity.name + " speaks text and takes no audio; give it a text", "audio");
         }
         if (n_samples == 0) throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the audio has no samples; give at least one", "audio");
@@ -380,7 +414,7 @@ void speech_request_cancel(speech_request * request) {
 speech_status speech_synthesize(speech_request * request, speech_audio_callback on_audio, void * user_data) {
     return guarded([&] {
         if (!on_audio) throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "on_audio is NULL; give a callback that takes the audio");
-        const RequestValues values = take(request, SPEECH_TASK_SYNTHESIS, "speech_transcribe() to recognize speech with it");
+        const RequestValues values = take(request, SPEECH_TASK_SYNTHESIS);
         auto result = std::make_unique<speech_result>();
         result->seed = values.has(SPEECH_OPT_SEED) ? values.integer(SPEECH_OPT_SEED) : -1;
         RequestRun run(*request, on_audio, user_data);
@@ -398,27 +432,24 @@ speech_status speech_synthesize(speech_request * request, speech_audio_callback 
 
 speech_status speech_transcribe(speech_request * request) {
     return guarded([&] {
-        const RequestValues values = take(request, SPEECH_TASK_RECOGNITION, "speech_synthesize() to speak with it");
-        auto result = std::make_unique<speech_result>();
-        result->synthesis = false;
-        RequestRun run(*request, [](const float *, size_t, void *) { return 0; }, nullptr);
-        std::lock_guard<std::mutex> lock(request->model->busy);
-        spend(*request, run, [&] {
-            if (run.stopped()) return;
-            const std::vector<float> samples = Resampler(request->sample_rate, request->model->file->sample_rate)(request->audio);
+        return hear(request, SPEECH_TASK_RECOGNITION, [&](const std::vector<float> & samples, const RequestValues & values, Run & run, speech_result & result) {
             Recognized found = request->model->engine->transcribe(samples, values, run);
-            if (!run.stopped()) {
-                result->text = std::move(found.text);
-                result->segments = std::move(found.segments);
-                result->tokens = std::move(found.tokens);
-                result->stop = found.stop;
-                result->languages = std::move(found.languages);
-            }
+            if (run.stopped()) return;
+            result.text = std::move(found.text);
+            result.segments = std::move(found.segments);
+            result.tokens = std::move(found.tokens);
+            result.stop = found.stop;
+            result.languages = std::move(found.languages);
         });
-        if (run.stopped()) result->stop = SPEECH_STOP_CANCELLED;
-        const speech_status status = run.stopped() ? SPEECH_CANCELLED : SPEECH_OK;
-        request->result = std::move(result);
-        return status;
+    });
+}
+
+speech_status speech_detect(speech_request * request) {
+    return guarded([&] {
+        return hear(request, SPEECH_TASK_DETECTION, [&](const std::vector<float> & samples, const RequestValues & values, Run & run, speech_result & result) {
+            std::vector<TimedText> regions = request->model->engine->detect(samples, values, run);
+            if (!run.stopped()) result.segments = std::move(regions);
+        });
     });
 }
 
@@ -439,7 +470,7 @@ uint64_t speech_result_samples(const speech_result * result) {
 }
 
 const char * speech_result_text(const speech_result * result) {
-    return result && !result->synthesis ? result->text.c_str() : nullptr;
+    return result && result->task == SPEECH_TASK_RECOGNITION ? result->text.c_str() : nullptr;
 }
 
 size_t speech_result_segment_count(const speech_result * result) {

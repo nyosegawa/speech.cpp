@@ -1,7 +1,7 @@
 /*
  * What the parts of speech-api-check share: messages, the checks of the library before a model is loaded, the
- * quantizing it refuses, the information read without loading against a loaded model's, the refusal of every option's values, and the requests
- * of a synthesis, their audio and their cancellation from another thread.
+ * quantizing it refuses, the information read without loading against a loaded model's, the refusal of every option's values, the reading
+ * of a dump's files, and the requests of a synthesis, their audio and their cancellation from another thread.
  */
 
 #include <math.h>
@@ -69,7 +69,8 @@ int check_library(void) {
                                      "cfg_scale_speaker", "cfg_guidance_mode", "cfg_min_t", "cfg_max_t", "truncation_factor",
                                      "rescale_k", "rescale_sigma", "speaker_uncond_mode", "sway_coeff", "keep_tail",
                                      "tail_window_size", "tail_std_threshold", "tail_mean_threshold", "speaker_kv_scale",
-                                     "speaker_kv_min_t", "speaker_kv_max_layers", "cfg_scale_instructions"};
+                                     "speaker_kv_min_t", "speaker_kv_max_layers", "cfg_scale_instructions", "threshold",
+                                     "min_speech_duration_ms", "min_silence_duration_ms", "speech_pad_ms", "max_speech_duration_s"};
     if (speech_option_count() != sizeof options / sizeof options[0]) {
         fprintf(stderr, "FAIL: the library knows %zu options\n", speech_option_count());
         return 1;
@@ -138,6 +139,8 @@ int check_quantize_refusals(const char * model_path) {
     speech_model_info * info = NULL;
     if (speech_model_info_open(model_path, &info) != SPEECH_OK) return fail("speech_model_info_open");
     const int f32 = !strcmp(speech_model_info_weight_type(info), "F32");
+    // Silero VAD's layout keeps every tensor in F32, of which no file of another type is made.
+    const int detection = speech_model_info_task(info) == SPEECH_TASK_DETECTION;
     speech_model_info_free(info);
     // The folder does not exist, so that no refusal can leave a file behind and a file of F32 weights, which the library
     // quantizes, is refused only when it comes to create its output.
@@ -150,7 +153,9 @@ int check_quantize_refusals(const char * model_path) {
     ok &= expect(speech_quantize("no-such-folder/no-such-model.gguf", "q8_0", out), SPEECH_ERROR_IO, "model_path",
                  "quantizing a model file that is not there");
     ok &= expect(speech_quantize(model_path, "Q4_K", model_path), SPEECH_ERROR_INVALID_ARGUMENT, "out_path", "quantizing a model file over itself");
-    if (f32) {
+    if (detection) {
+        ok &= expect(speech_quantize(model_path, "q8_0", out), SPEECH_ERROR_INVALID_ARGUMENT, "type", "quantizing a model whose layout keeps F32");
+    } else if (f32) {
         ok &= expect(speech_quantize(model_path, "q4_k", out), SPEECH_ERROR_IO, "out_path", "quantizing F32 weights into a folder that is not there");
     } else {
         ok &= expect(speech_quantize(model_path, "q4_k", out), SPEECH_ERROR_INVALID_ARGUMENT, "model_path",
@@ -421,6 +426,42 @@ int check_option_refusals(speech_model * model) {
     speech_model_info_free(info);
     if (!ok) fprintf(stderr, "FAIL: an option's value is not refused or accepted as speech.h declares\n");
     return ok ? 0 : 1;
+}
+
+char * read_whole(const char * path, size_t * size) {
+    FILE * f = open_utf8(path, "rb");
+    if (!f) return NULL;
+    size_t capacity = 1 << 16, n = 0;
+    char * data = (char *) malloc(capacity);
+    for (;;) {
+        n += fread(data + n, 1, capacity - n - 1, f);
+        if (n < capacity - 1) break;
+        capacity *= 2;
+        data = (char *) realloc(data, capacity);
+    }
+    fclose(f);
+    data[n] = '\0';
+    *size = n;
+    return data;
+}
+
+float * read_audio(const char * dump, size_t * n) {
+    char path[4096];
+    snprintf(path, sizeof path, "%s/audio.npy", dump);
+    size_t size = 0;
+    char * data = read_whole(path, &size);
+    if (!data) return NULL;
+    const size_t header = size >= 10 ? (size_t) (unsigned char) data[8] | (size_t) (unsigned char) data[9] << 8 : 0;
+    if (size < 10 || memcmp(data, "\x93NUMPY\x01", 7) != 0 || 10 + header > size || !strstr(data + 10, "'<f4'") ||
+        !strstr(data + 10, "'fortran_order': False") || !strstr(data + 10, ",)")) {
+        free(data);
+        return NULL;
+    }
+    *n = (size - 10 - header) / sizeof(float);
+    float * samples = (float *) malloc(*n * sizeof(float));
+    memcpy(samples, data + 10 + header, *n * sizeof(float));
+    free(data);
+    return samples;
 }
 
 int record_progress(double done, void * user_data) {

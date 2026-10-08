@@ -16,9 +16,11 @@ namespace fs = std::filesystem;
 
 namespace {
 
+/** A size in gigabytes, or in megabytes below 10 MB, which two decimals of a gigabyte would show as 0.00 GB. */
 std::string gigabytes(uint64_t bytes) {
     char s[32];
-    std::snprintf(s, sizeof s, "%.2f GB", bytes / 1e9);
+    if (bytes < 10000000) std::snprintf(s, sizeof s, "%.1f MB", bytes / 1e6);
+    else std::snprintf(s, sizeof s, "%.2f GB", bytes / 1e9);
     return s;
 }
 
