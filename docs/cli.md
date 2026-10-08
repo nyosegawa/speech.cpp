@@ -302,9 +302,10 @@ implementation:
 ## speech serve and speech worker
 
 ```
-speech serve [MODEL [MODEL]] [--open] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
+speech serve [MODEL [MODEL [MODEL]]] [--open] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
              [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup]
 speech worker MODEL [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup]
 ```
 
-[server.md](server.md) and [worker.md](worker.md) describe them. Neither takes a detection model.
+[server.md](server.md) and [worker.md](worker.md) describe them. `speech serve` takes a detection model beside a
+synthesis and a recognition model, for transcriptions by regions; the worker takes none.

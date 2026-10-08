@@ -18,10 +18,17 @@ granularity, and that granularity's refusal where it does not; WAV at three time
 file that is not WAV or cannot be read, a language, a prompt, a decoding, a member and a granularity it does not take,
 and audio the library cannot take.
 
+With --vad a detection model, which the server holds beside the model: /v1/models lists it after the model, and for a
+recognition model chunking_strategy "auto" on the dumps' audio joined with silences gives the text, the languages and
+the segments of `speech asr --vad` with its defaults, the members of server_vad give those of the flags they map to, a
+file of silence gives an empty text, and each form of chunking_strategy it does not take is refused. Without --vad,
+chunking_strategy is refused with a pointer to the detection model. A detection model alone is listed, and both
+endpoints answer that the server holds no model of their task.
+
 The audio goes as 16-bit samples, which move the near-silent input of reference/qwen3-asr/dump.py far enough to change
 the text a forced language makes of it; leave that dump out.
 
-usage: python3 tools/server_smoke.py <speech> <model.gguf> [dump folder...] [-- serve options...]
+usage: python3 tools/server_smoke.py <speech> <model.gguf> [dump folder...] [--vad DETECTION.gguf] [-- serve options...]
 """
 
 import array
@@ -30,7 +37,9 @@ import base64
 import json
 import os
 import struct
+import subprocess
 import sys
+import tempfile
 import uuid
 
 from server_client import Server, expect_error
@@ -39,18 +48,29 @@ from worker_client import check_model_information, dump_requests
 args = sys.argv[1:]
 options = args[args.index("--") + 1:] if "--" in args else []
 args = args[:args.index("--")] if "--" in args else args
+vad = None
+if "--vad" in args:
+    at = args.index("--vad")
+    vad = args[at + 1]
+    del args[at:at + 2]
 speech, model, *dumps = args
 added = [o.split("=", 1)[0] for i, o in enumerate(options) if i > 0 and options[i - 1] == "--add-voice"]
 ORIGIN = "http://localhost:5173"
 
-server = Server(speech, [model, "--cors-origin", ORIGIN, *options])
+server = Server(speech, [model, *([vad] if vad else []), "--cors-origin", ORIGIN, *options])
 call, post_json = server.call, server.post_json
 status, _, body = call("GET", "/health")
 assert status == 200 and json.loads(body) == {"status": "ok"}, body
 status, _, body = call("GET", "/v1/models")
 listed = json.loads(body)
-assert status == 200 and listed["object"] == "list" and len(listed["data"]) == 1, body
+assert status == 200 and listed["object"] == "list" and len(listed["data"]) == (2 if vad else 1), body
 entry = listed["data"][0]
+if vad:
+    detector = listed["data"][1]
+    check_model_information(speech, vad, detector["speech"])
+    assert detector["id"] == detector["speech"]["name"] and detector["speech"]["task"] == "detection", detector
+    assert json.loads(call("GET", "/v1/models/" + detector["id"])[2]) == detector
+    print(f"/v1/models lists {detector['id']} after {entry['id']}, with the model information of speech info --json")
 info = entry["speech"]
 assert entry["object"] == "model" and entry["owned_by"] == "speech.cpp" and entry["id"] == info["name"], entry
 assert isinstance(entry["created"], int) and isinstance(entry["version"], str), entry
@@ -86,7 +106,12 @@ def sse_events(r):
     return events
 
 
-if info["task"] == "synthesis":
+if info["task"] == "detection":
+    form = b'--x\r\nContent-Disposition: form-data; name="language"\r\n\r\nja\r\n--x--\r\n'
+    expect_error(call("POST", "/v1/audio/transcriptions", form, {"Content-Type": "multipart/form-data; boundary=x"}), 404, None, None,
+                 "POST /v1/audio/transcriptions to a server with a detection model alone")
+    expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": "x"}), 404, None, None, "POST /v1/audio/speech to it")
+elif info["task"] == "synthesis":
     form = b'--x\r\nContent-Disposition: form-data; name="language"\r\n\r\nja\r\n--x--\r\n'
     expect_error(call("POST", "/v1/audio/transcriptions", form, {"Content-Type": "multipart/form-data; boundary=x"}), 404, None, None,
                  "POST /v1/audio/transcriptions to a synthesis model")
@@ -271,6 +296,60 @@ else:
                  "timestamp_granularities[]", "a granularity without verbose_json")
     expect_error(transcribe([("model", "whisper-1")], [("file", "x.wav", wav)]), 404, "model_not_found", "model", "another model")
     expect_error(transcribe([("language", info["languages"][0])], []), 400, "missing_required_parameter", "file", "no file")
+    if not vad:
+        expect_error(transcribe([("chunking_strategy", "auto")], [("file", "x.wav", wav)]), 400, "unsupported_parameter", "chunking_strategy",
+                     "chunking_strategy without a detection model")
+    else:
+        # The dumps' audio joined with a second of silence after each, which the detection cuts into regions again; the
+        # server's answers are speech asr --vad's for the same audio and options, which tools/speech_cli_smoke.py checks
+        # against the worker.
+        joined = array.array("f", [x for d in dumps for x in list(read_npy(os.path.join(d, "audio.npy"))) + [0.0] * rate])
+        long, silence = wav_file(joined, rate), wav_file([0.0] * (6 * rate), rate)
+        load = [o for i, o in enumerate(options) if o in ("--device", "--threads") or (i and options[i - 1] in ("--device", "--threads"))]
+        with tempfile.TemporaryDirectory() as work:
+            path = os.path.join(work, "long.wav")
+            with open(path, "wb") as f:
+                f.write(long)
+            timed = ["--timestamps"] if "timestamps" in takes else []
+
+            def cli(*flags):
+                r = subprocess.run([speech, "asr", model, "--vad", vad, "--format", "json", *timed, *flags, *load, path],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                assert r.returncode == 0, r.stderr.decode()[-600:]
+                return json.loads(r.stdout)
+
+            for form, flags in (([("chunking_strategy", "auto")], []),
+                                ([("chunking_strategy[type]", "server_vad"), ("chunking_strategy[threshold]", "0.6"),
+                                  ("chunking_strategy[prefix_padding_ms]", "200"), ("chunking_strategy[silence_duration_ms]", "700")],
+                                 ["--threshold", "0.6", "--speech-pad-ms", "200", "--min-silence-duration-ms", "700"])):
+                want = cli(*flags)
+                status, headers, body = transcribe(form, [("file", "long.wav", long)])
+                assert status == 200 and json.loads(body) == {"text": want["text"]} and headers["x-speech-stop"] == want["stop"], (form, body)
+                status, _, body = transcribe(form + [("response_format", "verbose_json")], [("file", "long.wav", long)])
+                verbose = json.loads(body)
+                assert verbose["text"] == want["text"] and verbose.get("language") == (",".join(want.get("languages", [])) or None), body
+                if timed:
+                    assert verbose["segments"] == [{"id": i, **s} for i, s in enumerate(want["segments"])], body
+            assert json.loads(transcribe([("chunking_strategy", "auto")], [("file", "silence.wav", silence)])[2]) == {"text": ""}
+        print(f"chunking_strategy: auto and server_vad give speech asr --vad's text, language{' and segments' if timed else ''} "
+              f"for {len(joined) / rate:.1f} s of the dumps joined, and silence an empty text")
+        for form, code, param, what in (
+                ([("chunking_strategy", "server_vad")], "unsupported_value", "chunking_strategy", "a chunking_strategy other than auto"),
+                ([("chunking_strategy", '{"type":"server_vad"}')], "unsupported_value", "chunking_strategy", "chunking_strategy as JSON"),
+                ([("chunking_strategy[type]", "semantic_vad")], "unsupported_value", "chunking_strategy[type]", "a type other than server_vad"),
+                ([("chunking_strategy[threshold]", "0.5")], "missing_required_parameter", "chunking_strategy[type]", "a member without the type"),
+                ([("chunking_strategy", "auto"), ("chunking_strategy[type]", "server_vad")], "invalid_value", "chunking_strategy", "both forms"),
+                ([("chunking_strategy[type]", "server_vad"), ("chunking_strategy[threshold]", "high")], "invalid_type", "chunking_strategy[threshold]",
+                 "a threshold that is no number"),
+                ([("chunking_strategy[type]", "server_vad"), ("chunking_strategy[silence_duration_ms]", "0.5")], "invalid_type",
+                 "chunking_strategy[silence_duration_ms]", "a silence with a fraction"),
+                ([("chunking_strategy[type]", "server_vad"), ("chunking_strategy[threshold]", "2")], "unsupported_value", "chunking_strategy[threshold]",
+                 "a threshold above 1"),
+                ([("chunking_strategy[type]", "server_vad"), ("chunking_strategy[prefix_padding_ms]", "-1")], "unsupported_value",
+                 "chunking_strategy[prefix_padding_ms]", "a negative padding"),
+                ([("chunking_strategy[type]", "server_vad"), ("chunking_strategy[create_response]", "true")], "unknown_parameter",
+                 "chunking_strategy[create_response]", "a member of the Realtime API's server_vad")):
+            expect_error(transcribe(form, [("file", "x.wav", wav)]), 400, code, param, what)
 
 out = server.stop()
 if out:

@@ -174,7 +174,7 @@ void Page::models(httplib::Response & res) const {
     };
     try {
         res.set_content("{\"catalog\":" + models_json() + ",\"synthesis\":" + task(SPEECH_TASK_SYNTHESIS) + ",\"recognition\":" +
-                            task(SPEECH_TASK_RECOGNITION) + "}",
+                            task(SPEECH_TASK_RECOGNITION) + ",\"detection\":" + task(SPEECH_TASK_DETECTION) + "}",
                         "application/json");
     } catch (const Failure & e) {
         send_error(res, openai::library_error(e));
@@ -205,11 +205,6 @@ void Page::load(const httplib::Request & req, httplib::Response & res) {
         return;
     }
     const speech_task task = task_of(*choice.model);
-    if (task == SPEECH_TASK_DETECTION) {
-        send_error(res, {400, choice.model->name + " is a model of speech detection; the page loads a synthesis model and a recognition model.", "model",
-                         "invalid_value"});
-        return;
-    }
     if (!models_.begin_replacing(task, choice_name(choice))) {
         send_error(res, {409, "The speech " + std::string(task_name(task)) + " model is being replaced by " + models_.replacing(task) +
                               "; wait until it is in place.", "model", "model_loading"});

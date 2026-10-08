@@ -25,8 +25,9 @@
 
 // speech serve: serves a model of each task over HTTP with OpenAI's audio API, so that a program that speaks HTTP (a web
 // app, Python with requests, curl) can use speech.cpp without starting the worker: the synthesis model answers
-// POST /v1/audio/speech and the recognition model POST /v1/audio/transcriptions; GET /v1/models gives the models with
-// their information, and GET /health says the server is up, which it is once the models given are loaded. A failure of
+// POST /v1/audio/speech and the recognition model POST /v1/audio/transcriptions, which with chunking_strategy recognizes
+// the regions where the detection model finds that someone speaks; GET /v1/models gives the models with their
+// information, and GET /health says the server is up, which it is once the models given are loaded. A failure of
 // the library becomes OpenAI's error object by its category alone (openai::library_error()). A model serves one request
 // at a time in the order they arrive, and a client that goes away while it waits or while its request runs cancels it.
 // On a loopback address the server also serves its page (page.h), which replaces the model of a task by one of the
@@ -38,14 +39,14 @@ using openai::send_error;
 
 namespace {
 
-/** The endpoint of a task's model; speech serve holds no model of speech detection. */
-const char * endpoint_of(speech_task task) {
+/** What a task's model serves. */
+const char * use_of(speech_task task) {
     switch (task) {
         case SPEECH_TASK_SYNTHESIS: return "/v1/audio/speech";
         case SPEECH_TASK_RECOGNITION: return "/v1/audio/transcriptions";
-        case SPEECH_TASK_DETECTION: break;
+        case SPEECH_TASK_DETECTION: return "chunking_strategy of /v1/audio/transcriptions";
     }
-    throw std::logic_error("speech serve has no endpoint of speech " + std::string(task_name(task)));
+    throw std::logic_error("a task speech.h does not have");
 }
 
 /** The task of the other of the two endpoints that take a model. */
@@ -55,7 +56,7 @@ speech_task other_task(speech_task task) {
         case SPEECH_TASK_RECOGNITION: return SPEECH_TASK_SYNTHESIS;
         case SPEECH_TASK_DETECTION: break;
     }
-    throw std::logic_error("speech serve has no endpoint of speech " + std::string(task_name(task)));
+    throw std::logic_error("no endpoint takes a model of speech detection");
 }
 
 std::string wav_header(size_t data_bytes, int sample_rate) {
@@ -153,7 +154,7 @@ private:
         const speech_task other = other_task(wanted);
         if (const auto served = models_.of(other)) {
             message += "; it holds " + std::string(speech_model_info_name(served->info().get())) + ", a speech " + task_name(other) +
-                       " model, which " + endpoint_of(other) + " is for";
+                       " model, which " + use_of(other) + " is for";
         }
         send_error(res, {404, message + ". Give speech serve a " + task + " model" + (access_.loopback() ? ", or pick one on its page." : "."), "", ""});
         return nullptr;
@@ -269,8 +270,9 @@ private:
     }
 
     /**
-     * Recognizes the form's WAV file and answers with its text once it is done, as json, text or verbose_json, which
-     * also carries the language the model heard, and with why the recognition ended in X-Speech-Stop.
+     * Recognizes the form's WAV file, or with chunking_strategy each region of it where the detection model finds that
+     * someone speaks, and answers with its text once it is done, as json, text or verbose_json, which also carries the
+     * language the model heard, and with why the recognition ended in X-Speech-Stop.
      */
     void transcription(std::shared_ptr<Served> served, const httplib::Request & req, httplib::Response & res) {
         const auto info = served->info();
@@ -289,13 +291,33 @@ private:
         job->sample_rate = asked.sample_rate;
         job->duration = (double) asked.samples.size() / asked.sample_rate;
         job->served = served;
+        job->timestamps = asked.timestamps;
+        if (asked.regions) {
+            job->detector = detector(speech_model_info_name(info.get()), res);
+            if (!job->detector) return;
+            try {
+                job->detection = detection_request(job->detector->get(), asked.samples, asked.sample_rate, *asked.regions);
+            } catch (const Failure & e) {
+                ApiError error = openai::library_error(e);
+                const std::string member = openai::server_vad_member(e.option());
+                if (!member.empty()) error.param = "chunking_strategy[" + member + "]";
+                send_error(res, error);
+                return;
+            }
+        }
         try {
             job->request = new_request(served->get());
-            check(speech_request_set_audio(job->request.get(), asked.samples.data(), asked.samples.size(), asked.sample_rate));
+            if (!asked.regions) check(speech_request_set_audio(job->request.get(), asked.samples.data(), asked.samples.size(), asked.sample_rate));
             apply_options(job->request.get(), asked.options);
         } catch (const Failure & e) {
             send_error(res, openai::library_error(e));
             return;
+        }
+        if (asked.regions) {
+            job->request.reset();
+            job->recognizer = served->get();
+            job->samples = std::move(asked.samples);
+            job->options = std::move(asked.options);
         }
         const uint64_t ticket = served->turns().take();
         std::thread(transcribe, job, std::ref(served->turns()), ticket).detach();
@@ -306,15 +328,33 @@ private:
             return;
         }
         if (job->status != SPEECH_OK) return;
-        const speech_result * result = speech_request_result(job->request.get());
-        res.set_header("X-Speech-Stop", speech_stop_name(speech_result_stop(result)));
+        res.set_header("X-Speech-Stop", speech_stop_name(job->transcript.stop));
         if (asked.format == "text") {
-            res.set_content(speech_result_text(result), "text/plain; charset=utf-8");
+            res.set_content(job->transcript.text, "text/plain; charset=utf-8");
         } else if (asked.format == "verbose_json") {
-            res.set_content(openai::transcription_verbose_json(transcript_of(result, asked.timestamps), job->duration, asked.timestamps), "application/json");
+            res.set_content(openai::transcription_verbose_json(job->transcript, job->duration, asked.timestamps), "application/json");
         } else {
-            res.set_content(openai::transcription_json(speech_result_text(result)), "application/json");
+            res.set_content(openai::transcription_json(job->transcript.text), "application/json");
         }
+    }
+
+    /**
+     * The detection model that chunking_strategy needs; otherwise answers a 400 that says to give speech serve one, or a
+     * 503 while the page loads one.
+     */
+    std::shared_ptr<Served> detector(const std::string & recognizer, httplib::Response & res) const {
+        if (auto served = models_.of(SPEECH_TASK_DETECTION)) return served;
+        if (const std::string coming = models_.replacing(SPEECH_TASK_DETECTION); !coming.empty()) {
+            res.set_header("Retry-After", "5");
+            send_error(res, {503, "The speech detection model, which chunking_strategy needs, is being loaded (" + coming +
+                                      "); send the request again once it is in place.", "", "model_loading"});
+            return nullptr;
+        }
+        send_error(res, {400, "chunking_strategy recognizes the regions where a speech detection model finds that someone speaks, and this server "
+                              "holds none. Give speech serve one beside the recognition model, as in speech serve " + recognizer + " silero-vad, or "
+                              "leave chunking_strategy out.",
+                         "chunking_strategy", "unsupported_parameter"});
+        return nullptr;
     }
 
     /**
@@ -372,7 +412,7 @@ void report(const Served & served) {
     const auto info = served.info();
     std::fprintf(stderr, "speech serve: %s (%s) on %s, %d Hz, for %s\n", speech_model_info_name(info.get()), speech_model_info_architecture(info.get()),
                  speech_model_info_device(info.get()), speech_model_info_sample_rate(info.get()),
-                 endpoint_of(speech_model_info_task(info.get())));
+                 use_of(speech_model_info_task(info.get())));
 }
 
 int run_serve(const CommandLine & line, FILE *) {
@@ -428,12 +468,13 @@ int run_serve(const CommandLine & line, FILE *) {
 Command serve_command() {
     Command c;
     c.name = "serve";
-    c.usage = "serve [MODEL [MODEL]] [options]";
+    c.usage = "serve [MODEL [MODEL [MODEL]]] [options]";
     c.summary = "serve models over HTTP with OpenAI's audio API, and a page to try them";
     c.description =
-        "Loads each MODEL, a synthesis model and a recognition model at most, warmed up unless --no-warmup, adds the voices\n"
-        "of --add-voice to the synthesis model, and serves them over HTTP: POST /v1/audio/speech, POST\n"
-        "/v1/audio/transcriptions, GET /v1/models and GET /health. It has no authentication and no TLS, and refuses a\n"
+        "Loads each MODEL, a synthesis model, a recognition model and a detection model at most, warmed up unless\n"
+        "--no-warmup, adds the voices of --add-voice to the synthesis model, and serves them over HTTP: POST\n"
+        "/v1/audio/speech, POST /v1/audio/transcriptions, which with chunking_strategy recognizes the regions where the\n"
+        "detection model finds speech, GET /v1/models and GET /health. It has no authentication and no TLS, and refuses a\n"
         "request that a web page at another origin than --cors-origin's sends. On 127.0.0.1, ::1 or localhost it also\n"
         "serves a page on which to pick models of the catalog, fetch them and try them, at the address with a token\n"
         "that it prints; --open opens it, and starts the server without a model if none is given.";
@@ -448,7 +489,7 @@ Command serve_command() {
         no_warmup_flag(),
     };
     c.model = ModelKind::Any;
-    c.max_args = 2;
+    c.max_args = 3;
     c.run = run_serve;
     return c;
 }

@@ -11,9 +11,10 @@ several sentences, and a piece without speech is still recognized.
 VAD's `get_speech_timestamps()` ([the record of detection](detecting-speech-is-a-task-of-its-own-run-by-speech-detect-with-silero-vads-options-and-f32-files.md)).
 With Silero VAD's defaults (`min_silence_duration_ms` 100, `speech_pad_ms` 30) a region ends at a breath or a comma:
 three read sentences in 20 s gave 8 regions. With `min_silence_duration_ms` 500 the same three became one region of
-13.3 s. OpenAI's transcription API takes `chunking_strategy`, `"auto"` or `server_vad` with `threshold`,
-`prefix_padding_ms` and `silence_duration_ms`, whose defaults are 0.5, 300 ms and 500 ms; its Realtime API's
-`server_vad` takes the same three.
+13.3 s. OpenAI's transcription API takes `chunking_strategy`, `"auto"` or a `server_vad` object of `threshold`,
+`prefix_padding_ms` and `silence_duration_ms`, which its reference (github.com/openai/openai-openapi at commit 234829e,
+2026-10-07, `VadConfig`) defaults to 0.5, 300 ms and 200 ms and leaves `"auto"` to the server; its Realtime API's
+`server_vad` takes the same three, defaulting to 0.5, 300 ms and 500 ms.
 
 A library request runs on one model. The library recognizes Qwen3-ASR audio over 1200 s in parts and joins their texts
 without a separator, as qwen-asr does.
@@ -24,12 +25,13 @@ without a separator, as qwen-asr does.
   one detection request finds the regions of the whole audio, each region's samples become a recognition request of
   their own, and the results are joined. A region is cut from the audio as given, at its start and end times the rate,
   rounded.
-- **The detection options default to OpenAI's `server_vad`**: `threshold` 0.5, `speech_pad_ms` 300 for its
-  `prefix_padding_ms`, and `min_silence_duration_ms` 500 for its `silence_duration_ms`; `min_speech_duration_ms` keeps
-  Silero VAD's 250, and `max_speech_duration_s`, which OpenAI's form has no member for, gives a longest region, so that
-  a long run of speech without a pause of half a second is cut at its longest silence. `speech asr --vad MODEL` takes
-  the options of `speech vad` as flags of their names: those the detection model takes and the recognition model does
-  not go to the detection, the others to every region's recognition.
+- **The detection options default to OpenAI's Realtime `server_vad`, for every way in**: `threshold` 0.5,
+  `speech_pad_ms` 300 for its `prefix_padding_ms`, and `min_silence_duration_ms` 500 for its `silence_duration_ms`;
+  `min_speech_duration_ms` keeps Silero VAD's 250, and `max_speech_duration_s`, which OpenAI's forms have no member for,
+  gives a longest region, so that a long run of speech without a pause of half a second is cut at its longest silence.
+  `chunking_strategy` `"auto"` takes them all, and a `server_vad` object those of the members it leaves out.
+  `speech asr --vad MODEL` takes the options of `speech vad` as flags of their names: those the detection model takes and
+  the recognition model does not go to the detection, the others to every region's recognition.
 - **The texts are joined with a space, unless either side is written without spaces or already has one**: Han,
   Hiragana and Katakana with their radicals, symbols, punctuation and full-width forms, the scripts the page's join
   leaves without a space. The space begins the next region's first segment and first token, so that the segments, and
@@ -51,10 +53,13 @@ The alternatives were turned down:
   together at every pause, where a part of 1200 s ends once in twenty minutes.
 - Silero VAD's own defaults. They cut a sentence at every breath, and an OpenAI client that asks for `"auto"` or leaves a
   member of `server_vad` out expects OpenAI's values.
+- 200 ms of silence for `chunking_strategy`, as `VadConfig` gives it, beside 500 ms for the Realtime API. The same audio
+  would be cut into other regions by a file sent whole than by the same audio streamed, and by the command line.
 - Pieces of a fixed length cut at the quietest point, as the page cuts them. A piece still holds several sentences, and
   one without speech is still recognized.
 
 ## Consequences
 
-A program that wants the text of a long recording runs a detection model beside the recognizer. The page, which cuts its
-own pieces, can send whole recordings once it asks for regions.
+A program that wants the text of a long recording runs a detection model beside the recognizer: `speech asr --vad`, or
+`speech serve` given one, which answers `chunking_strategy` without it with an error rather than a transcription of the
+whole audio. The page, which cuts its own pieces, can send whole recordings once it asks for regions.

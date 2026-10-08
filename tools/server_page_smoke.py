@@ -23,10 +23,13 @@ folder of the script's own (SPEECH_MODEL_DIR), so that loading one by its name f
 - a load whose page goes away while it waits for another process's lock on the file, which that process then puts in
   place, leaves the model held as it was;
 - a voice added to a model that takes voice files, or refused by one that does not;
+- with a detection model, the place of detection, empty until the page loads that model into it by its catalog name,
+  a transcription with chunking_strategy refused before and answered after, and /v1/models listing it third;
 - a server on 0.0.0.0, which has no page and answers its endpoints with how to reach them (on Windows its firewall may
   ask about it).
 
 usage: python3 tools/server_page_smoke.py <speech> <work dir> <synthesis.gguf with voices of its own> <recognition.gguf> <third model.gguf>
+                                          [detection.gguf]
 """
 
 import hashlib
@@ -42,7 +45,7 @@ import uuid
 
 from server_client import Server, expect_error
 
-if len(sys.argv) != 6:
+if len(sys.argv) not in (6, 7):
     raise SystemExit(__doc__.strip().splitlines()[-1])
 speech, work, *files = sys.argv[1:]
 folder = os.path.join(os.path.abspath(work), "page-smoke-models")
@@ -72,8 +75,10 @@ for path in files:
     os.makedirs(os.path.dirname(f["path"]), exist_ok=True)
     os.symlink(os.path.abspath(path), f["path"])
     given.append({"path": path, "name": m["name"] if f["type"] == m["type"] else f"{m['name']}:{f['type']}", "task": m["task"]})
-synthesis, recognition, third = given
+synthesis, recognition, third = given[:3]
+detection = given[3] if len(given) > 3 else None
 assert synthesis["task"] == "synthesis" and recognition["task"] == "recognition", "give a synthesis model, then a recognition model"
+assert not detection or detection["task"] == "detection", "the fourth model is a detection model"
 print(f"linked {', '.join(g['name'] for g in given)} into {folder}")
 
 r = subprocess.run([speech, "serve", "--port", "0"], env=env, capture_output=True)
@@ -120,6 +125,7 @@ assert state["catalog"]["models"] == json.loads(subprocess.run([speech, "models"
 for g in (synthesis, recognition):
     held = state[g["task"]]
     assert held["replacing"] is None and held["held"]["name"] is None and held["held"]["path"] == g["path"], held
+assert state["detection"] == {"held": None, "replacing": None}, state["detection"]
 print("the token, the Host and the Origin of /speech/: refused without, wrong, foreign; the catalog and the two models given")
 
 expect_error(call("GET", "/health", headers={"Origin": FOREIGN}), 403, "origin_not_allowed", None, "GET /health from a foreign origin")
@@ -137,9 +143,10 @@ def speak(text="明日の東京は晴れです。", headers=None):
     return post_json("/v1/audio/speech", member, headers)
 
 
-def transcribe(wav, headers=None):
+def transcribe(wav, headers=None, chunking=False):
     boundary = uuid.uuid4().hex
-    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"x.wav\"\r\nContent-Type: audio/wav\r\n\r\n").encode()
+    body = f"--{boundary}\r\nContent-Disposition: form-data; name=\"chunking_strategy\"\r\n\r\nauto\r\n".encode() if chunking else b""
+    body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"x.wav\"\r\nContent-Type: audio/wav\r\n\r\n").encode()
     body += wav + f"\r\n--{boundary}--\r\n".encode()
     return call("POST", "/v1/audio/transcriptions", body, {"Content-Type": f"multipart/form-data; boundary={boundary}", **(headers or {})})
 
@@ -215,6 +222,16 @@ info[task] = load(back["name"], task)["model"]
 check_tasks()
 print(f"switching: {third['name']} in place of the {task} model, a second load meanwhile refused, both tasks served; "
       f"{back['name']} back by its name")
+
+if detection:
+    expect_error(transcribe(wav, chunking=True), 400, "unsupported_parameter", "chunking_strategy", "chunking_strategy without a detection model")
+    held = load(detection["name"], "detection")
+    status, _, body = call("GET", "/v1/models")
+    assert [m["speech"]["task"] for m in json.loads(body)["data"]] == ["synthesis", "recognition", "detection"], body
+    status, _, body = transcribe(wav, chunking=True)
+    assert status == 200 and json.loads(body)["text"], body
+    print(f"detection: {held['name']} loaded by the page into its empty place, /v1/models listing it third, and chunking_strategy "
+          f"refused before and answered after: {json.loads(body)['text']!r}")
 
 absent = next(m for m in catalog["models"] if all(m["name"] != g["name"].split(":")[0] for g in given))
 held_before = json.loads(call("GET", "/speech/models", headers=auth)[2])[absent["task"]]["held"]

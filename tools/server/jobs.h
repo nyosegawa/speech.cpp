@@ -10,8 +10,11 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
+#include "cancellation.h"
 #include "library.h"
+#include "regions.h"
 
 // How the server runs requests on a model it holds: each set up by its HTTP handler as it arrives, so that the library
 // refuses a value at once, then run in the order the requests arrived, each on a thread of its own that hands what it
@@ -65,6 +68,8 @@ struct Job {
     std::shared_ptr<Served> served;
     /** The request as its handler set it up, which the run spends and a client that goes away cancels. */
     Request request{nullptr, speech_request_free};
+    /** Stops the library requests the run makes, its request's or those of the regions of a transcription. */
+    Cancellation cancellation;
     std::mutex mutex;
     std::condition_variable changed;
     bool finished = false;
@@ -79,7 +84,7 @@ struct Job {
         std::lock_guard<std::mutex> lock(mutex);
         if (!abandoned) gone = Clock::now();
         abandoned = true;
-        speech_request_cancel(request.get());
+        cancellation.cancel();
     }
 };
 
@@ -97,11 +102,25 @@ struct SpeechJob : Job {
     Clock::time_point first_audio;
 };
 
-/** One request's recognition, whose result the HTTP handler reads from the request once it is done. */
+/**
+ * One request's recognition, whose result the HTTP handler reads from the request once it is done; or with
+ * chunking_strategy, a recognition of each region the detection request finds, joined.
+ */
 struct TranscriptionJob : Job {
     /** The length of the audio in seconds and its rate, for the log and verbose_json. */
     double duration = 0;
     int sample_rate = 0;
+    /** With chunking_strategy: the detection model, kept as `served` is, and its request set up with the audio. */
+    std::shared_ptr<Served> detector;
+    Request detection{nullptr, speech_request_free};
+    /** With chunking_strategy: the model of `served`, the audio, the recognition options and whether they set timestamps. */
+    speech_model * recognizer = nullptr;
+    std::vector<float> samples;
+    std::vector<RequestOption> options;
+    bool timestamps = false;
+    size_t regions = 0;
+    /** The recognition once it is done. */
+    Transcript transcript;
 };
 
 inline int on_audio(const float * s, size_t n, void * user_data) {
@@ -130,8 +149,8 @@ inline double seconds_between(Clock::time_point t0, Clock::time_point t1) {
 
 /**
  * Runs a request on the model in its turn, on a thread of its own, unless its client went away while it waited, and
- * logs how it went: `name` begins the line, `run` runs the request, and `outcome`, called with the job locked, says
- * what the run made.
+ * logs how it went: `name` begins the line, `run` runs the request through the job's cancellation and returns its
+ * status or throws the library's Failure, and `outcome`, called with the job locked, says what the run made.
  */
 template <typename Run, typename Outcome>
 void run_in_turn(Job & job, Turns & turns, uint64_t ticket, const std::string & name, Run run, Outcome outcome) {
@@ -145,8 +164,12 @@ void run_in_turn(Job & job, Turns & turns, uint64_t ticket, const std::string & 
     speech_status status = SPEECH_CANCELLED;
     std::optional<Failure> failure;
     if (ran) {
-        status = run(job.request.get());
-        if (status < 0) failure = library_failure(status);
+        try {
+            status = run();
+        } catch (const Failure & e) {
+            status = SPEECH_ERROR_INTERNAL;
+            failure = e;
+        }
     }
     {
         std::lock_guard<std::mutex> lock(job.mutex);
@@ -176,9 +199,10 @@ void run_in_turn(Job & job, Turns & turns, uint64_t ticket, const std::string & 
 }
 
 inline void synthesize(const std::shared_ptr<SpeechJob> & job, Turns & turns, uint64_t ticket, const std::string & name) {
-    run_in_turn(*job, turns, ticket, name, [&](speech_request * r) {
-        const speech_status s = speech_synthesize(r, on_audio, job.get());
-        if (s >= 0) {
+    run_in_turn(*job, turns, ticket, name, [&] {
+        speech_request * r = job->request.get();
+        const speech_status s = check(job->cancellation.run(r, [&] { return speech_synthesize(r, on_audio, job.get()); }));
+        if (s == SPEECH_OK) {
             const speech_result * result = speech_request_result(r);
             std::lock_guard<std::mutex> lock(job->mutex);
             job->seed = speech_result_seed(result);
@@ -194,12 +218,28 @@ inline void synthesize(const std::shared_ptr<SpeechJob> & job, Turns & turns, ui
     });
 }
 
+/** Runs a transcription, by the regions of its detection request where it has one, and keeps its recognition in the job. */
 inline void transcribe(const std::shared_ptr<TranscriptionJob> & job, Turns & turns, uint64_t ticket) {
     char name[256];
     std::snprintf(name, sizeof name, "transcription: %.2f s of audio at %d Hz", job->duration, job->sample_rate);
-    run_in_turn(*job, turns, ticket, name, [&](speech_request * r) { return speech_transcribe(r); }, [&](Clock::time_point) {
-        const speech_result * result = speech_request_result(job->request.get());
-        return result ? ", " + std::to_string(std::string(speech_result_text(result)).size()) + " bytes of text" : std::string();
+    run_in_turn(*job, turns, ticket, name, [&] {
+        if (!job->detection) {
+            speech_request * r = job->request.get();
+            const speech_status s = check(job->cancellation.run(r, [&] { return speech_transcribe(r); }));
+            if (s == SPEECH_OK) job->transcript = transcript_of(speech_request_result(r), job->timestamps);
+            return s;
+        }
+        const std::optional<std::vector<Region>> regions = detect_regions(job->detection.get(), job->cancellation);
+        if (!regions) return SPEECH_CANCELLED;
+        job->regions = regions->size();
+        std::optional<Transcript> t =
+            transcribe_regions(job->recognizer, job->samples, job->sample_rate, *regions, job->options, job->timestamps, job->cancellation);
+        if (!t) return SPEECH_CANCELLED;
+        job->transcript = std::move(*t);
+        return SPEECH_OK;
+    }, [&](Clock::time_point) {
+        std::string out = job->detection ? ", " + std::to_string(job->regions) + " regions" : "";
+        return job->status == SPEECH_OK ? out + ", " + std::to_string(job->transcript.text.size()) + " bytes of text" : out;
     });
 }
 

@@ -1,21 +1,22 @@
 # Server and page
 
-This page describes `speech serve`, which serves a synthesis model and a recognition model over HTTP with a subset of
-OpenAI's audio API, and a page on which to try models.
+This page describes `speech serve`, which serves a synthesis model, a recognition model and a detection model over HTTP
+with a subset of OpenAI's audio API, and a page on which to try models.
 
 ```
-speech serve [MODEL [MODEL]] [--open] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
+speech serve [MODEL [MODEL [MODEL]]] [--open] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
              [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup]
 ```
 
 ```sh
 speech serve --open                                   # the page, without a model until one is picked there
 speech serve qwen3-tts-0.6b qwen3-asr-0.6b            # speech and transcriptions
+speech serve reazonspeech-v2 silero-vad               # transcriptions, also by the regions where someone speaks
 speech serve irodori-tts-mf --add-voice me=me.voice.gguf --cors-origin http://localhost:5173
 ```
 
-The server holds at most one synthesis model and one recognition model, and refuses a detection model (Silero VAD). It
-loads the models given, listens once they are ready, and logs to stderr.
+The server holds at most one model of each task: synthesis, recognition and detection (Silero VAD), whose model
+transcriptions with `chunking_strategy` use. It loads the models given, listens once they are ready, and logs to stderr.
 
 | Option | Meaning |
 |---|---|
@@ -31,7 +32,7 @@ loads the models given, listens once they are ready, and logs to stderr.
 | Endpoint | What it does |
 |---|---|
 | `GET /health` | answers `{"status":"ok"}` |
-| `GET /v1/models` | lists the models held, the synthesis model first, as OpenAI's model objects whose `id` is the model's name, with `speech`, the model information ([c-api.md](c-api.md#model-information-as-json)) |
+| `GET /v1/models` | lists the models held, synthesis, recognition and detection in that order, as OpenAI's model objects whose `id` is the model's name, with `speech`, the model information ([c-api.md](c-api.md#model-information-as-json)) |
 | `GET /v1/models/{id}` | one model; another id is a 404 (`model_not_found`) |
 | `POST /v1/audio/speech` | speaks a text, as [OpenAI's create speech](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create) does |
 | `POST /v1/audio/transcriptions` | recognizes the speech in a WAV file, as [OpenAI's create transcription](https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create) does |
@@ -113,6 +114,7 @@ OpenAI's limit.
 | `response_format` | `json` (the default), which answers `{"text":"..."}`; `text`, the text alone as `text/plain`; or `verbose_json` (below). `srt`, `vtt` and `diarized_json` are refused: speech.cpp gives neither subtitles nor speakers |
 | `timestamp_granularities[]` | `segment`, with `verbose_json`; a model that gives no times refuses it. `word` is refused |
 | `decoding` | speech.cpp's own: `beam` (the default) or `greedy`, for a model that takes it (reazonspeech-nemo-v2) |
+| `chunking_strategy` | `auto`, or OpenAI's `server_vad` object: recognize each region where the detection model finds that someone speaks (below) |
 
 `verbose_json` answers `{"task":"transcribe","language":…,"duration":…,"text":…,"segments":[{"id":0,"start":…,"end":…,"text":…}]}`.
 `duration` is the file's length in seconds. `language` is the tag of the language Qwen3-ASR heard (`ja`, or `ja,en` for a
@@ -128,6 +130,38 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@utterance.wav -F res
 curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav -F response_format=verbose_json
 curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav -F language=ja -F prompt="Claude Code、渋谷"
 curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav -F decoding=greedy   # reazonspeech-nemo-v2
+curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav -F chunking_strategy=auto
+curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav \
+    -F 'chunking_strategy[type]=server_vad' -F 'chunking_strategy[silence_duration_ms]=800'
+```
+
+### By regions
+
+With `chunking_strategy`, the detection model finds where someone speaks in the file, each region is recognized alone,
+and the texts are joined in order, with a space between two regions unless either side is Japanese or Chinese text.
+`segments` have the times of the whole file, and `language` lists the languages heard in order. A file in which no one
+speaks gives an empty text. A recognizer given a long stretch with several sentences can drop whole sentences, and write
+words where no one speaks; by regions it hears one or a few sentences at a time.
+
+`chunking_strategy=auto` takes the defaults below. A `server_vad` object goes as OpenAI's SDKs send it in a form, one
+field per member:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `chunking_strategy[type]` | | `server_vad`, required with the others |
+| `chunking_strategy[threshold]` | 0.5 | the speech probability from which audio counts as speech, 0 to 1 |
+| `chunking_strategy[prefix_padding_ms]` | 300 | the audio kept before and after each region |
+| `chunking_strategy[silence_duration_ms]` | 500 | the silence that ends a region |
+
+A region is at most 15 s long, cut at its longest silence. A request with `chunking_strategy` to a server without a
+detection model is a 400 that says to give it one: `speech serve reazonspeech-v2 silero-vad`.
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="unused")
+with open("meeting.wav", "rb") as f:
+    print(client.audio.transcriptions.create(model="reazonspeech-nemo-v2", file=f, chunking_strategy="auto").text)
 ```
 
 ## Errors
