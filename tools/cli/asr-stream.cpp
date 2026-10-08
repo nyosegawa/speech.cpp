@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstdint>
 #include <cstring>
@@ -12,6 +13,8 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
+#include <vector>
 
 #ifdef _WIN32
 #include <io.h>
@@ -156,18 +159,69 @@ private:
     std::string shown_;
 };
 
-/** The PCM read from stdin a piece at a time: what has arrived, without waiting for a whole buffer. */
-size_t read_stdin(char * into, size_t n) {
-    for (;;) {
-#ifdef _WIN32
-        const int got = _read(0, into, (unsigned) n);
-#else
-        const ssize_t got = read(0, into, n);
-#endif
-        if (got >= 0) return (size_t) got;
-        if (errno != EINTR) throw Failure(speech_status_name(SPEECH_ERROR_IO), "audio", std::string("cannot read stdin: ") + std::strerror(errno));
+/**
+ * stdin read on a thread of its own, what has arrived without waiting for a whole buffer, at most `ahead` bytes before
+ * what the caller has taken, so that the caller notices a failure of the recognition while stdin stays open and silent.
+ * The thread is let go rather than joined, since it may wait in read() for as long as the writer keeps stdin open; what it
+ * shares with the caller outlives both.
+ */
+class StdinReader {
+public:
+    explicit StdinReader(size_t ahead) : shared_(std::make_shared<Shared>()) {
+        shared_->ahead = ahead;
+        std::thread([shared = shared_] { read_all(*shared); }).detach();
     }
-}
+
+    /** What has arrived since the last call, waiting up to `wait` while nothing has. */
+    std::string take(std::chrono::milliseconds wait) {
+        std::unique_lock<std::mutex> lock(shared_->mutex);
+        shared_->changed.wait_for(lock, wait, [&] { return !shared_->bytes.empty() || shared_->ended; });
+        std::string out;
+        out.swap(shared_->bytes);
+        shared_->changed.notify_all();
+        return out;
+    }
+
+    /** Whether stdin has ended and every byte of it was taken; a failure to read it throws. */
+    bool ended() {
+        std::lock_guard<std::mutex> lock(shared_->mutex);
+        if (!shared_->error.empty()) throw Failure(speech_status_name(SPEECH_ERROR_IO), "audio", shared_->error);
+        return shared_->ended && shared_->bytes.empty();
+    }
+
+private:
+    struct Shared {
+        std::mutex mutex;
+        std::condition_variable changed;
+        std::string bytes, error;
+        bool ended = false;
+        size_t ahead = 0;
+    };
+
+    static void read_all(Shared & s) {
+        std::vector<char> buffer(8192);
+        for (;;) {
+            {
+                std::unique_lock<std::mutex> lock(s.mutex);
+                s.changed.wait(lock, [&] { return s.bytes.size() < s.ahead; });
+            }
+#ifdef _WIN32
+            const int got = _read(0, buffer.data(), (unsigned) buffer.size());
+#else
+            const ssize_t got = read(0, buffer.data(), buffer.size());
+#endif
+            if (got < 0 && errno == EINTR) continue;
+            std::lock_guard<std::mutex> lock(s.mutex);
+            if (got < 0) s.error = std::string("cannot read stdin: ") + std::strerror(errno);
+            if (got > 0) s.bytes.append(buffer.data(), (size_t) got);
+            s.ended = got <= 0;
+            s.changed.notify_all();
+            if (s.ended) return;
+        }
+    }
+
+    std::shared_ptr<Shared> shared_;
+};
 
 }  // namespace
 
@@ -242,13 +296,16 @@ int transcribe_stream(const CommandLine & line, FILE * out, speech_model * recog
         std::signal(SIGINT, SIG_DFL);
     } else {
         std::fprintf(stderr, "reading 16-bit PCM at %d Hz from stdin\n", rate);
-        std::vector<char> bytes(8192);
+        StdinReader reader(1 << 20);
         std::string pending;
         std::vector<float> samples;
         while (!failed()) {
-            const size_t got = read_stdin(bytes.data(), bytes.size());
-            if (got == 0) break;
-            pending.append(bytes.data(), got);
+            const std::string got = reader.take(std::chrono::milliseconds(50));
+            if (got.empty()) {
+                if (reader.ended()) break;
+                continue;
+            }
+            pending += got;
             samples.resize(pending.size() / 2);
             for (size_t i = 0; i < samples.size(); i++) {
                 samples[i] = (float) (int16_t) ((uint16_t) (unsigned char) pending[2 * i] | (uint16_t) (unsigned char) pending[2 * i + 1] << 8) / 32768.0f;
