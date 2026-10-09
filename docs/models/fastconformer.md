@@ -59,21 +59,22 @@ Every stage is checked against NeMo's tensors on utterances of FLEURS' test spli
 The times of tokens and segments are NeMo's exactly.
 
 On the 4,483 utterances of Common Voice 8.0's Japanese test set, trimmed to the voice, the CER is 7.88% for
-parakeet-tdt_ctc-0.6b-ja, 12.03% for reazonspeech-nemo-v2 with beam search and 12.50% with greedy decoding (2.98%,
+parakeet-tdt_ctc-0.6b-ja, 12.03% for reazonspeech-nemo-v2 with beam search and 12.49% with greedy decoding (2.98%,
 7.13% and 7.69% accepting other spellings of the same words). parakeet-tdt-0.6b-v3's WER on 300 English utterances of
 FLEURS is 8.76%.
 
 ## Speed
 
-speech-bench on 2026-10-08, F16, one utterance at a time:
+speech-bench on 2026-10-10, F16, one warm request at a time. The Japanese timing sample is the first 100 Common Voice
+inputs, 99 retained by VAD, repeated three times; English uses 300 FLEURS inputs, 299 retained by VAD, once. These
+latencies are measured separately from the complete accuracy sets above. Loading and first-use warmup are excluded.
 
 | Model | Utterances | Median, M5 / RTX 2080 | p90, M5 / RTX 2080 |
 |---|---|---|---|
-| parakeet-tdt_ctc-0.6b-ja | Common Voice ja | 0.059 s / 0.069 s | 0.086 s / 0.130 s |
-| reazonspeech-nemo-v2, beam search | Common Voice ja | 0.110 s / 0.157 s | 0.167 s / 0.268 s |
-| reazonspeech-nemo-v2, greedy | Common Voice ja | 0.077 s / 0.092 s | 0.104 s / 0.149 s |
-| parakeet-tdt-0.6b-v3 | FLEURS en | 0.103 s / 0.152 s | 0.167 s / 0.221 s |
+| parakeet-tdt_ctc-0.6b-ja | Common Voice ja | 0.052 s / 0.040 s | 0.073 s / 0.066 s |
+| reazonspeech-nemo-v2, beam search | Common Voice ja | 0.085 s / 0.106 s | 0.135 s / 0.191 s |
+| reazonspeech-nemo-v2, greedy | Common Voice ja | 0.054 s / 0.047 s | 0.079 s / 0.078 s |
+| parakeet-tdt-0.6b-v3 | FLEURS en | 0.093 s / 0.082 s | 0.148 s / 0.111 s |
 
-A long recording is recognized whole: reazonspeech-nemo-v2 takes 4.9 s for 311 s of audio on the M5. Its peak memory on
-the CPU with F16 weights is 1.35 GB for 6.36 s, 1.55 GB for 64.80 s and 2.35 GB for 311.22 s. parakeet-tdt_ctc-0.6b-ja's
-is 1.30, 1.49 and 4.14 GB, growing with the square of the length.
+A long recording is recognized whole. ReazonSpeech and parakeet-tdt_ctc-0.6b-ja use global attention, whose memory
+grows with the square of the input length. Use `speech asr --vad silero-vad` to transcribe long recordings by region.
