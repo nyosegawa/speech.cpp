@@ -66,7 +66,7 @@ speech info irodori-tts-mf
 - An argument that begins with `-`, such as a text, follows `--`.
 - stdout carries the output alone, and every log goes to stderr.
 - On Windows the command line is read as UTF-8, and stdin and stdout are binary.
-- `speech --version` prints the release and the C API's version: `speech.cpp 0.8.2, C API 3.1`.
+- `speech --version` prints the release and the C API's version: `speech.cpp 0.8.3, C API 3.1`.
 
 | Exit | Meaning |
 |---|---|
