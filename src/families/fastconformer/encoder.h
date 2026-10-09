@@ -61,9 +61,9 @@ private:
                                   const std::string & name) const;
     ggml_tensor * convolution(Graph & g, ggml_tensor * x, const std::string & name) const;
 
-    /** The projections of local attention's fixed positions, shared by every utterance. */
-    struct LocalPositions;
-    mutable std::unique_ptr<LocalPositions> local_positions_;
+    /** The projections of attention's fixed positions, shared by every utterance. */
+    struct Positions;
+    mutable std::unique_ptr<Positions> positions_;
     ggml_backend_t backend_;
     const ModelFile & m_;
     int mels_, d_model_, layers_, heads_, conv_kernel_, sub_layers_;
@@ -73,6 +73,7 @@ private:
     /** Whether the attention is local; the frames each frame sees on either side and the global tokens if it is. */
     bool local_;
     int context_ = 0, global_tokens_ = 0;
+    int64_t cached_span_ = 0;
 };
 
 }  // namespace fastconformer
