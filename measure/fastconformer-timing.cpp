@@ -46,8 +46,7 @@ int main(int argc, char ** argv) {
         for (size_t a = 5; a < args.size(); a++) {
             const auto dir = std::filesystem::u8path(args[a]);
             const auto audio = read_npy((dir / "audio.npy").u8string()).f32;
-            recognizer.recognize(audio, args[3]);
-            for (int run = 0; run < runs; run++) {
+            for (int run = -1; run < runs; run++) {
                 const auto start = Clock::now();
                 const auto features = recognizer.frontend().features(audio);
                 const auto frontend_end = Clock::now();
@@ -64,6 +63,7 @@ int main(int argc, char ** argv) {
                 const auto decode_end = Clock::now();
                 const auto text = recognizer.detokenizer().text(decoding.ids);
                 const auto end = Clock::now();
+                if (run < 0) continue;
                 std::printf("{\"input\":%s,\"device\":%s,\"decoding\":%s,\"run\":%d,\"audio_seconds\":%.4f,"
                             "\"core_total_ms\":%.4f,\"frontend_ms\":%.4f,\"encoder_build_ms\":%.4f,"
                             "\"encoder_compute_ms\":%.4f,\"encoder_read_ms\":%.4f,\"decoder_ms\":%.4f,"
