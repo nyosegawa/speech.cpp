@@ -33,6 +33,15 @@ void Fft::work(const std::complex<double> * in, std::complex<double> * out, size
         else work(in + j * stride, out + j * m, stride * p, level + 1);
     }
     // X[k + s m] = Σ_j exp(-2πi j (k + s m) / n) Y_j[k], where exp(-2πi e / n) is twiddle e × stride.
+    if (p == 2) {
+        for (size_t k = 0; k < m; k++) {
+            const auto a = out[k];
+            const auto b = out[m + k];
+            out[k] = a + b * twiddles_[stride * k];
+            out[m + k] = a + b * twiddles_[stride * (k + m)];
+        }
+        return;
+    }
     std::vector<std::complex<double>> y(p);
     for (size_t k = 0; k < m; k++) {
         for (size_t j = 0; j < p; j++) y[j] = out[j * m + k];

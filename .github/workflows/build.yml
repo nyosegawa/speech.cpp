@@ -131,7 +131,9 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.checks
         with:
           name: speech-checks-windows-x64-vulkan
-          path: build/Release/*-check.exe
+          path: |
+            build/Release/*-check.exe
+            build/Release/*-timing.exe
           retention-days: 7
 
   # Linux x64 twice: with Vulkan, for a GPU of any vendor, and for the CPU alone, which needs no Vulkan loader

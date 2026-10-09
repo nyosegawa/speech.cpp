@@ -25,11 +25,13 @@ PredictionState PredictionNetwork::initial_state() const {
  * c' = sigmoid(f) c + sigmoid(i) tanh(g) and h' = sigmoid(o) tanh(c'). The converter sums b_ih and b_hh.
  */
 PredictionNetwork::Step PredictionNetwork::build(Graph & g, int32_t label, const PredictionState & state) const {
+    return build(g, g.input(std::vector<int32_t>{label}, 1), g.input(state.h, hidden_, layers_), g.input(state.c, hidden_, layers_));
+}
+
+PredictionNetwork::Step PredictionNetwork::build(Graph & g, ggml_tensor * label, ggml_tensor * h_in, ggml_tensor * c_in) const {
     ggml_context * ctx = g.ctx();
     const size_t width = (size_t) hidden_ * sizeof(float);
-    ggml_tensor * h_in = g.input(state.h, hidden_, layers_);
-    ggml_tensor * c_in = g.input(state.c, hidden_, layers_);
-    ggml_tensor * x = ggml_get_rows(ctx, m_.tensor("pred.embed.weight"), g.input(std::vector<int32_t>{label}, 1));
+    ggml_tensor * x = ggml_get_rows(ctx, m_.tensor("pred.embed.weight"), label);
     ggml_tensor * h_out = nullptr;
     ggml_tensor * c_out = nullptr;
     for (int l = 0; l < layers_; l++) {

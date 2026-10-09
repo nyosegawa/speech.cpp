@@ -34,6 +34,9 @@ public:
 
     Step build(Graph & g, int32_t label, const PredictionState & state) const;
 
+    /** Builds a step from tensor inputs so that a decoder can reuse its graph for subsequent labels. */
+    Step build(Graph & g, ggml_tensor * label, ggml_tensor * h, ggml_tensor * c) const;
+
     /** The next state of a step that has been computed. */
     static PredictionState read_state(const Step & step);
 
