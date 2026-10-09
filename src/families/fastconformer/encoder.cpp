@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
+
+#include "error.h"
 
 namespace fastconformer {
 
@@ -11,8 +14,36 @@ namespace fastconformer {
  * layout of ggml's 2D convolutions, whose width is the mel axis and height the time axis.
  */
 
-Encoder::Encoder(const ModelFile & m)
-    : m_(m),
+struct Encoder::LocalPositions {
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> context{nullptr, ggml_free};
+    std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)> buffer{nullptr, ggml_backend_buffer_free};
+    std::map<std::string, ggml_tensor *> projected;
+
+    LocalPositions(const ModelFile & model, ggml_backend_t backend, const std::vector<float> & positions, int width, int layers) {
+        context.reset(ggml_init({ggml_tensor_overhead() * (size_t) layers, nullptr, true}));
+        if (!context) throw Error(Fault::OutOfMemory, "cannot create a position context");
+        const int64_t count = (int64_t) positions.size() / width;
+        for (int l = 0; l < layers; l++) {
+            projected.emplace("blk." + std::to_string(l) + ".attn", ggml_new_tensor_2d(context.get(), GGML_TYPE_F32, width, count));
+        }
+        buffer.reset(ggml_backend_alloc_ctx_tensors(context.get(), backend));
+        if (!buffer) throw Error(Fault::OutOfMemory, "cannot allocate local attention positions");
+        std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator(
+            ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend)), ggml_gallocr_free);
+        if (!allocator) throw Error(Fault::OutOfMemory, "cannot create a position allocator");
+        Graph graph;
+        auto * input = graph.input(positions, width, count);
+        for (const auto & entry : projected) {
+            graph.copy(mul_mat(graph.ctx(), model.tensor(entry.first + "_pos.weight"), input), entry.second);
+        }
+        graph.compute(backend, allocator.get());
+    }
+};
+
+Encoder::~Encoder() = default;
+
+Encoder::Encoder(const ModelFile & m, ggml_backend_t backend)
+    : backend_(backend), m_(m),
       mels_((int) m.u32("fastconformer.frontend.n_mels")),
       d_model_((int) m.u32("fastconformer.encoder.d_model")),
       layers_((int) m.u32("fastconformer.encoder.num_layers")),
@@ -84,17 +115,21 @@ Encoder::AttentionInputs Encoder::attention_inputs(Graph & g, int64_t t) const {
     // through create_pe(): sines in the even channels and cosines in the odd, computed in float32, so the angles
     // round as they do here.
     const int64_t span = local_ ? context_ : t - 1;
-    std::vector<float> pe((size_t) ((2 * span + 1) * d_model_));
-    const float step = (float) (-std::log((double) pos_base_) / d_model_);
-    for (int64_t c = 0; c < 2 * span + 1; c++) {
-        const float position = (float) (span - c);
-        for (int i = 0; i < d_model_; i += 2) {
-            const float angle = position * std::exp((float) i * step);
-            pe[(size_t) (c * d_model_ + i)] = std::sin(angle);
-            pe[(size_t) (c * d_model_ + i + 1)] = std::cos(angle);
+    std::vector<float> pe;
+    if (!local_ || !local_positions_) {
+        pe.resize((size_t) ((2 * span + 1) * d_model_));
+        const float step = (float) (-std::log((double) pos_base_) / d_model_);
+        for (int64_t c = 0; c < 2 * span + 1; c++) {
+            const float position = (float) (span - c);
+            for (int i = 0; i < d_model_; i += 2) {
+                const float angle = position * std::exp((float) i * step);
+                pe[(size_t) (c * d_model_ + i)] = std::sin(angle);
+                pe[(size_t) (c * d_model_ + i + 1)] = std::cos(angle);
+            }
         }
+        if (local_ && !local_positions_) local_positions_ = std::make_unique<LocalPositions>(m_, backend_, pe, d_model_, layers_);
     }
-    AttentionInputs in{g.input(pe, d_model_, 2 * span + 1), nullptr};
+    AttentionInputs in{local_ ? nullptr : g.input(pe, d_model_, 2 * span + 1), nullptr};
     if (local_) {
         // The scores of block k's query r are [global tokens, window], where window column c is the frame
         // (k - 1) w + c; a frame is seen when it is within w of the query and in the utterance. NeMo masks the frames
@@ -137,7 +172,7 @@ ggml_tensor * Encoder::attention(Graph & g, ggml_tensor * x, const AttentionInpu
     if (local_) return ggml_add(ctx, x, linear(ctx, local_attention(g, q, k, v, in, name), name + "_out", use_bias_));
 
     auto heads = [&](ggml_tensor * y, int64_t n) {
-        return ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_3d(ctx, y, dk, heads_, n), 0, 2, 1, 3));
+        return ggml_permute(ctx, ggml_reshape_3d(ctx, y, dk, heads_, n), 0, 2, 1, 3);
     };
     ggml_tensor * p = heads(mul_mat(ctx, m_.tensor(name + "_pos.weight"), in.pos), 2 * t - 1);
     ggml_tensor * qu = heads(ggml_add(ctx, q, m_.tensor(name + "_pos_bias_u")), t);
@@ -196,7 +231,7 @@ ggml_tensor * Encoder::local_attention(Graph & g, ggml_tensor * q, ggml_tensor *
     ggml_tensor * kw = ggml_concat(ctx, ggml_concat(ctx, key_blocks(0), key_blocks(1), 1), key_blocks(2), 1);
     ggml_tensor * ac = mul_mat(ctx, kw, qu);
 
-    ggml_tensor * p = heads(ggml_reshape_3d(ctx, mul_mat(ctx, m_.tensor(name + "_pos.weight"), in.pos), dk, heads_, 2 * w + 1));
+    ggml_tensor * p = heads(ggml_reshape_3d(ctx, local_positions_->projected.at(name), dk, heads_, 2 * w + 1));
     ggml_tensor * bd = ggml_pad(ctx, mul_mat(ctx, p, qv), (int) (window - (2 * w + 1)), 0, 0, 0);
     bd = ggml_view_4d(ctx, bd, window, w, blocks, heads_, (size_t) (window - 1) * sizeof(float), (size_t) (w * window) * sizeof(float),
                       bd->nb[2], 0);

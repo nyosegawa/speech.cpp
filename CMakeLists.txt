@@ -96,6 +96,7 @@ add_library(fastconformer STATIC
     src/families/fastconformer/frontend.cpp
     src/families/fastconformer/encoder.cpp
     src/families/fastconformer/transducer.cpp
+    src/families/fastconformer/decoder-step.cpp
     src/families/fastconformer/decoder.cpp
     src/families/fastconformer/tdt.cpp
     src/families/fastconformer/alsd.cpp
@@ -354,6 +355,10 @@ foreach(stage decoder split)
     target_link_libraries(qwen3-asr-${stage}-check PRIVATE qwen3asr)
 endforeach()
 # Times the stages of a recognition on the dumps' audio, against measure/llama-server-timing.py.
+add_executable(fastconformer-timing measure/fastconformer-timing.cpp)
+target_include_directories(fastconformer-timing PRIVATE checks tools/common)
+target_link_libraries(fastconformer-timing PRIVATE fastconformer)
+
 add_executable(qwen3-asr-timing measure/qwen3-asr-timing.cpp tools/common/json-reader.cpp)
 target_include_directories(qwen3-asr-timing PRIVATE checks tools/common)
 target_link_libraries(qwen3-asr-timing PRIVATE qwen3asr)
@@ -362,3 +367,6 @@ target_link_libraries(qwen3-asr-timing PRIVATE qwen3asr)
 add_executable(silero-vad-check checks/silero-vad/silero-vad-check.cpp tools/common/json-reader.cpp)
 target_include_directories(silero-vad-check PRIVATE checks tools/common)
 target_link_libraries(silero-vad-check PRIVATE silerovad)
+
+add_executable(fft-check checks/common/fft-check.cpp)
+target_link_libraries(fft-check PRIVATE speechcommon)

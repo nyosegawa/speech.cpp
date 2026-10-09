@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -32,7 +33,8 @@ struct EncoderStages {
  */
 class Encoder {
 public:
-    explicit Encoder(const ModelFile & m);
+    Encoder(const ModelFile & m, ggml_backend_t backend);
+    ~Encoder();
 
     /** The encoder's output for `features` ([frames, mels] row-major), [d_model, subsampled_frames(frames)]. */
     ggml_tensor * build(Graph & g, const std::vector<float> & features, int64_t frames, EncoderStages * stages = nullptr) const;
@@ -59,6 +61,10 @@ private:
                                   const std::string & name) const;
     ggml_tensor * convolution(Graph & g, ggml_tensor * x, const std::string & name) const;
 
+    /** The projections of local attention's fixed positions, shared by every utterance. */
+    struct LocalPositions;
+    mutable std::unique_ptr<LocalPositions> local_positions_;
+    ggml_backend_t backend_;
     const ModelFile & m_;
     int mels_, d_model_, layers_, heads_, conv_kernel_, sub_layers_;
     float eps_, pos_base_, xscale_, ff_factor_;

@@ -23,7 +23,7 @@ Recognizer::Recognizer(const std::string & path, ggml_backend_t backend)
     : backend_(backend),
       model_(path, backend, layout),
       frontend_(model_),
-      encoder_(model_),
+      encoder_(model_, backend),
       prediction_(model_),
       joint_(model_),
       decoding_names_(fastconformer::decodings(model_)),
