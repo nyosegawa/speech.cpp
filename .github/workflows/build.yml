@@ -1,10 +1,14 @@
 name: build
 
+# A push or pull request that changes only Markdown, docs/ or skills/ builds nothing: no job reads them. GitHub does not
+# apply the paths to a tag, so a release always builds.
 on:
   push:
     branches: [main]
     tags: ['v*']
+    paths-ignore: ['**.md', 'docs/**', 'skills/**']
   pull_request:
+    paths-ignore: ['**.md', 'docs/**', 'skills/**']
   workflow_dispatch:
     inputs:
       checks:

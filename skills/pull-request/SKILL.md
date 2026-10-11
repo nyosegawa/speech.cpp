@@ -46,6 +46,9 @@ the pull request.
 - `gh pr checks <n> --watch` until every job ends, started in the background. Right after a push it may report no
   checks yet; wait until they appear (`until gh pr checks <n> | grep -q .; do sleep 10; done`) before watching. A
   failure is read from its log (`gh run view <run> --log-failed`) and fixed on the branch.
+- A pull request that changes only Markdown files, `docs/` or `skills/` runs no CI (`paths-ignore` in
+  `.github/workflows/build.yml`), so `gh pr checks` never lists a check for it: do not wait for one. It is ready to merge
+  once the review's findings are fixed.
 - Merge with a squash once CI passes and the review's findings are fixed, when the maintainer has asked you to merge:
   `gh pr merge <n> --squash --delete-branch`. Otherwise leave it for the maintainer.
 
