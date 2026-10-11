@@ -5,7 +5,7 @@ with a subset of OpenAI's audio API and its Realtime transcription, and a page o
 
 ```
 speech serve [MODEL [MODEL [MODEL]]] [--open] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
-             [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup]
+             [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup] [request options]
 ```
 
 ```sh
@@ -13,6 +13,7 @@ speech serve --open                                   # the page, without a mode
 speech serve qwen3-tts-0.6b qwen3-asr-0.6b            # speech and transcriptions
 speech serve reazonspeech-v2 silero-vad               # transcriptions, also by the regions where someone speaks
 speech serve irodori-tts-mf --add-voice me=me.voice.gguf --cors-origin http://localhost:5173
+speech serve irodori-tts-mf --steps 8 --add-voice me=me.voice.gguf  # 8 steps unless a request sets steps
 ```
 
 The server holds at most one model of each task: synthesis, recognition and detection (Silero VAD), whose model
@@ -26,6 +27,7 @@ transcriptions with `chunking_strategy` and Realtime sessions with `server_vad` 
 | `--cors-origin ORIGIN` | an origin a web page may call the server from, such as `http://localhost:5173`, or `*` for any; repeatable. A web page of any other origin is refused (403 `origin_not_allowed`); curl and scripts send no origin and are not |
 | `--add-voice NAME=FILE` | add a voice to the synthesis model from a voice file or a WAVE file; repeatable |
 | `--device`, `--threads`, `--no-warmup` | as for the worker, for the synthesis and recognition models the server loads, the page's included. A detection model runs on the CPU with one thread |
+| a request option, such as `--steps 8` or `--language ja` | the default of every request that does not set it, for each model given that takes the option. A request's own value wins; an option that no model given takes, or a value out of its range, stops the server before it listens. A model the page loads later keeps its own defaults, and the model information still shows the model's own |
 
 ## Endpoints
 

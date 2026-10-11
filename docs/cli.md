@@ -60,7 +60,8 @@ speech info irodori-tts-mf
 - **Request options.** `speech tts`, `speech asr` and `speech vad` take every option of the C API's vocabulary as a flag
   of its name in kebab-case: `duration_scale` is `--duration-scale` ([c-api.md](c-api.md#options)). The model refuses
   an option it does not take, as the C API does: Qwen3-TTS answers `--speed 1.5` with `speech: unsupported (speed): ...`.
-  `speech info MODEL` lists the options a model takes, with their defaults and ranges.
+  `speech info MODEL` lists the options a model takes, with their defaults and ranges. `speech serve` and
+  `speech worker` take the same flags as the defaults of their requests.
 - A value follows its flag or an `=`: `--seed 7` or `--seed=7`. A number is read whole: `--steps 4x` is a usage error.
 - A boolean flag alone means true, and takes `true` or `false` only after an `=`: `--timestamps`, `--do-sample=false`.
 - An argument that begins with `-`, such as a text, follows `--`.
@@ -344,9 +345,13 @@ implementation:
 
 ```
 speech serve [MODEL [MODEL [MODEL]]] [--open] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
-             [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup]
-speech worker MODEL [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup]
+             [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup] [request options]
+speech worker MODEL [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup] [request options]
 ```
 
 [server.md](server.md) and [worker.md](worker.md) describe them. `speech serve` takes a detection model beside a
 synthesis and a recognition model, for transcriptions by regions; the worker takes none.
+
+A request option given as a flag is the default of every request that does not set it, in place of the model's own:
+`speech serve irodori-tts-mf --steps 8` samples in 8 steps unless a request sets `steps`. A request's own value wins,
+and an option no model given takes, or a value out of its range, stops the program before it serves.

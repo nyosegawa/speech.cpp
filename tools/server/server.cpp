@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
@@ -185,6 +186,7 @@ private:
             send_error(res, e);
             return;
         }
+        asked.options = served->with_defaults(asked.options);
         auto job = std::make_shared<TranscriptionJob>();
         job->sample_rate = asked.sample_rate;
         job->duration = (double) asked.samples.size() / asked.sample_rate;
@@ -194,7 +196,8 @@ private:
             job->detector = detector(speech_model_info_name(info.get()), res);
             if (!job->detector) return;
             try {
-                job->detection = detection_request(job->detector->get(), asked.samples, asked.sample_rate, *asked.regions);
+                job->detection = detection_request(job->detector->get(), asked.samples, asked.sample_rate,
+                                                   job->detector->with_defaults(*asked.regions));
             } catch (const Failure & e) {
                 ApiError error = openai::library_error(e);
                 const std::string member = server_vad_member(e.option());
@@ -262,6 +265,29 @@ void report(const Served & served) {
     std::fprintf(stderr, "speech serve: %s (%s) on %s, %d Hz, for %s\n", speech_model_info_name(info.get()), speech_model_info_architecture(info.get()),
                  speech_model_info_device(info.get()), speech_model_info_sample_rate(info.get()),
                  use_of(speech_model_info_task(info.get())));
+    if (!served.defaults().empty()) {
+        std::fprintf(stderr, "speech serve: %s by default %s\n", speech_model_info_name(info.get()), options_text(served.defaults()).c_str());
+    }
+}
+
+/**
+ * Gives each model the command line named the request options it takes as its defaults; an option none of them takes
+ * stops the server. The models are held only while this runs: a model the server keeps a reference to past it could not
+ * be let go when the page replaces it, and the replacement would wait for it forever.
+ */
+void give_defaults(ServedModels & models, const std::vector<RequestOption> & options) {
+    const auto given = models.all();
+    for (const RequestOption & o : options) {
+        const bool taken = std::any_of(given.begin(), given.end(), [&](const std::shared_ptr<Served> & s) {
+            return speech_model_info_takes(s->info().get(), o.option) != 0;
+        });
+        if (!taken) {
+            throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), speech_option_name(o.option),
+                          option_flag(o.option) + " sets " + speech_option_name(o.option) +
+                              " by default for the models given, and none of them takes it; `speech info` lists the options a model takes");
+        }
+    }
+    for (const auto & served : given) served->set_defaults(defaults_for(served->get(), options));
 }
 
 int run_serve(const CommandLine & line, FILE *) {
@@ -286,6 +312,7 @@ int run_serve(const CommandLine & line, FILE *) {
         if (!synthesis) throw UsageError("--add-voice adds voices to the synthesis model, and none is given");
         for (const auto & [name, file] : loading.voices) synthesis->add_voice(name, file);
     }
+    give_defaults(models, line.options);
     for (const auto & served : models.all()) report(*served);
 
     httplib::Server http;
@@ -332,7 +359,9 @@ Command serve_command() {
         "model, and the text agreed so far while it is said. It has no authentication and no TLS, and refuses a\n"
         "request that a web page at another origin than --cors-origin's sends. On 127.0.0.1, ::1 or localhost it also\n"
         "serves a page on which to pick models of the catalog, fetch them and try them, at the address it prints;\n"
-        "--open opens it, and starts the server without a model if none is given.";
+        "--open opens it, and starts the server without a model if none is given. A request option given as a flag is\n"
+        "the default, in place of the model's own, of every request that does not set it on each MODEL that takes it; a\n"
+        "model the page loads keeps its own defaults.";
     c.flags = {
         {"--host", "ADDRESS", false, "the address to listen on, 127.0.0.1 unless given"},
         {"--port", "N", false, "the port, 8080 unless given; 0 for any free one"},
@@ -344,6 +373,7 @@ Command serve_command() {
         threads_flag(),
         no_warmup_flag(),
     };
+    c.request_options = true;
     c.model = ModelKind::Any;
     c.max_args = 3;
     c.run = run_serve;

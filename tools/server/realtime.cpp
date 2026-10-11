@@ -43,7 +43,8 @@ public:
     }
 
     void check(const std::string & model, const std::vector<RequestOption> & options) override {
-        apply_options(new_request(served(model)->get()).get(), options);
+        const auto on = served(model);
+        apply_options(new_request(on->get()).get(), on->with_defaults(options));
     }
 
     std::unique_ptr<utterances::Reservation> reserve(const std::string & model) override {
@@ -60,7 +61,7 @@ public:
         // The request holds a copy of its own, so that a reading, whose samples are a copy of the buffer, adds nothing to
         // the audio the session holds while it waits and runs.
         samples = std::vector<float>();
-        apply_options(request.get(), options);
+        apply_options(request.get(), held.on->with_defaults(options));
         held.turn.wait();
         const Clock::time_point started = Clock::now();
         // The readings of an utterance under way, several a second, are logged only where one stops or fails.
@@ -93,7 +94,7 @@ public:
                                 "Give speech serve one beside the recognition model, as in speech serve " + held() + " silero-vad, or give "
                                 "turn_detection null and commit each utterance.", "", "unsupported_value"};
         }
-        return std::make_unique<utterances::Detection>(on->get(), on, options, realtime::kRate);
+        return std::make_unique<utterances::Detection>(on->get(), on, on->with_defaults(options), realtime::kRate);
     }
 
     bool holds(const utterances::Detection & detection) override {
