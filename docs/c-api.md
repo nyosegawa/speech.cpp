@@ -232,6 +232,10 @@ it concerns (an option's name, `text`, `audio`, `device`, `threads`, `name`, `pa
   until `speech_request_free()`, the version, a device's and a name's (`speech_option_name()`, `speech_status_name()`,
   `speech_stop_name()`) as long as the process, and the error message until the next call on the thread. Nothing the
   caller passes is kept after the call.
+- **Freeing before the process ends.** Free every request and detection, then every model, before the program returns
+  from `main()` or calls `exit()`. On Metal, a process that ends with a model still loaded aborts as it ends (exit
+  status 134, `GGML_ASSERT([rsets->data count] == 0)`), after its work is done. A binding frees its models when the
+  program shuts down, such as from Python's `atexit`, not only when they are collected.
 - **Threads.** A model serves one request at a time; requests that several threads run on the same model wait for each
   other and for the pushes of its detections. A request is used by one thread at a time, but `speech_request_cancel()`
   may be called from any thread; a detection is used by one thread at a time. Information never changes once made and

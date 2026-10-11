@@ -756,7 +756,11 @@ typedef struct speech_model speech_model;
 SPEECH_API speech_status speech_model_load(const char * path, const speech_load_params * params,
                                            speech_model ** model);
 
-/** Frees a model and its device. Every request made for it must be freed first. NULL is ignored. */
+/**
+ * Frees a model and its device. Every request and detection made for it must be freed first. NULL is ignored. A
+ * process frees every model it loaded before it returns from main() or calls exit(): on Metal, ggml aborts a process
+ * that ends with a model still loaded, after its work is done, with SIGABRT.
+ */
 SPEECH_API void speech_model_free(speech_model * model);
 
 /**
