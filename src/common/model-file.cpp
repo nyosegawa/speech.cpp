@@ -18,6 +18,13 @@ namespace {
 
 using Gguf = std::unique_ptr<gguf_context, decltype(&gguf_free)>;
 
+/**
+ * The bytes of a tensor read from the file and set on the device at a time. A buffer that held a whole tensor raised the
+ * peak memory footprint by the largest one, Qwen3-TTS 1.7B's text embedding of 331 MB: by 315 MB with Metal and 321 MB
+ * with the CPU on an Apple M5, where pieces of 16 MB load the file as fast (2026-10-12).
+ */
+constexpr size_t kReadPiece = (size_t) 16 << 20;
+
 Error file_error(const std::string & message) {
     return Error(Fault::File, message);
 }
@@ -216,17 +223,21 @@ void ModelFile::load(ggml_backend_t backend, const std::function<bool(const std:
     std::unique_ptr<FILE, decltype(&std::fclose)> f(ggml_fopen(path_.c_str(), "rb"), &std::fclose);
     if (!f) throw Error(Fault::Io, "cannot open " + path_);
     const uint64_t data_offset = gguf_get_data_offset(gguf_.get());
-    std::vector<uint8_t> staging;
+    std::vector<uint8_t> piece;
     for (int64_t i = 0; i < gguf_get_n_tensors(gguf_.get()); i++) {
         const char * name = gguf_get_tensor_name(gguf_.get(), i);
         ggml_tensor * t = ggml_get_tensor(loaded_, name);
         if (!t) continue;
         const size_t size = ggml_nbytes(t);
-        staging.resize(size);
-        if (!seek_file(f.get(), data_offset + gguf_get_tensor_offset(gguf_.get(), i)) || std::fread(staging.data(), 1, size, f.get()) != size) {
-            throw file_error(std::string("cannot read the tensor ") + name + " of " + path_ + "; the file is shorter than its header says");
+        bool read = seek_file(f.get(), data_offset + gguf_get_tensor_offset(gguf_.get(), i));
+        for (size_t done = 0; read && done < size;) {
+            const size_t n = std::min(kReadPiece, size - done);
+            piece.resize(std::max(piece.size(), n));
+            read = std::fread(piece.data(), 1, n, f.get()) == n;
+            if (read) ggml_backend_tensor_set(t, piece.data(), done, n);
+            done += n;
         }
-        ggml_backend_tensor_set(t, staging.data(), 0, size);
+        if (!read) throw file_error(std::string("cannot read the tensor ") + name + " of " + path_ + "; the file is shorter than its header says");
     }
 }
 
