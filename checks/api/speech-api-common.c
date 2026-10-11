@@ -510,16 +510,17 @@ speech_request * new_request(speech_model * model, const char * text, const char
     return r;
 }
 
-/** Runs `r`, collecting its audio, and returns its status; the request is freed. */
 speech_status speak(speech_request * r, Audio * audio, speech_stop * stop, int64_t * seed) {
-    const speech_status s = speech_synthesize(r, collect, audio);
+    const size_t before = audio->n;
+    speech_status s = speech_synthesize(r, collect, audio);
     const speech_result * result = speech_request_result(r);
     if (stop) *stop = result ? speech_result_stop(result) : SPEECH_STOP_COMPLETE;
     if (seed) *seed = result ? speech_result_seed(result) : -1;
-    if (result && speech_result_samples(result) != audio->n) {
-        fprintf(stderr, "FAIL: a result counts %llu samples where the callback had %zu\n", (unsigned long long) speech_result_samples(result),
-                audio->n);
-        exit(1);
+    const size_t passed = audio->n - before;
+    if (result && speech_result_samples(result) != passed) {
+        fprintf(stderr, "FAIL: a result counts %llu samples where the callback was given %zu\n",
+                (unsigned long long) speech_result_samples(result), passed);
+        s = SPEECH_ERROR_INTERNAL;
     }
     speech_request_free(r);
     return s;
