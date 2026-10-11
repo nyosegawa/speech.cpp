@@ -197,7 +197,7 @@ private:
             if (!job->detector) return;
             try {
                 job->detection = detection_request(job->detector->get(), asked.samples, asked.sample_rate,
-                                                   job->detector->with_defaults(*asked.regions));
+                                                   region_options(*asked.regions, job->detector->defaults()));
             } catch (const Failure & e) {
                 ApiError error = openai::library_error(e);
                 const std::string member = server_vad_member(e.option());

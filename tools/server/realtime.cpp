@@ -94,7 +94,12 @@ public:
                                 "Give speech serve one beside the recognition model, as in speech serve " + held() + " silero-vad, or give "
                                 "turn_detection null and commit each utterance.", "", "unsupported_value"};
         }
-        return std::make_unique<utterances::Detection>(on->get(), on, on->with_defaults(options), realtime::kRate);
+        return std::make_unique<utterances::Detection>(on->get(), on, options, realtime::kRate);
+    }
+
+    std::vector<RequestOption> detection_defaults() override {
+        const auto on = models_.of(SPEECH_TASK_DETECTION);
+        return on ? on->defaults() : std::vector<RequestOption>();
     }
 
     bool holds(const utterances::Detection & detection) override {

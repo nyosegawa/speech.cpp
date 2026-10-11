@@ -27,7 +27,7 @@ transcriptions with `chunking_strategy` and Realtime sessions with `server_vad` 
 | `--cors-origin ORIGIN` | an origin a web page may call the server from, such as `http://localhost:5173`, or `*` for any; repeatable. A web page of any other origin is refused (403 `origin_not_allowed`); curl and scripts send no origin and are not |
 | `--add-voice NAME=FILE` | add a voice to the synthesis model from a voice file or a WAVE file; repeatable |
 | `--device`, `--threads`, `--no-warmup` | as for the worker, for the synthesis and recognition models the server loads, the page's included. A detection model runs on the CPU with one thread |
-| a request option, such as `--steps 8` or `--language ja` | the default of every request that does not set it, for each model given that takes the option. A request's own value wins; an option that no model given takes, or a value out of its range, stops the server before it listens. A model the page loads later keeps its own defaults, and the model information still shows the model's own |
+| a request option, such as `--steps 8` or `--language ja` | the default of every request that does not set it, for each model given that takes the option. A request's own value wins; an option that no model given takes, or a value out of its range, stops the server before it listens. The detection model's options, such as `--threshold`, come before OpenAI's server_vad defaults in `chunking_strategy` and Realtime turn detection. A model the page loads later keeps its own defaults, and the model information still shows the model's own |
 
 ## Endpoints
 

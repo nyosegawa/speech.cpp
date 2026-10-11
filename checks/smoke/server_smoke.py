@@ -401,8 +401,18 @@ else:
                 if timed:
                     assert verbose["segments"] == [{"id": i, **s} for i, s in enumerate(want["segments"])], body
             assert json.loads(transcribe([("chunking_strategy", "auto")], [("file", "silence.wav", silence)])[2]) == {"text": ""}
+            # The detection options given to the server as flags are the defaults of chunking_strategy, before OpenAI's:
+            # a threshold of 1 finds no region, so auto gives an empty text, while a request's own threshold wins.
+            tuned = Server(speech, [model, vad, *options, "--threshold", "1"])
+            status, _, body = tuned.transcribe([("chunking_strategy", "auto")], [("file", "long.wav", long)])
+            assert status == 200 and json.loads(body) == {"text": ""}, body
+            own = [("chunking_strategy[type]", "server_vad"), ("chunking_strategy[threshold]", "0.5")]
+            status, _, body = tuned.transcribe(own, [("file", "long.wav", long)])
+            assert status == 200 and json.loads(body) == {"text": cli()["text"]}, body
+            tuned.stop()
         print(f"chunking_strategy: auto and server_vad give speech asr --vad's text, language{' and segments' if timed else ''} "
-              f"for {len(joined) / rate:.1f} s of the dumps joined, and silence an empty text")
+              f"for {len(joined) / rate:.1f} s of the dumps joined, and silence an empty text; detection flags given to the "
+              f"server are auto's defaults, and a request's own threshold wins")
         for form, code, param, what in (
                 ([("chunking_strategy", "server_vad")], "unsupported_value", "chunking_strategy", "a chunking_strategy other than auto"),
                 ([("chunking_strategy", '{"type":"server_vad"}')], "unsupported_value", "chunking_strategy", "chunking_strategy as JSON"),
