@@ -257,22 +257,28 @@ object, for a program that chooses a device before it starts a worker:
 speech models [--json]
 ```
 
-Lists the catalog: each model's name, the type its name alone means, the file's size, whether it is fetched (`yes`, `no`,
-or how much of a stopped fetch is there), its task and languages; the model to start with for each language; and the
-old files in the model folder.
+Lists the catalog: each file of each model, by the name that fetches it, the name alone for the type the name means and
+`NAME:TYPE` for the others, with its type, size, whether it is fetched (`yes`, `no`, or how much of a stopped fetch is
+there), its task and languages; the model to start with for each language; and the old files in the model folder.
 
 ```
-NAME                      TYPE  SIZE     FETCHED  TASK         LANGUAGES
-qwen3-tts-0.6b            q8_0  1.21 GB  no       synthesis    de en es fr it ja ko pt ru zh
+NAME                           TYPE  SIZE     FETCHED  TASK         LANGUAGES
+qwen3-tts-0.6b                 q8_0  1.21 GB  no       synthesis    de en es fr it ja ko pt ru zh
+qwen3-tts-0.6b:q6_k            q6_k  0.99 GB  no       synthesis    de en es fr it ja ko pt ru zh
+qwen3-tts-0.6b:q5_k            q5_k  0.87 GB  no       synthesis    de en es fr it ja ko pt ru zh
+qwen3-tts-0.6b:q4_k            q4_k  0.76 GB  no       synthesis    de en es fr it ja ko pt ru zh
 ...
-reazonspeech-v2           f16   1.24 GB  no       recognition  ja
+reazonspeech-v2                q8_0  0.66 GB  no       recognition  ja
+reazonspeech-v2:f16            f16   1.24 GB  no       recognition  ja
 ...
 
 The model to start with for each language:
-  synthesis    qwen3-tts-0.6b            de en es fr it ja ko pt ru zh
-  recognition  qwen3-asr-0.6b            ar cs da de el en es fa fi fil fr hi hu id it ko mk ms nl pl pt ro ru sv th tr vi yue zh
-               reazonspeech-v2           ja
-               parakeet-tdt-0.6b-v3      bg et hr lt lv mt sk sl uk
+  synthesis    qwen3-tts-0.6b                 de en es fr it ja ko pt ru zh
+  recognition  qwen3-asr-0.6b                 ar cs da de el en es fa fi fil fr hi hu id it ko mk ms nl pl pt ro ru sv th tr vi yue zh
+               reazonspeech-v2                ja
+               parakeet-tdt-0.6b-v3           bg et hr lt lv mt sk sl uk
+
+A subcommand given a NAME[:TYPE] fetches its file the first time; speech pull fetches it ahead, and speech rm removes it.
 
 Old files, which no model of this release names; speech rm --old removes them:
   1.89 GB  sakasegawa--Irodori-TTS-v4.1-Small-MF-GGUF/99e5d77f6d92a70d4b9bff52829ac118fa1bf7d3/Irodori-TTS-848M-MF-v4.1-F16.gguf

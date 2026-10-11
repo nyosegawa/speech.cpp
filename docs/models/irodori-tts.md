@@ -132,6 +132,22 @@ Every stage is checked against the official implementation's tensors on an Apple
 
 On a GPU the audio is the same speech rather than the same waveform, since the GPU's matrix kernels round differently.
 
+## Weight types
+
+Each model comes in five types; `NAME:TYPE` fetches one (`speech tts irodori-tts:q8_0`). speech-bench on 2026-10-12, on
+an Apple M5 with Metal: the 20 sentences of its `prompts/speak-ja-JP.json` in a voice file of one reference, seeds 1, 2
+and 3, v4.1-Small with 16 steps, as Qwen3-ASR 1.7B hears them. The memory is the peak of one request. The codec stays
+F32 in every type, which is why the files shrink less than the other models'. The CER of one type moves by a point or
+two from seed to seed; v4.1-Small-MF's is higher in every quantized type than in F16.
+
+| Type | v4.1-Small-MF file | Memory | CER | v4.1-Small file | Memory | CER |
+|---|---|---|---|---|---|---|
+| F16 | 1.92 GB | 2.04 GB | 5.92% | 1.91 GB | 2.03 GB | 3.43% |
+| Q8_0 | 1.21 GB | 1.33 GB | 8.35% | 1.20 GB | 1.32 GB | 4.09% |
+| Q6_K | 1.04 GB | 1.16 GB | 7.35% | 1.03 GB | 1.16 GB | 3.65% |
+| Q5_K | 0.95 GB | 1.07 GB | 7.74% | 0.94 GB | 1.07 GB | 4.37% |
+| Q4_K | 0.86 GB | 0.99 GB | 7.57% | 0.86 GB | 0.98 GB | 4.54% |
+
 ## Speed
 
 speech-bench on 2026-10-08: the 20 sentences of its `prompts/speak-ja-JP.json` in a voice file of one reference, seed

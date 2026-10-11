@@ -284,8 +284,8 @@ the client reads as a broken transfer, and an SSE stream with `{"type":"error","
 
 `speech serve --open` opens a page on which to try models without writing a request.
 
-- Three tabs: Speak, Transcribe and Live. At the top of each, a picker lists the catalog's models of its task with
-  their sizes, whether they are fetched and their languages. Picking one fetches it, with progress that can be
+- Three tabs: Speak, Transcribe and Live. At the top of each, a picker lists the catalog's models of its task, each in
+  every type, with their sizes, whether they are fetched and their languages. Picking one fetches it, with progress that can be
   cancelled and is resumed the next time, and loads it in place of the model of its task. Transcribe and Live use the
   same recognition model and the same detection model. The options' fields, Live's pause among them, start at the
   defaults the command line gave a model, and a field left as it is keeps them.
