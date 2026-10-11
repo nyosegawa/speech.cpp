@@ -91,6 +91,18 @@ A request speaks at most 30 s. A text whose speech the model predicts to last lo
 the worker cuts a text it is refused after its sentences, its commas or its spaces. A
 `speed` above 1 that brings the length within 30 s is followed.
 
+## Long sentences
+
+v4.1-Small-MF can slur or garble a few words in the middle of a long sentence and then speak normally again. In our
+listening (F16 on Metal, and the official runtime in F32), it began at about 18 s of speech, about 100 characters, and
+was more frequent past 20 s; the official runtime does the same from the same noise. A sentence within 30 s is still
+spoken in one request, so to avoid it:
+
+- Cut a long sentence at its commas yourself. `speech tts` and `speech serve` cut a text at the ends of its sentences,
+  and at its commas only when a sentence is too long for one request.
+- Give a reference or a voice file, so that every part keeps one voice. With the voice `none`, the model may choose
+  another voice for each part.
+
 ## Instructions
 
 `instructions` describes the voice and the way of speaking: 「落ち着いた女性の声で、近い距離感でやわらかく自然に読み上げてください。」.
