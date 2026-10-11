@@ -3,12 +3,12 @@
 // minute whole, as the API does, and asks for one for longer audio; the detection model chosen in its picker and loaded
 // from the catalog; longer audio then transcribed by its regions, giving the text chunking_strategy "auto" gives; and the
 // live panel, which waits for a detection model, transcribing a microphone that plays the dumps with pauses between
-// them over /v1/realtime with the pause set in its options: grey text while an utterance is said, all of the microphone's
-// audio sent in order, and at the end the text the API gives for the audio sent, with the same pause. The text is not
-// compared with the API's for the file the microphone plays: the page sends it resampled to 24 kHz and some milliseconds
-// late, which moves Silero VAD's chunks of 32 ms over the speech, and the regions and the text with them; the file
-// delayed by 4 to 28 ms gave reazonspeech-nemo-v2 F16 texts 8.7 to 17.4% CER from the undelayed one's (Apple M5, Metal,
-// 2026-10-12). The audio is
+// them over /v1/realtime with the pause set in its options: grey text while an utterance is said, the microphone's audio
+// sent whole, in order and alone, and at the end the text the API gives for the audio sent, with the same pause. The
+// text is not compared with the API's for the file the microphone plays: the page sends it resampled to 24 kHz and some
+// milliseconds late, which moves Silero VAD's chunks of 32 ms over the speech, and the regions and the text with them;
+// the file delayed by 4 to 28 ms gave reazonspeech-nemo-v2 F16 texts 8.7 to 17.4% CER from the undelayed one's (Apple
+// M5, Metal, 2026-10-12). The audio is
 // 16-bit WAVE made of the dumps of reference/fastconformer/dump.py or reference/qwen3-asr/dump.py. Chrome is the one at
 // $CHROME, or macOS's; the server and Chrome are stopped however the script ends.
 // usage: node checks/smoke/server_page_browser_smoke.mjs <speech> <work dir> <recognition model> <detection model's catalog name> <dump folder>...
@@ -64,17 +64,18 @@ function readNpy(file) {
 }
 
 /**
- * Where `sent` holds `played`, both at `rate`: the lag of the sent audio's start, found within a second either way for the
- * half second around the loudest sample played, and the root mean square of what differs at that lag over all of
- * `played`, in steps of 16-bit PCM. Rounding to 16 bits alone leaves at most 1/√12, 0.29 of a step; a piece dropped,
- * repeated or held back moves what follows off the lag, which leaves the loudness of the speech there.
+ * Where `sent` holds `played`, both at `rate`: the lag of the sent audio's start, from 0 to `most` samples, found for the
+ * half second around the loudest sample played, and the largest difference, in steps of 16-bit PCM, between a sample of
+ * `sent` and the sample of `played` at that lag, or silence where `played` has none, and between a sample of `played`
+ * past the end of `sent` and silence. A piece dropped, repeated or held back moves what follows off the lag, and audio
+ * added anywhere, before or after `played` too, differs from the silence there.
  */
-function alignment(sent, played, rate) {
+function alignment(sent, played, rate, most) {
   const loudest = played.reduce((at, x, i) => (Math.abs(x) > Math.abs(played[at]) ? i : at), 0);
   const from = Math.max(0, Math.min(played.length - rate / 2, loudest - rate / 4));
   const block = played.subarray(from, from + rate / 2);
   let lag = 0, best = -Infinity;
-  for (let k = -rate; k <= rate; k++) {
+  for (let k = 0; k <= most; k++) {
     let dot = 0, norm = 0;
     for (let i = 0; i < block.length; i++) {
       const s = sent[from + k + i] ?? 0;
@@ -84,9 +85,12 @@ function alignment(sent, played, rate) {
     const score = dot / Math.sqrt(norm || 1);
     if (score > best) [lag, best] = [k, score];
   }
-  let differs = 0;
-  for (let i = 0; i < played.length; i++) differs += ((sent[i + lag] ?? 0) - played[i]) ** 2;
-  return { lag, differs: 32768 * Math.sqrt(differs / played.length) };
+  let largest = 0, at = 0;
+  for (let i = 0; i < Math.max(sent.length, lag + played.length); i++) {
+    const differs = Math.abs((sent[i] ?? 0) - (played[i - lag] ?? 0));
+    if (differs > largest) [largest, at] = [differs, i];
+  }
+  return { lag, largest: 32768 * largest, at };
 }
 
 /** A WAVE file of one channel of 16-bit samples, as the page writes one. */
@@ -243,8 +247,12 @@ try {
   // The microphone plays the dumps once, in real time, and then silence. It plays at the rate the page records, OpenAI's
   // rate of audio/pcm, so that the page receives the samples decodeAudioData gives at that rate, a whole number of
   // samples late. Through a context at the browser's own rate, the delay had a fraction of a sample in one run of four,
-  // which left 17 steps of 16-bit PCM differing in the speech of reazonspeech-nemo-v2's dumps.
+  // which left 17 steps of 16-bit PCM differing in the speech of reazonspeech-nemo-v2's dumps. It plays a second of
+  // silence first: the page connects its recorder only once getUserMedia has returned and the recorder's worklet has
+  // loaded, and the samples played before that are not recorded, which were the first 240 of a dump that speaks at once.
+  // The check of the audio sent finds the speech lost if the recorder ever takes longer.
   const pcmRate = 24000;
+  const lead = 1;
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `
     window.__microphone = ${JSON.stringify(fs.readFileSync(microphone).toString('base64'))};
     navigator.mediaDevices.getUserMedia = async () => {
@@ -254,7 +262,7 @@ try {
       source.buffer = await context.decodeAudioData(bytes.buffer);
       const out = context.createMediaStreamDestination();
       source.connect(out);
-      source.start();
+      source.start(context.currentTime + ${lead});
       return out.stream;
     };
   ` });
@@ -354,7 +362,7 @@ try {
     $('live-start').click();
     const card = document.querySelector('#live-transcript .transcript');
     let grey = 0;
-    const end = Date.now() + ${Math.ceil((spoken.length / rate) * 1000) + 2500};
+    const end = Date.now() + ${Math.ceil((lead + spoken.length / rate) * 1000) + 2500};
     while (Date.now() < end) {
       if (!$('live-error').hidden) return { error: $('live-error').textContent };
       if (card.querySelector('.provisional')?.textContent) grey++;
@@ -379,13 +387,18 @@ try {
   `);
   const pcm = Buffer.concat(heard.appended.map((a) => Buffer.from(a, 'base64')));
   const sent = Float32Array.from({ length: pcm.length / 2 }, (_, i) => pcm.readInt16LE(2 * i) / 32768);
-  const played = new Float32Array(Uint8Array.from(Buffer.from(heard.played, 'base64')).buffer);
-  const { lag, differs } = alignment(sent, played, pcmRate);
-  // The audio sent differed by 0.23 to 0.28 of a step (Chrome 155, 2026-10-12), and by 3.3 steps or more with 128 samples
-  // dropped at any of six places in the speech of the dumps of reazonspeech-nemo-v2 and of Qwen3-ASR, which is quieter.
-  if (differs > 1) {
+  // The page sends each sample clamped to [-1, 1], times 32767 and rounded, which the server reads over 32768; Chrome's
+  // resampling takes a loud dump past 1.
+  const played = Float32Array.from(new Float32Array(Uint8Array.from(Buffer.from(heard.played, 'base64')).buffer),
+                                   (x) => Math.round(32767 * Math.max(-1, Math.min(1, x))) / 32768);
+  // The recorder starts within the microphone's second of silence.
+  const { lag, largest, at } = alignment(sent, played, pcmRate, 2 * lead * pcmRate);
+  // The audio sent was the microphone's bit for bit (Chrome 155, 2026-10-12), where a dump's speech or 128 samples dropped
+  // left samples hundreds of steps off; a sample computed otherwise before its rounding would be a step off.
+  if (largest > 1) {
     throw new Error(`the live panel sent ${(sent.length / pcmRate).toFixed(1)} s that hold the microphone's ${(played.length / pcmRate).toFixed(1)} s `
-                    + `at a lag of ${(1000 * lag / pcmRate).toFixed(1)} ms with ${differs.toFixed(2)} steps of 16-bit PCM differing`);
+                    + `from ${(lag / pcmRate).toFixed(3)} s on with a sample ${(at / pcmRate).toFixed(3)} s in differing by ${largest.toFixed(0)} `
+                    + 'steps of 16-bit PCM');
   }
   const appended = path.join(work, 'page-smoke-appended.wav');
   fs.writeFileSync(appended, wav(sent, pcmRate));
@@ -394,8 +407,8 @@ try {
       || JSON.stringify(live.turns) !== JSON.stringify([{ type: 'server_vad', silence_duration_ms: 400 }])) {
     throw new Error(`the live panel: ${JSON.stringify(live)}, where the API gives ${JSON.stringify(wantLive)} for the audio it sent`);
   }
-  console.log(`live: ${(spoken.length / rate).toFixed(1)} s from the microphone, sent ${(1000 * lag / pcmRate).toFixed(1)} ms late with `
-              + `${differs.toFixed(2)} steps of 16-bit PCM differing, grey text in ${live.grey} of its looks, the API's text for the audio sent: ${live.text.slice(0, 40)}`);
+  console.log(`live: ${(spoken.length / rate).toFixed(1)} s from the microphone, sent from ${(lag / pcmRate).toFixed(3)} s on with `
+              + `the largest difference ${largest.toFixed(0)} steps of 16-bit PCM, grey text in ${live.grey} of its looks, the API's text for the audio sent: ${live.text.slice(0, 40)}`);
   if (errors.length) throw new Error(`the page threw: ${errors.join('; ')}`);
   console.log('ok');
 } finally {
