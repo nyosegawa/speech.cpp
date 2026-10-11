@@ -287,8 +287,8 @@ the client reads as a broken transfer, and an SSE stream with `{"type":"error","
 - Three tabs: Speak, Transcribe and Live. At the top of each, a picker lists the catalog's models of its task with
   their sizes, whether they are fetched and their languages. Picking one fetches it, with progress that can be
   cancelled and is resumed the next time, and loads it in place of the model of its task. Transcribe and Live use the
-  same recognition model and the same detection model. The options' fields show the defaults the command line gave a
-  model, and a field left as it is sends nothing.
+  same recognition model and the same detection model. The options' fields, Live's pause among them, start at the
+  defaults the command line gave a model, and a field left as it is keeps them.
 - Speak takes a text and the model's options, plays the speech as the server streams it, and can play it again, save it
   as a WAVE file or hand it to Transcribe. For Irodori-TTS it makes a voice from a recording dropped on it or recorded in
   the browser.
