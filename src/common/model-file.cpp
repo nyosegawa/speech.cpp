@@ -21,7 +21,9 @@ using Gguf = std::unique_ptr<gguf_context, decltype(&gguf_free)>;
 /**
  * The bytes of a tensor read from the file and set on the device at a time. A buffer that held a whole tensor raised the
  * peak memory footprint by the largest one, Qwen3-TTS 1.7B's text embedding of 331 MB: by 315 MB with Metal and 321 MB
- * with the CPU on an Apple M5, where pieces of 16 MB load the file as fast (2026-10-12).
+ * with the CPU on an Apple M5. ggml's Vulkan backend copies a write to a device's memory through a host buffer of its
+ * own as large as the largest write, which it keeps until the process ends: a ready worker of Qwen3-ASR 1.7B held
+ * 310 MB more private bytes on an RTX 2080. Pieces of 16 MB load the files as fast on both (2026-10-12).
  */
 constexpr size_t kReadPiece = (size_t) 16 << 20;
 
