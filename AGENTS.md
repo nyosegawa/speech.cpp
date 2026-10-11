@@ -174,7 +174,8 @@ another one.
 ## Text
 
 - The output of the tools, README.md, `docs/` and AGENTS.md are English. Japanese and other languages appear only
-  as data: texts to speak and model output.
+  as data: texts to speak and model output. The one exception is README.ja.md, README.md in Japanese, which says what
+  README.md says; a pull request that changes README.md changes README.ja.md the same way.
 - An error message names what failed and what to do.
 
 ## Decisions

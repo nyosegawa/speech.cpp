@@ -46,7 +46,7 @@ the model loads. The catalog's update is a pull request of its own, or part of t
 
 ## 4. The numbers
 
-The headline numbers of README.md and the family pages are measured again for the release, with speech-bench against
+The headline numbers of README.md, README.ja.md and the family pages are measured again for the release, with speech-bench against
 the build that will be released: `SPEECH_BENCH_SPEECH_CPP=<build dir>` for a local build, `ci:<run id>` for a CI run's
 archive (the Windows machine takes this one). Measure every runtime of a comparison on the same day, with nothing else
 running, and write each number with its model, type and device. A number that moved goes into the pages in the version's
