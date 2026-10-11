@@ -268,14 +268,18 @@ assert rest[-1]["type"] == "end" and rest[-1]["id"] == "last", short(rest[-1])
 
 # A request option given to the worker as a flag is the default of every request that does not set it, and one the model
 # does not take, or a value out of its range, ends the worker with fatal before ready.
+assert ready["defaults"] == {}, ready["defaults"]
 w = Worker(speech, model, [*options, "--seed", "11"])
-assert w.ready["model"] == info, "a default changed the model information of ready"
+assert w.ready["model"] == info and w.ready["defaults"] == {"seed": 11}, "ready's defaults or model information"
+w.request({"type": "info", "id": "defaults-info"})
+assert w.terminal("defaults-info", "end")["defaults"] == {"seed": 11}, "info's defaults"
 voice = added[0][0] if added else info["voices"][0]["name"]
 pcm_default, end_default = speak("default")
 assert end_default["seed"] == 11 and pcm_default == pcm_a, "a request without a seed did not speak with the worker's --seed 11"
 assert speak("own", seed=5)[1]["seed"] == 5, "a request's own seed did not win over the worker's --seed"
 w.close()
-print("--seed 11: a request without a seed spoke seed 11's audio, and one with seed 5 kept it; ready's model information unchanged")
+print("--seed 11: in ready's and info's defaults, a request without a seed spoke seed 11's audio, and one with seed 5 kept it; "
+      "ready's model information unchanged")
 for flags, code, option in [(["--timestamps"], "unsupported", "timestamps"), (["--seed", "-1"], "out_of_range", "seed")]:
     run = subprocess.run([speech, "worker", model, *options, *flags], stdin=subprocess.DEVNULL, capture_output=True, text=True)
     first = json.loads(run.stdout.splitlines()[0])

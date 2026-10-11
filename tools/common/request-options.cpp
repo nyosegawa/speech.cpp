@@ -162,6 +162,21 @@ std::string options_text(const std::vector<RequestOption> & options) {
     return out;
 }
 
+std::string options_json(const std::vector<RequestOption> & options) {
+    std::string out = "{";
+    for (const RequestOption & o : options) {
+        if (out.size() > 1) out += ",";
+        out += json_string(speech_option_name(o.option)) + ":";
+        switch (o.value.index()) {
+            case 0: out += json_string(std::get<std::string>(o.value)); break;
+            case 1: out += std::to_string(std::get<int64_t>(o.value)); break;
+            case 2: out += json_number(std::get<double>(o.value)); break;
+            default: out += std::get<bool>(o.value) ? "true" : "false"; break;
+        }
+    }
+    return out + "}";
+}
+
 std::vector<RequestOption> defaults_for(speech_model * model, const std::vector<RequestOption> & defaults) {
     const ModelInfo info = model_info(model);
     std::vector<RequestOption> taken;

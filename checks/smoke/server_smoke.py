@@ -18,8 +18,9 @@ granularity, and that granularity's refusal where it does not; WAV at three time
 file that is not WAV or cannot be read, a language, a prompt, a decoding, a member and a granularity it does not take,
 and audio the library cannot take.
 
-For a synthesis model, also that a request option given to the server as a flag (--seed) is the default of a request
-that does not set it and leaves the model information as it was, and that one no model given takes stops the server;
+For a synthesis model, also that a request option given to the server as a flag (--seed, and --tts.seed for the
+synthesis model alone) is the default of a request that does not set it, listed in /v1/models' defaults beside the
+model information as it was, and that one no model given takes, or one for a task without a model, stops the server;
 a text of one sentence, and on a model that reads a text in one request a text of two,
 spoken as the worker speaks it in one request; and on a model that speaks a text a sentence at a time (Irodori-TTS),
 a paragraph of thirty sentences, past its tokens and four times its 30 s, as a pcm stream whose first bytes come before
@@ -161,17 +162,21 @@ elif info["task"] == "synthesis":
     print(f"a request without a seed drew {drawn}, which repeats the audio")
     # A request option given to the server as a flag is the default of the requests that do not set it, and one that no
     # model given takes stops the server before it listens.
-    seeded = Server(speech, [model, *options, "--seed", "11"])
-    status, headers, body = seeded.post_json("/v1/audio/speech", {"input": TEXT, "voice": voice})
-    assert status == 200 and headers["x-speech-seed"] == "11" and wav_data(body) == pcm, (status, headers)
-    assert seeded.post_json("/v1/audio/speech", {"input": TEXT, "voice": voice, "seed": 5})[1]["x-speech-seed"] == "5"
-    assert json.loads(seeded.call("GET", "/v1/models")[2])["data"][0]["speech"] == info, "a default changed the model information"
-    seeded.stop()
-    refused = subprocess.run([speech, "serve", model, *options, "--timestamps", "--port", "0"], stdin=subprocess.DEVNULL,
-                             capture_output=True, text=True, timeout=300)
-    assert refused.returncode != 0 and "unsupported (timestamps)" in refused.stderr, (refused.returncode, refused.stderr[-300:])
-    print("--seed 11: a request without a seed spoke seed 11's audio and one with seed 5 kept it; --timestamps, which no model "
-          "given takes, refused at start")
+    assert entry["defaults"] == {}, entry
+    for flag in ("--seed", "--tts.seed"):
+        seeded = Server(speech, [model, *options, flag, "11"])
+        status, headers, body = seeded.post_json("/v1/audio/speech", {"input": TEXT, "voice": voice})
+        assert status == 200 and headers["x-speech-seed"] == "11" and wav_data(body) == pcm, (flag, status, headers)
+        assert seeded.post_json("/v1/audio/speech", {"input": TEXT, "voice": voice, "seed": 5})[1]["x-speech-seed"] == "5"
+        listed = json.loads(seeded.call("GET", "/v1/models")[2])["data"][0]
+        assert listed["defaults"] == {"seed": 11} and listed["speech"] == info, (flag, listed["defaults"])
+        seeded.stop()
+    for flags, code, says in ((["--timestamps"], 1, "unsupported (timestamps)"), (["--asr.language", "ja"], 2, "--asr.language sets a default")):
+        refused = subprocess.run([speech, "serve", model, *options, *flags, "--port", "0"], stdin=subprocess.DEVNULL,
+                                 capture_output=True, text=True, timeout=300)
+        assert refused.returncode == code and says in refused.stderr, (flags, refused.returncode, refused.stderr[-300:])
+    print("--seed 11 and --tts.seed 11: /v1/models' defaults, a request without a seed spoke seed 11's audio and one with seed 5 "
+          "kept it; --timestamps, which no model given takes, and --asr.language without a recognition model, refused at start")
     # A text of one sentence is one request, and so is a text of several on a model that reads a text in one request.
     by_sentence = speaks_by_sentence(info)
     TWO = TEXT + "二つ目の文です。"
@@ -403,7 +408,9 @@ else:
             assert json.loads(transcribe([("chunking_strategy", "auto")], [("file", "silence.wav", silence)])[2]) == {"text": ""}
             # The detection options given to the server as flags are the defaults of chunking_strategy, before OpenAI's:
             # a threshold of 1 finds no region, so auto gives an empty text, while a request's own threshold wins.
-            tuned = Server(speech, [model, vad, *options, "--threshold", "1"])
+            tuned = Server(speech, [model, vad, *options, "--vad.threshold", "1"])
+            listed = json.loads(tuned.call("GET", "/v1/models")[2])["data"]
+            assert [m["defaults"] for m in listed] == [{}, {"threshold": 1}], listed
             status, _, body = tuned.transcribe([("chunking_strategy", "auto")], [("file", "long.wav", long)])
             assert status == 200 and json.loads(body) == {"text": ""}, body
             own = [("chunking_strategy[type]", "server_vad"), ("chunking_strategy[threshold]", "0.5")]

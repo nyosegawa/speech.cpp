@@ -151,13 +151,15 @@ void add_voice(Inbox & inbox, speech_model * model, const Job & job) {
 }
 
 /**
- * The terminal message of an info, the model's information with the voices added so far, or of a count_tokens. Both
- * read information, which any thread may read while a request runs, so the reader answers them as they arrive.
+ * The terminal message of an info, the defaults of the command line and the model's information with the voices added
+ * so far, or of a count_tokens. Both read information, which any thread may read while a request runs, so the reader
+ * answers them as they arrive.
  */
-std::string answer_at_once(const speech_model * model, const speech_model_info * info, const Job & job) {
+std::string answer_at_once(const speech_model * model, const speech_model_info * info, const std::string & defaults, const Job & job) {
     try {
         if (job.kind == Job::Kind::Info) {
-            return "{\"type\":\"end\",\"id\":" + json_string(job.id) + ",\"model\":" + speech_model_info_json(model_info(model).get()) + "}";
+            return "{\"type\":\"end\",\"id\":" + json_string(job.id) + ",\"defaults\":" + defaults + ",\"model\":" +
+                   speech_model_info_json(model_info(model).get()) + "}";
         }
         size_t tokens = 0;
         check(speech_model_info_text_tokens(info, job.text.c_str(), &tokens));
@@ -190,13 +192,15 @@ int run_worker(const CommandLine & line, FILE * out) {
         }
     }
     const std::vector<RequestOption> defaults = defaults_for(model.get(), line.options);
-    protocol.line("{\"type\":\"ready\",\"protocol\":" + std::to_string(kProtocol) + ",\"version\":" + json_string(speech_version()) + ",\"model\":" + speech_model_info_json(m) + "}");
+    const std::string defaults_json = options_json(defaults);
+    protocol.line("{\"type\":\"ready\",\"protocol\":" + std::to_string(kProtocol) + ",\"version\":" + json_string(speech_version()) +
+                  ",\"defaults\":" + defaults_json + ",\"model\":" + speech_model_info_json(m) + "}");
     std::fprintf(stderr, "speech worker: %s on %s, ready\n", speech_model_info_name(m), speech_model_info_device(m));
     if (!defaults.empty()) std::fprintf(stderr, "speech worker: by default %s\n", options_text(defaults).c_str());
 
     const speech_model * loaded = model.get();
     Inbox & inbox = *new Inbox(protocol, speech_model_info_task(m), speech_model_info_name(m),
-                               [loaded, m](const Job & job) { return answer_at_once(loaded, m, job); });
+                               [loaded, m, defaults_json](const Job & job) { return answer_at_once(loaded, m, defaults_json, job); });
     std::thread reader([&inbox] { inbox.read(std::cin); });
     reader.detach();
     for (Job job; inbox.take(job);) {

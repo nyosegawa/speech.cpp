@@ -14,6 +14,7 @@ speech serve qwen3-tts-0.6b qwen3-asr-0.6b            # speech and transcription
 speech serve reazonspeech-v2 silero-vad               # transcriptions, also by the regions where someone speaks
 speech serve irodori-tts-mf --add-voice me=me.voice.gguf --cors-origin http://localhost:5173
 speech serve irodori-tts-mf --steps 8 --add-voice me=me.voice.gguf  # 8 steps unless a request sets steps
+speech serve qwen3-tts-0.6b qwen3-asr-0.6b --language ja --asr.language auto
 ```
 
 The server holds at most one model of each task: synthesis, recognition and detection (Silero VAD), whose model
@@ -27,14 +28,15 @@ transcriptions with `chunking_strategy` and Realtime sessions with `server_vad` 
 | `--cors-origin ORIGIN` | an origin a web page may call the server from, such as `http://localhost:5173`, or `*` for any; repeatable. A web page of any other origin is refused (403 `origin_not_allowed`); curl and scripts send no origin and are not |
 | `--add-voice NAME=FILE` | add a voice to the synthesis model from a voice file or a WAVE file; repeatable |
 | `--device`, `--threads`, `--no-warmup` | as for the worker, for the synthesis and recognition models the server loads, the page's included. A detection model runs on the CPU with one thread |
-| a request option, such as `--steps 8` or `--language ja` | the default of every request that does not set it, for each model given that takes the option. A request's own value wins; an option that no model given takes, or a value out of its range, stops the server before it listens. The detection model's options, such as `--threshold`, come before OpenAI's server_vad defaults in `chunking_strategy` and Realtime turn detection. A model the page loads later keeps its own defaults, and the model information still shows the model's own |
+| a request option, such as `--steps 8` or `--language ja` | the default of every request that does not set it, for each model given that takes the option. A request's own value wins; an option that no model given takes, or a value out of its range, stops the server before it listens. The detection model's options, such as `--threshold`, come before OpenAI's server_vad defaults in `chunking_strategy` and Realtime turn detection |
+| `--tts.`, `--asr.` or `--vad.` and a request option, such as `--asr.language en` | the same for the synthesis, recognition or detection model alone, winning over the option without the prefix. A model the page loads later keeps its own defaults |
 
 ## Endpoints
 
 | Endpoint | What it does |
 |---|---|
 | `GET /health` | answers `{"status":"ok"}` |
-| `GET /v1/models` | lists the models held, synthesis, recognition and detection in that order, as OpenAI's model objects whose `id` is the model's name, with `speech`, the model information ([c-api.md](c-api.md#model-information-as-json)) |
+| `GET /v1/models` | lists the models held, synthesis, recognition and detection in that order, as OpenAI's model objects whose `id` is the model's name, with `defaults`, the request options the command line gave the model (`{}` without any), and `speech`, the model information ([c-api.md](c-api.md#model-information-as-json)), which keeps the model's own defaults |
 | `GET /v1/models/{id}` | one model; another id is a 404 (`model_not_found`) |
 | `POST /v1/audio/speech` | speaks a text, as [OpenAI's create speech](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create) does |
 | `POST /v1/audio/transcriptions` | recognizes the speech in a WAV file, as [OpenAI's create transcription](https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create) does |
@@ -285,7 +287,8 @@ the client reads as a broken transfer, and an SSE stream with `{"type":"error","
 - Three tabs: Speak, Transcribe and Live. At the top of each, a picker lists the catalog's models of its task with
   their sizes, whether they are fetched and their languages. Picking one fetches it, with progress that can be
   cancelled and is resumed the next time, and loads it in place of the model of its task. Transcribe and Live use the
-  same recognition model and the same detection model.
+  same recognition model and the same detection model. The options' fields show the defaults the command line gave a
+  model, and a field left as it is sends nothing.
 - Speak takes a text and the model's options, plays the speech as the server streams it, and can play it again, save it
   as a WAVE file or hand it to Transcribe. For Irodori-TTS it makes a voice from a recording dropped on it or recorded in
   the browser.

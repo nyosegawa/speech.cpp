@@ -15,8 +15,7 @@ speech worker reazonspeech-v2
 ```
 
 A request option given as a flag ([cli.md](cli.md#speech-serve-and-speech-worker)) is the default of every request that
-does not set it, in place of the model's own; a request's own member wins. `ready`'s model information still shows the
-model's own defaults.
+does not set it, in place of the model's own; a request's own member wins. `ready` and `info` list these defaults.
 
 The worker serves one model. It speaks [JSON Lines](https://jsonlines.org): one JSON object per line on stdin and on
 stdout, in UTF-8.
@@ -33,13 +32,15 @@ stdout, in UTF-8.
 ## Start
 
 ```
-out {"type":"ready","protocol":3,"version":"0.8.3","model":{...model information...}}
+out {"type":"ready","protocol":3,"version":"0.8.3","defaults":{"steps":8},"model":{...model information...}}
 out {"type":"fatal","error":{"code":"model_file","option":null,"message":"..."}}
 ```
 
 `ready` comes once the model is loaded, warmed up unless `--no-warmup` so that a GPU has compiled its kernels before the
-first request, and has the voices of `--add-voice`. `version` is the release, and `model` is the model information as
-JSON ([c-api.md](c-api.md#model-information-as-json)), with the device, the threads and the voices added.
+first request, and has the voices of `--add-voice`. `version` is the release, `defaults` the request options given as
+flags with their values (`{}` without any), and `model` is the model information as JSON
+([c-api.md](c-api.md#model-information-as-json)), with the device, the threads and the voices added. The model
+information keeps the model's own defaults.
 
 `fatal` comes instead when the worker cannot start. The worker then exits with 1, or with 2 for a command line it cannot
 run. A detection model (Silero VAD) is `unsupported`: the worker serves synthesis and recognition models. A request
@@ -91,7 +92,7 @@ out {"type":"end","id":"a","seed":1234,"samples":96000,"stop":"complete"}
 out {"type":"end","id":"r","text":"...","stop":"complete","segments":[{"start":0.0,"end":2.48,"text":"..."}],"tokens":[{"start":0.0,"end":0.16,"text":"..."}]}
 out {"type":"end","id":"q","text":"...","stop":"complete","languages":["ja"]}
 out {"type":"end","id":"v"}
-out {"type":"end","id":"i","model":{...model information...}}
+out {"type":"end","id":"i","defaults":{"steps":8},"model":{...model information...}}
 out {"type":"end","id":"c","tokens":14}
 out {"type":"error","id":"a","error":{"code":"out_of_range","option":"speed","message":"..."}}
 out {"type":"cancelled","id":"a"}

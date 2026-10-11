@@ -3,7 +3,7 @@
 
 import { Recorder } from './audio.js';
 import { RATE, RealtimeTranscription } from './live-realtime.js';
-import { OptionForm } from './options.js';
+import { OptionForm, withServerDefaults } from './options.js';
 import { length, TranscriptView } from './transcript.js';
 
 const $ = (id) => document.getElementById(id);
@@ -61,7 +61,7 @@ export class LivePanel {
     this.#held = held;
     if (held) {
       const kept = this.#options?.values() ?? {};
-      this.#options = new OptionForm(held.model, $('live-options'), null, SESSION_OPTIONS);
+      this.#options = new OptionForm(withServerDefaults(held), $('live-options'), null, SESSION_OPTIONS);
       this.#options.restore(kept);
     } else {
       $('live-options').replaceChildren();

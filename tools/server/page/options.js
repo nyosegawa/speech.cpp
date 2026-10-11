@@ -1,7 +1,7 @@
 // The fields of a model's request options, built from its information as speech info --json gives it: each option's
 // type, whether it is required, its default, its range and its choices. The common options are shown and the rest are
 // folded away; an option the model checks but does not steer by has no field, and a field left as it came sends
-// nothing, so that the model's own default applies.
+// nothing, so that the default applies: the model's own, or the one the server was started with.
 
 import { languageName } from './languages.js';
 
@@ -28,10 +28,22 @@ function range(option) {
   return '';
 }
 
+/**
+ * A held model's information with the defaults the server was started with in place of the model's own, so that each
+ * field shows, and leaves to the server, the default a request without it gets.
+ */
+export function withServerDefaults(held) {
+  const defaults = held.defaults ?? {};
+  const options = held.model.options.map((o) => (o.name in defaults ? { ...o, default: defaults[o.name], server: true } : o));
+  return { ...held.model, options };
+}
+
 function hint(option) {
-  if (option.name === 'seed') return 'drawn for each request when empty';
+  if (option.name === 'seed' && !option.server) return 'drawn for each request when empty';
   const parts = [];
-  if (option.default !== undefined && option.type !== 'bool' && !option.choices && option.default !== '') parts.push(`default ${option.default}`);
+  const shown = option.default !== undefined && option.type !== 'bool' && !option.choices && option.default !== '';
+  if (shown) parts.push(`default ${option.default}${option.server ? ', set when the server started' : ''}`);
+  else if (option.server) parts.push('default set when the server started');
   if (option.type === 'int' || option.type === 'float') parts.push(range(option));
   return parts.filter(Boolean).join(', ');
 }

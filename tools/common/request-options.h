@@ -56,6 +56,9 @@ void apply_options(speech_request * request, const std::vector<RequestOption> & 
 /** Options as a command line writes them, for a log: "--steps 8 --keep-tail=true". */
 std::string options_text(const std::vector<RequestOption> & options);
 
+/** Options as a JSON object of their names and values, as a request's members give them: {"steps":8,"language":"ja"}. */
+std::string options_json(const std::vector<RequestOption> & options);
+
 /**
  * The options among `defaults` that the model takes, each checked against it through a request's setters, so that a
  * value it refuses fails where the program starts rather than at its first request. The setters check each value

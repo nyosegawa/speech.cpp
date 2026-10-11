@@ -355,3 +355,8 @@ synthesis and a recognition model, for transcriptions by regions; the worker tak
 A request option given as a flag is the default of every request that does not set it, in place of the model's own:
 `speech serve irodori-tts-mf --steps 8` samples in 8 steps unless a request sets `steps`. A request's own value wins,
 and an option no model given takes, or a value out of its range, stops the program before it serves.
+
+`speech serve` gives a flag to every model given that takes the option. After `tts.`, `asr.` or `vad.` it gives it to
+the synthesis, recognition or detection model alone, and wins over the same flag without one:
+`speech serve qwen3-tts-0.6b qwen3-asr-0.6b --language ja --asr.language auto`. The worker's `ready` and the server's
+`/v1/models` list the defaults given.
