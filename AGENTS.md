@@ -102,6 +102,9 @@ another one.
   library and `libspeech` never include either. `speech` has the library and ggml linked in statically, so that a release is
   one executable beside the shared library `libspeech`, which exports the C API and nothing else, for bindings and
   other programs.
+- The submodule is the branch `speech.cpp` of github.com/nyosegawa/ggml: an upstream tag of ggml-org/ggml, a commit of
+  `test-backend-ops` cases, and one commit for each defect of the tag that speech.cpp's models meet, which its cases
+  show. A defect of ggml is fixed there, with its cases, rather than avoided in speech.cpp.
 - Anything the C API returns is owned by the library, and the header says for how long. A model serves one
   request at a time, and the header says which functions any thread may call.
 - The GGUF layout is this repository's own: one file per model, its codec included, written by

@@ -107,13 +107,6 @@ int check_library(void) {
         fprintf(stderr, "FAIL: the devices are not listed as speech.h declares\n");
         return 1;
     }
-#ifdef __APPLE__
-    if (getenv("GGML_METAL_TENSOR_DISABLE") != NULL) {
-        fprintf(stderr, "FAIL: GGML_METAL_TENSOR_DISABLE is set after the devices were listed\n");
-        return 1;
-    }
-    printf("GGML_METAL_TENSOR_DISABLE is unset again after the devices were listed\n");
-#endif
     return 0;
 }
 

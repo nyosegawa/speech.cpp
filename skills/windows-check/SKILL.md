@@ -12,7 +12,9 @@ reaches through whatever remote shell it has.
 ## Ground rules
 
 - Work in one temporary folder (`%TEMP%\speech-<task>`), and remove it when done. Change nothing else on the machine:
-  no installs, no PATH, no settings, no other program's data.
+  no installs, no PATH, no settings, no other program's data. The one exception is the Vulkan SDK of the version CI
+  pins (`VULKAN_VERSION` in `.github/workflows/build.yml`), installed under `C:\VulkanSDK`, with which ggml's
+  `test-backend-ops` is built on the machine; its installer needs an administrator, so the user runs it.
 - Large files are fetched by the Windows machine itself (GitHub, Hugging Face), not copied over a remote shell, which
   may be slow. Send only small files: scripts and short dumps.
 
@@ -37,6 +39,7 @@ reaches through whatever remote shell it has.
 | What | How | Passes when |
 |---|---|---|
 | Stage checks | `<family>-<stage>-check.exe <model> <dump> … gpu` | within the bounds the check prints |
+| ggml's fixes | ggml's `test-backend-ops` built with `-DGGML_VULKAN=ON -DGGML_BUILD_TESTS=ON` from the submodule's commit, `test -o MUL_MAT -b Vulkan0 -p large_b`; on a newer upstream tag, the same with the commit of cases alone | every case passes with the fixes; a case that passes on the tag alone marks a fix to drop |
 | Window or chunk independence | the family's codec check with its forced patterns | every pattern gives the whole decode's samples |
 | Unchanged behaviour | `python same_audio.py <old speech.dll> <model> <new speech.dll> <model> <prompts.json> --voice … --seeds 1,2,3` | the same audio, bit for bit |
 | Entry points | `worker_smoke.py`, `server_smoke.py`, `server_realtime_smoke.py`, `speech_cli_smoke.py` with a model of each family | ok |

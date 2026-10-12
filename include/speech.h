@@ -154,12 +154,9 @@ SPEECH_API void speech_log_set(speech_log_callback callback, void * user_data);
 /*
  * Devices: the CPU and the GPUs that ggml can run a whole model on, in ggml's order. An accelerator that ggml runs
  * beside the CPU, such as BLAS, cannot run a model by itself and is not listed. The first call that touches a device
- * sets ggml up for the process. On macOS, Metal must run without Metal 4's tensor API, and ggml reads that only from
- * the environment variable GGML_METAL_TENSOR_DISABLE while it lists its devices; the library sets the variable for
- * that listing alone and then restores it, so the host sees the value it had. ggml's Metal backend itself sets
- * AGX_RELAX_CDM_CTXSTORE_TIMEOUT to 1 for the process during that listing, which the library leaves as ggml sets it.
- * Setting the environment is not safe while another thread reads it, so that first call must not run while another
- * thread of the process reads the environment.
+ * sets ggml up for the process. ggml's Metal backend sets the environment variable AGX_RELAX_CDM_CTXSTORE_TIMEOUT to 1
+ * for the process while it lists its devices. Setting the environment is not safe while another thread reads it, so
+ * that first call must not run while another thread of the process reads the environment.
  */
 
 /** The kind of a device. */
