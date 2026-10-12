@@ -83,16 +83,16 @@ In the Q6_K, Q5_K and Q4_K files the prediction network and the joint stay Q8_0.
 
 ## Speed
 
-speech-bench on 2026-10-10, F16, one warm request at a time. The Japanese timing sample is the first 100 Common Voice
-inputs, 99 retained by VAD, repeated three times; English uses 300 FLEURS inputs, 299 retained by VAD, once. These
-latencies are measured separately from the complete accuracy sets above. Loading and first-use warmup are excluded.
+speech-bench on 2026-10-12, one request at a time, with the files the names fetch: Q8_0 for parakeet-tdt_ctc-0.6b-ja
+and reazonspeech-nemo-v2 on the first 100 utterances of Common Voice 8.0's Japanese test set (99 kept by VAD), and F16
+for parakeet-tdt-0.6b-v3 on 300 English utterances of FLEURS (299 kept).
 
 | Model | Utterances | Median, M5 / RTX 2080 | p90, M5 / RTX 2080 |
 |---|---|---|---|
-| parakeet-tdt_ctc-0.6b-ja | Common Voice ja | 0.052 s / 0.040 s | 0.073 s / 0.066 s |
-| reazonspeech-nemo-v2, beam search | Common Voice ja | 0.085 s / 0.106 s | 0.135 s / 0.191 s |
-| reazonspeech-nemo-v2, greedy | Common Voice ja | 0.054 s / 0.047 s | 0.079 s / 0.078 s |
-| parakeet-tdt-0.6b-v3 | FLEURS en | 0.093 s / 0.082 s | 0.148 s / 0.111 s |
+| parakeet-tdt_ctc-0.6b-ja | Common Voice ja | 0.051 s / 0.040 s | 0.072 s / 0.079 s |
+| reazonspeech-nemo-v2, beam search | Common Voice ja | 0.081 s / 0.107 s | 0.127 s / 0.197 s |
+| reazonspeech-nemo-v2, greedy | Common Voice ja | 0.056 s / 0.046 s | 0.083 s / 0.088 s |
+| parakeet-tdt-0.6b-v3 | FLEURS en | 0.089 s / 0.100 s | 0.144 s / 0.143 s |
 
 A long recording is recognized whole. ReazonSpeech and parakeet-tdt_ctc-0.6b-ja use global attention, whose memory
 grows with the square of the input length. Use `speech asr --vad silero-vad` to transcribe long recordings by region.

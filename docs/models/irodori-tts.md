@@ -161,5 +161,5 @@ speech-bench on 2026-10-08: the 20 sentences of its `prompts/speak-ja-JP.json` i
 | v4.1-Small, 16 steps | RTX 2080, Vulkan | 0.52 s | 1.12 s | 0.13 | 3.2% |
 
 The first audio waits for the whole sentence's sampling, so it grows with the sentence. v4.1-Small's default of 40
-steps takes about 2.4 times as long as 16. The worker takes 2.2 GB of memory with F16 weights, and 1.5 GB with Q8_0,
-which speaks as fast.
+steps takes about 2.4 times as long as 16. Over the same 20 sentences on the M5, the worker's memory peaks at 2.06 GB
+with F16 weights and 1.35 GB with Q8_0, which speaks as fast.
