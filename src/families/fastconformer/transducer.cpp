@@ -12,6 +12,13 @@ ggml_tensor * linear(ggml_context * ctx, const ModelFile & m, ggml_tensor * x, c
 
 }  // namespace
 
+bool decoding_tensor(const std::string & name) {
+    for (const char * prefix : {"pred.", "joint.pred.", "joint.out."}) {
+        if (name.rfind(prefix, 0) == 0) return true;
+    }
+    return false;
+}
+
 PredictionNetwork::PredictionNetwork(const ModelFile & m)
     : m_(m), layers_((int) m.u32("fastconformer.decoder.prediction_layers")), hidden_((int) m.tensor("pred.embed.weight")->ne[0]) {}
 

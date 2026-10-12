@@ -62,7 +62,7 @@ extern "C" {
  * version and a minor version of m or more. Version 3.0 is first released with speech.cpp 0.7.0, the option prompt
  * included, and a declaration added since says the version that added it.
  */
-#define SPEECH_API_VERSION_MINOR 1
+#define SPEECH_API_VERSION_MINOR 2
 
 /** The SPEECH_API_VERSION_MAJOR the library was built with, for a caller that loads it at run time. */
 SPEECH_API int speech_api_version_major(void);
@@ -391,7 +391,15 @@ typedef enum speech_option {
      * model's least (98 ms for Silero VAD), the next region beginning where that silence ended, or, without one, at the
      * chunk that reaches the limit. Without it a region has no limit. Added in 3.1.
      */
-    SPEECH_OPT_MAX_SPEECH_DURATION_S = 43
+    SPEECH_OPT_MAX_SPEECH_DURATION_S = 43,
+    /**
+     * "decode_on_cpu", a boolean: whether a recognition with a model on a GPU decodes its tokens on the CPU, from a copy
+     * of the weights its decoding reads that the model keeps there, rather than on the GPU. Each step of such a decoding
+     * is a small computation whose round trip to a GPU takes longer than the CPU takes to compute it, so the default is
+     * true; false keeps the decoding on the GPU. The two compute in different arithmetic, which can choose another token
+     * where two score almost the same. A model on the CPU decodes there either way. Added in 3.2.
+     */
+    SPEECH_OPT_DECODE_ON_CPU = 44
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */
@@ -443,9 +451,10 @@ SPEECH_API speech_status speech_load_params_set_device(speech_load_params * para
 
 /**
  * The number of threads the CPU computes with, 1 or more: a preference about how the work runs, which applies to
- * whatever the model computes on the CPU, all of its graphs for a model on the CPU and none of them for a model on a
- * GPU. Without it the library takes the machine's performance cores, or its physical cores where the system does not
- * tell them apart. The model's information reports the number in effect (speech_model_info_threads()).
+ * whatever the model computes on the CPU: all of its graphs for a model on the CPU, and for a model on a GPU those it
+ * computes on the CPU, such as a decoding with decode_on_cpu, or none. Without it the library takes the machine's
+ * performance cores, or its physical cores where the system does not tell them apart. The model's information reports
+ * the number in effect (speech_model_info_threads()).
  */
 SPEECH_API speech_status speech_load_params_set_threads(speech_load_params * params, int threads);
 
@@ -701,8 +710,9 @@ SPEECH_API const char * speech_model_info_device(const speech_model_info * info)
 
 /**
  * The number of threads the CPU computes a loaded model's graphs with: the number the load parameters set, or the
- * library's default, for a model on the CPU, and 0 for a model on a GPU, none of whose graphs runs on the CPU. 0 for
- * information read from a file.
+ * library's default, for a model on the CPU and for a model on a GPU that computes some of its graphs on the CPU (a
+ * model that takes decode_on_cpu), and 0 for a model on a GPU none of whose graphs runs on the CPU. 0 for information
+ * read from a file.
  */
 SPEECH_API int speech_model_info_threads(const speech_model_info * info);
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "graph.h"
@@ -12,6 +13,12 @@ namespace fastconformer {
 struct PredictionState {
     std::vector<float> h, c;
 };
+
+/**
+ * Whether the tensor `name` is one that a decoding reads: the prediction network's and the joint's, but for the joint's
+ * projection of the encoder, which the encoder's graph computes.
+ */
+bool decoding_tensor(const std::string & name);
 
 /**
  * NeMo's RNNTDecoder (nemo/collections/asr/modules/rnnt.py) with the blank as the embedding's padding: an

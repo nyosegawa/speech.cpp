@@ -2,7 +2,9 @@
 // audio. One untimed recognition of each input warms the device. Each JSON line is one measured run; core_total_ms
 // includes detokenization but excludes input loading and model loading. Profiling does not change graph boundaries.
 //
-// usage: fastconformer-timing <model.gguf> <gpu|cpu|device name> <decoding> <runs> <dump dir>...
+// The decoding computes on the CPU's copy of its tensors (cpu) or on the model's device (device).
+//
+// usage: fastconformer-timing <model.gguf> <gpu|cpu|device name> <decoding> <cpu|device> <runs> <dump dir>...
 
 #include <chrono>
 #include <cstdio>
@@ -30,20 +32,21 @@ double ms(Clock::time_point start, Clock::time_point end) {
 
 int main(int argc, char ** argv) {
     const auto args = utf8_args(argc, argv);
-    if (args.size() < 6) {
-        std::fprintf(stderr, "usage: %s <model.gguf> <gpu|cpu|device name> <decoding> <runs> <dump dir>...\n", args[0].c_str());
+    if (args.size() < 7 || (args[4] != "cpu" && args[4] != "device")) {
+        std::fprintf(stderr, "usage: %s <model.gguf> <gpu|cpu|device name> <decoding> <cpu|device> <runs> <dump dir>...\n", args[0].c_str());
         return 2;
     }
     try {
-        const int runs = std::stoi(args[4]);
+        const DecodeOn on = args[4] == "cpu" ? DecodeOn::Cpu : DecodeOn::Device;
+        const int runs = std::stoi(args[5]);
         if (runs < 1) throw std::runtime_error("runs must be positive");
         std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> backend(init_backend(args[2]), ggml_backend_free);
-        Recognizer recognizer(args[1], backend.get());
+        Recognizer recognizer(args[1], backend.get(), default_threads());
         recognizer.decoder(args[3]);
         std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator(
             ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend.get())), ggml_gallocr_free);
         if (!allocator) throw std::runtime_error("cannot create an encoder allocator");
-        for (size_t a = 5; a < args.size(); a++) {
+        for (size_t a = 6; a < args.size(); a++) {
             const auto dir = std::filesystem::u8path(args[a]);
             const auto audio = read_npy((dir / "audio.npy").u8string()).f32;
             for (int run = -1; run < runs; run++) {
@@ -59,17 +62,18 @@ int main(int argc, char ** argv) {
                 const auto compute_end = Clock::now();
                 const auto output = Graph::read(projected);
                 const auto read_end = Clock::now();
-                const auto decoding = recognizer.decoding(output, args[3]);
+                const auto decoding = recognizer.decoding(output, args[3], on);
                 const auto decode_end = Clock::now();
                 const auto text = recognizer.detokenizer().text(decoding.ids);
                 const auto end = Clock::now();
                 if (run < 0) continue;
-                std::printf("{\"input\":%s,\"device\":%s,\"decoding\":%s,\"run\":%d,\"audio_seconds\":%.4f,"
+                std::printf("{\"input\":%s,\"device\":%s,\"decoding\":%s,\"decode_on\":%s,\"run\":%d,\"audio_seconds\":%.4f,"
                             "\"core_total_ms\":%.4f,\"frontend_ms\":%.4f,\"encoder_build_ms\":%.4f,"
                             "\"encoder_compute_ms\":%.4f,\"encoder_read_ms\":%.4f,\"decoder_ms\":%.4f,"
                             "\"graphs\":%zu,\"tokens\":%zu,\"text\":%s}\n",
                             json_string(dir.filename().u8string()).c_str(), json_string(ggml_backend_name(backend.get())).c_str(),
-                            json_string(args[3]).c_str(), run, (double) audio.size() / recognizer.sample_rate(), ms(start, end),
+                            json_string(args[3]).c_str(), json_string(args[4]).c_str(), run, (double) audio.size() / recognizer.sample_rate(),
+                            ms(start, end),
                             ms(start, frontend_end), ms(frontend_end, build_end), ms(build_end, compute_end), ms(compute_end, read_end),
                             ms(read_end, decode_end), decoding.graphs, decoding.ids.size(), json_string(text).c_str());
                 std::fflush(stdout);

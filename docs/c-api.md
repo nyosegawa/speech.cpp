@@ -264,6 +264,7 @@ Each model takes some of them, with ranges and defaults from its file, and `spee
 | `timestamps` | bool | false | [FastConformer](models/fastconformer.md#options) |
 | `prompt` | string | `""` | [Qwen3-ASR](models/qwen3-asr.md#options) |
 | `decoding` | string | none | reazonspeech-nemo-v2 |
+| `decode_on_cpu` | bool | none | FastConformer |
 | `do_sample`, `top_k`, `top_p`, `temperature`, `repetition_penalty` | bool, int, float, float, float | none | Qwen3-TTS |
 | `code_predictor_do_sample`, `code_predictor_top_k`, `code_predictor_top_p`, `code_predictor_temperature` | bool, int, float, float | none | Qwen3-TTS |
 | `instructions` | string | `""` | Qwen3-TTS 1.7B, Irodori-TTS |
@@ -338,5 +339,6 @@ loaded on Metal, with two of its nine voices and four of its options shown:
 - An option has `type` (`string`, `int`, `float`, `bool`), `required`, `steers`, and where they apply `default`,
   `minimum` or `exclusive_minimum`, `maximum`, and `choices`.
 - `device` and `threads` are there for a loaded model alone. `threads` is the number of CPU threads in effect for a model
-  on the CPU, and 0 for a model on a GPU. Setting threads is never an error, since with the device `auto` a caller cannot
+  on the CPU or for a model on a GPU that computes part of a request on the CPU (FastConformer's decoding), and 0 for a
+  model on a GPU that computes nothing there. Setting threads is never an error, since with the device `auto` a caller cannot
   know where the model will run.
