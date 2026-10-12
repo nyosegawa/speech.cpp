@@ -7,7 +7,8 @@
 // the two picks have equal logits, which either sort may put in either order. It
 // then draws 25,600 numbers from uniform() for the first row of each case, and the share of each candidate among the
 // device's picks must lie within five standard deviations of a fair draw of its probability. A temperature that takes a
-// logit beyond a float must be refused as candidates() refuses it, naming the temperature.
+// logit beyond a float must be refused as candidates() refuses it, naming the temperature; in a Debug build, where ggml
+// asserts, a softmax that reads the infinite logit aborts instead.
 //
 // usage: qwen3-tts-graph-sampler-check <qwen3-tts model.gguf> <sampling cases dir> [gpu|cpu]
 

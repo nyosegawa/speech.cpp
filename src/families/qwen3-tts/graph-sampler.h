@@ -39,7 +39,7 @@ public:
     void draw(Graph & g, const std::vector<double> & u) const;
 
     /**
-     * The ids the picks of the computed graph gave. Where the temperature took a pick's largest logit beyond a float, it
+     * The ids the picks of the computed graph gave. Where the temperature takes a draw's largest logit beyond a float, it
      * throws temperature_overflow(), as candidates() does.
      */
     std::vector<int32_t> read() const;
@@ -50,8 +50,8 @@ private:
     /** The numbers of the draws, F32 [picks]. */
     ggml_tensor * draws_ = nullptr;
     /**
-     * What a compute reads back in one copy, F32 [picks, 1] greedy and [picks, 2] drawing: the ids picked, and the weight
-     * of each draw's first candidate, which is not finite where the temperature took a logit beyond a float.
+     * What a compute reads back in one copy, F32 [picks, 1] greedy and [picks, 2] drawing: the ids picked, and the
+     * largest logit of each draw, which read() divides by the temperature as candidates() does.
      */
     ggml_tensor * out_ = nullptr;
 };

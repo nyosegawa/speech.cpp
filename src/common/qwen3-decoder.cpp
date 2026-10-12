@@ -462,13 +462,17 @@ void Qwen3Decoder::step(int32_t id, ggml_tensor * table, ggml_tensor * head) {
         s->graph.set(s->inputs.mask, causal_mask(n_past_, 1, n_kv));
         s->graph.compute_again(backend_);
     } else {
-        token_step_ = std::make_unique<TokenStep>(backend_, table, head, n_kv);
-        s = token_step_.get();
+        // The step is kept only once it has computed: a graph whose memory could not be allocated has tensors without
+        // memory, which computing it again would write to and abort.
+        token_step_.reset();
+        auto built = std::make_unique<TokenStep>(backend_, table, head, n_kv);
+        s = built.get();
         s->id = s->graph.input(std::vector<int32_t>{id}, 1);
         s->inputs = run_inputs(s->graph, 1);
         ggml_tensor * x = layers(s->graph, ggml_get_rows(s->graph.ctx(), table, s->id), 1, true, s->inputs);
         s->outputs = outputs(s->graph, x, head);
         s->graph.compute(backend_, s->allocr);
+        token_step_ = std::move(built);
     }
     read(s->outputs);
     n_past_ += 1;
@@ -513,20 +517,25 @@ bool Qwen3Decoder::chain(Qwen3Chain & chain) {
     start(total, first);
     make_room(total);
     KeptChain * k = chain_.get();
-    const bool kept = k && k->chain == &chain && chain.refill(k->graph);
-    if (!kept) {
-        chain_ = std::make_unique<KeptChain>(backend_, &chain, chain.steps() * (shape_.n_layer * kChainLayerNodes + kChainStepNodes));
-        k = chain_.get();
-        build_chain(chain, *k);
-        n_past_ = 0;
-        if (!k->computes) {
-            log_message(LogLevel::Info, std::string("the device ") + ggml_backend_name(backend_) + " cannot compute the steps of the decoder " + tensors_ +
-                                            " in one graph");
-        }
+    if (k && k->chain == &chain && chain.refill(k->graph)) {
+        if (!k->computes) return false;
+        k->graph.compute_again(backend_);
+        n_past_ = total;
+        return true;
     }
-    if (!k->computes) return false;
-    if (kept) k->graph.compute_again(backend_);
-    else k->graph.compute(backend_, k->allocr);
+    chain_.reset();
+    auto built = std::make_unique<KeptChain>(backend_, &chain, chain.steps() * (shape_.n_layer * kChainLayerNodes + kChainStepNodes));
+    build_chain(chain, *built);
+    n_past_ = 0;
+    if (!built->computes) {
+        log_message(LogLevel::Info, std::string("the device ") + ggml_backend_name(backend_) + " cannot compute the steps of the decoder " + tensors_ +
+                                        " in one graph");
+        chain_ = std::move(built);
+        return false;
+    }
+    // The chain is kept only once it has computed, as a step is.
+    built->graph.compute(backend_, built->allocr);
+    chain_ = std::move(built);
     n_past_ = total;
     return true;
 }

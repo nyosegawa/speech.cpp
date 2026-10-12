@@ -26,8 +26,13 @@ ggml_tensor * GraphSampler::pick(Graph & g, int i, ggml_tensor * logits) {
     } else {
         ggml_tensor * order = ggml_argsort_top_k(ctx, ggml_reshape_2d(ctx, logits, vocab_, 1), k_);
         ggml_tensor * values = ggml_get_rows(ctx, ggml_reshape_2d(ctx, logits, 1, vocab_), order);
-        ggml_tensor * weights = ggml_soft_max_ext(ctx, ggml_reshape_1d(ctx, values, k_), nullptr, 1.0f / p_.temperature, 0.0f);
-        g.copy(ggml_view_1d(ctx, weights, 1, 0), slot(1));
+        // The softmax reads the logits less the largest, which no temperature takes to +inf: an infinite scaled logit
+        // makes ggml's softmax assert that its sum is positive. read() refuses a temperature that takes the largest
+        // logit itself beyond a float, as candidates() does.
+        ggml_tensor * largest = ggml_view_1d(ctx, values, 1, 0);
+        g.copy(largest, slot(1));
+        ggml_tensor * below_largest = ggml_sub(ctx, ggml_reshape_1d(ctx, values, k_), largest);
+        ggml_tensor * weights = ggml_soft_max_ext(ctx, below_largest, nullptr, 1.0f / p_.temperature, 0.0f);
         if (k_ == 1) {
             id = order;
         } else {
@@ -71,7 +76,7 @@ std::vector<int32_t> GraphSampler::read() const {
     const std::vector<float> out = Graph::read(out_);
     std::vector<int32_t> ids((size_t) picks_);
     for (int i = 0; i < picks_; i++) {
-        if (!p_.greedy && !std::isfinite(out[(size_t) (picks_ + i)])) throw temperature_overflow(p_.temperature);
+        if (!p_.greedy && !std::isfinite(out[(size_t) (picks_ + i)] / p_.temperature)) throw temperature_overflow(p_.temperature);
         ids[(size_t) i] = (int32_t) out[(size_t) i];
     }
     return ids;
