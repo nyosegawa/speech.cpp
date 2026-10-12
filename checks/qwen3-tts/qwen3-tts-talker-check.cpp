@@ -163,7 +163,9 @@ int main(int argc, char ** argv) {
     w_cp.print("code predictor logits");
 
     // Free-running greedy decode with the official talker settings, as dump.py ran it.
+    // The graph's error in all, and at each step, so that the first step that departs shows.
     Worst w_frame;
+    std::vector<Worst> w_frame_steps((size_t) n_groups - 1);
     bool one_graph = true;
     SamplingParams talker_p = generation.talker;
     talker_p.greedy = true;
@@ -210,14 +212,21 @@ int main(int argc, char ** argv) {
                 codes[g] = sample(g == 1 ? talker.cp_begin(codes[0]) : talker.cp_next(g - 1, codes[g - 1]), cp_p, made, none, rng);
             } else if (f < n_frames && diff_frame < 0) {
                 // The graph's logits of a code whose frame and frames before follow the reference read what the reference's did.
-                w_frame.add(talker.cp_frame_logits(g - 1).data(), ref_row, talker.cp_vocab());
+                const std::vector<float> got = talker.cp_frame_logits(g - 1);
+                w_frame.add(got.data(), ref_row, talker.cp_vocab());
+                w_frame_steps[(size_t) g - 1].add(got.data(), ref_row, talker.cp_vocab());
             }
             if (f < n_frames) compare(f, g, codes[g], ref_row);
         }
         talker.step(codes.data(), prompt.frame_extra);
         frames++;
     }
-    if (one_graph) w_frame.print("code predictor in a graph");
+    if (one_graph) {
+        w_frame.print("code predictor in a graph");
+        for (size_t step = 0; step < w_frame_steps.size(); step++) {
+            w_frame_steps[step].print(("  step " + std::to_string(step) + ", code " + std::to_string(step + 1)).c_str());
+        }
+    }
     else std::printf("the device cannot compute the code predictor's frame in one graph, which the decode made a step at a time\n");
     std::printf("code predictor graphs: %.2f MiB on the device\n", talker.cp_graph_bytes() / 1048576.0);
     ggml_backend_free(backend);
