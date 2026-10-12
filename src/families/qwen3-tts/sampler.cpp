@@ -104,6 +104,22 @@ Candidates candidates(const std::vector<float> & raw, const SamplingParams & p, 
     return c;
 }
 
+double uniform(std::mt19937_64 & rng) {
+    return (double) rng() * 0x1.0p-64;
+}
+
+int pick(const std::vector<double> & weights, double u) {
+    double sum = 0;
+    for (double w : weights) sum += w;
+    const int last = (int) weights.size() - 1;
+    double cumulative = 0;
+    for (int i = 0; i < last; i++) {
+        cumulative += weights[i] / sum;
+        if (cumulative > u) return i;
+    }
+    return last;
+}
+
 int32_t sample(const std::vector<float> & logits, const SamplingParams & p, const std::vector<int32_t> & history,
                const std::vector<bool> & banned, std::mt19937_64 & rng) {
     if (p.greedy) {
@@ -111,6 +127,5 @@ int32_t sample(const std::vector<float> & logits, const SamplingParams & p, cons
         return (int32_t) (std::max_element(r.begin(), r.end()) - r.begin());
     }
     const Candidates c = candidates(logits, p, history, banned);
-    std::discrete_distribution<int> pick(c.weights.begin(), c.weights.end());
-    return c.tokens[pick(rng)];
+    return c.tokens[pick(c.weights, uniform(rng))];
 }
