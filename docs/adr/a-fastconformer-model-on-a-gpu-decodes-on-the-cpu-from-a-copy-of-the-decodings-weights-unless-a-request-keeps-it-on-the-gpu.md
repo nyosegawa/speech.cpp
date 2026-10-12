@@ -26,21 +26,27 @@ given a pool of its own.
 - **The CPU decodes with the load's threads, in a pool that waits between graphs.** The model's information reports the
   threads of a FastConformer model on a GPU, which computes part of each request on the CPU.
 
-Measured on an Apple M5 with Metal on 2026-10-13, while other work loaded the machine: the median time of a recognition
-of 4 utterances of 6 to 28 s with the files the names fetch, 3 runs in each of 3 rounds that alternate the builds,
-summed over the utterances.
+Measured on an Apple M5 with Metal on 2026-10-13, the median time of a recognition of 4 utterances of 6 to 28 s, 3 runs
+in each of 3 rounds that alternate the builds, summed over the utterances; the copy in the file's type and, for
+comparison, converted to F32:
 
-| Model, decoding | Decoding on Metal | On the CPU, a pool of 4 threads |
-|---|---|---|
-| reazonspeech-nemo-v2, beam search | 1,473 ms | 1,258 ms |
-| reazonspeech-nemo-v2, greedy | 812 ms | 793 ms |
-| parakeet-tdt_ctc-0.6b-ja | 722 ms | 683 ms |
-| parakeet-tdt-0.6b-v3 | 664 ms | 623 ms |
+| Model, file, decoding | Decoding on Metal | On the CPU | On the CPU from an F32 copy |
+|---|---|---|---|
+| reazonspeech-nemo-v2, Q8_0, beam search | 1,262 ms | 1,001 ms | 1,641 ms |
+| reazonspeech-nemo-v2, F16, beam search | 1,409 ms | 1,312 ms | 1,839 ms |
+| reazonspeech-nemo-v2, Q8_0, greedy | 714 ms | 707 ms | 855 ms |
+| parakeet-tdt_ctc-0.6b-ja, Q8_0 | 635 ms | 585 ms | 678 ms |
+| parakeet-tdt-0.6b-v3, F16 | 583 ms | 555 ms | 678 ms |
 
-The same day, with reazonspeech-nemo-v2's beam search on 3 of those utterances, the CPU took 1,071 ms with 1 thread,
-950 ms with 4 threads started for each graph and 856 ms with a pool of 4, where Metal took 1,091 ms. A prototype that
-decoded on the CPU with threads started for each graph took about 20% off recognition on Vulkan with an RTX 2080, with
-the same text.
+On Windows with an RTX 2080 on Vulkan and an i9-9900K, the total of 100 utterances in 3 alternating rounds against
+0.8.4, which decodes on the GPU: reazonspeech-nemo-v2 in Q8_0 13.93 s against 11.56 s, parakeet-tdt_ctc-0.6b-ja in Q8_0
+4.65 s against 3.97 s, and parakeet-tdt-0.6b-v3 in F16 8.78 s against 10.38 s, slower.
+
+A step's time follows the bytes of weights it reads, about 4 products of 2,560 by 640, one of 640 by 640 and the joint's
+output layer: on the M5 with 4 threads, parakeet-tdt-0.6b-v3's step took 595 us in F32 (46.6 MB), 209 us in F16 and
+116 us in Q8_0, measured with ggml's CPU backend alone. The same day, with reazonspeech-nemo-v2's beam search on 3 of
+the utterances above, the CPU took 1,071 ms with 1 thread, 950 ms with 4 threads started for each graph and 856 ms with
+a pool of 4, where Metal took 1,091 ms.
 
 The alternatives were turned down:
 
@@ -50,6 +56,9 @@ The alternatives were turned down:
   silicon; a discrete GPU on Vulkan has no buffer the CPU can read in place.
 - Decoding on the GPU alone. Every step pays a round trip that costs as much as the step's arithmetic or more.
 - ggml's threads started for each graph. The pool took a further 10% off the beam search.
+- A copy converted to F32, whose arithmetic would match the GPU's more closely. It gives main's text on every input
+  above and the 311 s one, with no token a frame from NeMo's, but reads twice the bytes of F16 and four times those of
+  Q8_0 at each step, and was slower than decoding on Metal for every model, by 7 to 30%, and holds 43 to 70 MB.
 
 ## Consequences
 
@@ -62,5 +71,6 @@ search on that input then runs to its last step, 7,782 where Metal stops at 4,88
 hypotheses.
 
 A FastConformer model on a GPU takes 6 to 50 MB more of the host's memory at its peak for the files the names fetch,
-and its recognitions occupy the CPU's threads while they decode. A caller that wants the CPU free, or the GPU's
-arithmetic, sets `decode_on_cpu` to false.
+and its recognitions occupy the CPU's threads while they decode. Where the CPU computes a step more slowly than the GPU's
+round trip, as the i9-9900K does with parakeet-tdt-0.6b-v3's F16 weights, decoding on the CPU is slower. A caller that
+wants the CPU free, the GPU's arithmetic or the GPU's speed there sets `decode_on_cpu` to false.
