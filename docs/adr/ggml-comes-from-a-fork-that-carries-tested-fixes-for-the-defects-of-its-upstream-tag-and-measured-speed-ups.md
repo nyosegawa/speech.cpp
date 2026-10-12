@@ -1,4 +1,4 @@
-# ggml comes from a fork that carries a fix and a test for each defect of its upstream tag
+# ggml comes from a fork that carries tested fixes for the defects of its upstream tag and measured speed-ups
 
 ## Context
 
@@ -24,25 +24,40 @@ which it reads only while it lists its devices, so that a library sets it in its
 thread reads the environment; and `GGML_VK_DISABLE_MMVQ`, which it reads when it first creates each Vulkan device, and
 which also moves Q8_0's batched products off their kernels. ggml-org/ggml master on 2026-10-12 has the same code.
 
+ggml's kernels also leave some of speech.cpp's graphs slower than they need be. On Metal on an Apple M5 (2026-10-13),
+Irodori-TTS v4.1-Small-MF spends 80 to 85% of its synthesis in its codec, and 23 to 26% of the codec's time in Snake,
+which it writes as five operations (a product, a sine, a square, a product and a sum), each a pass over the
+activations. ggml-org/ggml and llama.cpp master on 2026-10-13 run those five as one kernel on Metal and Vulkan only
+when the channels run along `ne[1]`, while the codecs of Irodori-TTS and Qwen3-TTS keep their activations with the
+channels along `ne[0]`, the layout in which their convolutions run as matrix products and their strided convolutions
+as reshapes.
+
 ## Decision
 
 - **The submodule is the branch `speech.cpp` of github.com/nyosegawa/ggml**, pinned by commit: an upstream release tag,
-  then one commit of `test-backend-ops` cases that show the defects, then one commit for each fix, and nothing else.
+  then one commit of `test-backend-ops` cases that show the defects, then one commit for each fix, then one commit for
+  each speed-up, and nothing else.
 - **Metal keeps the tensor API off by default on every chip**, as ggml already does on the chips before the M5, and runs
   it only when `GGML_METAL_TENSOR_ENABLE` asks for it, so that every chip runs the simdgroup kernel.
 - **Vulkan keeps the types whose q8_1 dot products read the block sums off q8_1 activations**, through the
   dequantizing kernels, which then accumulate in F32 as the q8_1 kernels do, whatever precision the product asks for:
   in half precision, which they take by default, a product past 65504 is clipped. Q8_0, Q6_K and the other types keep
   the q8_1 path.
-- **Each fix comes with what shows its defect, and goes when its upstream no longer has it:**
+- **Metal and Vulkan fuse Snake with the channels along `ne[0]`** as they fuse it with the channels along `ne[1]`.
+- **A speed-up is a commit of its own, with `test-backend-ops` cases that show it correct in the same commit, and its
+  effect measured on Metal and on the Windows machine's Vulkan GPU, with the numbers and their conditions (the model,
+  the type, the device and the date) in its commit message.** A speed-up whose effect on one of speech.cpp's models
+  is not measured does not go in.
+- **Each commit comes with what shows it, and goes when its upstream has the same:**
 
-  | Fix | Shown by | Dropped when |
+  | Commit | Shown by | Dropped when |
   |---|---|---|
   | Metal's tensor API off | `test-backend-ops -o MUL_MAT`: F16 products of 64 and 192 columns, with `GGML_METAL_TENSOR_ENABLE` on an M5, M6, A19 or A20; and the stage checks of speech.cpp on Metal | the tag's tensor API passes those cases and every stage check, and is no slower in speech-bench |
   | Vulkan's q8_1 block sums | `test-backend-ops -o MUL_MAT -p large_b`: Q4_0, Q5_0, Q4_K and Q5_K products of activations from 2048 to 4096, and of activations from 512 to 1024 with weights from 0.5 to 1, on Vulkan | the tag passes those cases |
+  | Snake fused with the channels along `ne[0]` (speed-up) | `test-backend-ops -o SNAKE_FUSE`: the cases with `channels_first=1`, on Metal and Vulkan | the tag fuses Snake in that layout |
 
   Moving ggml to a newer tag starts the branch again from that tag: the commit of cases first, on which they run on the
-  devices above, then each fix the table still calls for.
+  devices above, then each fix the table still calls for, then each speed-up the tag still lacks.
 
 The alternatives were turned down:
 
@@ -53,9 +68,14 @@ The alternatives were turned down:
 - Avoiding the shapes and the activations in speech.cpp, such as changing the codec's windows or keeping Qwen3-TTS
   from K-quants on Vulkan. Every graph can meet the shapes, and every model with large activations the sums.
 - Waiting for ggml-org/ggml to fix them. The models give wrong results on supported platforms until then.
+- A fork that carries fixes alone, with speed-ups only in speech.cpp's graphs. ggml's custom operations run on the CPU
+  alone, and laying out the codecs' activations with the channels along `ne[1]` for upstream's Snake kernel would put a
+  transposition of the activations before and after each Snake, or change every convolution of both codecs.
+- Waiting for ggml-org/ggml to add a speed-up. The models run more slowly on supported platforms until then.
 
 ## Consequences
 
 Metal computes on the M5 as it did when the library set `GGML_METAL_TENSOR_DISABLE`, and the library no longer touches
 the environment. A ggml update runs the cases on the M5 and on the Windows machine's Vulkan GPU, from the Windows
-build of CI with checks, before the submodule moves.
+build of CI with checks, before the submodule moves. A speed-up changes the results of the graphs it covers on Metal
+and Vulkan by rounding alone, and the CPU's not at all.

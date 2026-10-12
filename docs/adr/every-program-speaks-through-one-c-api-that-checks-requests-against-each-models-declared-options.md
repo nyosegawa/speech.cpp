@@ -60,7 +60,7 @@ bind their imports up front.
 - **The process is left as it was found.** Logs go to a callback the host sets, and until it sets one only warnings
   and errors go to stderr. The library sets nothing in the environment, and ggml's Metal backend only its own
   `AGX_RELAX_CDM_CTXSTORE_TIMEOUT` while it lists its devices; ggml's fixes are in its source
-  ([the record of the fork](ggml-comes-from-a-fork-that-carries-a-fix-and-a-test-for-each-defect-of-its-upstream-tag.md)).
+  ([the record of the fork](ggml-comes-from-a-fork-that-carries-tested-fixes-for-the-defects-of-its-upstream-tag-and-measured-speed-ups.md)).
 - **The API has a major and a minor version**, and the shared library's SOVERSION is the major: an added function,
   option or enum value raises the minor, so that a binding that binds its imports up front can tell an older library
   that lacks a function, and a change an existing caller notices raises the major.

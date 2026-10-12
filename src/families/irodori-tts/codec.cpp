@@ -83,7 +83,11 @@ struct Convolutions {
         return ggml_add(ctx(), ggml_reshape_2d(ctx(), y, out, stride * frames), m.tensor(name + ".bias"));
     }
 
-    /** Snake: x + sin(alpha x)^2 / (alpha + 1e-9). */
+    /**
+     * Snake: x + sin(alpha x)^2 / (alpha + 1e-9). Metal and Vulkan run these five operations as one kernel only in
+     * this order and form, x times alpha first and x added last, with alpha and inv_alpha of [channels] and x
+     * contiguous; any other way of writing them takes five kernels, each a pass over the activations.
+     */
     ggml_tensor * snake(ggml_tensor * x, const std::string & name) {
         ggml_tensor * s = ggml_sin(ctx(), ggml_mul(ctx(), x, m.tensor(name + ".alpha")));
         return ggml_add(ctx(), x, ggml_mul(ctx(), ggml_sqr(ctx(), s), m.tensor(name + ".inv_alpha")));

@@ -40,6 +40,7 @@ reaches through whatever remote shell it has.
 |---|---|---|
 | Stage checks | `<family>-<stage>-check.exe <model> <dump> … gpu` | within the bounds the check prints |
 | ggml's fixes | ggml's `test-backend-ops` built with `-DGGML_VULKAN=ON -DGGML_BUILD_TESTS=ON` from the submodule's commit, `test -o MUL_MAT -b Vulkan0 -p large_b`; on a newer upstream tag, the same with the commit of cases alone | every case passes with the fixes; a case that passes on the tag alone marks a fix to drop |
+| ggml's speed-ups | the same `test-backend-ops`, `test -o <op> -b Vulkan0` with the op of the speed-up's cases (`SNAKE_FUSE` for Snake); then the model the speed-up is for, timed with the previous submodule's build and this one in turn (A B A B, three rounds or more) | every case passes; the commit message gets the medians, the model, the type and the date |
 | Window or chunk independence | the family's codec check with its forced patterns | every pattern gives the whole decode's samples |
 | Unchanged behaviour | `python same_audio.py <old speech.dll> <model> <new speech.dll> <model> <prompts.json> --voice … --seeds 1,2,3` | the same audio, bit for bit |
 | Entry points | `worker_smoke.py`, `server_smoke.py`, `server_realtime_smoke.py`, `speech_cli_smoke.py` with a model of each family | ok |

@@ -129,8 +129,8 @@ jobs:
         with:
           name: speech-windows-x64-vulkan
           path: ${{ env.ARCHIVE }}
-      # ggml's test-backend-ops, whose cases show each defect the ggml fork fixes, built from the submodule's commit
-      # for the Windows machine's Vulkan GPU.
+      # ggml's test-backend-ops, whose cases show each defect the ggml fork fixes and each speed-up it carries correct,
+      # built from the submodule's commit for the Windows machine's Vulkan GPU.
       - name: Build ggml's test-backend-ops
         if: github.event_name == 'workflow_dispatch' && inputs.checks
         run: |
