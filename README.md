@@ -199,16 +199,16 @@ factor, and the CER of the speech as Qwen3-ASR 1.7B hears it.
 
 Recognition: the 4,483 utterances of Common Voice 8.0's Japanese test set, trimmed to the voice, with the CER that
 accepts other spellings of the same words in parentheses, and parakeet-tdt-0.6b-v3 on 300 English utterances of FLEURS.
-FastConformer timing was measured on 2026-10-10 using 99 Japanese inputs three times and 299 English inputs once,
-with loading and warmup excluded; its accuracy and timing use separate sample counts.
+FastConformer's times were measured on 2026-10-12 by speech-bench, one request at a time, on the first 100 Japanese
+utterances (99 kept by VAD) and the 300 English ones (299 kept); its accuracy and timing use separate sample counts.
 
 | Model | CER on Common Voice ja | Median time, M5 / RTX 2080 |
 |---|---|---|
-| `parakeet-tdt_ctc-0.6b-ja`, F16 | 7.9% (3.0%) | 0.05 s / 0.04 s |
-| `reazonspeech-v2`, F16 | 12.0% (7.1%) | 0.08 s / 0.11 s |
+| `parakeet-tdt_ctc-0.6b-ja`, Q8_0 | 7.9% (3.0%) | 0.05 s / 0.04 s |
+| `reazonspeech-v2`, Q8_0 | 12.1% (7.2%) | 0.08 s / 0.11 s |
 | `qwen3-asr-0.6b`, Q8_0 | 11.9% (7.0%) | 0.13 s / 0.09 s |
 | `qwen3-asr-1.7b`, Q8_0 | 9.5% (4.7%) | 0.31 s / 0.16 s |
-| `parakeet-tdt-0.6b-v3`, F16 | WER 8.8% on FLEURS en | 0.09 s / 0.08 s |
+| `parakeet-tdt-0.6b-v3`, F16 | WER 8.8% on FLEURS en | 0.09 s / 0.10 s |
 
 Each model's page has more.
 

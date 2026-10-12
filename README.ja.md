@@ -174,15 +174,15 @@ speech_synthesize(request, on_audio, NULL);   /* on_audio receives the samples a
 | `irodori-tts-mf`, F16 | 0.25 s / 0.12 s | 0.17 / 0.07 | 6.1% / 7.1% |
 | `irodori-tts`, F16, 16 steps | 1.24 s / 0.52 s | 0.34 / 0.13 | 3.2% / 3.2% |
 
-認識は、Common Voice 8.0 の日本語テストセットの 4,483 発話(声の部分だけに切り詰めたもの)で測りました。括弧内は、同じ語の別の表記を正解と認めたときの CER です。parakeet-tdt-0.6b-v3 は FLEURS の英語 300 発話で測りました。FastConformer の時間は 2026-10-10 に、日本語 99 入力を3回と英語 299 入力を1回処理して測り、読み込みとウォームアップは除いています。精度と時間では使ったサンプルの数が異なります。
+認識は、Common Voice 8.0 の日本語テストセットの 4,483 発話(声の部分だけに切り詰めたもの)で測りました。括弧内は、同じ語の別の表記を正解と認めたときの CER です。parakeet-tdt-0.6b-v3 は FLEURS の英語 300 発話で測りました。FastConformer の時間は 2026-10-12 に speech-bench で、リクエストを1つずつ送り、日本語の最初の 100 発話(VAD で残った 99 発話)と英語の 300 発話(残った 299 発話)で測りました。精度と時間では使ったサンプルの数が異なります。
 
 | モデル | Common Voice ja の CER | 時間の中央値、M5 / RTX 2080 |
 |---|---|---|
-| `parakeet-tdt_ctc-0.6b-ja`, F16 | 7.9% (3.0%) | 0.05 s / 0.04 s |
-| `reazonspeech-v2`, F16 | 12.0% (7.1%) | 0.08 s / 0.11 s |
+| `parakeet-tdt_ctc-0.6b-ja`, Q8_0 | 7.9% (3.0%) | 0.05 s / 0.04 s |
+| `reazonspeech-v2`, Q8_0 | 12.1% (7.2%) | 0.08 s / 0.11 s |
 | `qwen3-asr-0.6b`, Q8_0 | 11.9% (7.0%) | 0.13 s / 0.09 s |
 | `qwen3-asr-1.7b`, Q8_0 | 9.5% (4.7%) | 0.31 s / 0.16 s |
-| `parakeet-tdt-0.6b-v3`, F16 | FLEURS en の WER 8.8% | 0.09 s / 0.08 s |
+| `parakeet-tdt-0.6b-v3`, F16 | FLEURS en の WER 8.8% | 0.09 s / 0.10 s |
 
 詳しくは各モデルのページを見てください。
 
