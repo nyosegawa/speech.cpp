@@ -17,10 +17,11 @@ Talker::Talker(const ModelFile & m, ggml_backend_t backend)
       n_groups_((int) m.u32("qwen3-tts.talker.num_code_groups")),
       vocab_((int) m.u32("qwen3-tts.talker.vocab_size")),
       cp_vocab_((int) m.u32("qwen3-tts.code_predictor.vocab_size")),
+      // The talker's hidden state is read back as the first row of the code predictor's sequence, which a frame's codes
+      // follow.
       talker_(m, backend, "talker", read_qwen3_shape(m, "qwen3-tts.talker"), m.u32("qwen3-tts.talker.max_position_embeddings"),
-              GGML_TYPE_F16),
-      // The code predictor's sequence is the talker's hidden state and a frame's codes.
-      cp_(m, backend, "cp", read_qwen3_shape(m, "qwen3-tts.code_predictor"), n_groups_ + 1, GGML_TYPE_F32),
+              GGML_TYPE_F16, Qwen3Readback::LogitsAndHidden),
+      cp_(m, backend, "cp", read_qwen3_shape(m, "qwen3-tts.code_predictor"), n_groups_ + 1, GGML_TYPE_F32, Qwen3Readback::Logits),
       cp_projected_(cp_.shape().hidden != talker_.shape().hidden),
       allocr_(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))) {}
 
@@ -66,12 +67,15 @@ void Talker::step(const int32_t * codes, const std::vector<float> & extra) {
         1,
         [&](Graph & g, int64_t, int64_t) {
             // A frame's input is the sum of its codes' embeddings: the first from the talker's table, the
-            // others from the code predictor's, which live in the talker's hidden space.
+            // others from the code predictor's, which live in the talker's hidden space. The codes go to the device as
+            // one input, each read through a view of it: an upload took about 0.06 ms on Windows with Vulkan, and
+            // one upload instead of sixteen took 1.6% off the 1.7B model's synthesis on an RTX 2080 (2026-10-12).
             ggml_context * ctx = g.ctx();
-            ggml_tensor * x = ggml_get_rows(ctx, m.tensor("talker.codec_embd"), g.input(std::vector<int32_t>{codes[0]}, 1));
+            ggml_tensor * ids = g.input(std::vector<int32_t>(codes, codes + n_groups_), n_groups_);
+            const auto id = [&](int q) { return ggml_view_1d(ctx, ids, 1, (size_t) q * ids->nb[0]); };
+            ggml_tensor * x = ggml_get_rows(ctx, m.tensor("talker.codec_embd"), id(0));
             for (int q = 1; q < n_groups_; q++) {
-                ggml_tensor * id = g.input(std::vector<int32_t>{codes[q]}, 1);
-                x = ggml_add(ctx, x, ggml_get_rows(ctx, m.tensor("cp.codec_embd." + std::to_string(q - 1)), id));
+                x = ggml_add(ctx, x, ggml_get_rows(ctx, m.tensor("cp.codec_embd." + std::to_string(q - 1)), id(q)));
             }
             return ggml_add(ctx, x, g.input(extra, hidden()));
         },

@@ -188,7 +188,8 @@ struct Qwen3Decoder::TokenStep {
     ggml_gallocr_t allocr;
     ggml_tensor * table, * head;
     int64_t n_kv;
-    ggml_tensor * id = nullptr, * hidden = nullptr, * logits = nullptr;
+    ggml_tensor * id = nullptr;
+    Outputs outputs;
     RunInputs inputs;
 
     TokenStep(ggml_backend_t backend, ggml_tensor * table, ggml_tensor * head, int64_t n_kv)
@@ -199,13 +200,15 @@ struct Qwen3Decoder::TokenStep {
 };
 
 Qwen3Decoder::Qwen3Decoder(const ModelFile & m, ggml_backend_t backend, std::string tensors, const Qwen3Shape & shape,
-                           int64_t max_positions, ggml_type cache_type, int64_t block_rows, std::optional<Qwen3Attention> attention)
+                           int64_t max_positions, ggml_type cache_type, Qwen3Readback readback, int64_t block_rows,
+                           std::optional<Qwen3Attention> attention)
     : backend_(backend),
       m_(m),
       tensors_(std::move(tensors)),
       shape_(shape),
       max_positions_(max_positions),
       cache_type_(cache_type),
+      readback_(readback),
       block_rows_(block_rows),
       flash_(attention.value_or(qwen3_attention(backend, shape, cache_type)) == Qwen3Attention::Flash) {
     if (block_rows_ < 1) throw std::logic_error("a decoder runs at least one row in a graph");
@@ -228,6 +231,11 @@ int64_t Qwen3Decoder::cache_capacity() const {
 
 size_t Qwen3Decoder::graph_bytes() const {
     return ggml_gallocr_get_buffer_size(allocr_, 0);
+}
+
+const std::vector<float> & Qwen3Decoder::hidden() const {
+    if (readback_ != Qwen3Readback::LogitsAndHidden) throw std::logic_error("the decoder " + tensors_ + " reads no hidden state");
+    return hidden_;
 }
 
 void Qwen3Decoder::read_cache(int layer, std::vector<float> & keys, std::vector<float> & values) const {
@@ -368,12 +376,22 @@ void Qwen3Decoder::make_room(int64_t n) {
     }
 }
 
-void Qwen3Decoder::outputs(Graph & g, ggml_tensor * last, ggml_tensor * head, ggml_tensor *& hidden, ggml_tensor *& logits) const {
+Qwen3Decoder::Outputs Qwen3Decoder::outputs(Graph & g, ggml_tensor * last, ggml_tensor * head) const {
     ggml_context * ctx = g.ctx();
-    hidden = ggml_mul(ctx, ggml_rms_norm(ctx, last, shape_.rms_eps), m_.tensor(tensors_ + ".norm"));
-    logits = ggml_mul_mat(ctx, head, hidden);
-    g.output(hidden);
-    g.output(logits);
+    ggml_tensor * hidden = ggml_mul(ctx, ggml_rms_norm(ctx, last, shape_.rms_eps), m_.tensor(tensors_ + ".norm"));
+    Outputs out;
+    out.logits = ggml_mul_mat(ctx, head, hidden);
+    g.output(out.logits);
+    if (readback_ == Qwen3Readback::LogitsAndHidden) {
+        out.hidden = hidden;
+        g.output(hidden);
+    }
+    return out;
+}
+
+void Qwen3Decoder::read(const Outputs & outputs) {
+    if (outputs.hidden) Graph::read(outputs.hidden, hidden_);
+    Graph::read(outputs.logits, logits_);
 }
 
 void Qwen3Decoder::run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head) {
@@ -384,13 +402,10 @@ void Qwen3Decoder::run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head) {
         Graph g(kGraphSize);
         RunInputs inputs;
         ggml_tensor * x = layers(g, rows(g, from, count), count, output, inputs);
-        ggml_tensor * hidden = nullptr, * logits = nullptr;
-        if (output) outputs(g, ggml_view_2d(g.ctx(), x, shape_.hidden, 1, x->nb[1], (count - 1) * x->nb[1]), head, hidden, logits);
+        Outputs out;
+        if (output) out = outputs(g, ggml_view_2d(g.ctx(), x, shape_.hidden, 1, x->nb[1], (count - 1) * x->nb[1]), head);
         g.compute(backend_, allocr_);
-        if (output) {
-            Graph::read(hidden, hidden_);
-            Graph::read(logits, logits_);
-        }
+        if (output) read(out);
         n_past_ += count;
     }
 }
@@ -413,10 +428,9 @@ void Qwen3Decoder::step(int32_t id, ggml_tensor * table, ggml_tensor * head) {
         s = token_step_.get();
         s->id = s->graph.input(std::vector<int32_t>{id}, 1);
         ggml_tensor * x = layers(s->graph, ggml_get_rows(s->graph.ctx(), table, s->id), 1, true, s->inputs);
-        outputs(s->graph, x, head, s->hidden, s->logits);
+        s->outputs = outputs(s->graph, x, head);
         s->graph.compute(backend_, s->allocr);
     }
-    Graph::read(s->hidden, hidden_);
-    Graph::read(s->logits, logits_);
+    read(s->outputs);
     n_past_ += 1;
 }
