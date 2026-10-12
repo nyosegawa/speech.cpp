@@ -4,6 +4,7 @@
 #include <random>
 #include <vector>
 
+#include "error.h"
 #include "model-file.h"
 
 /** Sampling settings of one stack; the defaults leave the distribution as it is. */
@@ -14,6 +15,11 @@ struct SamplingParams {
     int top_k = 0;
     float top_p = 1.0f;
     float repetition_penalty = 1.0f;
+
+    bool operator==(const SamplingParams & o) const {
+        return greedy == o.greedy && temperature == o.temperature && top_k == o.top_k && top_p == o.top_p &&
+               repetition_penalty == o.repetition_penalty;
+    }
 };
 
 /**
@@ -66,9 +72,16 @@ int pick(const std::vector<double> & weights, double u);
 
 /**
  * Picks a token the way transformers' generate() does: the argmax of the logits with the repetition penalty on the
- * tokens in `history` and the tokens in `banned` removed, or a draw from candidates(). A penalty that pushes the
- * largest logit beyond a float throws an Error naming "repetition_penalty" in either case. A draw takes one uniform()
- * and pick()s with it from the candidates' weights.
+ * tokens in `history` and the tokens in `banned` removed, or a draw from candidates(), which pick()s with `u` from the
+ * candidates' weights; a greedy pick leaves `u` unused. A penalty that pushes the largest logit beyond a float throws an
+ * Error naming "repetition_penalty" in either case.
  */
 int32_t sample(const std::vector<float> & logits, const SamplingParams & p, const std::vector<int32_t> & history,
+               const std::vector<bool> & banned, double u);
+
+/** sample() with the next uniform() of `rng` where `p` draws, and no number of it where `p` is greedy. */
+int32_t sample(const std::vector<float> & logits, const SamplingParams & p, const std::vector<int32_t> & history,
                const std::vector<bool> & banned, std::mt19937_64 & rng);
+
+/** The Error of a temperature that pushes the largest logit beyond the range of a float, naming "temperature". */
+Error temperature_overflow(float temperature);

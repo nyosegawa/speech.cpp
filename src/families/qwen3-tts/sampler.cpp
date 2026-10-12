@@ -80,11 +80,7 @@ Candidates candidates(const std::vector<float> & raw, const SamplingParams & p, 
     c.tokens.resize(k);
 
     const float max_logit = logits[c.tokens[0]];
-    if (!std::isfinite(max_logit)) {
-        throw Error(Fault::OutOfRange,
-                    "the temperature " + json_number(p.temperature) + " pushes the logits beyond the range of a float; give a temperature nearer 1",
-                    "temperature");
-    }
+    if (!std::isfinite(max_logit)) throw temperature_overflow(p.temperature);
     c.weights.resize(k);
     double sum = 0;
     for (int i = 0; i < k; i++) sum += c.weights[i] = std::exp((double) logits[c.tokens[i]] - max_logit);
@@ -121,11 +117,22 @@ int pick(const std::vector<double> & weights, double u) {
 }
 
 int32_t sample(const std::vector<float> & logits, const SamplingParams & p, const std::vector<int32_t> & history,
-               const std::vector<bool> & banned, std::mt19937_64 & rng) {
+               const std::vector<bool> & banned, double u) {
     if (p.greedy) {
         const std::vector<float> r = restricted(logits, p, history, banned);
         return (int32_t) (std::max_element(r.begin(), r.end()) - r.begin());
     }
     const Candidates c = candidates(logits, p, history, banned);
-    return c.tokens[pick(c.weights, uniform(rng))];
+    return c.tokens[pick(c.weights, u)];
+}
+
+int32_t sample(const std::vector<float> & logits, const SamplingParams & p, const std::vector<int32_t> & history,
+               const std::vector<bool> & banned, std::mt19937_64 & rng) {
+    return sample(logits, p, history, banned, p.greedy ? 0.0 : uniform(rng));
+}
+
+Error temperature_overflow(float temperature) {
+    return Error(Fault::OutOfRange,
+                 "the temperature " + json_number(temperature) + " pushes the logits beyond the range of a float; give a temperature nearer 1",
+                 "temperature");
 }

@@ -85,6 +85,33 @@ enum class Qwen3Readback {
 };
 
 /**
+ * The steps of a sequence that Qwen3Decoder::chain() runs in one graph, and what its caller builds around the stack in
+ * that graph: the rows of the first step, and from the logits of each step the row of the step after it, so that no step
+ * waits for the CPU. The decoder keeps the graph and computes it again for the next sequence of the same chain, which
+ * then gives the graph's inputs their new data.
+ */
+class Qwen3Chain {
+public:
+    virtual ~Qwen3Chain() = default;
+    virtual int steps() const = 0;
+    virtual int64_t first_rows() const = 0;
+    /** Builds the first step's rows, [hidden, first_rows()]. */
+    virtual ggml_tensor * first(Graph & g) = 0;
+    /** The output matrix of the logits of step `step`, [hidden, vocabulary]. */
+    virtual ggml_tensor * head(int step) const = 0;
+    /**
+     * Builds what follows the logits of step `step`, [vocabulary]: the row the step after it reads, [hidden, 1], and
+     * nullptr after the last step.
+     */
+    virtual ggml_tensor * after(Graph & g, int step, ggml_tensor * logits) = 0;
+    /**
+     * Whether the graph `g` that this chain built for an earlier sequence serves the next one, giving its inputs the next
+     * one's data where it does; where it does not, the decoder builds the graph again.
+     */
+    virtual bool refill(Graph & g) = 0;
+};
+
+/**
  * A Qwen3 decoder stack of a model file: in each layer, RMSNorm, attention with grouped key/value heads, RMSNorm of
  * each head's queries and keys and rotate-half RoPE, and RMSNorm and a SwiGLU feed-forward; and RMSNorm at the end.
  * Its tensors are `<tensors>.blk.<layer>.` attn_norm, attn_q, attn_k, attn_v, attn_q_norm, attn_k_norm, attn_o,
@@ -120,7 +147,10 @@ public:
     int64_t n_past() const { return n_past_; }
     /** The positions the cache holds before it grows. */
     int64_t cache_capacity() const;
-    /** The bytes the device holds for computing a graph: what the largest graph so far took. */
+    /**
+     * The bytes the device holds for computing graphs: what the largest graph of a run so far took, and what the kept
+     * graphs of a step and of a chain take.
+     */
     size_t graph_bytes() const;
 
     /**
@@ -145,6 +175,16 @@ public:
      */
     void step(int32_t id, ggml_tensor * table, ggml_tensor * head);
 
+    /**
+     * Starts a sequence of the steps of `chain` and runs them in one graph on the device, which is kept and computed
+     * again for the next sequence of the same chain while the cache stays, the chain's refill() giving it new data. Each
+     * step's logits stay on the device, for chain_logits(). Returns false, having run nothing, where the device cannot
+     * compute an operation of the graph.
+     */
+    bool chain(Qwen3Chain & chain);
+    /** The logits of step `step` of the last sequence chain() ran. */
+    std::vector<float> chain_logits(int step) const;
+
     /** The last hidden state read; a decoder that reads none throws. */
     const std::vector<float> & hidden() const;
     const std::vector<float> & logits() const { return logits_; }
@@ -158,6 +198,7 @@ public:
 private:
     struct Cache;
     struct TokenStep;
+    struct KeptChain;
 
     /** The inputs of a run's graph that depend on where its rows are in the sequence. */
     struct RunInputs {
@@ -165,14 +206,20 @@ private:
         ggml_tensor * positions = nullptr;
         /** What each row sees of the positions attention reads, or none on the CPU for a single row. */
         ggml_tensor * mask = nullptr;
+        /** The positions attention reads. */
+        int64_t n_kv = 0;
     };
 
+    /** Makes in `g` the inputs of `rows` rows after the n_past() positions. */
+    RunInputs run_inputs(Graph & g, int64_t rows) const;
     /**
-     * Builds the layers over the `rows` rows of `x` that follow the n_past() positions, writing their keys and values,
-     * and returns their output, or with `output` false none, the last layer stopping at its keys and values. `inputs`
-     * gets the inputs it made.
+     * Builds the layers over the `rows` rows of `x` that follow the n_past() positions, at the positions and with the
+     * mask of `inputs`, writing their keys and values, and returns their output, or with `output` false none, the last
+     * layer stopping at its keys and values.
      */
-    ggml_tensor * layers(Graph & g, ggml_tensor * x, int64_t rows, bool output, RunInputs & inputs);
+    ggml_tensor * layers(Graph & g, ggml_tensor * x, int64_t rows, bool output, const RunInputs & inputs);
+    /** Builds the graph of a sequence of the steps of `chain` into `kept`. */
+    void build_chain(Qwen3Chain & chain, KeptChain & kept);
     /** The tensors of a graph that a run or step reads back: the hidden state, where it is read, and the logits. */
     struct Outputs {
         ggml_tensor * hidden = nullptr;
@@ -204,6 +251,7 @@ private:
 
     std::unique_ptr<Cache> cache_;
     std::unique_ptr<TokenStep> token_step_;
+    std::unique_ptr<KeptChain> chain_;
     ggml_gallocr_t allocr_ = nullptr;
     int64_t positions_ = 0;
     int64_t n_past_ = 0;

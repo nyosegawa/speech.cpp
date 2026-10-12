@@ -66,6 +66,7 @@ add_library(qwen3tts STATIC
     src/families/qwen3-tts/talker.cpp
     src/families/qwen3-tts/prompt.cpp
     src/families/qwen3-tts/sampler.cpp
+    src/families/qwen3-tts/graph-sampler.cpp
     src/families/qwen3-tts/synthesizer.cpp
 )
 # Code names the family in its includes ("qwen3-tts/codec.h"), since both families have a codec.h.
@@ -281,6 +282,11 @@ target_link_libraries(qwen3-tts-talker-check PRIVATE qwen3tts)
 add_executable(qwen3-tts-sampler-check checks/qwen3-tts/qwen3-tts-sampler-check.cpp tools/common/json-reader.cpp)
 target_include_directories(qwen3-tts-sampler-check PRIVATE checks tools/common)
 target_link_libraries(qwen3-tts-sampler-check PRIVATE qwen3tts)
+
+# The picks built into a graph against the sampler, on the same cases, on the CPU or a GPU.
+add_executable(qwen3-tts-graph-sampler-check checks/qwen3-tts/qwen3-tts-graph-sampler-check.cpp tools/common/json-reader.cpp)
+target_include_directories(qwen3-tts-graph-sampler-check PRIVATE checks tools/common)
+target_link_libraries(qwen3-tts-graph-sampler-check PRIVATE qwen3tts)
 
 # The tokenizer of a Qwen3-TTS or a Qwen3-ASR file, each its family's.
 add_executable(tokenizer-check checks/common/tokenizer-check.cpp)
