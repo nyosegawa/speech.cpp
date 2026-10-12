@@ -41,25 +41,35 @@ inline double next_estimate(double previous, double measured) {
 }
 
 /**
- * How a streaming decoder sizes its windows: `first` frames first, then from `floor` to `ceiling` frames, so that the
- * next one arrives while the listener still has `margin` seconds of audio, a frame being `frame_seconds` of audio and
- * each window decoding `context` frames on either side of its own.
+ * How a streaming decoder sizes its windows: `first` frames first, then from `floor` frames up, so that the next one
+ * arrives while the listener still has `margin` seconds of audio, a frame being `frame_seconds` of audio and each window
+ * decoding `context` frames on either side of its own. A later window takes up to `ceiling` frames whatever its decoding
+ * takes; more only while its decoding is expected to take no longer than wait() and the listener holds, beyond the
+ * margin, the audio of every frame it decodes, margins included, so that it arrives in time even if its decoding slows
+ * to real time; and never more than `largest`, which bounds the memory of its decoding.
  */
 struct WindowRule {
-    int first = 0, floor = 0, ceiling = 0, context = 0;
+    int first = 0, floor = 0, ceiling = 0, largest = 0, context = 0;
     double frame_seconds = 0, margin = 0;
+
+    /**
+     * The longest a window past the ceiling may be expected to take to decode: the time the second window has, which
+     * is the first window's audio less the margin.
+     */
+    double wait() const { return first * frame_seconds - margin; }
 };
 
 /**
  * The frames of the next window under `rule`. The first window is `first` frames, or the frames left when fewer. After
- * it, the frames left when they are no more than the floor; otherwise the
- * largest size from the floor to the ceiling whose decoding, estimated at `seconds_per_frame` for its frames and its
- * margins, ends before the listener's audio falls below the margin, the listener having the audio sent less the time
- * since the first window was sent, as if playback began with the first window. When not even the floor ends in time,
- * the floor where its decoding still takes less than the audio it gives, which gains on the listener, and the ceiling
- * where decoding is slower than real time, since smaller windows would only decode more margins and fall further
- * behind; the player has to buffer then. It reads no clock, and the result is never past the ceiling or the frames
- * left.
+ * it, the frames left when they are no more than the floor; otherwise the largest size from the floor to the top whose
+ * decoding, estimated at `seconds_per_frame` for its frames and its margins, ends before the listener's audio falls
+ * below the margin, the listener having the audio sent less the time since the first window was sent, as if playback
+ * began with the first window. The top is the largest size from the ceiling to `largest` whose decoding is expected to
+ * take no longer than wait() and whose frames and margins, as audio, the listener holds beyond the margin, or the
+ * ceiling where none is. When not even the floor ends in time, the floor where its decoding still takes less than
+ * the audio it gives, which gains on the listener, and the top where decoding is slower than real time, since smaller
+ * windows would only decode more margins and fall further behind; the player has to buffer then. It reads no clock, and
+ * the result is never past the top or the frames left.
  */
 int next_window(const WindowRule & rule, const DecodeProgress & progress);
 

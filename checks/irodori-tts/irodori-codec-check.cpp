@@ -161,9 +161,11 @@ bool check_decoder(Codec & codec, ggml_backend_t backend, const std::string & mo
     // Measured on an Apple M5: 119 dB on the CPU in F32 and 47 dB on Metal.
     ok = ok && whole.size() == official.f32.size() && dw.snr_db > 30;
 
-    // The windows of 0.7.1 and windows of other sizes, which a decoder that measures its speed may choose: each must give
-    // the samples of decoding at once, bit for bit, so that a seed repeats its samples whatever the clock says.
-    const std::vector<std::vector<int>> patterns = {{12, 48}, {12, 24}, {12, 32}, {24, 24}, {12, 24, 48, 32}, {12, 30, 25, 48, 17, 36}, {5, 3, 48, 2, 24}};
+    // The windows of 0.7.1 and windows of other sizes, up to twice 0.7.1's, which a decoder that measures its speed may
+    // choose: each must give the samples of decoding at once, bit for bit, so that a seed repeats its samples whatever the
+    // clock says.
+    const std::vector<std::vector<int>> patterns = {{12, 48}, {12, 24}, {12, 32}, {24, 24}, {12, 24, 48, 32}, {12, 30, 25, 48, 17, 36}, {5, 3, 48, 2, 24},
+                                                    {12, 79, 96, 61}};
     const double audio_s = (double) whole.size() / codec.sample_rate();
     for (const std::vector<int> & p : patterns) {
         std::vector<float> windowed;

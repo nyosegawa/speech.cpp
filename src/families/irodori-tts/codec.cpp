@@ -196,8 +196,10 @@ ggml_tensor * Codec::build_decoder(Graph & g, const std::vector<float> & latent,
 int next_window(const WindowRule & rule, const DecodeProgress & p) {
     if (p.frames_done == 0) return (int) std::min<int64_t>(rule.first, p.frames_left);
     if (p.frames_left <= rule.floor) return (int) p.frames_left;
-    const int most = (int) std::min<int64_t>(rule.ceiling, p.frames_left);
     const double buffer = p.audio_sent - p.since_first;
+    const double in_time = std::floor(rule.wait() / p.seconds_per_frame), held = std::floor((buffer - rule.margin) / rule.frame_seconds);
+    const int top = (int) std::clamp<double>(std::min(in_time, held) - 2.0 * rule.context, rule.ceiling, rule.largest);
+    const int most = (int) std::min<int64_t>(top, p.frames_left);
     const double fits = (buffer - rule.margin) / p.seconds_per_frame - 2.0 * rule.context;
     if (fits >= rule.floor) return (int) std::min<double>(most, std::floor(fits));
     const double floor_takes = p.seconds_per_frame * (rule.floor + 2.0 * rule.context);
