@@ -106,7 +106,7 @@ struct Convolutions {
  */
 int decoder_reach(const ModelFile & m, const std::vector<int32_t> & rates) {
     int64_t reach = 0;
-    auto conv = [&](const std::string & name, int64_t dilation) { reach += (m.tensor(name + ".weight")->ne[2] - 1) * dilation / 2; };
+    auto conv = [&](const std::string & name, int64_t dilation) { reach += (m.width(name + ".weight", 2) - 1) * dilation / 2; };
     conv("codec.dec.conv_out", 1);
     for (size_t i = rates.size(); i-- > 0;) {
         const std::string b = "codec.dec.blk." + std::to_string(i);
