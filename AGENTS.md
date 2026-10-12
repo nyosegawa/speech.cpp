@@ -120,14 +120,15 @@ another one.
   release that reads it to the converter's table and brings the previous layout up in the family's one upgrade
   function. Every model constant lives in the file, from the checkpoint or, where it has none, from the official code,
   and the converter says where.
-- Do not add fallback behavior; fail loudly rather than degrade silently. A GGUF without a key or tensor, a key
-  of another type, a tensor the keys do not call for, a layout the reader does not know,
-  a text longer than the model takes, a WAVE format that is not understood and a device that does not
-  start all throw an `Error` of their kind with a message (`src/common/error.h`), naming the input at fault where
-  there is one; the C API returns each with its category, which every subcommand passes on: the worker as `error` or
-  `fatal`, the server as OpenAI's error by the category alone, and the command line as `speech: <code> (<option>)`. Nothing
-  is truncated or moved to another device behind the caller's back, and the library checks what it is given before
-  ggml sees it, so that no input makes ggml abort the process.
+- Do not add fallback behavior; fail loudly rather than degrade silently. A GGUF without a key or tensor, a key of
+  another type, a tensor the keys do not call for, a layout the reader does not know, a text longer than the model
+  takes, a WAVE format that is not understood and a device that does not start all throw an `Error` of their kind with a
+  message (`src/common/error.h`), naming the input at fault where there is one; the C API returns each with its
+  category, which every subcommand passes on: the worker as `error` or `fatal`, the server as OpenAI's error by the
+  category alone, and the command line as `speech: <code> (<option>)`. Nothing is truncated or moved to another device
+  behind the caller's back: a part of a model's work that runs on another device by design is on the model's page, with
+  a request option that keeps it on the model's device. The library checks what it is given before ggml sees it, so that
+  no input makes ggml abort the process.
 - Fix a defect where its cause is, in a form in which it cannot happen, rather than with a guard for the
   one case that showed it; the code after the fix reads better than before. When a fix is much larger
   than the defect, or needs a choice only the user can make, stop and ask instead of patching.
