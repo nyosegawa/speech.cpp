@@ -116,9 +116,9 @@ public:
 
     /**
      * How the decoder sizes its windows, a short first one of 12 frames, which brings the first audio early, and the
-     * later ones as it measures its speed, for a codec's frames (synthesizer.cpp says why).
+     * later ones as it measures its speed, for a codec's frames and its decoder's margin (synthesizer.cpp says why).
      */
-    static WindowRule window_rule(int hop, int sample_rate);
+    static WindowRule window_rule(int hop, int sample_rate, int margin);
 
 private:
     ggml_backend_t backend_;
