@@ -78,6 +78,7 @@ add_library(irodoritts STATIC
     src/families/irodori-tts/text-normalizer.cpp
     src/families/irodori-tts/tokenizer.cpp
     src/families/irodori-tts/text-encoder.cpp
+    src/families/irodori-tts/layers.cpp
     src/families/irodori-tts/loudness.cpp
     src/families/irodori-tts/codec.cpp
     src/families/irodori-tts/reference.cpp

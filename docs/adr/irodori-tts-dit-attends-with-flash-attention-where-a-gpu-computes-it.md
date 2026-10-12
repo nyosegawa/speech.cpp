@@ -1,0 +1,50 @@
+# Irodori-TTS's DiT attends with flash attention where a GPU computes it
+
+## Context
+
+Irodori-TTS's DiT attends from the latent's frames to themselves and to the text, speaker and caption conditions, in
+twelve layers of 20 heads of 64, every step of the sampler, for every branch of RF's guidance at once. It can attend
+through two matrix products and a softmax, or through ggml_flash_attn_ext. Metal's matrix kernel rounds both operands
+to half precision, the keys and values included; its flash attention reads keys and values of float32 as they are,
+rounds only the queries, and holds no scores. A request that scales the speaker's keys and values in every layer makes
+the attention sensitive to the keys' rounding. Measured on an Apple M5 on 2026-10-13, through `speech worker` with
+v4.1-Small-MF (4 steps) and v4.1-Small (16 steps) in F16, the speech-bench sentences, the two builds alternating in four
+rounds:
+
+| | Products | Flash attention |
+|---|---|---|
+| Worst step of irodori-dit-check over the RF dumps on Metal, least and median | 31.2 and 48.6 dB | 36.6 and 49.6 dB |
+| rf-hai-speaker-kv-min1's worst step and sampled latent on Metal | 31.2 and 39.0 dB | 48.3 and 61.8 dB |
+| The 20 sentences of 2 to 19 s, RTF, MF / RF | 0.1915 / 0.4057 | 0.1901 / 0.3948 |
+| First audio of the three sentences of 16 to 19 s, MF / RF | 0.59 to 0.68 / 3.9 to 4.6 s | 0.56 to 0.63 / 3.6 to 4.3 s |
+| 0.8 to 1.2 s of speech at a fixed length, total, MF / RF | 227 to 285 / 519 to 592 ms | 227 to 284 / 549 to 605 ms |
+| DiT sampling on the CPU, 27, 145 and 685 frames, MF in F32 | 0.77, 3.36, 14.9 s | 0.82, 3.30, 15.2 s |
+
+Qwen3-ASR 1.7B hears the same text in 58 of 60 of each model's audios (20 sentences, seeds 1 to 3), with a character
+error rate of 4.75% and 4.69% for MF and 5.30% and 5.41% for RF.
+
+## Decision
+
+The DiT chooses its attention once, when the model loads, from what its device computes, and logs the choice: flash
+attention on a GPU whose backend computes ggml_flash_attn_ext for its heads with a half-precision mask
+(`ggml_backend_supports_op`), and the two products on the CPU and on any other GPU. The mask that leaves a condition out
+of a branch is in half precision for either attention. irodori-dit-check and irodori-synthesis-check take an argument
+that forces either attention, so that both are checked on a GPU. The speaker encoder, which runs once for a voice, keeps
+the two products: on Metal its condition lay 49.3 dB from the official with flash attention and 50.9 dB with the
+products.
+
+The alternatives were turned down:
+
+- Flash attention on every device. On the CPU it is no faster at any length the DiT meets, and its error against the
+  official is neither smaller nor larger.
+- The products on every device. On Metal they round the keys and values to half precision, which costs 17 to 23 dB on
+  a request that scales the speaker's keys, and they are slower for sentences of more than a few seconds.
+- The products for short latents and flash attention for long ones. RF's guidance spends 15 to 30 ms more on 0.8 to
+  1.2 s of speech with flash attention, and MF nothing; two attentions chosen by length would make the audio of a
+  request depend on a threshold, for a few percent of a short request.
+
+## Consequences
+
+The audio of a request on Metal changes with this choice, within the rounding the checks allow: every Irodori stage
+check passes with the same thresholds with either attention. Vulkan runs the same flash attention where its device has
+the subgroup operations ggml's needs.

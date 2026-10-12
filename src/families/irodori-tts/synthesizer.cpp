@@ -86,7 +86,7 @@ WindowRule Synthesizer::window_rule(int hop, int sample_rate, int margin) {
     return {12, 24, 48, margin, (double) hop / sample_rate, 0.1};
 }
 
-Synthesizer::Synthesizer(const std::string & model_path, ggml_backend_t backend)
+Synthesizer::Synthesizer(const std::string & model_path, ggml_backend_t backend, std::optional<Attention> attention)
     : backend_(backend),
       model_(std::make_unique<ModelFile>(model_path, backend, model_layout)),
       codec_(*model_, backend),
@@ -94,7 +94,7 @@ Synthesizer::Synthesizer(const std::string & model_path, ggml_backend_t backend)
       text_(*model_),
       speaker_(*model_),
       duration_(*model_),
-      dit_(*model_),
+      dit_(*model_, backend, attention),
       sampler_(dit_, *model_, backend),
       reference_(*model_),
       tail_(*model_) {
