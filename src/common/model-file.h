@@ -93,6 +93,8 @@ public:
      * past the range of int.
      */
     int64_t width(const std::string & name, int axis) const;
+    /** The type of the tensor `name` as the file stores it, whether or not it is loaded; one the file does not hold throws. */
+    ggml_type stored_type(const std::string & name) const;
     /** The number of tensors the file holds. */
     int64_t tensor_count() const;
     float f32(const std::string & key) const;

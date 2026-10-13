@@ -395,8 +395,9 @@ typedef enum speech_option {
     /**
      * "decode_on_cpu", a boolean: whether a recognition with a model on a GPU decodes its tokens on the CPU, from a copy
      * of the weights its decoding reads that the model keeps there, rather than on the GPU. Each step of such a decoding
-     * is a small computation whose round trip to a GPU takes longer than the CPU takes to compute it, so the default is
-     * true; false keeps the decoding on the GPU. The two compute in different arithmetic, which can choose another token
+     * is a small computation, which the CPU computes in less time than a round trip to a GPU takes where its weights are
+     * quantized, so the model's default is true where they are quantized and false where they are F16 or F32
+     * (speech_model_info_option_default_bool()). The two compute in different arithmetic, which can choose another token
      * where two score almost the same. A model on the CPU decodes there either way. Added in 3.2.
      */
     SPEECH_OPT_DECODE_ON_CPU = 44
@@ -710,7 +711,7 @@ SPEECH_API const char * speech_model_info_device(const speech_model_info * info)
 
 /**
  * The number of threads the CPU computes a loaded model's graphs with: the number the load parameters set, or the
- * library's default, for a model on the CPU and for a model on a GPU that computes some of its graphs on the CPU (a
+ * library's default, for a model on the CPU and for a model on a GPU that can compute some of its graphs on the CPU (a
  * model that takes decode_on_cpu), and 0 for a model on a GPU none of whose graphs runs on the CPU. 0 for information
  * read from a file.
  */

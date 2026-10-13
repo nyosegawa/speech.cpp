@@ -336,6 +336,12 @@ int64_t ModelFile::width(const std::string & name, int axis) const {
     return t->ne[axis];
 }
 
+ggml_type ModelFile::stored_type(const std::string & name) const {
+    const ggml_tensor * t = ggml_get_tensor(ctx_.get(), name.c_str());
+    if (!t) throw file_error(path_ + " does not hold the tensor " + name + ", which " + layout_name() + " calls for; " + remedy_);
+    return t->type;
+}
+
 int64_t ModelFile::tensor_count() const {
     return gguf_get_n_tensors(gguf_.get());
 }

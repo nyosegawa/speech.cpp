@@ -339,6 +339,6 @@ loaded on Metal, with two of its nine voices and four of its options shown:
 - An option has `type` (`string`, `int`, `float`, `bool`), `required`, `steers`, and where they apply `default`,
   `minimum` or `exclusive_minimum`, `maximum`, and `choices`.
 - `device` and `threads` are there for a loaded model alone. `threads` is the number of CPU threads in effect for a model
-  on the CPU or for a model on a GPU that computes part of a request on the CPU (FastConformer's decoding), and 0 for a
-  model on a GPU that computes nothing there. Setting threads is never an error, since with the device `auto` a caller cannot
-  know where the model will run.
+  on the CPU or for a model on a GPU that can compute part of a request on the CPU (FastConformer's decoding with
+  `decode_on_cpu`), and 0 for a model on a GPU that computes nothing there. Setting threads is never an error, since
+  with the device `auto` a caller cannot know where the model will run.

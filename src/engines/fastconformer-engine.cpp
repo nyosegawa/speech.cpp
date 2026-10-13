@@ -64,7 +64,11 @@ private:
  * checked against the model's and not used; parakeet-tdt-0.6b-v3 finds the language of the audio itself. A model with
  * more than one decoding, an RNN-T's beam search and greedy decoding, takes the decoding, the one NeMo's transcribe()
  * runs by default being the default; TDT's one decoding is no choice. Every model takes where its decoding computes,
- * which a model on the CPU takes too, so that a request does not depend on the device the model was loaded on.
+ * which a model on the CPU takes too, so that a request does not depend on the device the model was loaded on. It
+ * decodes on the CPU by default where the decoding's matrices are quantized, whose step the CPU computes in less time
+ * than a GPU's round trip, and on the GPU where they are F16 or F32: on an i9-9900K with 4 threads, a step of
+ * parakeet-tdt-0.6b-v3 took 228 us in Q8_0 and 562 us in F16, where a graph's round trip on Vulkan takes 0.6 to 0.7 ms
+ * and Metal's 0.3 ms (2026-10-13).
  */
 FamilyInfo describe_fastconformer(const std::shared_ptr<const ModelFile> & file) {
     FamilyInfo info;
@@ -78,7 +82,7 @@ FamilyInfo describe_fastconformer(const std::shared_ptr<const ModelFile> & file)
         decoding.choices = decodings;
         info.options.push_back(decoding);
     }
-    info.options.push_back({SPEECH_OPT_DECODE_ON_CPU, false, true, true});
+    info.options.push_back({SPEECH_OPT_DECODE_ON_CPU, false, true, fastconformer::quantized_decoding(*file)});
     return info;
 }
 

@@ -107,9 +107,10 @@ Off frames_off(const char * what, const Decoding & d, const Npy & timestep, cons
  * differs, and returns whether they are NeMo's. A decoding on the CPU with weights in half precision may put a token one
  * frame from NeMo's, and a TDT token's duration one frame from NeMo's with it, whose spans and the spans of the segments
  * are then printed and not required; the segments' number and texts are. ggml's CPU backend sums a product of F16
- * weights in half precision on ARM, and two frames can score within that arithmetic. Measured on an Apple M5 on 2026-10-13, reazonspeech-nemo-v2's greedy decoding of
- * 9518252661993015549 finds its 16th token on frame 57 by 0.00095 over the blank with F16 weights on the CPU, where
- * with F32 weights the blank wins on frame 57 by 0.011 and the token comes on frame 58, as in NeMo.
+ * weights in half precision on ARM, and two frames can score within that arithmetic. Measured on an Apple M5 on
+ * 2026-10-13, reazonspeech-nemo-v2's greedy decoding of 9518252661993015549 finds its 16th token on frame 57 by 0.00095
+ * over the blank with F16 weights on the CPU, where with F32 weights the blank wins on frame 57 by 0.011 and the token
+ * comes on frame 58, as in NeMo.
  */
 bool check_times(Recognizer & recognizer, const std::string & dump, const std::vector<float> & projected, const Npy & audio,
                  const std::filesystem::path & from, const std::string & name, DecodeOn on) {
@@ -143,7 +144,9 @@ bool check_times(Recognizer & recognizer, const std::string & dump, const std::v
     }
     const Off off = frames_off("from the encoder output", decoding, timestep, tdt ? &duration : nullptr, steps);
     bool same = exact ? off.tokens == 0 : off.largest <= 1;
-    if (!exact && off.tokens > 0 && off.largest <= 1) std::printf("    within a frame, as the CPU's half-precision sums allow; the spans below need not be NeMo's\n");
+    if (!exact && off.tokens > 0 && off.largest <= 1) {
+        std::printf("    within a frame, as the CPU's half-precision sums allow; the spans below need not be NeMo's\n");
+    }
     const bool times_required = exact || off.tokens == 0;
     if (steps && !decoding.frames.empty()) {
         const int64_t past = (int64_t) decoding.frames.size() - 1;
@@ -178,8 +181,9 @@ bool check_times(Recognizer & recognizer, const std::string & dump, const std::v
                         recognizer.seconds(segs[k].span.end) == segment_seconds.f64[2 * k + 1];
     }
     const bool same_segments = segment_texts && (!times_required || segment_times);
-    std::printf("  token texts %s; segments with the file's separators: texts %s, times %s\n", joined == want_text ? "make the text" : "DO NOT make the text",
-                segment_texts ? "equal" : "DIFFER", segment_times ? "equal" : "DIFFER");
+    std::printf("  token texts %s; segments with the file's separators: texts %s, times %s\n",
+                joined == want_text ? "make the text" : "DO NOT make the text", segment_texts ? "equal" : "DIFFER",
+                segment_times ? "equal" : "DIFFER");
     if (!segment_texts || !segment_times) {
         for (const Segment & s : segs) std::printf("    got  %lld-%lld %s\n", (long long) s.span.start, (long long) s.span.end, s.text.c_str());
         for (size_t k = 0; k < want_segments.size(); k++) {

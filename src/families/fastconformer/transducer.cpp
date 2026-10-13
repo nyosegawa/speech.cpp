@@ -19,6 +19,17 @@ bool decoding_tensor(const std::string & name) {
     return false;
 }
 
+bool quantized_decoding(const ModelFile & m) {
+    std::vector<std::string> names = {"joint.pred.weight", "joint.out.weight"};
+    for (uint32_t l = 0; l < m.u32("fastconformer.decoder.prediction_layers"); l++) {
+        for (const char * part : {".ih.weight", ".hh.weight"}) names.push_back("pred.lstm." + std::to_string(l) + part);
+    }
+    for (const std::string & name : names) {
+        if (!ggml_is_quantized(m.stored_type(name))) return false;
+    }
+    return true;
+}
+
 PredictionNetwork::PredictionNetwork(const ModelFile & m)
     : m_(m), layers_((int) m.u32("fastconformer.decoder.prediction_layers")), hidden_((int) m.tensor("pred.embed.weight")->ne[0]) {}
 

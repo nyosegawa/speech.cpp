@@ -21,6 +21,12 @@ struct PredictionState {
 bool decoding_tensor(const std::string & name);
 
 /**
+ * Whether every matrix a decoding multiplies by, the prediction network's LSTM layers and the joint's projection of the
+ * prediction and output layer, is quantized in the file `m`: Q8_0 or a K-quant rather than F16 or F32.
+ */
+bool quantized_decoding(const ModelFile & m);
+
+/**
  * NeMo's RNNTDecoder (nemo/collections/asr/modules/rnnt.py) with the blank as the embedding's padding: an
  * embedding of the tokens and the blank, whose blank row is zero, then stacked LSTM layers. One step takes the
  * last label and the state and gives the last layer's h. The blank fed first is the start of the sequence.
