@@ -62,7 +62,8 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   converters' (`quantize_compare.py`) and the first release that reads each (`quantize_releases.py`).
 - `measure/` holds what measures and passes or fails nothing: the times of Qwen3-ASR's stages (`qwen3-asr-timing.cpp`,
   built with the checks), of llama.cpp's llama-server on the same audio and of Irodori-TTS with and without a caption,
-  and the accuracy of each longest region of transcription by regions (`region_cap_compare.py`).
+  the accuracy of each longest region of transcription by regions (`region_cap_compare.py`), and how late live
+  transcription over `/v1/realtime` is for one build or two on the same recordings (`live_latency.py`).
 - `tools/server/` holds `speech serve`, which serves a synthesis, a recognition and a detection model over HTTP with
   OpenAI's audio API (`POST /v1/audio/speech`, `POST /v1/audio/transcriptions`, `GET /v1/models`, `GET /health`)
   and OpenAI's Realtime transcription over a WebSocket at `/v1/realtime`, for programs that speak HTTP. Like the worker
