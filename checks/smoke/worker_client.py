@@ -236,13 +236,46 @@ def dump_requests(speech, model, dump, options=()):
     return library_texts(speech, model, dump, options, requests)
 
 
+def recognition_defaults(options, takes):
+    """The request options that the flags `options`, which started a worker or a server, set for its recognition model,
+    by name, with the device and the threads: a flag of a request option the model takes (`takes`, its options from
+    speech info --json, by name), alone or after the prefix asr., and --device and --threads. The flags of the process
+    alone (--no-warmup, --port, --add-voice and the like) and those for the other tasks (tts., vad.) set nothing here.
+    A flag of a bool option stands alone or with =false; any other takes the next word or the value after =."""
+    defaults, at = {}, 0
+    while at < len(options):
+        flag = options[at]
+        at += 1
+        if not flag.startswith("--"):
+            continue
+        name, given, value = flag[2:].partition("=")
+        name = name.replace("-", "_")
+        task, dot, bare = name.partition(".")
+        if dot:
+            name = bare if task == "asr" else None
+        option = takes.get(name)
+        takes_value = (option is None or option["type"] != "bool") and not given
+        if takes_value and at < len(options) and not options[at].startswith("--"):
+            value = options[at]
+            at += 1
+        if option is not None and option["type"] == "bool":
+            defaults[name] = value if given else "true"
+        elif option is not None or name in ("device", "threads"):
+            defaults[name] = value
+    return defaults
+
+
 def library_texts(speech, model, dump, options, requests):
-    """`requests` as they are for weights in F32 or F16, and otherwise with the text and languages of `speech asr`."""
+    """`requests` as they are for weights in F32 or F16, and otherwise with the text and languages of `speech asr`, each
+    with the defaults the flags `options` set, overridden by the request's own members as the worker and the server
+    override them."""
     r = subprocess.run([speech, "info", model, "--json", "--meta"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-    meta = json.loads(r.stdout)["meta"]
-    if meta["general.file_type"] in REFERENCE_TYPES:
+    info = json.loads(r.stdout)
+    if info["meta"]["general.file_type"] in REFERENCE_TYPES:
         return requests
-    rate = json.loads(r.stdout)["sample_rate"]
+    takes = {o["name"]: o for o in info["options"]}
+    defaults = recognition_defaults(options, takes)
+    rate = info["sample_rate"]
     pcm = pcm16(read_npy(os.path.join(dump, "audio.npy")))
     with tempfile.TemporaryDirectory() as temp:
         path = os.path.join(temp, "dump.wav")
@@ -251,9 +284,11 @@ def library_texts(speech, model, dump, options, requests):
                     + b"data" + struct.pack("<I", len(pcm)) + pcm)
         found = []
         for name, members, _, _ in requests:
-            flags = [x for k, v in members.items() for x in ("--" + k.replace("_", "-"), v)]
-            r = subprocess.run([speech, "asr", model, path, "--format", "json", *options, *flags], stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE)
+            flags = []
+            for k, v in (defaults | members).items():
+                flag = "--" + k.replace("_", "-")
+                flags += [f"{flag}={str(v).lower()}"] if k in takes and takes[k]["type"] == "bool" else [flag, str(v)]
+            r = subprocess.run([speech, "asr", model, path, "--format", "json", *flags], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if r.returncode != 0:
                 raise SystemExit(f"speech asr exited with {r.returncode} on {dump}: {r.stderr.decode(errors='replace')[-800:]}")
             end = json.loads(r.stdout)

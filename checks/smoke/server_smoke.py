@@ -412,7 +412,7 @@ else:
             # a threshold of 1 finds no region, so auto gives an empty text, while a request's own threshold wins.
             tuned = Server(speech, [model, vad, *options, "--vad.threshold", "1"])
             listed = json.loads(tuned.call("GET", "/v1/models")[2])["data"]
-            assert [m["defaults"] for m in listed] == [{}, {"threshold": 1}], listed
+            assert [m["defaults"] for m in listed] == [entry["defaults"], detector["defaults"] | {"threshold": 1}], listed
             status, _, body = tuned.transcribe([("chunking_strategy", "auto")], [("file", "long.wav", long)])
             assert status == 200 and json.loads(body) == {"text": ""}, body
             own = [("chunking_strategy[type]", "server_vad"), ("chunking_strategy[threshold]", "0.5")]

@@ -40,6 +40,7 @@ if not dumps:
     raise SystemExit(__doc__)
 w = Worker(speech, model, flags)
 info = w.ready["model"]
+defaults = w.ready["defaults"]
 assert info["task"] == "recognition" and "voices" not in info, short(w.ready)
 w.check_model_information()
 rate = info["sample_rate"]
@@ -253,7 +254,7 @@ assert [(m["type"], m["id"]) for m in rest] == [("error", "z")], [short(m) for m
 # gives segments and tokens to a recognition that does not ask for them.
 if timed:
     w = Worker(speech, model, [*flags, "--timestamps"])
-    assert w.ready["defaults"] == {"timestamps": True}, w.ready["defaults"]
+    assert w.ready["defaults"] == defaults | {"timestamps": True}, w.ready["defaults"]
     send_audio("timed", short_pcm)
     m = w.terminal("timed", "end")
     assert m["text"] == short_text and "segments" in m and "tokens" in m, short(m)
