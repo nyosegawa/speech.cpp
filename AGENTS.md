@@ -62,10 +62,16 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   `checks/compare/` holds the scripts that compare two builds or releases: the audio of the same requests bit for bit
   (`same_audio.py`), the files `speech quantize` makes with the converters' (`quantize_compare.py`) and the first
   release that reads each (`quantize_releases.py`).
-- `measure/` holds what measures and passes or fails nothing: the times of Qwen3-ASR's stages (`qwen3-asr-timing.cpp`,
-  built with the checks), of llama.cpp's llama-server on the same audio and of Irodori-TTS with and without a caption,
-  the accuracy of each longest region of transcription by regions (`region_cap_compare.py`), and how late live
-  transcription over `/v1/realtime` is for one build or two on the same recordings (`live_latency.py`).
+- `measure/` holds what measures and passes or fails nothing: the times of the stages of Qwen3-ASR, FastConformer,
+  Qwen3-TTS and Irodori-TTS (`<family>-timing.cpp`, built with the checks), of llama.cpp's llama-server on Qwen3-ASR's
+  dumps and of Irodori-TTS with and without a caption, the accuracy of each longest region of transcription by regions
+  (`region_cap_compare.py`), and how late live transcription over `/v1/realtime` is for one build or two on the same
+  recordings (`live_latency.py`). speech.cpp keeps what passes or fails (the checks, the smoke scripts and
+  `checks/compare/`) and what measures from inside the library or its entry points: the time of each stage and the
+  delay of live transcription. speech-bench (github.com/nyosegawa/speech-bench) measures what a user sees of a whole
+  request (speed, latency, memory and accuracy) across speech.cpp's builds and other runtimes, and tries a model in its
+  official implementation and the runtimes that already run it before speech.cpp takes it up, so any other comparison
+  of builds or of runtimes goes there and not into `measure/`.
 - `tools/server/` holds `speech serve`, which serves a synthesis, a recognition and a detection model over HTTP with
   OpenAI's audio API (`POST /v1/audio/speech`, `POST /v1/audio/transcriptions`, `GET /v1/models`, `GET /health`)
   and OpenAI's Realtime transcription over a WebSocket at `/v1/realtime`, for programs that speak HTTP. Like the worker

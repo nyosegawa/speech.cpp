@@ -371,6 +371,13 @@ add_executable(qwen3-asr-timing measure/qwen3-asr-timing.cpp tools/common/json-r
 target_include_directories(qwen3-asr-timing PRIVATE checks tools/common)
 target_link_libraries(qwen3-asr-timing PRIVATE qwen3asr)
 
+# Times the stages of a synthesis on the texts given.
+add_executable(qwen3-tts-timing measure/qwen3-tts-timing.cpp)
+target_link_libraries(qwen3-tts-timing PRIVATE qwen3tts)
+
+add_executable(irodori-tts-timing measure/irodori-tts-timing.cpp)
+target_link_libraries(irodori-tts-timing PRIVATE irodoritts)
+
 # Silero VAD's stages and regions against the dumps of reference/silero-vad/dump.py, read with the JSON reader of `speech`.
 add_executable(silero-vad-check checks/silero-vad/silero-vad-check.cpp tools/common/json-reader.cpp)
 target_include_directories(silero-vad-check PRIVATE checks tools/common)
