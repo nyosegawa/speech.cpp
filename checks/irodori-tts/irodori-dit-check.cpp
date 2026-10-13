@@ -151,7 +151,10 @@ int main(int argc, char ** argv) {
                 const std::vector<float> default_x =
                     sampler.sample(plain, noise.f32, frames, steps, sampler.check(sampler.guidance(), steps, d.reference(), d.caption()));
                 const Diff dd = compare(default_x.data(), &xs.f32[(steps - 1) * n], n);
-                print_diff("  the same with the default guidance", dd);
+                // Printed as the distance it is, not as an SNR: here a low SNR is what the check wants, and checks/run.py
+                // shows a check's least SNR as its result.
+                std::printf("  the default guidance's latent lies %.1f dB from the official's, %.1f dB further than the request's\n",
+                            dd.snr_db, df.snr_db - dd.snr_db);
                 ok = ok && dd.snr_db + 6 < df.snr_db;
             }
         }

@@ -57,9 +57,11 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   recognition model (`speech-api-recognition.c`), and with `detect`, with a detection model (`speech-api-detection.c`,
   and detections of audio given a piece at a time in `speech-api-detection-stream.c`), what they share in
   `speech-api-common.c` and what differs by the operating system in `speech-api-platform.c`. Checks reach into `src/`
-  for the stage they check; they are built but not released. `checks/compare/` holds the scripts that compare two builds
-  or releases: the audio of the same requests bit for bit (`same_audio.py`), the files `speech quantize` makes with the
-  converters' (`quantize_compare.py`) and the first release that reads each (`quantize_releases.py`).
+  for the stage they check; they are built but not released. `checks/run.py` runs the stage checks of the families and
+  devices it is given, with the model files and the dumps it finds, in the order data flows, one line per check.
+  `checks/compare/` holds the scripts that compare two builds or releases: the audio of the same requests bit for bit
+  (`same_audio.py`), the files `speech quantize` makes with the converters' (`quantize_compare.py`) and the first
+  release that reads each (`quantize_releases.py`).
 - `measure/` holds what measures and passes or fails nothing: the times of Qwen3-ASR's stages (`qwen3-asr-timing.cpp`,
   built with the checks), of llama.cpp's llama-server on the same audio and of Irodori-TTS with and without a caption,
   the accuracy of each longest region of transcription by regions (`region_cap_compare.py`), and how late live
@@ -200,7 +202,8 @@ comment.
 ## Workflow
 
 - Build with `cmake -B build && cmake --build build -j`, and run the checks the change touches before
-  committing code. A change to the C API or the worker also runs `speech-api-check` and
+  committing code, a family's stage checks with `python3 checks/run.py <family> --devices cpu,gpu`. A change to the C
+  API or the worker also runs `speech-api-check` and
   `checks/smoke/worker_smoke.py` for both synthesis families, and `speech-api-check transcribe` and
   `checks/smoke/worker_recognition_smoke.py` for both recognition families, and `speech-api-check detect` with Silero
   VAD; a change to the server runs `checks/smoke/server_smoke.py`, `checks/smoke/server_realtime_smoke.py` and
