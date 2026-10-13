@@ -1,5 +1,6 @@
 #include "layers.h"
 
+#include <cstring>
 #include <memory>
 
 #include "error.h"
@@ -25,8 +26,8 @@ bool computes_flash_attention(ggml_backend_t backend, int64_t head_dim) {
 }  // namespace
 
 Attention attention_on(ggml_backend_t backend, int64_t head_dim) {
-    const bool cpu = ggml_backend_dev_type(ggml_backend_get_device(backend)) == GGML_BACKEND_DEVICE_TYPE_CPU;
-    return !cpu && computes_flash_attention(backend, head_dim) ? Attention::Flash : Attention::Products;
+    const bool metal = std::strcmp(ggml_backend_reg_name(ggml_backend_dev_backend_reg(ggml_backend_get_device(backend))), "MTL") == 0;
+    return metal && computes_flash_attention(backend, head_dim) ? Attention::Flash : Attention::Products;
 }
 
 const char * attention_name(Attention attention) {

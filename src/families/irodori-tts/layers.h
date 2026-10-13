@@ -18,13 +18,14 @@ enum class Attention {
 };
 
 /**
- * The attention of heads of `head_dim` on `backend`: flash attention on a GPU whose backend computes it, and the two
- * products on the CPU and on any other GPU. Metal's flash attention keeps the keys and values in float32, where its
+ * The attention of heads of `head_dim` on `backend`: flash attention on Metal where it computes it, and the two products
+ * on Vulkan, the CPU and any other backend. Metal's flash attention keeps the keys and values in float32, where its
  * matrix kernel rounds them to half precision, and the DiT's worst step of rf-hai-speaker-kv-min1 lies 48 dB from the
  * official instead of 31. With v4.1-Small-MF and v4.1-Small in F16 on an Apple M5 (2026-10-13), it brought the first
  * audio of 16 to 19 s of speech 5 to 7% earlier and spoke 20 sentences of 2 to 19 s 1 to 3% faster, while 0.8 to 1.2 s
- * with v4.1-Small's guidance took 15 to 30 ms longer. On that CPU it was no faster at 27 to 685 frames and no more
- * precise.
+ * with v4.1-Small's guidance took 15 to 30 ms longer. Vulkan's matrix product does not round the keys and values so:
+ * on an RTX 2080 flash attention was no faster and about 4 dB further from the official, and on the M5's CPU it was no
+ * faster at 27 to 685 frames and no more precise.
  */
 Attention attention_on(ggml_backend_t backend, int64_t head_dim);
 
