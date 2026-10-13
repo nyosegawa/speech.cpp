@@ -45,8 +45,8 @@ public:
 
     /** The codec head's logits for the next frame's first code. */
     const std::vector<float> & logits() const { return talker_.logits(); }
-    /** The talker's last hidden state after the final norm, which conditions the code predictor. */
-    const std::vector<float> & hidden_state() const { return talker_.hidden(); }
+    /** The talker's last hidden state after the final norm, which conditions the code predictor, read from the device. */
+    std::vector<float> hidden_state() const { return talker_.hidden(); }
 
     /**
      * Code predictor: the codes 1 to 15 of a frame whose first code is `code0`, into `codes`, each picked under `p` as

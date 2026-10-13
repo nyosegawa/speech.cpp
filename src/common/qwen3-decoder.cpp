@@ -197,7 +197,7 @@ struct Qwen3Decoder::TokenStep {
     ggml_tensor * table, * head;
     int64_t n_kv;
     ggml_tensor * id = nullptr;
-    Outputs outputs;
+    ggml_tensor * logits = nullptr;
     RunInputs inputs;
 
     TokenStep(ggml_backend_t backend, ggml_tensor * table, ggml_tensor * head, int64_t n_kv)
@@ -228,8 +228,37 @@ struct Qwen3Decoder::KeptChain {
     KeptChain & operator=(const KeptChain &) = delete;
 };
 
+/**
+ * The last hidden state of a decoder that keeps it on the device, in a buffer of its own that no allocator of a graph
+ * owns: a graph that reads it, or writes it through ggml_cpy(), holds it as a tensor whose memory is set, which
+ * ggml_gallocr neither places nor frees nor gives to another tensor.
+ */
+struct Qwen3Decoder::KeptHidden {
+    ggml_context * ctx = nullptr;
+    ggml_backend_buffer_t buffer = nullptr;
+    ggml_tensor * tensor = nullptr;
+
+    KeptHidden(ggml_backend_t backend, int64_t hidden) {
+        ggml_init_params params = {ggml_tensor_overhead(), nullptr, true};
+        ctx = ggml_init(params);
+        tensor = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hidden, 1);
+        buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
+        if (!buffer) {
+            ggml_free(ctx);
+            throw Error(Fault::OutOfMemory, "cannot allocate a decoder's hidden state on the device");
+        }
+        ggml_backend_buffer_clear(buffer, 0);
+    }
+    ~KeptHidden() {
+        ggml_backend_buffer_free(buffer);
+        ggml_free(ctx);
+    }
+    KeptHidden(const KeptHidden &) = delete;
+    KeptHidden & operator=(const KeptHidden &) = delete;
+};
+
 Qwen3Decoder::Qwen3Decoder(const ModelFile & m, ggml_backend_t backend, std::string tensors, const Qwen3Shape & shape,
-                           int64_t max_positions, ggml_type cache_type, Qwen3Readback readback, int64_t block_rows,
+                           int64_t max_positions, ggml_type cache_type, Qwen3Hidden hidden, int64_t block_rows,
                            std::optional<Qwen3Attention> attention)
     : backend_(backend),
       m_(m),
@@ -237,7 +266,6 @@ Qwen3Decoder::Qwen3Decoder(const ModelFile & m, ggml_backend_t backend, std::str
       shape_(shape),
       max_positions_(max_positions),
       cache_type_(cache_type),
-      readback_(readback),
       block_rows_(block_rows),
       flash_(attention.value_or(qwen3_attention(backend, shape, cache_type)) == Qwen3Attention::Flash) {
     if (block_rows_ < 1) throw std::logic_error("a decoder runs at least one row in a graph");
@@ -248,6 +276,7 @@ Qwen3Decoder::Qwen3Decoder(const ModelFile & m, ggml_backend_t backend, std::str
     log_message(LogLevel::Info, "the decoder " + tensors_ + " attends with " + qwen3_attention_name(this->attention()) + " on " +
                                     ggml_backend_name(backend));
     allocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+    if (hidden == Qwen3Hidden::OnDevice) hidden_ = std::make_unique<KeptHidden>(backend_, shape_.hidden);
 }
 
 Qwen3Decoder::~Qwen3Decoder() {
@@ -265,9 +294,13 @@ size_t Qwen3Decoder::graph_bytes() const {
     return bytes;
 }
 
-const std::vector<float> & Qwen3Decoder::hidden() const {
-    if (readback_ != Qwen3Readback::LogitsAndHidden) throw std::logic_error("the decoder " + tensors_ + " reads no hidden state");
-    return hidden_;
+ggml_tensor * Qwen3Decoder::hidden_tensor() const {
+    if (!hidden_) throw std::logic_error("the decoder " + tensors_ + " keeps no hidden state");
+    return hidden_->tensor;
+}
+
+std::vector<float> Qwen3Decoder::hidden() const {
+    return Graph::read(hidden_tensor());
 }
 
 void Qwen3Decoder::read_cache(int layer, std::vector<float> & keys, std::vector<float> & values) const {
@@ -414,22 +447,13 @@ void Qwen3Decoder::make_room(int64_t n) {
     }
 }
 
-Qwen3Decoder::Outputs Qwen3Decoder::outputs(Graph & g, ggml_tensor * last, ggml_tensor * head) const {
+ggml_tensor * Qwen3Decoder::outputs(Graph & g, ggml_tensor * last, ggml_tensor * head) const {
     ggml_context * ctx = g.ctx();
     ggml_tensor * hidden = ggml_mul(ctx, ggml_rms_norm(ctx, last, shape_.rms_eps), m_.tensor(tensors_ + ".norm"));
-    Outputs out;
-    out.logits = ggml_mul_mat(ctx, head, hidden);
-    g.output(out.logits);
-    if (readback_ == Qwen3Readback::LogitsAndHidden) {
-        out.hidden = hidden;
-        g.output(hidden);
-    }
-    return out;
-}
-
-void Qwen3Decoder::read(const Outputs & outputs) {
-    if (outputs.hidden) Graph::read(outputs.hidden, hidden_);
-    Graph::read(outputs.logits, logits_);
+    ggml_tensor * logits = ggml_mul_mat(ctx, head, hidden);
+    g.output(logits);
+    if (hidden_) g.copy(hidden, hidden_->tensor);
+    return logits;
 }
 
 void Qwen3Decoder::run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head) {
@@ -440,10 +464,9 @@ void Qwen3Decoder::run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head) {
         Graph g(kGraphSize);
         const RunInputs inputs = run_inputs(g, count);
         ggml_tensor * x = layers(g, rows(g, from, count), count, output, inputs);
-        Outputs out;
-        if (output) out = outputs(g, ggml_view_2d(g.ctx(), x, shape_.hidden, 1, x->nb[1], (count - 1) * x->nb[1]), head);
+        ggml_tensor * logits = output ? outputs(g, ggml_view_2d(g.ctx(), x, shape_.hidden, 1, x->nb[1], (count - 1) * x->nb[1]), head) : nullptr;
         g.compute(backend_, allocr_);
-        if (output) read(out);
+        if (output) Graph::read(logits, logits_);
         n_past_ += count;
     }
 }
@@ -470,11 +493,11 @@ void Qwen3Decoder::step(int32_t id, ggml_tensor * table, ggml_tensor * head) {
         s->id = s->graph.input(std::vector<int32_t>{id}, 1);
         s->inputs = run_inputs(s->graph, 1);
         ggml_tensor * x = layers(s->graph, ggml_get_rows(s->graph.ctx(), table, s->id), 1, true, s->inputs);
-        s->outputs = outputs(s->graph, x, head);
+        s->logits = outputs(s->graph, x, head);
         s->graph.compute(backend_, s->allocr);
         token_step_ = std::move(built);
     }
-    read(s->outputs);
+    Graph::read(s->logits, logits_);
     n_past_ += 1;
 }
 
@@ -501,10 +524,10 @@ void Qwen3Decoder::build_chain(Qwen3Chain & chain, KeptChain & kept) {
             if (rows > 1) in.mask = g.input(causal_mask(n_past_, rows, in.n_kv), in.n_kv, rows);
         }
         ggml_tensor * y = layers(g, x, rows, true, in);
-        const Outputs out = outputs(g, ggml_view_2d(ctx, y, shape_.hidden, 1, y->nb[1], (rows - 1) * y->nb[1]), chain.head(step));
-        kept.logits.push_back(out.logits);
+        ggml_tensor * logits = outputs(g, ggml_view_2d(ctx, y, shape_.hidden, 1, y->nb[1], (rows - 1) * y->nb[1]), chain.head(step));
+        kept.logits.push_back(logits);
         n_past_ += rows;
-        x = chain.after(g, step, out.logits);
+        x = chain.after(g, step, logits);
         rows = 1;
     }
     kept.computes = true;

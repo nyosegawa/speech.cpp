@@ -19,17 +19,18 @@ Talker::Talker(const ModelFile & m, ggml_backend_t backend)
       n_groups_((int) m.u32("qwen3-tts.talker.num_code_groups")),
       vocab_((int) m.u32("qwen3-tts.talker.vocab_size")),
       cp_vocab_((int) m.u32("qwen3-tts.code_predictor.vocab_size")),
-      // The talker's hidden state is read back as the first row of the code predictor's sequence, which a frame's codes
-      // follow.
+      // The talker's hidden state stays on the device as the first row of the code predictor's sequence, which a
+      // frame's codes follow.
       talker_(m, backend, "talker", read_qwen3_shape(m, "qwen3-tts.talker"), m.u32("qwen3-tts.talker.max_position_embeddings"),
-              GGML_TYPE_F16, Qwen3Readback::LogitsAndHidden),
-      cp_(m, backend, "cp", read_qwen3_shape(m, "qwen3-tts.code_predictor"), n_groups_ + 1, GGML_TYPE_F32, Qwen3Readback::Logits),
+              GGML_TYPE_F16, Qwen3Hidden::OnDevice),
+      cp_(m, backend, "cp", read_qwen3_shape(m, "qwen3-tts.code_predictor"), n_groups_ + 1, GGML_TYPE_F32, Qwen3Hidden::Dropped),
       cp_projected_(cp_.shape().hidden != talker_.shape().hidden),
       allocr_(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))) {}
 
 /**
- * A frame of the code predictor as a chain of its 15 steps, each picking its code on the device: what a frame reads
- * between the calls is the talker's hidden state, the first code and the draws.
+ * A frame of the code predictor as a chain of its 15 steps, each picking its code on the device: what a frame takes
+ * from the host is the first code and the draws, and it reads the talker's hidden state where the talker's step left it
+ * on the device.
  */
 class Talker::Frame : public Qwen3Chain {
 public:
@@ -50,9 +51,9 @@ public:
         ggml_context * ctx = g.ctx();
         sampler_ = std::make_unique<GraphSampler>(g, p_, t_.cp_vocab_, steps());
         sampler_->draw(g, *draws_);
-        hidden_ = g.input(t_.talker_.hidden(), t_.hidden(), 1);
         code0_input_ = g.input(std::vector<int32_t>{code0_}, 1);
-        return t_.cp_input(ctx, ggml_concat(ctx, hidden_, ggml_get_rows(ctx, t_.m_.tensor("talker.codec_embd"), code0_input_), 1));
+        ggml_tensor * code0 = ggml_get_rows(ctx, t_.m_.tensor("talker.codec_embd"), code0_input_);
+        return t_.cp_input(ctx, ggml_concat(ctx, t_.talker_.hidden_tensor(), code0, 1));
     }
 
     ggml_tensor * head(int step) const override { return t_.m_.tensor("cp.head." + std::to_string(step)); }
@@ -65,7 +66,6 @@ public:
 
     bool refill(Graph & g) override {
         if (!(sampler_->params() == p_)) return false;
-        g.set(hidden_, t_.talker_.hidden());
         g.set(code0_input_, std::vector<int32_t>{code0_});
         sampler_->draw(g, *draws_);
         return true;
@@ -77,7 +77,7 @@ private:
     SamplingParams p_;
     const std::vector<double> * draws_ = nullptr;
     std::unique_ptr<GraphSampler> sampler_;
-    ggml_tensor * hidden_ = nullptr, * code0_input_ = nullptr;
+    ggml_tensor * code0_input_ = nullptr;
 };
 
 Talker::~Talker() {
@@ -171,7 +171,7 @@ const std::vector<float> & Talker::run_cp(int32_t code, int group) {
             ggml_tensor * id = g.input(std::vector<int32_t>{code}, 1);
             ggml_tensor * x;
             if (group == 0) {
-                x = ggml_concat(ctx, g.input(talker_.hidden(), hidden(), 1), ggml_get_rows(ctx, m.tensor("talker.codec_embd"), id), 1);
+                x = ggml_concat(ctx, talker_.hidden_tensor(), ggml_get_rows(ctx, m.tensor("talker.codec_embd"), id), 1);
             } else {
                 x = ggml_get_rows(ctx, m.tensor("cp.codec_embd." + std::to_string(group - 1)), id);
             }

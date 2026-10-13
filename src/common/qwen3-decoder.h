@@ -73,15 +73,17 @@ Qwen3Attention qwen3_attention(ggml_backend_t backend, const Qwen3Shape & shape,
 const char * qwen3_attention_name(Qwen3Attention attention);
 
 /**
- * What a run or step with a head reads back from the device. Each read waits for the device and copies, about 0.07 ms
- * on Windows with Vulkan, so a decoder reads only what its caller uses: reading a hidden state nobody used took 2 to 3%
- * of the time of Qwen3-TTS's code predictor and of Qwen3-ASR's decoder on an RTX 2080 with Vulkan (2026-10-13).
+ * What a run or step with a head does with its last row's hidden state after the final norm; it reads back only the
+ * logits. Each read waits for the device and copies, about 0.07 ms on Windows with Vulkan, and each upload takes about
+ * 0.06 ms: reading a hidden state nobody used took 2 to 3% of the time of Qwen3-TTS's code predictor and of Qwen3-ASR's
+ * decoder on an RTX 2080 with Vulkan (2026-10-13), and the hidden state of Qwen3-TTS's talker, which starts the code
+ * predictor's frame, would be read back and uploaded again at every frame.
  */
-enum class Qwen3Readback {
-    /** The last row's logits. */
-    Logits,
-    /** The last row's logits and its hidden state after the final norm. */
-    LogitsAndHidden,
+enum class Qwen3Hidden {
+    /** The hidden state is dropped. */
+    Dropped,
+    /** The hidden state is written into a tensor on the device, which the graphs of another decoder read. */
+    OnDevice,
 };
 
 /**
@@ -123,18 +125,20 @@ public:
  * to its own rows, so that the memory of a long run grows with its rows rather than with their square. The caller
  * builds a run's input rows, embeddings it computed or rows the graph looks up from ids, and names the output matrix
  * whose logits the run's last row gives: a head of the model's own, or the input embeddings where the model ties its
- * head to them. Whether the last row's hidden state is read back as well is said when the decoder is made.
+ * head to them. Whether the last row's hidden state stays on the device for another decoder's graphs is said when the
+ * decoder is made.
  */
 class Qwen3Decoder {
 public:
     /**
      * The stack `tensors` of `m`, which outlives it, of shape `shape`, for sequences of at most `max_positions`
-     * positions, with a cache of `cache_type`, reading back what `readback` says, running blocks of at most
-     * `block_rows` rows, and attending as `attention` says or, without it, as qwen3_attention() chooses; it logs which.
+     * positions, with a cache of `cache_type`, doing with the hidden state what `hidden` says, running blocks of at
+     * most `block_rows` rows, and attending as `attention` says or, without it, as qwen3_attention() chooses; it logs
+     * which.
      * Flash attention that the backend cannot compute throws an Error of the device.
      */
     Qwen3Decoder(const ModelFile & m, ggml_backend_t backend, std::string tensors, const Qwen3Shape & shape,
-                 int64_t max_positions, ggml_type cache_type, Qwen3Readback readback, int64_t block_rows = kQwen3BlockRows,
+                 int64_t max_positions, ggml_type cache_type, Qwen3Hidden hidden, int64_t block_rows = kQwen3BlockRows,
                  std::optional<Qwen3Attention> attention = std::nullopt);
     ~Qwen3Decoder();
     Qwen3Decoder(const Qwen3Decoder &) = delete;
@@ -163,15 +167,15 @@ public:
     /**
      * Runs `n` rows, which `rows` builds, through the stack after the positions the sequence has so far, growing the
      * cache when it has no room for them. With a `head`, an output matrix [hidden, vocabulary], the last row's logits
-     * under `head` are read for logits() and, where the decoder reads it, its hidden state after the final norm for
-     * hidden().
+     * under `head` are read for logits() and, where the decoder keeps it, its hidden state after the final norm is
+     * written into hidden_tensor().
      */
     void run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head = nullptr);
 
     /**
      * Feeds the token `id`, whose row of `table` is its input, after the sequence, and reads its logits under `head`
-     * and its hidden state as run() does. On a GPU the graph of such a step is kept and computed again for the steps
-     * after it while they read the same block of positions.
+     * and keeps its hidden state as run() does. On a GPU the graph of such a step is kept and computed again for the
+     * steps after it while they read the same block of positions.
      */
     void step(int32_t id, ggml_tensor * table, ggml_tensor * head);
 
@@ -185,8 +189,14 @@ public:
     /** The logits of step `step` of the last sequence chain() ran. */
     std::vector<float> chain_logits(int step) const;
 
-    /** The last hidden state read; a decoder that reads none throws. */
-    const std::vector<float> & hidden() const;
+    /**
+     * The tensor on the device, [hidden, 1] in float32, into which each run or step with a head writes its last row's
+     * hidden state after the final norm, for the graphs of another decoder to read. It lives as long as the decoder; a
+     * decoder that drops the hidden state throws.
+     */
+    ggml_tensor * hidden_tensor() const;
+    /** The last hidden state, read back from hidden_tensor(). */
+    std::vector<float> hidden() const;
     const std::vector<float> & logits() const { return logits_; }
 
     /**
@@ -199,6 +209,7 @@ private:
     struct Cache;
     struct TokenStep;
     struct KeptChain;
+    struct KeptHidden;
 
     /** The inputs of a run's graph that depend on where its rows are in the sequence. */
     struct RunInputs {
@@ -220,19 +231,11 @@ private:
     ggml_tensor * layers(Graph & g, ggml_tensor * x, int64_t rows, bool output, const RunInputs & inputs);
     /** Builds the graph of a sequence of the steps of `chain` into `kept`. */
     void build_chain(Qwen3Chain & chain, KeptChain & kept);
-    /** The tensors of a graph that a run or step reads back: the hidden state, where it is read, and the logits. */
-    struct Outputs {
-        ggml_tensor * hidden = nullptr;
-        ggml_tensor * logits = nullptr;
-    };
-
     /**
-     * Builds the hidden state after the final norm of `last`, one row, and its logits under `head` in `g`, and makes
-     * outputs of `g` of what is read back.
+     * Builds in `g` the hidden state after the final norm of `last`, one row, writing it into hidden_tensor() where the
+     * decoder keeps it, and returns its logits under `head`, an output of `g`.
      */
-    Outputs outputs(Graph & g, ggml_tensor * last, ggml_tensor * head) const;
-    /** Reads `outputs` of a computed graph into hidden() and logits(). */
-    void read(const Outputs & outputs);
+    ggml_tensor * outputs(Graph & g, ggml_tensor * last, ggml_tensor * head) const;
     /** Grows the cache when it has no room for `n` more rows. */
     void make_room(int64_t n);
     /** Moves the cache to one with room for `positions` positions, keeping the n_past() it holds. */
@@ -244,7 +247,6 @@ private:
     const Qwen3Shape shape_;
     const int64_t max_positions_;
     const ggml_type cache_type_;
-    const Qwen3Readback readback_;
     const int64_t block_rows_;
     /** Whether attention runs as ggml_flash_attn_ext rather than as two products. */
     const bool flash_;
@@ -252,8 +254,9 @@ private:
     std::unique_ptr<Cache> cache_;
     std::unique_ptr<TokenStep> token_step_;
     std::unique_ptr<KeptChain> chain_;
+    std::unique_ptr<KeptHidden> hidden_;
     ggml_gallocr_t allocr_ = nullptr;
     int64_t positions_ = 0;
     int64_t n_past_ = 0;
-    std::vector<float> hidden_, logits_;
+    std::vector<float> logits_;
 };
