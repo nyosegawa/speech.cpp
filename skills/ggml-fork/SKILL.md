@@ -58,8 +58,10 @@ does not go in. The commit message gives the medians with the model, the type, t
 
 Moving to a newer tag rebuilds the branch in the decision record's order:
 
-1. The tag, then one commit with the cases of every fix, run on the tag on the devices the table names. A fix whose
-   cases pass on the tag alone is dropped, with its row.
+1. The tag, then one commit with the cases of every fix, run on the tag on the devices the table names. A fix is
+   dropped, with its row, only when the tag meets the whole of its row's "dropped when", which can ask for more than
+   the cases: the Metal tensor API's row also asks that every stage check pass and that speech-bench find it no
+   slower.
 2. Each fix the table still calls for, then each speed-up the tag still lacks, with its cases, the latter measured
    again on the new tag.
 3. Releases of speech.cpp pin commits of the old branch, and a rebuilt history does not fast-forward from it. After

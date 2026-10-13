@@ -65,9 +65,14 @@ branches pushed for CI runs (`git push origin --delete <branch>`).
   in its body which pull request it builds on.
 - Before merging the base, retarget every pull request on it to main (`gh pr edit <n> --base main`): `--delete-branch`
   deletes the merged branch, and that closes every pull request whose base it is.
-- After the base merges with a squash, its commits are not on main; bring the dependent onto main with
-  `git rebase --onto origin/main <old base tip>`, where the old base tip is the base branch's last commit before the
-  merge, and push with `--force-with-lease`.
+- Note each dependent's own base when it is opened, the commit it was built on:
+  `git merge-base <dependent> <base branch>`, taken before the base branch changes. In a stack A, B, C, C's base is
+  the commit of B it was built on, which is no longer B's tip once B is rebased.
+- After the base merges with a squash, its commits are not on main. `git fetch origin` and check that `origin/main`
+  holds the squash merge (`git log origin/main` lists it); a rebase onto an `origin/main` from before the merge drops
+  the base's changes. Then bring the dependent onto main with `git rebase --onto origin/main <its base>` and push with
+  `--force-with-lease`. Whenever a branch is rebased, rebase every branch stacked on it the same way, onto its new tip
+  from the base noted for it, so that no merged commit is replayed.
 
 ## A subagent's branch
 
