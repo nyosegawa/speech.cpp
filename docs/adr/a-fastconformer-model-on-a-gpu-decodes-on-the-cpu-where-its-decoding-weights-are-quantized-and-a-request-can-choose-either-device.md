@@ -86,7 +86,7 @@ almost the same, the text or a token's frame can differ from the GPU's. On the c
 way; with F16 weights decoding on the CPU, one token in 2 of reazonspeech-nemo-v2's 20 decodings falls one frame from
 NeMo's, and with the Q8_0 file the joined 311 s input comes out one word different, once nearer NeMo's text and once
 further, with each decoding. The beam search on that input then runs to its last step, 7,782 where Metal stops at
-4,889, and keeps 0.2 GB more of finished hypotheses.
+4,889.
 
 A FastConformer model on a GPU takes 6 to 50 MB more of the host's memory at its peak for the files the names fetch,
 and a recognition that decodes on the CPU occupies its threads while it decodes. A caller that wants the CPU free or the
