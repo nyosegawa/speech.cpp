@@ -21,6 +21,7 @@
 #include "irodori-tts/text-normalizer.h"
 #include "irodori-tts/tokenizer.h"
 #include "npy.h"
+#include "weight-types.h"
 
 using namespace irodori;
 
@@ -76,6 +77,10 @@ int main(int argc, char ** argv) {
         return 2;
     }
     try {
+        if (!takes_weights(args[1], model_layout, {"F32", "F16", "Q8_0"},
+                           "its bound is the one measured with them")) {
+            return 2;
+        }
         ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
         std::printf("backend: %s\n", ggml_backend_name(backend));
         const ModelFile model(args[1], backend, model_layout);

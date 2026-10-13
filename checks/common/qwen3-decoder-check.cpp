@@ -33,6 +33,7 @@
 #include "qwen3-tts/layout.h"
 #include "qwen3-tts/synthesizer.h"
 #include "qwen3-tts/talker.h"
+#include "weight-types.h"
 
 namespace {
 
@@ -79,15 +80,15 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "usage: %s <qwen3-tts model F32.gguf> <text file> [gpu|cpu] [block rows] [flash|products]\n", args[0].c_str());
         return 2;
     }
+    if (!takes_weights(args[1], qwen3_tts_layout, {"F32"},
+                       "with quantized weights a row's numbers change with how a graph groups the rows")) {
+        return 2;
+    }
     ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
     const int64_t block_rows = args.size() > 4 ? std::stoll(args[4]) : kQwen3BlockRows;
     std::optional<Qwen3Attention> attention;
     if (args.size() > 5) attention = args[5] == "flash" ? Qwen3Attention::Flash : Qwen3Attention::Products;
     const ModelFile model(args[1], backend, qwen3_tts_layout);
-    if (read_identity(model).weight_type != "F32") {
-        std::fprintf(stderr, "%s holds %s weights; give the check an F32 file\n", args[1].c_str(), read_identity(model).weight_type.c_str());
-        return 2;
-    }
     Talker talker(model, backend);
     std::ifstream f(std::filesystem::u8path(args[2]));
     const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());

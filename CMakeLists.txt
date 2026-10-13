@@ -295,6 +295,7 @@ target_link_libraries(tokenizer-check PRIVATE qwen3tts qwen3asr)
 
 # The decoder's runs in blocks, on the talker of a Qwen3-TTS file.
 add_executable(qwen3-decoder-check checks/common/qwen3-decoder-check.cpp)
+target_include_directories(qwen3-decoder-check PRIVATE checks)
 target_link_libraries(qwen3-decoder-check PRIVATE qwen3tts)
 
 add_executable(irodori-text-check checks/irodori-tts/irodori-text-check.cpp)

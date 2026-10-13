@@ -16,8 +16,10 @@
 #include "backend.h"
 #include "compare.h"
 #include "irodori-dumps.h"
+#include "irodori-tts/layout.h"
 #include "irodori-tts/synthesizer.h"
 #include "npy.h"
+#include "weight-types.h"
 
 using namespace irodori;
 
@@ -49,6 +51,10 @@ int main(int argc, char ** argv) {
         return 2;
     }
     try {
+        if (!takes_weights(args[1], model_layout, {"F32", "F16"},
+                           "quantized weights carry the latent and the length further than its bound")) {
+            return 2;
+        }
         ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
         std::printf("backend: %s\n", ggml_backend_name(backend));
         Synthesizer synth(args[1], backend, forced_attention(args, 4));
