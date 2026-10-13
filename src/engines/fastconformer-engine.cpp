@@ -44,11 +44,16 @@ public:
 
     void warm_up() override {
         // The first recognition builds Metal's pipelines and compiles Vulkan's shaders, which take seconds, for the
-        // encoder and for a decoding on the device, which a request can ask for.
+        // encoder and for a decoding on the device, which a request can ask for. Where requests decode on the CPU by
+        // default, a decoding there makes the CPU's copy of the decoding's tensors, which a model on a GPU makes when a
+        // decoding first computes on the CPU.
         const std::vector<float> second((size_t) recognizer_.sample_rate(), 0.0f);
         const fastconformer::Frontend & frontend = recognizer_.frontend();
         const std::vector<float> projected = recognizer_.encode(frontend.features(second), frontend.frames(second.size()));
         recognizer_.decoding(projected, recognizer_.decodings().front(), fastconformer::DecodeOn::Device);
+        if (fastconformer::quantized_decoding(recognizer_.model())) {
+            recognizer_.decoding(projected, recognizer_.decodings().front(), fastconformer::DecodeOn::Cpu);
+        }
     }
 
     bool computes_on_cpu() const override { return true; }

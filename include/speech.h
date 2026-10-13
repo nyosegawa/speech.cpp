@@ -393,12 +393,13 @@ typedef enum speech_option {
      */
     SPEECH_OPT_MAX_SPEECH_DURATION_S = 43,
     /**
-     * "decode_on_cpu", a boolean: whether a recognition with a model on a GPU decodes its tokens on the CPU, from a copy
-     * of the weights its decoding reads that the model keeps there, rather than on the GPU. Each step of such a decoding
-     * is a small computation, which the CPU computes in less time than a round trip to a GPU takes where its weights are
-     * quantized, so the model's default is true where they are quantized and false where they are F16 or F32
-     * (speech_model_info_option_default_bool()). The two compute in different arithmetic, which can choose another token
-     * where two score almost the same. A model on the CPU decodes there either way. Added in 3.2.
+     * "decode_on_cpu", a boolean: whether a recognition with a model on a GPU decodes its tokens on the CPU, from a
+     * copy of the weights its decoding reads that the model makes there when a request first decodes on the CPU and
+     * then keeps, rather than on the GPU. Each step of such a decoding is a small computation, which the CPU computes
+     * in less time than a round trip to a GPU takes where its weights are quantized, so the model's default is true
+     * where they are quantized and false where they are F16 or F32 (speech_model_info_option_default_bool()). The two
+     * compute in different arithmetic, which can choose another token where two score almost the same. A model on the
+     * CPU decodes there either way. Added in 3.2.
      */
     SPEECH_OPT_DECODE_ON_CPU = 44
 } speech_option;

@@ -19,10 +19,10 @@ const Decoder & Recognizer::Transducer::decoder(const std::string & name) const 
     throw std::logic_error("a FastConformer model has no decoding named " + name);
 }
 
-Recognizer::OnCpu::OnCpu(const std::string & path, int threads, const std::vector<std::string> & names)
+Recognizer::OnCpu::OnCpu(const ModelFile & device, int threads, const std::vector<std::string> & names)
     : pool(nullptr, ggml_threadpool_free),
       backend(start_device(find_device("cpu"), threads), ggml_backend_free),
-      model(path, backend.get(), layout, decoding_tensor),
+      model(device, backend.get(), decoding_tensor),
       transducer(model, names) {
     ggml_threadpool_params params = ggml_threadpool_params_default(threads);
     pool.reset(ggml_threadpool_new(&params));
@@ -32,14 +32,13 @@ Recognizer::OnCpu::OnCpu(const std::string & path, int threads, const std::vecto
 
 Recognizer::Recognizer(const std::string & path, ggml_backend_t backend, int threads)
     : backend_(backend),
+      on_cpu_(ggml_backend_dev_type(ggml_backend_get_device(backend)) == GGML_BACKEND_DEVICE_TYPE_CPU),
+      threads_(threads),
       model_(path, backend, layout),
       frontend_(model_),
       encoder_(model_, backend),
       decoding_names_(fastconformer::decodings(model_)),
       device_(model_, decoding_names_),
-      cpu_(ggml_backend_dev_type(ggml_backend_get_device(backend)) == GGML_BACKEND_DEVICE_TYPE_CPU
-               ? nullptr
-               : std::make_unique<OnCpu>(path, threads, decoding_names_)),
       detokenizer_(model_),
       separators_(model_.str_array("fastconformer.segment.separators")),
       breaks_(model_.str_array("fastconformer.segment.breaks")),
@@ -67,10 +66,16 @@ Transcript Recognizer::recognize(const std::vector<float> & samples, const std::
     return t;
 }
 
+Recognizer::OnCpu & Recognizer::cpu() {
+    if (!cpu_) cpu_ = std::make_unique<OnCpu>(model_, threads_, decoding_names_);
+    return *cpu_;
+}
+
 Decoding Recognizer::decoding(const std::vector<float> & projected, const std::string & name, DecodeOn on,
-                              const DecodingProgress & progress) const {
-    if (on == DecodeOn::Cpu && cpu_) return cpu_->transducer.decoder(name).decode(projected, cpu_->backend.get(), progress);
-    return device_.decoder(name).decode(projected, backend_, progress);
+                              const DecodingProgress & progress) {
+    if (on == DecodeOn::Device || on_cpu_) return device_.decoder(name).decode(projected, backend_, progress);
+    OnCpu & copy = cpu();
+    return copy.transducer.decoder(name).decode(projected, copy.backend.get(), progress);
 }
 
 std::vector<Segment> Recognizer::segments(const Decoding & decoding) const {

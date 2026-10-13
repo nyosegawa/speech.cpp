@@ -33,8 +33,10 @@ given a pool of its own.
 
 ## Decision
 
-- **A FastConformer model loaded on a GPU also loads the tensors its decodings read into the CPU's memory**, once, in
-  the file's type, beside the copy on the GPU. A model on the CPU keeps no second copy.
+- **A FastConformer model loaded on a GPU copies the tensors its decodings read into the CPU's memory when a request
+  first decodes on the CPU**, once, in the file's type, from its tensors on the GPU, and keeps them beside those. A
+  warm-up decodes on the CPU where the file's default does, so that a server's first request finds the copy made. A
+  model on the CPU keeps no second copy.
 - **The request option `decode_on_cpu` chooses where the decoding computes, and its default follows the file's
   decoding weights**: true where every matrix the decoding multiplies by is quantized (Q8_0 or a K-quant), false where
   they are F16 or F32. The model's information gives the default per file, and a request can ask for either. Every
@@ -69,6 +71,11 @@ The alternatives were turned down:
   to 30% slower than decoding on Metal for every model on the M5, and holds 43 to 70 MB.
 - A copy of F16 weights converted to Q8_0, which the CPU computes fastest. It changes the precision of the weights the
   file holds, which a user chose with the file.
+- The copy loaded with the model. parakeet-tdt-0.6b-v3's F16 file, whose requests decode on the GPU by default, then
+  holds 35 MB that no request reads unless it asks; making the copy when a request first asks took 1 to 8 ms on the
+  M5 for each of the files the names fetch (2026-10-13).
+- The copy read from the file when a request first asks. The file can have been replaced or removed since the model
+  loaded, and the request would fail or decode with other weights than the GPU's.
 - A second copy of the whole model on the CPU. It doubles the memory of the weights, 0.66 GB more for a Q8_0 file and
   1.26 GB for an F16 one, where the decoding reads 2 to 3% of them.
 - The CPU reading the GPU's own buffers. It works only where the GPU's memory is the host's, as Metal's is on Apple
@@ -88,7 +95,7 @@ NeMo's, and with the Q8_0 file the joined 311 s input comes out one word differe
 further, with each decoding. The beam search on that input then runs to its last step, 7,782 where Metal stops at
 4,889, and keeps 0.2 GB more of finished hypotheses.
 
-A FastConformer model on a GPU takes 6 to 50 MB more of the host's memory at its peak for the files the names fetch,
-and a recognition that decodes on the CPU occupies its threads while it decodes. A caller that wants the CPU free or the
+A FastConformer model on a GPU takes the copy's 12 to 35 MB more of the host's memory once a request decodes on the
+CPU, and a recognition that decodes on the CPU occupies its threads while it decodes. A caller that wants the CPU free or the
 GPU's arithmetic sets `decode_on_cpu` to false; one whose CPU decodes F16 weights faster than its GPU's round trip, as
 the M5 does, can set it to true.

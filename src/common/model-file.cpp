@@ -134,7 +134,8 @@ ModelFile::ModelFile(const std::string & path, ggml_backend_t backend, const Lay
                      const std::function<bool(const std::string & name)> & keep)
     : path_(path), architecture_(layout.architecture), remedy_(layout.remedy) {
     open(layout);
-    load(backend, keep);
+    allocate(backend, keep);
+    load();
 }
 
 ModelFile::ModelFile(const std::string & path, const Layout & layout)
@@ -142,10 +143,19 @@ ModelFile::ModelFile(const std::string & path, const Layout & layout)
     open(layout);
 }
 
+ModelFile::ModelFile(const ModelFile & source, ggml_backend_t backend, const std::function<bool(const std::string & name)> & keep)
+    : path_(source.path_), architecture_(source.architecture_), remedy_(source.remedy_), version_(source.version_), gguf_(source.gguf_),
+      ctx_(source.ctx_) {
+    allocate(backend, keep ? keep : [](const std::string &) { return true; });
+    for (ggml_tensor * t = ggml_get_first_tensor(loaded_); t; t = ggml_get_next_tensor(loaded_, t)) {
+        ggml_backend_tensor_copy(source.tensor(ggml_get_name(t)), t);
+    }
+}
+
 void ModelFile::open(const Layout & layout) {
     ggml_context * ctx = nullptr;
     gguf_ = open_gguf(path_, &ctx);
-    ctx_.reset(ctx);
+    ctx_.reset(ctx, ggml_free);
     require_layout_key(gguf_.get(), path_, remedy_);
     const int64_t id = gguf_find_key(gguf_.get(), "general.architecture");
     if (id < 0 || gguf_get_kv_type(gguf_.get(), id) != GGUF_TYPE_STRING) {
@@ -204,7 +214,7 @@ void ModelFile::check_tensors(const Layout & layout) const {
     }
 }
 
-void ModelFile::load(ggml_backend_t backend, const std::function<bool(const std::string & name)> & keep) {
+void ModelFile::allocate(ggml_backend_t backend, const std::function<bool(const std::string & name)> & keep) {
     loaded_ = ctx_.get();
     if (keep) {
         const int64_t n = gguf_get_n_tensors(gguf_.get());
@@ -221,7 +231,9 @@ void ModelFile::load(ggml_backend_t backend, const std::function<bool(const std:
     if (!buffer_) throw Error(Fault::OutOfMemory, "cannot allocate the weights of " + path_ + " on " + ggml_backend_name(backend));
     ggml_backend_buffer_set_usage(buffer_.get(), GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
     for (ggml_tensor * t = ggml_get_first_tensor(loaded_); t; t = ggml_get_next_tensor(loaded_, t)) by_name_.emplace(ggml_get_name(t), t);
+}
 
+void ModelFile::load() {
     std::unique_ptr<FILE, decltype(&std::fclose)> f(ggml_fopen(path_.c_str(), "rb"), &std::fclose);
     if (!f) throw Error(Fault::Io, "cannot open " + path_);
     const uint64_t data_offset = gguf_get_data_offset(gguf_.get());

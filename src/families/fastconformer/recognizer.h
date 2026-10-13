@@ -35,8 +35,8 @@ enum class DecodeOn { Cpu, Device };
 class Recognizer {
 public:
     /**
-     * Loads the model at `path` onto `backend`, and, when `backend` is not the CPU, the tensors of decoding_tensor() a
-     * second time onto a CPU backend of its own that computes with `threads` threads.
+     * Loads the model at `path` onto `backend`. When `backend` is not the CPU, the first decoding on the CPU copies the
+     * tensors of decoding_tensor() from it onto a CPU backend of its own that computes with `threads` threads.
      */
     Recognizer(const std::string & path, ggml_backend_t backend, int threads);
     ~Recognizer();
@@ -59,12 +59,12 @@ public:
      * `name`, computed where `on` says, telling `progress` how far it has come.
      */
     Decoding decoding(const std::vector<float> & projected, const std::string & name, DecodeOn on = DecodeOn::Cpu,
-                      const DecodingProgress & progress = {}) const;
+                      const DecodingProgress & progress = {});
     /** The same with the default decoding. */
-    Decoding decoding(const std::vector<float> & projected) const { return decoding(projected, decodings().front()); }
+    Decoding decoding(const std::vector<float> & projected) { return decoding(projected, decodings().front()); }
 
     /** The token ids of encode()'s output, by the default decoding. */
-    std::vector<int32_t> decode(const std::vector<float> & projected) const { return decoding(projected).ids; }
+    std::vector<int32_t> decode(const std::vector<float> & projected) { return decoding(projected).ids; }
 
     /**
      * The time in seconds of encoder frame `frame` as process_timestamp_outputs() computes it: the frame times the
@@ -91,7 +91,7 @@ public:
     const Decoder & decoder(const std::string & name) const { return device_.decoder(name); }
     const Detokenizer & detokenizer() const { return detokenizer_; }
     /** Whether the model is on the CPU, where DecodeOn::Device decodes too. */
-    bool on_cpu() const { return !cpu_; }
+    bool on_cpu() const { return on_cpu_; }
 
 private:
     /** The prediction network, the joint and the decoders of decodings() over the tensors of one model file. */
@@ -116,7 +116,7 @@ private:
      * each graph, 116, 451 and 504 ms with 1 thread, and 119, 446 and 526 ms decoding on Metal (2026-10-13, medians).
      */
     struct OnCpu {
-        OnCpu(const std::string & path, int threads, const std::vector<std::string> & names);
+        OnCpu(const ModelFile & device, int threads, const std::vector<std::string> & names);
 
         std::unique_ptr<ggml_threadpool, decltype(&ggml_threadpool_free)> pool;
         std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> backend;
@@ -124,13 +124,22 @@ private:
         Transducer transducer;
     };
 
+    /** The copy of the decoding's tensors on the CPU, made when a decoding first computes there. */
+    OnCpu & cpu();
+
     ggml_backend_t backend_;
+    bool on_cpu_;
+    int threads_;
     ModelFile model_;
     Frontend frontend_;
     Encoder encoder_;
     std::vector<std::string> decoding_names_;
     Transducer device_;
-    /** None for a model on the CPU, whose decodings compute on its own tensors. */
+    /**
+     * None for a model on the CPU, whose decodings compute on its own tensors, and for a model on another device until
+     * a decoding first computes on the CPU: the copy takes the host's memory, 35 MB for parakeet-tdt-0.6b-v3's F16
+     * file, which a model whose requests decode on its device never reads.
+     */
     std::unique_ptr<OnCpu> cpu_;
     Detokenizer detokenizer_;
     std::vector<std::string> separators_, breaks_;
