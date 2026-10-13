@@ -98,7 +98,7 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   `pins.py`, which pins the checkpoints by revision, the conversion of the official weights to one GGUF file per
   model, and the scripts that run the official implementation to dump reference tensors. Dumps go to
   `reference/<model>/out/`. `reference/resample/` does the same for the resampler of `src/common/`, against
-  torchaudio.
+  torchaudio. `reference/npy_to_wav.py` writes the audio of a dump as a WAVE file.
 
 Keep these boundaries explicit: code does not reach past its module for an operation that belongs to
 another one.
