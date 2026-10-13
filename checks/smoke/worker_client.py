@@ -2,13 +2,17 @@
 it speaks, and on every line it reads it checks that the line is one JSON object with a string "type", that a chunk,
 progress or terminal message belongs to a request in flight, and that a request gets exactly one terminal message (end, error or cancelled) and
 nothing for its id after it. It also compares the model information of ready with `speech info --json`, reads the
-requests a recognition model's reference dumped, and holds the paragraph and the character error rate with which the
+requests a recognition model's reference dumped, with the texts they must give, and holds the paragraph and the character error rate with which the
 smoke scripts check a long text spoken a sentence at a time.
 """
 
+import array
+import ast
 import json
 import os
+import struct
 import subprocess
+import tempfile
 import time
 import unicodedata
 
@@ -170,7 +174,28 @@ def check_model_information(speech, model, loaded, added_voices=()):
         raise SystemExit(f"the loaded model's information differs from speech info --json:\n  {json.dumps(got)[:600]}\n  {json.dumps(want)[:600]}")
 
 
-def dump_requests(speech, model, dump):
+def read_npy(path):
+    """The float32 samples of a dump's .npy file."""
+    with open(path, "rb") as f:
+        data = f.read()
+    header_length = struct.unpack("<H", data[8:10])[0]
+    header = ast.literal_eval(data[10:10 + header_length].decode())
+    assert header["descr"] == "<f4" and len(header["shape"]) == 1, header
+    values = array.array("f")
+    values.frombytes(data[10 + header_length:])
+    return values
+
+
+def pcm16(samples):
+    """Float samples as 16-bit little-endian PCM, scaled as the worker scales them back (by 32768)."""
+    return array.array("h", [max(-32768, min(32767, round(x * 32768))) for x in samples]).tobytes()
+
+
+# general.file_type of the weight types whose texts are the reference's: F32 and F16.
+REFERENCE_TYPES = (0, 1)
+
+
+def dump_requests(speech, model, dump, options=()):
     """The requests of a dump of a recognition model's reference, each as (name, members, text, languages): for one of
     reference/fastconformer/dump.py, the request without options, the dump's text and no language, since FastConformer
     writes none, then, for a model that takes the option decoding (read with speech info --json), a request with each
@@ -178,7 +203,12 @@ def dump_requests(speech, model, dump):
     reference/qwen3-asr/dump.py, which keeps each request in a folder of its own, auto, forced, auto-prompt and
     forced-prompt, the forced language given by the tag of general.languages whose name qwen3-asr.language_names gives
     (read with speech info --json --meta), the prompt by its text, and the language qwen-asr parsed by its tag, or
-    none."""
+    none.
+
+    The text and languages are the reference's for weights in F32 or F16. A quantized file's rounding may change a word
+    of a long recording, which points to no defect of the entry point a smoke script drives, so for one the text and
+    languages are what `speech asr` of the same build gives for the dump's audio as 16-bit samples, with the request's
+    members and `options`, the flags that started the worker or the server."""
     def text(folder):
         with open(os.path.join(folder, "text.txt"), encoding="utf-8") as f:
             return f.read()
@@ -187,7 +217,8 @@ def dump_requests(speech, model, dump):
         r = subprocess.run([speech, "info", model, "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
         decoding = [o for o in json.loads(r.stdout)["options"] if o["name"] == "decoding"]
         others = [c for o in decoding for c in o["choices"] if c != o["default"]]
-        return [("auto", {}, text(dump), [])] + [(c, {"decoding": c}, text(os.path.join(dump, c)), []) for c in others]
+        requests = [("auto", {}, text(dump), [])] + [(c, {"decoding": c}, text(os.path.join(dump, c)), []) for c in others]
+        return library_texts(speech, model, dump, options, requests)
     r = subprocess.run([speech, "info", model, "--json", "--meta"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     meta = json.loads(r.stdout)["meta"]
     tags = dict(zip(meta["qwen3-asr.language_names"], meta["general.languages"]))
@@ -202,7 +233,32 @@ def dump_requests(speech, model, dump):
         if asked["prompt"]:
             members["prompt"] = asked["prompt"]
         requests.append((name, members, text(folder), [tags[asked["parsed_language"]]] if asked["parsed_language"] else []))
-    return requests
+    return library_texts(speech, model, dump, options, requests)
+
+
+def library_texts(speech, model, dump, options, requests):
+    """`requests` as they are for weights in F32 or F16, and otherwise with the text and languages of `speech asr`."""
+    r = subprocess.run([speech, "info", model, "--json", "--meta"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    meta = json.loads(r.stdout)["meta"]
+    if meta["general.file_type"] in REFERENCE_TYPES:
+        return requests
+    rate = json.loads(r.stdout)["sample_rate"]
+    pcm = pcm16(read_npy(os.path.join(dump, "audio.npy")))
+    with tempfile.TemporaryDirectory() as temp:
+        path = os.path.join(temp, "dump.wav")
+        with open(path, "wb") as f:
+            f.write(b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+                    + b"data" + struct.pack("<I", len(pcm)) + pcm)
+        found = []
+        for name, members, _, _ in requests:
+            flags = [x for k, v in members.items() for x in ("--" + k.replace("_", "-"), v)]
+            r = subprocess.run([speech, "asr", model, path, "--format", "json", *options, *flags], stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE)
+            if r.returncode != 0:
+                raise SystemExit(f"speech asr exited with {r.returncode} on {dump}: {r.stderr.decode(errors='replace')[-800:]}")
+            end = json.loads(r.stdout)
+            found.append((name, members, end["text"], end.get("languages", [])))
+    return found
 
 
 # The blocks of the scripts written without spaces between words: Han, Hiragana and Katakana with their radicals,
