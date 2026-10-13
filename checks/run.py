@@ -83,6 +83,9 @@ class Model:
         self.type = FILE_TYPES.get(keys.get("general.file_type"), str(keys.get("general.file_type")))
         self.layout = keys["speech.layout"]
         self.repository = keys.get("general.source.repo_url", "")
+        # general.source.url names the revision, as https://huggingface.co/<repository>/tree/<revision>.
+        self.revision = keys.get("general.source.url", "").rstrip("/").rsplit("/", 1)[-1]
+        self.captions = bool(keys.get("irodori-tts.caption_condition"))
 
     def label(self):
         return f"{self.name} {self.type}"
@@ -151,6 +154,13 @@ def missing(check, what, path):
     return Run(check, [], None, what, f"no {path}")
 
 
+def reading(paths, runs):
+    """The runs of a check, or, where a file or folder it reads besides the model's dumps is missing, a skip of each that
+    names it."""
+    absent = [p for p in paths if not os.path.exists(p)]
+    return [Run(r.check, [], None, r.what, f"no {absent[0]}") for r in runs] if absent else runs
+
+
 def named_dumps(check, model, out):
     """The skip of a check whose model has no dumps under <out>/<general.name>/, or None."""
     d = os.path.join(out, model.name)
@@ -176,10 +186,13 @@ def qwen3_tts(model, devices, ctx):
     sampling = os.path.join(out, "sampling")
     for i, device in enumerate(devices):
         if text:
-            runs.append(runs_on(device, "qwen3-decoder-check", model, [text]))
+            runs += attentions(device, "qwen3-decoder-check", model, [text])
         else:
             runs.append(missing("qwen3-decoder-check", model.label(), "text: no dump's meta.json under " + out))
-        own = [d for d, meta in dumps if meta.get("model_dir") == model.name]
+        # dump.py records the base name of the checkpoint's folder: the repository's name, or the revision of a Hugging
+        # Face snapshot.
+        checkpoint = {model.repository.rstrip("/").rsplit("/", 1)[-1], model.revision}
+        own = [d for d, meta in dumps if meta.get("model_dir") in checkpoint]
         runs += [runs_on(device, "qwen3-tts-talker-check", model, [d], " " + os.path.basename(d)) for d in own]
         if not own:
             runs.append(missing("qwen3-tts-talker-check", model.label(), f"dump of {model.name} under {out}"))
@@ -195,17 +208,16 @@ def qwen3_tts(model, devices, ctx):
 
 
 def decoder_text(dumps, ctx):
-    """A text for qwen3-decoder-check, which needs one of several blocks of rows: --decoder-text, or the Qwen3-TTS
-    dumps' texts repeated to some 3,000 characters, written to the logs folder."""
+    """A text for qwen3-decoder-check, which repeats it until its rows fill the blocks it needs: --decoder-text, or the
+    Qwen3-TTS dumps' texts, written to the logs folder."""
     if ctx.decoder_text:
         return ctx.decoder_text
     texts = [meta["text"] for _, meta in dumps if meta.get("text")]
     if not texts:
         return None
-    joined = "".join(texts)
     path = os.path.join(ctx.logs, "qwen3-decoder-text.txt")
     with open(path, "w", encoding="utf-8") as f:
-        f.write(joined * (3000 // len(joined) + 1))
+        f.write("".join(texts))
     return path
 
 
@@ -228,7 +240,10 @@ def irodori_tts(model, devices, ctx):
         if all((refs, m.get("ref_normalize_db", "model")) != (r, n) for _, r, n in codec):
             codec.append((os.path.join(out, d), refs, m.get("ref_normalize_db", "model")))
     for i, device in enumerate(devices):
-        runs.append(runs_on(device, "irodori-text-check", model, [out]))
+        cases = [os.path.join(out, "text", "text-cases.tsv")]
+        if model.captions:
+            cases.append(os.path.join(out, "caption", "caption-cases.tsv"))
+        runs += reading(cases, [runs_on(device, "irodori-text-check", model, [out])])
         runs.append(runs_on(device, "irodori-condition-check", model, [out]))
         runs += attentions(device, "irodori-dit-check", model, [out])
         if not ctx.references:
@@ -260,8 +275,8 @@ def qwen3_asr(model, devices, ctx):
         runs.append(missing("tokenizer-check", model.label(), cases))
     for device in devices:
         runs.append(runs_on(device, "qwen3-asr-encoder-check", model, [out]))
-        runs += attentions(device, "qwen3-asr-decoder-check", model, [out])
-        runs.append(runs_on(device, "qwen3-asr-split-check", model, [out]))
+        runs += reading([os.path.join(out, "parse-cases.jsonl")], attentions(device, "qwen3-asr-decoder-check", model, [out]))
+        runs += reading([os.path.join(out, "split")], [runs_on(device, "qwen3-asr-split-check", model, [out])])
     return runs
 
 
@@ -352,7 +367,7 @@ def main():
     p.add_argument("--models", nargs="+", help="model files or folders to look in (default: models/ and the model cache)")
     p.add_argument("--reference", default=os.path.join(REPO, "reference"), help="the folder of <family>/out/")
     p.add_argument("--references", help="the folder of the reference WAVE files Irodori-TTS's dumps name")
-    p.add_argument("--decoder-text", help="the text qwen3-decoder-check runs (default: the Qwen3-TTS dumps' texts, repeated)")
+    p.add_argument("--decoder-text", help="the text qwen3-decoder-check runs (default: the Qwen3-TTS dumps' texts)")
     p.add_argument("--only", nargs="+", help="run only these checks, by executable name")
     p.add_argument("--logs", help="the folder for each check's output (default: a new temporary folder)")
     p.add_argument("--gpu-lock", help="a file to lock while a check runs on a GPU")
