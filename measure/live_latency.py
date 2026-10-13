@@ -48,7 +48,8 @@ usage: uv run --script measure/live_latency.py <work dir> --build NAME=SPEECH...
   as the models list it (ja, en). Every model runs on the sets of its languages. Without --models: qwen3-asr-0.6b,
   qwen3-asr-1.7b, reazonspeech-v2, parakeet-tdt_ctc-0.6b-ja and parakeet-tdt-0.6b-v3. --set is needed only while the
   sessions of that language are not yet in the work folder, and --rounds 0 only makes them; --sessions and --turns
-  apply only then.
+  apply only then. Options after -- go to every `speech serve`, except the detection model's, which the measure keeps
+  at server_vad's defaults.
 
 e.g. uv run --script measure/live_latency.py work --build 0.8.4=old/speech --build new=build/bin/speech \\
          --set ja=~/speech-bench-data/fleurs/<revision>/ja_jp/test --set en=~/speech-bench-data/fleurs/<revision>/en_us/test
@@ -271,14 +272,16 @@ class Session:
                 return
 
     def wait(self, done):
-        """Waits until done(events) holds; a session the server ends or fails ends the measure."""
+        """Waits until done(events) holds; a session the server ends or fails ends the measure, even where done holds."""
         with self.changed:
-            while not done([e for _, e in self.events if e is not None]):
-                if self.events and self.events[-1][1] is None:
-                    raise SystemExit("the server closed the session")
+            while True:
                 errors = [e for _, e in self.events if e and e["type"] == "error"]
                 if errors:
                     raise SystemExit(f"the server answered an error: {errors[0]}")
+                if done([e for _, e in self.events if e is not None]):
+                    return
+                if self.events and self.events[-1][1] is None:
+                    raise SystemExit("the server closed the session")
                 self.changed.wait(1)
 
     def stream(self, pcm, chunk):
@@ -387,12 +390,22 @@ def peak_memory(process):
     return None
 
 
-def model_languages(speech, model):
-    """The languages of a model, from its file's metadata alone."""
+def model_info(speech, model):
+    """A model's information, from its file's metadata alone."""
     r = subprocess.run([speech, "info", model, "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if r.returncode != 0:
         raise SystemExit(f"speech info {model} exited with {r.returncode}: {r.stderr.decode(errors='replace')[-800:]}")
-    return set(json.loads(r.stdout)["languages"])
+    return json.loads(r.stdout)
+
+
+def check_serve(speech, vad, serve):
+    """Refuses serve options that set a detection option: they would replace server_vad's defaults in the server, while
+    the reference of the sessions and the regions the offline texts are made of assume those defaults."""
+    names = {o["name"] for o in model_info(speech, vad)["options"]}
+    given = [a for a in serve if a.startswith("--") and a[2:].split("=", 1)[0].replace("-", "_") in names]
+    if given:
+        raise SystemExit(f"{', '.join(given)} after -- would change the server's detection, which this measure keeps at "
+                         "server_vad's defaults; leave the detection options out")
 
 
 def run(work, label, speech, model, vad, serve, names, chunk_ms, round_number):
@@ -507,6 +520,7 @@ def main():
             raise SystemExit(f"--build {label}: {speech} does not exist")
     vad = named["--vad"][0]
     first_build = next(iter(builds.values()))
+    check_serve(first_build, vad, serve)
     folder = os.path.join(work, "sessions")
     made = {n[:-len(".json")].rsplit("-", 1)[0] for n in os.listdir(folder) if n.endswith(".json")} if os.path.isdir(folder) else set()
     names = []
@@ -518,7 +532,7 @@ def main():
     rounds = int(named["--rounds"][0])
     for round_number in range(rounds):
         for model in named["--models"]:
-            spoken = model_languages(first_build, model)
+            spoken = set(model_info(first_build, model)["languages"])
             mine = [n for n in names if n.rsplit("-", 1)[0] in spoken]
             if not mine:
                 print(f"{model} takes none of the sessions' languages ({', '.join(sorted(set(sets) | made))}); skipped", flush=True)
