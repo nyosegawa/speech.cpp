@@ -227,8 +227,10 @@ holds steps these rules do not repeat.
 - `adr`: a decision settled or an approach turned down for good, a change that contradicts a record, or tidying
   `docs/adr/`.
 - `docs`: a change that alters what a user does or sees, or writing a page of README.md or `docs/`.
-- `pull-request`: starting a change, committing, opening a pull request, its review and CI, merging, cleaning up, and
-  taking back a subagent's branch.
+- `ggml-fork`: a fix or a speed-up in the ggml fork, its `test-backend-ops` cases, and moving the submodule.
+- `pull-request`: starting a change, committing, opening a pull request, its review and CI, stacked pull requests,
+  merging, cleaning up, and taking back a subagent's branch.
 - `release`: model files and cards on Hugging Face, the catalog, the numbers measured again, raising `VERSION`, the
   README's screenshots of the page, the tag and checking the release.
+- `speed-up`: making a model faster or smaller in memory, measuring the gain and checking the output.
 - `windows-check`: checking a change on a Windows machine with a Vulkan GPU.
