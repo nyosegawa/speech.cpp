@@ -40,7 +40,7 @@ The result gives the language the model heard, or the forced one: the worker's a
 
 Audio over 1200 s is cut as qwen-asr cuts it, at the quietest point near each 1200 s, and each part is recognized alone.
 The texts are joined, and the languages listed in the order of the audio, so a recording heard in Japanese and then in
-English gives `ja` and `en`. The memory is that of the longest part.
+English gives `ja` and `en`. The peak memory is that of the longest part.
 
 A part stops at the 4096 tokens the model writes at most, and the request then says `model_limit`, with the text of
 every part. A recording of over a few minutes may reach them: on 20 minutes of read Japanese, the 0.6B model repeats a
@@ -67,9 +67,9 @@ On the 4,483 utterances of Common Voice 8.0's Japanese test set, trimmed to the 
 
 Each model comes in four types; `NAME:TYPE` fetches one (`speech asr qwen3-asr-1.7b:q6_k`). speech-bench on 2026-10-12,
 on an Apple M5 with Metal: the CER on Common Voice 8.0's 4,483 Japanese test utterances, and after the slash the CER
-accepting other spellings of the same words. The memory is the peak of one request.
+accepting other spellings of the same words. The peak memory is that of one request.
 
-| Type | 0.6B file | Memory | CER | 1.7B file | Memory | CER |
+| Type | 0.6B file | Peak memory | CER | 1.7B file | Peak memory | CER |
 |---|---|---|---|---|---|---|
 | Q8_0 | 0.84 GB | 1.00 GB | 11.89% / 7.05% | 2.18 GB | 2.34 GB | 9.49% / 4.67% |
 | Q6_K | 0.68 GB | 0.84 GB | 12.01% / 7.02% | 1.68 GB | 1.85 GB | 9.52% / 4.72% |
@@ -83,11 +83,11 @@ In the 0.6B model's Q6_K, Q5_K and Q4_K files, the encoder and the projector sta
 speech-bench on 2026-10-08: Common Voice's Japanese test set, Q8_0, one utterance at a time, the language left to the
 model.
 
-| Model | Median, M5 / RTX 2080 | p90, M5 / RTX 2080 |
+| Model | p50 latency, M5 / RTX 2080 | p90 latency, M5 / RTX 2080 |
 |---|---|---|
 | 0.6B | 0.132 s / 0.087 s | 0.231 s / 0.158 s |
 | 1.7B | 0.309 s / 0.155 s | 0.544 s / 0.286 s |
 
-Beside llama.cpp b11246 with ggml-org's Q8_0 files on the same day, the medians are the same on the M5, where
+Beside llama.cpp b11246 with ggml-org's Q8_0 files on the same day, the p50 latencies are the same on the M5, where
 llama.cpp's p90 is 8% lower, and speech.cpp's are 10% to 17% lower on the RTX 2080. 1338 s of audio take 120 s with
-the 0.6B model, nearly all of it the first part's 4096 tokens, with a peak memory footprint of 2.03 GB.
+the 0.6B model, nearly all of it the first part's 4096 tokens, with a peak memory of 2.03 GB.

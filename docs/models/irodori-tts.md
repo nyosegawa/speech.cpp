@@ -136,11 +136,11 @@ On a GPU the audio is the same speech rather than the same waveform, since the G
 
 Each model comes in five types; `NAME:TYPE` fetches one (`speech tts irodori-tts:q8_0`). speech-bench on 2026-10-12, on
 an Apple M5 with Metal: the 20 sentences of its `prompts/speak-ja-JP.json` in a voice file of one reference, seeds 1, 2
-and 3, v4.1-Small with 16 steps, as Qwen3-ASR 1.7B hears them. The memory is the peak of one request. The codec stays
+and 3, v4.1-Small with 16 steps, as Qwen3-ASR 1.7B hears them. The peak memory is that of one request. The codec stays
 F32 in every type, which is why the files shrink less than the other models'. The CER of one type moves by a point or
 two from seed to seed; v4.1-Small-MF's is higher in every quantized type than in F16.
 
-| Type | v4.1-Small-MF file | Memory | CER | v4.1-Small file | Memory | CER |
+| Type | v4.1-Small-MF file | Peak memory | CER | v4.1-Small file | Peak memory | CER |
 |---|---|---|---|---|---|---|
 | F16 | 1.92 GB | 2.04 GB | 5.92% | 1.91 GB | 2.03 GB | 3.43% |
 | Q8_0 | 1.21 GB | 1.33 GB | 8.35% | 1.20 GB | 1.32 GB | 4.09% |
@@ -151,15 +151,16 @@ two from seed to seed; v4.1-Small-MF's is higher in every quantized type than in
 ## Speed
 
 speech-bench on 2026-10-08: the 20 sentences of its `prompts/speak-ja-JP.json` in a voice file of one reference, seed
-1, one request at a time through the worker, F16. The CER is of the speech as Qwen3-ASR 1.7B hears it.
+1, one request at a time through the worker, F16. The RTFx is the seconds of audio over the seconds they took, so
+larger is faster. The CER is of the speech as Qwen3-ASR 1.7B hears it.
 
-| Model | Device | Median first audio | p90 first audio | Real-time factor | CER |
+| Model | Device | Time to first audio, p50 | Time to first audio, p90 | RTFx | CER |
 |---|---|---|---|---|---|
-| v4.1-Small-MF, 4 steps | Apple M5, Metal | 0.25 s | 0.52 s | 0.17 | 6.1% |
-| v4.1-Small, 16 steps | Apple M5, Metal | 1.24 s | 3.40 s | 0.34 | 3.2% |
-| v4.1-Small-MF, 4 steps | RTX 2080, Vulkan | 0.12 s | 0.20 s | 0.07 | 7.1% |
-| v4.1-Small, 16 steps | RTX 2080, Vulkan | 0.52 s | 1.12 s | 0.13 | 3.2% |
+| v4.1-Small-MF, 4 steps | Apple M5, Metal | 0.25 s | 0.52 s | 5.9 | 6.1% |
+| v4.1-Small, 16 steps | Apple M5, Metal | 1.24 s | 3.40 s | 2.9 | 3.2% |
+| v4.1-Small-MF, 4 steps | RTX 2080, Vulkan | 0.12 s | 0.20 s | 14 | 7.1% |
+| v4.1-Small, 16 steps | RTX 2080, Vulkan | 0.52 s | 1.12 s | 7.7 | 3.2% |
 
-The first audio waits for the whole sentence's sampling, so it grows with the sentence. v4.1-Small's default of 40
-steps takes about 2.4 times as long as 16. Over the same 20 sentences on the M5, the worker's memory peaks at 2.06 GB
+The time to first audio includes the whole sentence's sampling, so it grows with the sentence. v4.1-Small's default of
+40 steps takes about 2.4 times as long as 16. Over the same 20 sentences on the M5, the worker's peak memory is 2.06 GB
 with F16 weights and 1.35 GB with Q8_0, which speaks as fast.

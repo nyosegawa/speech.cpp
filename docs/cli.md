@@ -101,7 +101,7 @@ speech tts MODEL -o FILE|- [options] [TEXT]
   removes the WAVE file it was writing.
 - Text on stdin is UTF-8.
 - stderr reports the load time and, for each text, its seconds of audio, how many requests it took when more than one,
-  the time to its first audio and to its end, and the real-time factor.
+  its time to first audio, the time to its end, and its RTFx, the seconds of audio over the seconds they took.
 
 ## speech asr
 
@@ -123,7 +123,7 @@ speech asr MODEL [options] AUDIO.wav...|-|--live
 - `json` writes `{"file":…,"text":…,"stop":…}` for each file, with `"languages"` where the model names the languages it
   heard (Qwen3-ASR), and `"segments"` and `"tokens"` with `--timestamps`, in the form of the worker's `end`
   ([worker.md](worker.md#answers)).
-- stderr reports the load and, for each file, its seconds of audio, the time to its text and the real-time factor. It also
+- stderr reports the load time and, for each file, its seconds of audio, the time to its text and the RTFx. It also
   reports a recognition that stopped at the most tokens the model writes (4096 for Qwen3-ASR); the command then exits
   with 3 once every file's text is written.
 - A failure names the file. The lines of the files before it are already on stdout.
@@ -204,8 +204,8 @@ speech vad MODEL [options] AUDIO.wav...
 - `--split DIR` also writes each region as a mono 16-bit WAVE file at the file's rate in DIR, which it makes if it is not
   there: `meeting-1.wav`, `meeting-2.wav` and so on, numbered with as many digits as the last number so that they sort
   in order. Files of one name in different folders are refused, since their regions would take the same names.
-- stderr reports the load and, for each file, its seconds of audio, the time to its regions, the real-time factor and
-  the number of regions.
+- stderr reports the load time and, for each file, its seconds of audio, the time to its regions, the RTFx and the
+  number of regions.
 
 ## speech voice
 

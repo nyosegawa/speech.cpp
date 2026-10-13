@@ -60,10 +60,10 @@ Every stage is checked against the official implementation's tensors:
 
 Each model comes in four types; `NAME:TYPE` fetches one (`speech tts qwen3-tts-0.6b:q6_k`). speech-bench on 2026-10-12,
 on an Apple M5 with Metal: the 20 sentences of its `prompts/speak-ja-JP.json` with `ono_anna` and seeds 1, 2 and 3, as
-Qwen3-ASR 1.7B hears them. The memory is the peak of one request. The CER of one type moves by a few points from seed to
+Qwen3-ASR 1.7B hears them. The peak memory is that of one request. The CER of one type moves by a few points from seed to
 seed, so only a larger difference, such as the 0.6B model's Q4_K, tells two types apart.
 
-| Type | 0.6B file | Memory | CER | 1.7B file | Memory | CER |
+| Type | 0.6B file | Peak memory | CER | 1.7B file | Peak memory | CER |
 |---|---|---|---|---|---|---|
 | Q8_0 | 1.21 GB | 1.37 GB | 6.14% | 2.29 GB | 2.44 GB | 6.25% |
 | Q6_K | 0.99 GB | 1.15 GB | 6.03% | 1.82 GB | 1.98 GB | 4.42% |
@@ -73,17 +73,18 @@ seed, so only a larger difference, such as the 0.6B model's Q4_K, tells two type
 ## Speed
 
 speech-bench on 2026-10-08: the 20 sentences of its `prompts/speak-ja-JP.json` with the speaker `ono_anna`, one
-request at a time through the worker, Q8_0. The CER is of the speech as Qwen3-ASR 1.7B hears it.
+request at a time through the worker, Q8_0. The RTFx is the seconds of audio over the seconds they took, so larger is
+faster. The CER is of the speech as Qwen3-ASR 1.7B hears it.
 
-| Model | Device | Median first audio | p90 first audio | Real-time factor | CER |
+| Model | Device | Time to first audio, p50 | Time to first audio, p90 | RTFx | CER |
 |---|---|---|---|---|---|
-| 0.6B | Apple M5, Metal | 0.038 s | 0.054 s | 0.31 | 5.8% |
-| 1.7B | Apple M5, Metal | 0.060 s | 0.110 s | 0.42 | 3.0% |
-| 0.6B | RTX 2080, Vulkan | 0.031 s | 0.039 s | 0.27 | 8.0% |
-| 1.7B | RTX 2080, Vulkan | 0.039 s | 0.052 s | 0.32 | 2.8% |
+| 0.6B | Apple M5, Metal | 0.038 s | 0.054 s | 3.2 | 5.8% |
+| 1.7B | Apple M5, Metal | 0.060 s | 0.110 s | 2.4 | 3.0% |
+| 0.6B | RTX 2080, Vulkan | 0.031 s | 0.039 s | 3.7 | 8.0% |
+| 1.7B | RTX 2080, Vulkan | 0.039 s | 0.052 s | 3.1 | 2.8% |
 
 On the RTX 2080 the 0.6B model takes 1.6 GB of video memory and the 1.7B 2.7 GB.
 
-The first audio is the first chunk. The 0.6B model often begins its speech with silence, so the voice is heard later:
+The time to first audio is the time to the first chunk. The 0.6B model often begins its speech with silence, so the voice is heard later:
 on the M5, half a second after the request in the median, from 0.24 s to 0.48 s by speaker and up to 1.9 s. The official
 implementation does the same, 0.89 s in the median over 20 takes of `ono_anna`. The 1.7B model begins with 0.10 s.

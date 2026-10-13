@@ -184,6 +184,9 @@ another one.
   as data: texts to speak and model output. The one exception is README.ja.md, README.md in Japanese, which says what
   README.md says; a pull request that changes README.md changes README.ja.md the same way.
 - An error message names what failed and what to do.
+- Speed is RTFx, the seconds of audio over the seconds they took, so that larger is faster, as Hugging Face's Open ASR
+  Leaderboard gives it. The other figures take their common names: the time to first audio of a synthesis, the load
+  time, the peak memory, and latencies as p50, p90 and p99. The tools' output and the documentation say them alike.
 
 ## Decisions
 

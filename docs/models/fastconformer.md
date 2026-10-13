@@ -78,10 +78,10 @@ FLEURS is 8.76%.
 Each model comes in five types; `NAME:TYPE` fetches one (`speech asr parakeet-tdt-0.6b-v3:q8_0`). speech-bench on
 2026-10-12, on an Apple M5 with Metal: the CER on Common Voice 8.0's 4,483 Japanese test utterances, and after the slash
 the CER accepting other spellings of the same words, and parakeet-tdt-0.6b-v3's WER on 300 English utterances of
-FLEURS. The memory is the peak of one request. The file and the memory are the same for the three models within
+FLEURS. The peak memory is that of one request. The file and the peak memory are the same for the three models within
 0.03 GB.
 
-| Type | File | Memory | parakeet-tdt_ctc-0.6b-ja | reazonspeech-nemo-v2, beam search | parakeet-tdt-0.6b-v3 |
+| Type | File | Peak memory | parakeet-tdt_ctc-0.6b-ja | reazonspeech-nemo-v2, beam search | parakeet-tdt-0.6b-v3 |
 |---|---|---|---|---|---|
 | F16 | 1.24 GB | 1.37 GB | 7.88% / 2.98% | 12.02% / 7.13% | 8.76% |
 | Q8_0 | 0.66 GB | 0.78 GB | 7.93% / 3.00% | 12.05% / 7.15% | 9.06% |
@@ -97,7 +97,7 @@ speech-bench on 2026-10-12, one request at a time, with the files the names fetc
 and reazonspeech-nemo-v2 on the first 100 utterances of Common Voice 8.0's Japanese test set (99 kept by VAD), and F16
 for parakeet-tdt-0.6b-v3 on 300 English utterances of FLEURS (299 kept).
 
-| Model | Utterances | Median, M5 / RTX 2080 | p90, M5 / RTX 2080 |
+| Model | Utterances | p50 latency, M5 / RTX 2080 | p90 latency, M5 / RTX 2080 |
 |---|---|---|---|
 | parakeet-tdt_ctc-0.6b-ja | Common Voice ja | 0.051 s / 0.040 s | 0.072 s / 0.079 s |
 | reazonspeech-nemo-v2, beam search | Common Voice ja | 0.081 s / 0.107 s | 0.127 s / 0.197 s |

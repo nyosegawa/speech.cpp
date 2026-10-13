@@ -101,7 +101,7 @@ int main(int argc, char ** argv) {
             std::printf("%s: %zu samples (official %zu), %d frames\n", name.c_str(), audio.size(), official.f32.size(),
                         stats.frames);
             print_diff("  audio against the official", da);
-            std::printf("  first audio %.3f s: text and duration %.3f s, sampling %.3f s, codec %.3f s in all\n", stats.first_audio,
+            std::printf("  time to first audio %.3f s: text and duration %.3f s, sampling %.3f s, codec %.3f s in all\n", stats.first_audio,
                         stats.text, stats.sampling, stats.codec);
             ok = ok && audio.size() == official.f32.size() && da.snr_db > least_snr_db(name);
         }
