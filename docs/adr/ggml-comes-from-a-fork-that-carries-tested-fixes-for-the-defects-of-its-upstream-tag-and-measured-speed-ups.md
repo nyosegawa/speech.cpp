@@ -3,7 +3,7 @@
 ## Context
 
 speech.cpp builds ggml from a git submodule. ggml-org/ggml v0.25.3 gives speech.cpp's models wrong results on two
-supported platforms:
+supported platforms, in three places:
 
 - **Metal's tensor API.** On the M5, M6, A19 and A20, Metal runs matrix products through Metal 4's tensor API by
   default. On an Apple M5 its `kernel_mul_mm` stores its tile past the output when 64 columns remain, so an output of 64
@@ -19,7 +19,14 @@ supported platforms:
   Q4_K, Q5_K, Q2_0 and IQ1_S read that sum, and Qwen3-TTS's activations sum past 65504 in a block, so its Q4_K and Q5_K
   files gave no finite logit on an RTX 2080, where the CPU and Metal spoke.
 
-ggml reads no setting that avoids either through its API, only environment variables: `GGML_METAL_TENSOR_DISABLE`,
+- **Vulkan's ROPE reading its positions in a view.** Vulkan binds a buffer at its offset rounded down to the device's
+  `minStorageBufferOffsetAlignment`, and a shader adds the rest back. ROPE's shaders did so for their input and output
+  but not for the positions or the frequency factors, so a ROPE whose positions are a view that does not start on that
+  alignment rotated by another row's positions. Qwen3-TTS's code predictor, which reads each step's positions as a view
+  of one input when it runs a frame in one graph, gave logits 1.37 in relative error from the reference on an RTX 2080
+  (16 bytes of alignment), against 0.034 a step at a time, and its CER rose from 15.9% to 20.0% (2026-10-13).
+
+ggml reads no setting that avoids the first two through its API, only environment variables: `GGML_METAL_TENSOR_DISABLE`,
 which it reads only while it lists its devices, so that a library sets it in its host's process, unsafely while another
 thread reads the environment; and `GGML_VK_DISABLE_MMVQ`, which it reads when it first creates each Vulkan device, and
 which also moves Q8_0's batched products off their kernels. ggml-org/ggml master on 2026-10-12 has the same code.
@@ -43,6 +50,8 @@ as reshapes.
   dequantizing kernels, which then accumulate in F32 as the q8_1 kernels do, whatever precision the product asks for:
   in half precision, which they take by default, a product past 65504 is clipped. Q8_0, Q6_K and the other types keep
   the q8_1 path.
+- **Vulkan's ROPE adds the offsets of its positions and frequency factors in a view**, as it adds those of its input
+  and output.
 - **Metal and Vulkan fuse Snake with the channels along `ne[0]`** as they fuse it with the channels along `ne[1]`.
 - **A speed-up is a commit of its own, with `test-backend-ops` cases that show it correct in the same commit, and its
   effect measured on Metal and on the Windows machine's Vulkan GPU, with the numbers and their conditions (the model,
@@ -54,9 +63,11 @@ as reshapes.
   |---|---|---|
   | Metal's tensor API off | `test-backend-ops -o MUL_MAT`: F16 products of 64 and 192 columns, with `GGML_METAL_TENSOR_ENABLE` on an M5, M6, A19 or A20; and the stage checks of speech.cpp on Metal | the tag's tensor API passes those cases and every stage check, and is no slower in speech-bench |
   | Vulkan's q8_1 block sums | `test-backend-ops -o MUL_MAT -p large_b`: Q4_0, Q5_0, Q4_K and Q5_K products of activations from 2048 to 4096, and of activations from 512 to 1024 with weights from 0.5 to 1, on Vulkan | the tag passes those cases |
+  | Vulkan's ROPE offsets | `test-backend-ops -o ROPE` and `-o ROPE_BACK`: the cases with `v=4`, whose positions and frequency factors are views one element into a longer tensor, on Vulkan | the tag passes those cases |
   | Snake fused with the channels along `ne[0]` (speed-up) | `test-backend-ops -o SNAKE_FUSE`: the cases with `channels_first=1`, on Metal and Vulkan | the tag fuses Snake in that layout |
 
-  Moving ggml to a newer tag starts the branch again from that tag: the commit of cases first, on which they run on the
+  Between tags, a fix found later is a commit of its own on top, with its cases. Moving ggml to a newer tag starts the
+  branch again from that tag: the commit of cases first, on which they run on the
   devices above, then each fix the table still calls for, then each speed-up the tag still lacks.
 
 The alternatives were turned down:
