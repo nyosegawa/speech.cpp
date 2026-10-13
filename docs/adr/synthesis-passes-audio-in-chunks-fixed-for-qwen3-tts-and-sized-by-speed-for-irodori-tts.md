@@ -52,6 +52,13 @@ The alternatives were turned down:
   second of audio for nothing and break the stream into twice the chunks.
 - A floor of 12 for Irodori-TTS's later windows. It decodes 75% more per second of audio than 48, which a machine that
   decodes 48-frame windows barely faster than real time cannot afford.
+- Later Irodori-TTS windows past 48 frames, up to 96, whenever their expected decoding fits the second window's wait.
+  v4.1-Small-MF F16 spoke speech-bench's 20 sentences 7.0% faster on an Apple M5 (2026-10-13), but only by spending the
+  listener's slack: its second window arrived with 0.05 to 0.1 s of audio left to play instead of 0.16 to 0.19 s, and a
+  window seen taking 1.64 times its estimate on a shared GPU would have run the stream dry. Growing a window only once
+  the listener holds the audio of the frames it decodes kept that slack but gained 1.4%, within the noise, since only
+  sentences longer than about 6.2 s reach a third window, and each frame a window decodes adds about 3.5 MiB to the
+  codec's buffers on the device (226 MiB at 48 frames, 394 MiB at 96).
 
 ## Consequences
 
