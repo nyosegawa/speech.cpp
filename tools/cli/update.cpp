@@ -178,7 +178,11 @@ int run_installer() {
     CloseHandle(process.hProcess);
     return (int) code;
 #else
-    const std::string script = std::string(kInstallSh) + " -s -- --no-modify-path";
+    // `curl ... | sh` ends with sh's status, which is 0 when curl fails and sh reads nothing, and POSIX sh has no
+    // pipefail; the installer is read first, so that a download that fails ends the script with curl's status.
+    const std::string script =
+        "installer=$(curl -fsSL https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.sh) || exit $?\n"
+        "printf '%s\\n' \"$installer\" | sh -s -- --no-modify-path";
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
