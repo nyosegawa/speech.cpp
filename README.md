@@ -89,9 +89,10 @@ irm https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.ps1 | ie
 ```
 
 The installer checks the release's archive against its SHA-256, puts `speech` under your home folder, and adds it to
-`PATH`. Run it again to update. On Linux it installs the Vulkan build when the Vulkan loader is installed, and the CPU
-build otherwise; the Linux builds need glibc 2.34 or later. [docs/install.md](docs/install.md) has the options, how to
-uninstall, and what each platform needs. On an Intel Mac or another system, [build from source](docs/install.md#build-from-source).
+`PATH`. `speech update`, or running it again, updates it. On Linux it installs the Vulkan build when the Vulkan loader
+is installed, and the CPU build otherwise; the Linux builds need glibc 2.34 or later. [docs/install.md](docs/install.md)
+has the options, how to uninstall, and what each platform needs. On an Intel Mac or another system, [build from
+source](docs/install.md#build-from-source).
 
 ## Quick start
 
@@ -131,6 +132,7 @@ uninstall, and what each platform needs. On an Intel Mac or another system, [bui
 | `speech devices` | lists the devices a model can run on |
 | `speech models`, `pull`, `rm` | list, fetch and remove models |
 | `speech quantize` | writes a model file of F32 weights in F16, Q8_0 or a smaller type |
+| `speech update` | installs the latest release, or says whether one is out |
 | `speech serve` | serves models over HTTP with OpenAI's audio API, and a page to try them |
 | `speech worker` | serves a model over JSON Lines on stdin and stdout, for programs |
 

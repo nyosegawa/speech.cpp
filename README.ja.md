@@ -76,7 +76,7 @@ x64 の Windows では、PowerShell で次のコマンドを実行します。
 irm https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.ps1 | iex
 ```
 
-インストーラはリリースのアーカイブを SHA-256 で確かめ、`speech` をホームフォルダの下に置き、`PATH` に加えます。もう一度実行すると更新されます。Linux では、Vulkan のローダーが入っていれば Vulkan 版を、入っていなければ CPU 版をインストールします。Linux 版には glibc 2.34 以降が必要です。オプション、アンインストールの方法、各プラットフォームで必要なものは [docs/install.md](docs/install.md) にあります。Intel Mac やその他のシステムでは、[ソースからビルド](docs/install.md#build-from-source)してください。
+インストーラはリリースのアーカイブを SHA-256 で確かめ、`speech` をホームフォルダの下に置き、`PATH` に加えます。`speech update` を実行するか、インストーラをもう一度実行すると更新されます。Linux では、Vulkan のローダーが入っていれば Vulkan 版を、入っていなければ CPU 版をインストールします。Linux 版には glibc 2.34 以降が必要です。オプション、アンインストールの方法、各プラットフォームで必要なものは [docs/install.md](docs/install.md) にあります。Intel Mac やその他のシステムでは、[ソースからビルド](docs/install.md#build-from-source)してください。
 
 ## クイックスタート
 
@@ -116,6 +116,7 @@ irm https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.ps1 | ie
 | `speech devices` | モデルを動かせるデバイスを一覧にします |
 | `speech models`, `pull`, `rm` | モデルの一覧表示、取得、削除をします |
 | `speech quantize` | F32 の重みのモデルファイルを F16、Q8_0、またはより小さい型で書き出します |
+| `speech update` | 最新のリリースをインストールするか、新しいリリースが出ているかどうかを表示します |
 | `speech serve` | OpenAI の音声 API と、モデルを試すページを HTTP で提供します |
 | `speech worker` | プログラムのために、標準入力と標準出力の JSON Lines でモデルを提供します |
 

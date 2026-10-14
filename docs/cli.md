@@ -14,6 +14,7 @@ This page lists the subcommands of `speech` and their options. `speech <subcomma
 | [`speech pull`](#speech-pull) | fetches models ahead of their use |
 | [`speech rm`](#speech-rm) | removes fetched models, or the old files no model names |
 | [`speech quantize`](#speech-quantize) | writes a model file of F32 weights in another weight type |
+| [`speech update`](#speech-update) | installs the latest release, or says whether one is out |
 | [`speech serve`](server.md) | serves a model of each task over HTTP with OpenAI's audio API, and a page to try models on |
 | [`speech worker`](worker.md) | serves a model over JSON Lines on stdin and stdout, for programs such as ASIST |
 
@@ -68,6 +69,10 @@ speech info irodori-tts-mf
 - stdout carries the output alone, and every log goes to stderr.
 - On Windows the command line is read as UTF-8, and stdin and stdout are binary.
 - `speech --version` prints the release and the C API's version: `speech.cpp 0.8.5, C API 3.2`.
+- On a terminal, a subcommand says on stderr when a later release is out, once it ends (`speech serve` as it starts):
+  `speech: speech.cpp 0.8.6 is out (this is 0.8.5); run speech update to install it`. It asks github.com at most once a
+  day, and only when stderr is a terminal, so a script or a program that starts `speech` never makes the request; the
+  worker never asks. `SPEECH_NO_UPDATE_CHECK=1` turns it off.
 
 | Exit | Meaning |
 |---|---|
@@ -346,6 +351,28 @@ implementation:
 | Irodori-TTS | the speech still says the text, with lengths that part from the official's |
 | FastConformer | reazonspeech-nemo-v2 writes 1.5% to 3.5% of its characters otherwise, against 0.9% in Q8_0 |
 | Qwen3-ASR | the 0.6B model keeps the official text on 34 (Q6_K) to 21 (Q4_K) of 40 requests, the 1.7B on 36 to 28 |
+
+## speech update
+
+```
+speech update [--check]
+```
+
+Asks github.com for the latest release. When it is later than this one, and this `speech` is the one the installer put
+in place, `speech update` runs the installer with `--no-modify-path` (`-NoModifyPath` on Windows), which downloads the
+release, checks it against the release's `SHA256SUMS` and replaces this version ([install.md](install.md#update)), and
+exits with the installer's status. `--check` only says whether a later release is out. Messages go to stderr.
+
+```
+$ speech update
+speech.cpp 0.8.6 is out (this is 0.8.5); running the installer
+Downloading https://github.com/nyosegawa/speech.cpp/releases/download/v0.8.6/speech-0.8.6-macos-arm64-metal.zip
+...
+```
+
+A `speech` built from source or copied elsewhere is left as it is, and `speech update` exits with 1, saying where it is
+and how to update it: run the installer, or pull and build again. Without the network it exits with 1 and an `io`
+failure.
 
 ## speech serve and speech worker
 
