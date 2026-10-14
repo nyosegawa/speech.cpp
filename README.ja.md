@@ -53,7 +53,7 @@ speech.cpp は、1つのコマンド `speech` と1つの共有ライブラリ `l
 | タスク | 名前 | 言語 | 得意なこと |
 |---|---|---|---|
 | 合成 | [`qwen3-tts-0.6b`](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF), [`qwen3-tts-1.7b`](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF) | de en es fr it ja ko pt ru zh | 名前のある9人の話者を持ち、0.08 秒の最初のフレームから音声をストリーミングします。1.7B モデルは話し方の指示に従います |
-| 合成 | [`irodori-tts-mf`](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF), [`irodori-tts`](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) | ja | 参照録音の声や、言葉で説明した声で日本語を話します |
+| 合成 | [`irodori-tts-mf`](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF), [`irodori-tts`](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF), [`irodori-tts-large`](https://huggingface.co/sakasegawa/Irodori-TTS-v4-Large-GGUF) | ja | 参照録音の声や、言葉で説明した声で日本語を話します。large はどちらにもより忠実です |
 | 認識 | [`qwen3-asr-0.6b`](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF), [`qwen3-asr-1.7b`](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF) | 30 言語 | 言語を自分で判定し、人名や用語のプロンプトを受け付け、20 分までの音声を一度に認識します |
 | 認識 | [`reazonspeech-v2`](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) | ja | 何分もある録音の日本語を、句読点つきで認識します |
 | 認識 | [`parakeet-tdt_ctc-0.6b-ja`](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | ja | 短い日本語の発話を速く認識し、時刻も出します |
@@ -207,6 +207,7 @@ MIT ライセンスです。[LICENSE](LICENSE) を見てください。モデル
 
 - Qwen3-TTS と Qwen3-ASR は Qwen チームのもので、Apache License 2.0 で提供されています。
 - Irodori-TTS v4.1-Small と v4.1-Small-MF は Aratako 氏のもので、MIT License に加えて、モデルカードにある倫理上の制限がかかります。同意のない声のクローン、ディープフェイク、誤情報への利用は禁じられています。
+- Irodori-TTS v4-Large は Aratako 氏のもので、テキストエンコーダーが Google の T5Gemma 2 から派生しているため、Gemma Terms of Use で提供されています。倫理上の制限は v4.1 と同じです。
 - Irodori-TTS のファイルに含まれるコーデック Semantic-DACVAE-Japanese-32dim は Aratako 氏のもので、MIT License で提供されています。これは Meta の facebook/dacvae-watermarked(Apache License 2.0)から派生しています。そのモデルカードの本文は SAM License にも触れていますが、facebookresearch/dacvae で 2025-12-19 に Apache-2.0 に訂正されました。
 - parakeet のモデルは NVIDIA のもので CC-BY-4.0、reazonspeech-nemo-v2 は reazon-research のもので Apache License 2.0 で提供されています。
 - Silero VAD は Silero Team のもので、MIT License で提供されています。
