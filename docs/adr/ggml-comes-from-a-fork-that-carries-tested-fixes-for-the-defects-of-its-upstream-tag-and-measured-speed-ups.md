@@ -6,14 +6,24 @@ speech.cpp builds ggml from a git submodule. ggml-org/ggml v0.25.3 gives speech.
 supported platforms, in four places:
 
 - **Metal's tensor API.** On the M5, M6, A19 and A20, Metal runs matrix products through Metal 4's tensor API by
-  default. On an Apple M5 its `kernel_mul_mm` stores its tile past the output when 64 columns remain, so an output of 64
-  or 192 columns corrupts the next tensor of its buffer: one of 64 Irodori-TTS samples decoded a codec window of 64
-  frames to noise. Under the relaxed precision it asks for, it also computes less precisely than the simdgroup kernel
-  that the earlier chips run: Irodori-TTS v4.1-Small's synthesis lay 2.3 to 48.3 dB from the official implementation's
-  against 8.7 to 62.5 dB, and reazonspeech-nemo-v2's beam search of a 311 s input changed its text. Without relaxed
-  precision it is as precise as the simdgroup kernel but slower, by speech-bench on the M5 (2026-10-12): median first
-  audio 0.351 s against 0.251 s for Irodori-TTS v4.1-Small-MF, 1.762 s against 1.239 s for v4.1-Small at 16 steps and
-  0.072 s against 0.039 s for Qwen3-TTS 0.6B, and median recognition 0.150 s against 0.123 s for Qwen3-ASR 0.6B.
+  default, on the matrix units those chips have. ggml's `kernel_mul_mm` for it has two defects on an Apple M5. Its
+  store, clipped to the output, writes past it when 64 of a tile's 128 columns remain, so an output of 64 or 192 columns
+  corrupts the next tensor of its buffer: one of 64 Irodori-TTS samples decoded a codec window of 64 frames to noise.
+  And it reads the activations in float and asks for relaxed precision, under which it computes less precisely than
+  the simdgroup kernel that the earlier chips run: Irodori-TTS v4.1-Small's synthesis lay 2.3 to 48.3 dB from the
+  official implementation's against 8.7 to 62.5 dB, reazonspeech-nemo-v2's beam search of a 311 s input changed its
+  text, and on speech.cpp's products its result lies 2e-7 to 3e-7 in NMSE from the exact product of the operands
+  rounded to half, where the simdgroup kernel's lies 1e-14 to 2e-12 (2026-10-15). Without relaxed precision the units
+  multiply its float activations in float, and it is slower than the simdgroup kernel, by speech-bench on the M5
+  (2026-10-12): median first audio 0.351 s against 0.251 s for Irodori-TTS v4.1-Small-MF, 1.762 s against 1.239 s for
+  v4.1-Small at 16 steps and 0.072 s against 0.039 s for Qwen3-TTS 0.6B, and median recognition 0.150 s against
+  0.123 s for Qwen3-ASR 0.6B. Given both operands in half precision, as the simdgroup kernel stages them, the units
+  multiply them without relaxed precision as that kernel does, half by half summed in float, faster than it and at
+  least as fast as ggml's relaxed kernel. On an Apple M5 with Q8_0 files (2026-10-15), against the simdgroup kernel:
+  Irodori-TTS v4.1-Small speaks 11.2 s at RTFx 3.67 against 2.37 (ggml's relaxed kernel 3.61) and v4.1-Small-MF at
+  9.76 against 7.72; Qwen3-ASR 0.6B prefills in 18 ms against 41 and encodes in 20 ms against 32;
+  parakeet-tdt_ctc-0.6b-ja encodes 25.5 s in 95 ms against 174; Qwen3-TTS 1.7B gives its first audio in 39 ms
+  against 56.
 - **Vulkan's q8_1 activations.** Vulkan quantizes a matrix product's activations to q8_1 for its integer dot products,
   and q8_1 carries the sum of each block of 32 activations in half precision. The products of Q4_0, Q4_1, Q5_0, Q5_1,
   Q4_K, Q5_K, Q2_0 and IQ1_S read that sum, and Qwen3-TTS's activations sum past 65504 in a block, so its Q4_K and Q5_K
@@ -51,8 +61,15 @@ picking Qwen3-ASR's tokens on the device was slower than reading the logits back
 - **The submodule is the branch `speech.cpp` of github.com/nyosegawa/ggml**, pinned by commit: an upstream release tag,
   then one commit of `test-backend-ops` cases that show the defects, then one commit for each fix, then one commit for
   each speed-up, and nothing else.
-- **Metal keeps the tensor API off by default on every chip**, as ggml already does on the chips before the M5, and runs
-  it only when `GGML_METAL_TENSOR_ENABLE` asks for it, so that every chip runs the simdgroup kernel.
+- **Metal runs matrix products on the matrix units of the chips that have them**, the M5, M6, A19 and A20, through the
+  tensor API as ggml does, but with a `kernel_mul_mm` of the fork's: it stages both operands in threadgroup memory in
+  half precision, as the simdgroup kernel does, multiplies them without relaxed precision, and stores a tile that ends
+  past the output through threadgroup memory, never with a store clipped to the output. Its products are the
+  simdgroup kernel's up to the order of the float sums: on speech.cpp's shapes in F32, F16, Q8_0, Q4_K, Q5_K and Q6_K,
+  the RMS of their difference is at most 1.6e-6 of the output's and its largest value 1.6e-5 of it, and the NMSE from
+  the exact product is the simdgroup kernel's to four digits, or lower (2026-10-15). ggml's own tensor
+  `kernel_mul_mm` is not in the fork. The chips before the M5 keep the simdgroup kernel, as in ggml:
+  `GGML_METAL_TENSOR_ENABLE` turns the tensor API on there and `GGML_METAL_TENSOR_DISABLE` off on any chip.
 - **Vulkan keeps the types whose q8_1 dot products read the block sums off q8_1 activations**, through the
   dequantizing kernels, which then accumulate in F32 as the q8_1 kernels do, whatever precision the product asks for:
   in half precision, which they take by default, a product past 65504 is clipped. Q8_0, Q6_K and the other types keep
@@ -70,12 +87,13 @@ picking Qwen3-ASR's tokens on the device was slower than reading the logits back
 
   | Commit | Shown by | Dropped when |
   |---|---|---|
-  | Metal's tensor API off | `test-backend-ops -o MUL_MAT`: F16 products of 64 and 192 columns, with `GGML_METAL_TENSOR_ENABLE` on an M5, M6, A19 or A20; and the stage checks of speech.cpp on Metal | the tag's tensor API passes those cases and every stage check, and is no slower in speech-bench |
+  | Metal's tensor API off | `test-backend-ops -o MUL_MAT`: F16 products of 64 and 192 columns, with `GGML_METAL_TENSOR_ENABLE` on an M5, M6, A19 or A20 | the branch moves to a new tag, on which the matrix units' commit below stands alone |
   | Vulkan's q8_1 block sums | `test-backend-ops -o MUL_MAT -p large_b`: Q4_0, Q5_0, Q4_K and Q5_K products of activations from 2048 to 4096, and of activations from 512 to 1024 with weights from 0.5 to 1, on Vulkan | the tag passes those cases |
   | Vulkan's ROPE offsets | `test-backend-ops -o ROPE` and `-o ROPE_BACK`: the cases with `v=4`, whose positions and frequency factors are views one element into a longer tensor, on Vulkan | the tag passes those cases |
   | Snake fused with the channels along `ne[0]` (speed-up) | `test-backend-ops -o SNAKE_FUSE`: the cases with `channels_first=1`, on Metal and Vulkan | the tag fuses Snake in that layout |
   | argmax takes the first of equal values | `test-backend-ops -o ARGMAX`: the cases with `ties=1`, whose rows repeat their largest value in every thread, on Metal and Vulkan | the tag's argmax takes the first of equal values on every backend |
   | argmax reads a row with a threadgroup's threads (speed-up) | `test-backend-ops -o ARGMAX`: rows of 151,936 values, one to eight of them, on Metal and Vulkan | the tag reads a row of argmax with more than one subgroup on Vulkan and more than 256 threads among all rows on Metal |
+  | Metal's matrix units without relaxed precision (fix and speed-up) | `test-backend-ops -o MUL_MAT` on an M5, M6, A19 or A20: the F16 products of 64 and 192 columns, and the products of F32, F16, BF16, Q8_0, Q4_K, Q5_K and Q6_K weights whose outputs end inside a tile, whose K does not fill a step, with broadcast batches, permuted or strided activations and activations in half precision; and the stage checks of speech.cpp on Metal | the tag's tensor-API `kernel_mul_mm` passes those cases, gives the simdgroup kernel's products up to the order of the float sums, and is no slower |
 
   Between tags, a fix found later is a commit of its own on top, with its cases. Moving ggml to a newer tag starts the
   branch again from that tag: the commit of cases first, on which they run on the
@@ -85,8 +103,16 @@ The alternatives were turned down:
 
 - The environment variables above, set by the library. They change the environment of a host's process, and Vulkan's
   would also move Q8_0 off its kernels.
-- Fixing the tensor API's store and running it without relaxed precision. Every speech model is slower to its first
-  result on the M5 with it than with the simdgroup kernel.
+- Keeping the tensor API off on every chip, so that the M5 runs the simdgroup kernel as the earlier chips do. It is as
+  precise, and leaves the matrix units idle, at the speeds above.
+- ggml's tensor `kernel_mul_mm` as ggml runs it, under relaxed precision. It stores past the output and computes less
+  precisely, as above.
+- ggml's tensor `kernel_mul_mm` without relaxed precision, its store fixed. The units multiply its float activations
+  in float, slower than the simdgroup kernel, as above.
+- Converting the activations to half precision once per product, into memory beside the output, for the units to read
+  from device memory. As precise, and up to 1.9 times as fast on products far larger than speech.cpp's, but slower
+  than the simdgroup kernel on the codecs' largest products, with K of 96 (0.6 to 0.8 of its speed, where staging both
+  operands gives 1.1 to 1.4 times it, on an M5 on 2026-10-15), and it takes memory beside every product.
 - Avoiding the shapes and the activations in speech.cpp, such as changing the codec's windows or keeping Qwen3-TTS
   from K-quants on Vulkan. Every graph can meet the shapes, and every model with large activations the sums.
 - Waiting for ggml-org/ggml to fix them. The models give wrong results on supported platforms until then.
@@ -97,7 +123,9 @@ The alternatives were turned down:
 
 ## Consequences
 
-Metal computes on the M5 as it did when the library set `GGML_METAL_TENSOR_DISABLE`, and the library no longer touches
-the environment. A ggml update runs the cases on the M5 and on the Windows machine's Vulkan GPU, from the Windows
-build of CI with checks, before the submodule moves. A speed-up changes the results of the graphs it covers on Metal
+Metal computes on the M5 as the simdgroup kernel computes but for the order of the float sums, which moves the stage
+checks' errors as any change of that order does: a build of the simdgroup kernel that only sums the odd steps of K
+apart moves them as far, in both directions. The library does not touch the environment. A ggml update runs the cases
+on the M5 and on the Windows machine's Vulkan GPU, from the Windows build of CI with checks, before the submodule
+moves. A speed-up changes the results of the graphs it covers on Metal
 and Vulkan by rounding alone, and the CPU's not at all.
