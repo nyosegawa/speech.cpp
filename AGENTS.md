@@ -157,6 +157,8 @@ another one.
 - A Linux release runs on glibc 2.34 and needs no shared library but glibc's and, in the Vulkan build,
   `libvulkan.so.1`; CI fails a build that needs more. It is built on the oldest Ubuntu GitHub
   hosts, with libstdc++ linked in and ggml's OpenMP off.
+- A Windows release needs no DLL but Windows' own and `vulkan-1.dll`; CI fails a build that needs more. It is built
+  with the C runtime linked in and ggml's OpenMP off.
 - Model weights, reference dumps and audio are never committed; `.gitignore` covers `models/`,
   `reference/*/out/`, `*.gguf` and `*.wav`.
 

@@ -117,10 +117,9 @@ private:
      * They keep ggml's default of spinning a while before they sleep, which held up best while other processes kept the
      * cores busy: with 4 and 8 such processes on the M5's 10 cores, 8 recognitions took 1,867 and 2,604 ms with these
      * threads, 1,967 and 4,280 ms with threads that sleep at once, and 2,392 and 3,167 ms with threads started for each
-     * graph; on an i9-9900K with Vulkan and 8 busy processes, 100 took 19.1, 19.4 and 19.5 s (2026-10-13, sums of
-     * medians). A model on the CPU computes without such threads: there they gained 2 to 3% on a quiet M5 but lost 62%
-     * with reazonspeech-nemo-v2 and 73% with parakeet-tdt_ctc-0.6b-ja, both in Q8_0 with 4 threads, while 8 processes
-     * kept the cores busy (2026-10-13).
+     * graph (2026-10-13, sums of medians). A model on the CPU computes without such threads: there they gained 2 to
+     * 3% on a quiet M5 but lost 62% with reazonspeech-nemo-v2 and 73% with parakeet-tdt_ctc-0.6b-ja, both in Q8_0 with
+     * 4 threads, while 8 processes kept the cores busy (2026-10-13).
      */
     struct OnCpu {
         OnCpu(const ModelFile & device, int threads, const std::vector<std::string> & names);
