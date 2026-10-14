@@ -26,14 +26,19 @@ two tokens score almost the same, the two can choose different ones.
 - **A draft may change a token where two score almost the same, and the documentation says so.** On the checks' dumps
   and readings simulated from them every 0.2 s (2026-10-15): with the 0.6B and 1.7B models in Q8_0, no reading of four
   recordings changed on the M5, 3 of 135 and 7 of 135 changed on an RTX 2080 with Vulkan, and 1 of 52 changed on the
-  M5's CPU, each at the end of a reading cut in the middle of a word or between a comma and a full stop; no recognition
-  of a whole recording changed. The decoder's check fails where a draft changes a token whose margin is wider than
-  the difference between the two steps' logits of the two tokens, which points to a defect of the drafting.
+  M5's CPU, each at the end of a reading cut in the middle of a word or between a comma and a full stop. Over
+  /v1/realtime (below), 2 of the 58 completed transcripts on the RTX 2080 differed from the same samples recognized
+  without a draft, a full stop at the end and タイマー for タイマ, and none of the 58 on the M5. The decoder's check fails
+  where a draft changes a token whose margin is wider than the difference between the two steps' logits of the two
+  tokens, which points to a defect of the drafting.
 
-Measured on the same recordings, the drafts of live transcription took the whole recording's recognition from 225 to
-124 ms (Japanese), 241 to 125 ms (English), 216 to 121 ms (Chinese) and 353 to 186 ms (German) with the 0.6B model on
-the M5, 494 to 270, 529 to 259 and 862 to 416 ms with the 1.7B, and 93 to 56, 106 to 60, 106 to 58 and 170 to 85 ms
-with the 0.6B on the RTX 2080; 86 to 93% of the drafted tokens were kept.
+measure/live_latency.py, FLEURS's Japanese and English test clips in two rounds of two sessions of five clips over
+/v1/realtime with server_vad, Q8_0, the utterances the detection did not cut (2026-10-15): the p50 of the time from
+the end of speech to the completed transcript went from 0.93 to 0.81 s (Japanese) and 0.93 to 0.82 s (English) with
+the 0.6B model on an Apple M5, and from 1.29 to 0.99 s and 1.21 to 0.97 s with the 1.7B; on an RTX 2080 with Vulkan
+from 0.82 to 0.76 s and 0.81 to 0.78 s with the 0.6B, and from 0.97 to 0.81 s and 0.93 to 0.80 s with the 1.7B. About
+0.7 s of it is the detection's wait for the end of speech, so the recognition after the commit took about half the
+time. In readings simulated from the checks' dumps, 86 to 95% of the drafted tokens were kept.
 
 The alternatives were turned down:
 
