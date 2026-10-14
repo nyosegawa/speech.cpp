@@ -32,7 +32,7 @@ API and its Realtime transcription over HTTP, and runs a worker process for any 
 requests, [ASIST](https://github.com/nyosegawa/asist) among them.
 
 **A time to first audio of a quarter of a second or less.** On an Apple M5, Qwen3-TTS 0.6B sends its first audio
-0.04 s after the text and Irodori-TTS 0.25 s after it, and the rest follows while it plays.
+0.035 s after the text and Irodori-TTS v4.1-Small-MF 0.22 s after it, and the rest follows while it plays.
 
 **One executable, nothing else to install.** No Python and no CUDA: `speech` fetches each model by name, one GGUF file
 with its codec, and runs it on Metal, Vulkan or the CPU.
@@ -186,29 +186,29 @@ does: one request per line on stdin, its audio or text and one terminal message 
 Every stage of each port is compared with tensors dumped from the official implementation. The recognizers write the
 official text on every check input in F32 and F16.
 
-Measured with [speech-bench](https://github.com/nyosegawa/speech-bench) on 2026-10-08, on an Apple M5 (Metal) and an
-RTX 2080 (Vulkan), one request at a time. Speech: 20 Japanese sentences, the p50 time to first audio, the RTFx (the
-seconds of audio over the seconds they took, so larger is faster), and the CER of the speech as Qwen3-ASR 1.7B hears it.
+Measured with [speech-bench](https://github.com/nyosegawa/speech-bench) on 2026-10-14, on an Apple M5 (Metal) and an
+RTX 2080 (Vulkan), one request at a time. Speech: 20 Japanese sentences with seeds 1 and 2, three rounds, Irodori-TTS
+in the voice of one reference recording; the p50 time to first audio, the RTFx (the seconds of audio over the seconds
+they took, so larger is faster), and the CER of the speech as Qwen3-ASR 1.7B hears it.
 
 | Model | Time to first audio, M5 / RTX 2080 | RTFx | CER |
 |---|---|---|---|
-| `qwen3-tts-0.6b`, Q8_0 | 0.04 s / 0.03 s | 3.2 / 3.7 | 5.8% / 8.0% |
-| `qwen3-tts-1.7b`, Q8_0 | 0.06 s / 0.04 s | 2.4 / 3.1 | 3.0% / 2.8% |
-| `irodori-tts-mf`, F16 | 0.25 s / 0.12 s | 5.9 / 14 | 6.1% / 7.1% |
-| `irodori-tts`, F16, 16 steps | 1.24 s / 0.52 s | 2.9 / 7.7 | 3.2% / 3.2% |
+| `qwen3-tts-0.6b`, Q8_0 | 0.035 s / 0.024 s | 3.7 / 5.2 | 6.4% / 6.0% |
+| `qwen3-tts-1.7b`, Q8_0 | 0.057 s / 0.032 s | 2.6 / 4.2 | 4.2% / 6.1% |
+| `irodori-tts-mf`, F16 | 0.22 s / 0.12 s | 7.7 / 18 | 6.7% / 6.4% |
+| `irodori-tts`, F16, 16 steps | 1.15 s / 0.52 s | 3.5 / 8.5 | 3.2% / 3.2% |
 
 Recognition: the 4,483 utterances of Common Voice 8.0's Japanese test set, trimmed to the voice, with the CER that
-accepts other spellings of the same words in parentheses, and parakeet-tdt-0.6b-v3 on 300 English utterances of FLEURS.
-FastConformer's times were measured on 2026-10-12 by speech-bench, one request at a time, on the first 100 Japanese
-utterances (99 kept by VAD) and the 300 English ones (299 kept); its accuracy and timing use separate sample counts.
+accepts other spellings of the same words in parentheses, the same on both machines, and the p50 latency over the same
+utterances; parakeet-tdt-0.6b-v3 on 300 English utterances of FLEURS, three rounds.
 
 | Model | CER on Common Voice ja | p50 latency, M5 / RTX 2080 |
 |---|---|---|
-| `parakeet-tdt_ctc-0.6b-ja`, Q8_0 | 7.9% (3.0%) | 0.05 s / 0.04 s |
-| `reazonspeech-v2`, Q8_0 | 12.1% (7.2%) | 0.08 s / 0.11 s |
-| `qwen3-asr-0.6b`, Q8_0 | 11.9% (7.0%) | 0.13 s / 0.09 s |
-| `qwen3-asr-1.7b`, Q8_0 | 9.5% (4.7%) | 0.31 s / 0.16 s |
-| `parakeet-tdt-0.6b-v3`, F16 | WER 8.8% on FLEURS en | 0.09 s / 0.10 s |
+| `parakeet-tdt_ctc-0.6b-ja`, Q8_0 | 7.9% (3.0%) | 0.045 s / 0.050 s |
+| `reazonspeech-v2`, Q8_0 | 12.0% (7.1%) | 0.063 s / 0.092 s |
+| `qwen3-asr-0.6b`, Q8_0 | 11.9% (7.0%) | 0.127 s / 0.073 s |
+| `qwen3-asr-1.7b`, Q8_0 | 9.5% (4.7%) | 0.312 s / 0.140 s |
+| `parakeet-tdt-0.6b-v3`, F16 | WER 8.8% on FLEURS en | 0.077 s / 0.095 s |
 
 Each model's page has more.
 
