@@ -45,7 +45,7 @@ from pins import CODEC, MODELS, snapshot
 ARCH = "irodori-tts"
 # Each layout this converter has written, with the first release of speech.cpp whose reader takes it; it writes the
 # last.
-RELEASES = {1: "0.7.0", 2: "0.8.0", 3: "0.9.0"}
+RELEASES = {1: "0.7.0", 2: "0.8.0", 3: "0.8.7"}
 LAYOUT = max(RELEASES)
 # The SPDX identifier of each license a model card names.
 LICENSES = {"mit": "MIT", "gemma": "gemma"}

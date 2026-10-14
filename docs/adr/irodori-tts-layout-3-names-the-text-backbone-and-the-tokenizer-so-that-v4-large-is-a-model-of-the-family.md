@@ -21,7 +21,7 @@ scores are simply required.
   `unigram` or `bpe`, which call for their own keys and tensors: T5Gemma 2's heads of keys and values, head width,
   sliding window before and after a token, RoPE scale of its full layers, `query_pre_attn_scalar` and the id of its
   token that ends an image with that token's embedding; and the BPE model's merges, in rank order, as the ids of their two
-  pieces. Its `speech.requires` is 0.9.0.
+  pieces. Its `speech.requires` is 0.8.7: no file a release before it reads changes, so the release is a patch.
 - **Gemma's RMS norms are stored as the factor they multiply by**, 1 + weight, which is the float32 sum the official
   code computes, so that every RMS norm of the family multiplies by its stored weight.
 - **The upgrade sets the two keys of a layout 1 or 2 file to `modernbert` and `unigram`**, which every such file holds,
@@ -42,5 +42,5 @@ The alternatives were turned down:
 
 ## Consequences
 
-A release before 0.9.0 refuses a v4-Large file by its layout. Layout 3 files of v4.1 differ from their layout 2 files
+A release before 0.8.7 refuses a v4-Large file by its layout. Layout 3 files of v4.1 differ from their layout 2 files
 only in the two keys, so the files on Hugging Face stay layout 2.
