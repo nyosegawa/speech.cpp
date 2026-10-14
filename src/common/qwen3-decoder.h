@@ -184,6 +184,20 @@ public:
     void step(int32_t id, ggml_tensor * table, ggml_tensor * head);
 
     /**
+     * Feeds the tokens `ids`, whose rows of `table` are their inputs, after the sequence in one graph, and returns for
+     * each the greedy pick of the token after it under `head`, the first of its largest logits, picked on the device;
+     * `logits`, where given, gets every row's logits, [ids, vocabulary] row-major. The rows are computed together, which
+     * rounds differently from a step of each: where two tokens score almost the same, a pick can differ from a step's.
+     */
+    std::vector<int32_t> verify(const std::vector<int32_t> & ids, ggml_tensor * table, ggml_tensor * head, std::vector<float> * logits = nullptr);
+
+    /**
+     * Forgets the positions from `n_past` on, which the next run or step writes again: what a caller does with the
+     * rows of a verify() whose picks it does not keep. More positions than the sequence has throw.
+     */
+    void rewind(int64_t n_past);
+
+    /**
      * Starts a sequence of the steps of `chain` and runs them in one graph on the device, which is kept and computed
      * again for the next sequence of the same chain while the cache stays, the chain's refill() giving it new data. Each
      * step's logits stay on the device, for chain_logits(). Returns false, having run nothing, where the device cannot

@@ -68,7 +68,7 @@ speech info irodori-tts-mf
 - An argument that begins with `-`, such as a text, follows `--`.
 - stdout carries the output alone, and every log goes to stderr.
 - On Windows the command line is read as UTF-8, and stdin and stdout are binary.
-- `speech --version` prints the release and the C API's version: `speech.cpp 0.8.7, C API 3.2`.
+- `speech --version` prints the release and the C API's version: `speech.cpp 0.8.7, C API 3.3`.
 - On a terminal, a subcommand says on stderr when a later release is out, once it ends (`speech serve` as it starts):
   `speech: speech.cpp 0.8.8 is out (this is 0.8.7); run speech update to install it`. It asks github.com at most once a
   day, and only when stderr is a terminal, so a script or a program that starts `speech` never makes the request; the
@@ -169,7 +169,8 @@ speech asr qwen3-asr-0.6b --vad silero-vad --live --format json > events.jsonl
 ```
 
 - `text` writes each utterance's text as a line. On a terminal, the line shows the text as it is said, the beginning that
-  two readings in a row agree on, and the final text replaces it once the utterance ends.
+  two readings in a row agree on, and the final text replaces it once the utterance ends. With Qwen3-ASR, each reading
+  and the final text are given the reading before as their `draft`.
 - `json` writes OpenAI's Realtime server events, one JSON object per line, as `/v1/realtime` sends them
   ([server.md](server.md#realtime-transcription)): `input_audio_buffer.speech_started` with `audio_start_ms` and the
   utterance's `item_id`, `input_audio_buffer.speech_stopped` with `audio_end_ms`, `input_audio_buffer.committed`,

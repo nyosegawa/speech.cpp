@@ -29,6 +29,7 @@ Not supported: timestamps, which need a second model, Qwen3-ForcedAligner-0.6B; 
 |---|---|---|
 | `language` | `auto` | one of the 30 languages, which then steers the model, or `auto`, which lets it find the language |
 | `prompt` | `""` | what the model is told of the audio before it hears it: the names and terms it may hold. The model uses it as background, not as instructions to follow |
+| `draft` | `""` | the text the recognition is likely to write, such as an earlier recognition of the beginning of the same audio. The model checks several of its tokens at once and keeps those it would write, so the text is the same, sooner where the draft is right; where two tokens score almost the same, it can choose the other. Live transcription gives each reading the reading before |
 
 The languages are `ar` `cs` `da` `de` `el` `en` `es` `fa` `fi` `fil` `fr` `hi` `hu` `id` `it` `ja` `ko` `mk` `ms` `nl`
 `pl` `pt` `ro` `ru` `sv` `th` `tr` `vi` `yue` `zh`, and 22 Chinese dialects under `zh` or `auto`.

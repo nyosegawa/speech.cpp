@@ -489,6 +489,33 @@ void Qwen3Decoder::step(int32_t id, ggml_tensor * table, ggml_tensor * head) {
     n_past_ += 1;
 }
 
+std::vector<int32_t> Qwen3Decoder::verify(const std::vector<int32_t> & ids, ggml_tensor * table, ggml_tensor * head,
+                                          std::vector<float> * logits) {
+    const int64_t n = (int64_t) ids.size();
+    make_room(n);
+    Graph g(kGraphSize);
+    ggml_context * ctx = g.ctx();
+    const RunInputs inputs = run_inputs(g, n);
+    ggml_tensor * x = layers(g, ggml_get_rows(ctx, table, g.input(ids, n)), n, true, inputs);
+    ggml_tensor * all = ggml_mul_mat(ctx, head, ggml_mul(ctx, ggml_rms_norm(ctx, x, shape_.rms_eps), m_.tensor(tensors_ + ".norm")));
+    ggml_tensor * picks = ggml_argmax(ctx, all);
+    g.output(picks);
+    if (logits) g.output(all);
+    g.compute(backend_, allocr_);
+    std::vector<int32_t> out((size_t) n);
+    ggml_backend_tensor_get(picks, out.data(), 0, out.size() * sizeof(int32_t));
+    if (logits) Graph::read(all, *logits);
+    n_past_ += n;
+    return out;
+}
+
+void Qwen3Decoder::rewind(int64_t n_past) {
+    if (n_past < 0 || n_past > n_past_) {
+        throw std::logic_error("a decoder of " + std::to_string(n_past_) + " positions was rewound to " + std::to_string(n_past));
+    }
+    n_past_ = n_past;
+}
+
 void Qwen3Decoder::build_chain(Qwen3Chain & chain, KeptChain & kept) {
     Graph & g = kept.graph;
     ggml_context * ctx = g.ctx();

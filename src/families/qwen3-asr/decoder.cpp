@@ -70,25 +70,103 @@ void Decoder::step(int32_t id) {
     stack_.step(id, m_.tensor("dec.token_embd"), m_.tensor("dec.token_embd"));
 }
 
-std::optional<Generation> Decoder::generate(const std::function<bool(size_t tokens)> & keep_going) {
-    Generation out;
-    for (;;) {
-        int32_t id;
-        if (stack_.readback() == Qwen3Readback::Pick) {
-            id = stack_.pick();
-        } else {
-            const std::vector<float> & l = logits();
-            id = (int32_t) (std::max_element(l.begin(), l.end()) - l.begin());
+void Draft::follow(const std::vector<int32_t> & written) {
+    const int32_t last = written.back();
+    if (!started_) {
+        started_ = last == marker_;
+        return;
+    }
+    if (at_ < ids_.size() && ids_[at_] == last) {
+        at_++;
+        return;
+    }
+    // The draft's two tokens that the decoding wrote last, nearest where it was.
+    size_t found = kNowhere, distance = SIZE_MAX;
+    if (written.size() >= 2) {
+        const int32_t before = written[written.size() - 2];
+        for (size_t j = 2; j <= ids_.size(); j++) {
+            if (ids_[j - 1] != last || ids_[j - 2] != before) continue;
+            const size_t d = at_ == kNowhere ? j : (j > at_ ? j - at_ : at_ - j);
+            if (d < distance) {
+                found = j;
+                distance = d;
+            }
         }
-        out.ids.push_back(id);
-        if (std::find(eos_.begin(), eos_.end(), id) != eos_.end()) return out;
+    }
+    at_ = found;
+}
+
+std::vector<int32_t> Draft::ahead(size_t count) const {
+    if (!started_ || at_ >= ids_.size()) return {};
+    return std::vector<int32_t>(ids_.begin() + (std::ptrdiff_t) at_, ids_.begin() + (std::ptrdiff_t) std::min(ids_.size(), at_ + count));
+}
+
+std::optional<Generation> Decoder::generate(const std::function<bool(size_t tokens)> & keep_going, Draft * draft,
+                                            std::vector<std::vector<float>> * seen) {
+    const bool picks = stack_.readback() == Qwen3Readback::Pick;
+    if (seen && picks) throw std::logic_error("a decoder that reads picks has no logits to give");
+    const auto next = [&] {
+        if (picks) return stack_.pick();
+        const std::vector<float> & l = logits();
+        if (seen) seen->push_back(l);
+        return (int32_t) (std::max_element(l.begin(), l.end()) - l.begin());
+    };
+    Generation out;
+    int32_t id = next();
+    // Writes `token`, and says whether the decoding goes on: not after an end token, at the limit, or once stopped.
+    std::optional<bool> stopped;
+    const auto write = [&](int32_t token) {
+        out.ids.push_back(token);
+        if (std::find(eos_.begin(), eos_.end(), token) != eos_.end()) return false;
         if ((int64_t) out.ids.size() == max_new_tokens_) {
             out.limited = true;
-            return out;
+            return false;
         }
-        if (!keep_going(out.ids.size())) return std::nullopt;
-        step(id);
+        if (!keep_going(out.ids.size())) {
+            stopped = true;
+            return false;
+        }
+        if (draft) draft->follow(out.ids);
+        return true;
+    };
+    for (;;) {
+        if (!write(id)) break;
+        std::vector<int32_t> rows{id};
+        if (draft) {
+            // Each token kept takes a position, and the pick after them one more: the rows stay within the limit.
+            const size_t room = (size_t) (max_new_tokens_ - (int64_t) out.ids.size());
+            for (int32_t d : draft->ahead(std::min(kDraftTokens, room))) rows.push_back(d);
+        }
+        if (rows.size() == 1) {
+            step(id);
+            id = next();
+            continue;
+        }
+        const int64_t past = stack_.n_past();
+        std::vector<float> all;
+        const std::vector<int32_t> picked =
+            stack_.verify(rows, m_.tensor("dec.token_embd"), m_.tensor("dec.token_embd"), seen ? &all : nullptr);
+        size_t kept = 0;
+        while (kept + 1 < rows.size() && picked[kept] == rows[kept + 1]) kept++;
+        draft->checks++;
+        draft->checked += (int) rows.size() - 1;
+        draft->kept += (int) kept;
+        stack_.rewind(past + 1 + (int64_t) kept);
+        const size_t vocab = all.size() / rows.size();
+        const auto saw = [&](size_t row) {
+            if (seen) seen->emplace_back(all.begin() + (std::ptrdiff_t) (row * vocab), all.begin() + (std::ptrdiff_t) ((row + 1) * vocab));
+        };
+        bool goes_on = true;
+        for (size_t j = 1; j <= kept && goes_on; j++) {
+            saw(j - 1);
+            goes_on = write(rows[j]);
+        }
+        if (!goes_on) break;
+        saw(kept);
+        id = picked[kept];
     }
+    if (stopped) return std::nullopt;
+    return out;
 }
 
 }  // namespace qwen3_asr
