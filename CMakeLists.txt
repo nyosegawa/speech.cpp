@@ -212,10 +212,12 @@ add_executable(speech-cli
     tools/cli/model.cpp
     tools/cli/models.cpp
     tools/cli/quantize.cpp
+    tools/cli/update.cpp
     tools/catalog/catalog.cpp
     tools/catalog/cache.cpp
     tools/catalog/curl.cpp
     tools/catalog/fetch.cpp
+    tools/catalog/release.cpp
     tools/catalog/sha256.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/catalog-json.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/page-files.cpp

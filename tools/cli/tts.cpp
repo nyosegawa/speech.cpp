@@ -285,5 +285,6 @@ Command tts_command() {
     c.min_args = 1;
     c.max_args = 2;
     c.run = run_tts;
+    c.release_notice = ReleaseNotice::AtEnd;
     return c;
 }

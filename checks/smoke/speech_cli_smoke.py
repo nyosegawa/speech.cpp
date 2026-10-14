@@ -76,7 +76,7 @@ if "--asr" in args:
 speech, work, model, *dumps = args
 os.makedirs(work, exist_ok=True)
 added = [o.split("=", 1)[0] for i, o in enumerate(options) if i > 0 and options[i - 1] == "--add-voice"]
-SUBCOMMANDS = ["tts", "asr", "vad", "voice", "info", "devices", "models", "pull", "rm", "quantize", "serve", "worker"]
+SUBCOMMANDS = ["tts", "asr", "vad", "voice", "info", "devices", "models", "pull", "rm", "quantize", "update", "serve", "worker"]
 
 
 def run(*command, input=None, stdout=subprocess.PIPE, code=0):
