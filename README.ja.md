@@ -174,6 +174,7 @@ speech_synthesize(request, on_audio, NULL);   /* on_audio receives the samples a
 | `qwen3-tts-1.7b`, Q8_0 | 0.057 s / 0.032 s | 2.6 / 4.2 | 4.2% / 6.1% |
 | `irodori-tts-mf`, F16 | 0.22 s / 0.12 s | 7.7 / 18 | 6.7% / 6.4% |
 | `irodori-tts`, F16, 16 steps | 1.15 s / 0.52 s | 3.5 / 8.5 | 3.2% / 3.2% |
+| `irodori-tts-large`, Q8_0, 16 steps | 4.44 s / 1.25 s | 0.98 / 3.3 | 5.5% / 5.5% |
 
 認識は、Common Voice 8.0 の日本語テストセットの 4,483 発話(声の部分だけに切り詰めたもの)で測りました。括弧内は、同じ語の別の表記を正解と認めたときの CER で、CER は2台で同じでした。レイテンシの p50 も同じ発話で測りました。parakeet-tdt-0.6b-v3 は FLEURS の英語 300 発話で、3 回測りました。
 
