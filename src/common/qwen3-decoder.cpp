@@ -270,6 +270,11 @@ const std::vector<float> & Qwen3Decoder::hidden() const {
     return hidden_;
 }
 
+int32_t Qwen3Decoder::pick() const {
+    if (readback_ != Qwen3Readback::Pick) throw std::logic_error("the decoder " + tensors_ + " reads logits, not picks");
+    return pick_;
+}
+
 void Qwen3Decoder::read_cache(int layer, std::vector<float> & keys, std::vector<float> & values) const {
     const int64_t kv_dim = (int64_t) shape_.n_kv_head * shape_.head_dim, capacity = cache_->capacity;
     const auto as_floats = [&](const ggml_tensor * t, int64_t count) {
@@ -419,7 +424,12 @@ Qwen3Decoder::Outputs Qwen3Decoder::outputs(Graph & g, ggml_tensor * last, ggml_
     ggml_tensor * hidden = ggml_mul(ctx, ggml_rms_norm(ctx, last, shape_.rms_eps), m_.tensor(tensors_ + ".norm"));
     Outputs out;
     out.logits = ggml_mul_mat(ctx, head, hidden);
-    g.output(out.logits);
+    if (readback_ == Qwen3Readback::Pick) {
+        out.pick = ggml_argmax(ctx, out.logits);
+        g.output(out.pick);
+    } else {
+        g.output(out.logits);
+    }
     if (readback_ == Qwen3Readback::LogitsAndHidden) {
         out.hidden = hidden;
         g.output(hidden);
@@ -429,7 +439,8 @@ Qwen3Decoder::Outputs Qwen3Decoder::outputs(Graph & g, ggml_tensor * last, ggml_
 
 void Qwen3Decoder::read(const Outputs & outputs) {
     if (outputs.hidden) Graph::read(outputs.hidden, hidden_);
-    Graph::read(outputs.logits, logits_);
+    if (outputs.pick) ggml_backend_tensor_get(outputs.pick, &pick_, 0, sizeof(pick_));
+    else Graph::read(outputs.logits, logits_);
 }
 
 void Qwen3Decoder::run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head) {

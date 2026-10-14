@@ -27,7 +27,7 @@ Recognizer::Recognizer(const std::string & path, ggml_backend_t backend, std::op
     : model_(path, backend, layout),
       frontend_(model_),
       encoder_(model_, backend),
-      decoder_(model_, backend, kCacheType, attention),
+      decoder_(model_, backend, kCacheType, Qwen3Readback::Pick, attention),
       tokenizer_(model_),
       prompt_(model_, tokenizer_),
       transcript_(model_),

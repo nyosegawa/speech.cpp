@@ -15,11 +15,12 @@ constexpr int kEmbeddingGraphSize = 8;
 
 }  // namespace
 
-Decoder::Decoder(const ModelFile & m, ggml_backend_t backend, ggml_type cache_type, std::optional<Qwen3Attention> attention)
+Decoder::Decoder(const ModelFile & m, ggml_backend_t backend, ggml_type cache_type, Qwen3Readback readback,
+                 std::optional<Qwen3Attention> attention)
     : m_(m),
       backend_(backend),
       stack_(m, backend, "dec", read_qwen3_shape(m, "qwen3-asr.decoder"), m.u32("qwen3-asr.decoder.max_position_embeddings"), cache_type,
-             Qwen3Readback::Logits, kQwen3BlockRows, attention),
+             readback, kQwen3BlockRows, attention),
       max_new_tokens_(m.u32("qwen3-asr.generation.max_new_tokens")),
       eos_(m.i32_array("qwen3-asr.generation.eos_ids")),
       allocr_(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))) {}
@@ -72,8 +73,13 @@ void Decoder::step(int32_t id) {
 std::optional<Generation> Decoder::generate(const std::function<bool(size_t tokens)> & keep_going) {
     Generation out;
     for (;;) {
-        const std::vector<float> & l = logits();
-        const int32_t id = (int32_t) (std::max_element(l.begin(), l.end()) - l.begin());
+        int32_t id;
+        if (stack_.readback() == Qwen3Readback::Pick) {
+            id = stack_.pick();
+        } else {
+            const std::vector<float> & l = logits();
+            id = (int32_t) (std::max_element(l.begin(), l.end()) - l.begin());
+        }
         out.ids.push_back(id);
         if (std::find(eos_.begin(), eos_.end(), id) != eos_.end()) return out;
         if ((int64_t) out.ids.size() == max_new_tokens_) {

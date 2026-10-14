@@ -169,7 +169,10 @@ int main(int argc, char ** argv) {
             Decoder & decoder = recognizer.decoder();
             // The stages from the dump's input run with an F32 cache, which leaves the arithmetic of the weights alone;
             // the greedy decodings run as the recognizer does, with its F16 cache.
-            Decoder exact(m, backend, GGML_TYPE_F32, recognizer.decoder().attention());
+            Decoder exact(m, backend, GGML_TYPE_F32, Qwen3Readback::Logits, recognizer.decoder().attention());
+            // The recognizer's decoder reads back only its picks; the greedy decodings follow the logits of one with its
+            // cache, and the recognizer's must pick the first of each step's largest logits.
+            Decoder followed(m, backend, kCacheType, Qwen3Readback::Logits, recognizer.decoder().attention());
             // Measured on an Apple M5 on 2026-10-06, the prompt's last logits from the dumps' input against transformers'
             // float32, over the ten inputs and four requests of the 0.6B and the 1.7B model: with F32 weights 97.4 and
             // 96.1 dB on the CPU, and 43.3 and 46.6 dB on Metal, whose matrix kernel rounds its inputs to half precision,
@@ -270,8 +273,12 @@ int main(int argc, char ** argv) {
 
                     // Greedy from the dump's projector output, the prompt and the embeddings ours.
                     Steps greedy;
+                    followed.prefill(ours, n, [](int64_t) { return true; });
+                    const std::vector<int32_t> written = follow(followed, ids, top_ids, top_logits, greedy);
                     decoder.prefill(ours, n, [](int64_t) { return true; });
-                    const std::vector<int32_t> written = follow(decoder, ids, top_ids, top_logits, greedy);
+                    const bool same_picks = decoder.generate([](size_t) { return true; })->ids == written;
+                    std::printf("  %-32s %s\n", "picks on the device", same_picks ? "the first of the largest logits" : "DIFFER");
+                    ok = ok && same_picks;
                     const std::string greedy_text = recognizer.transcript().parse(recognizer.tokenizer().decode(written), request.language).text;
                     greedy.print("greedy from the projector");
                     std::printf("  %-32s %s\n", "its ids and text", written == ids.i32 ? "the dump's" : greedy_text == text ? "other ids, the dump's text" : "DIFFER");
@@ -302,9 +309,9 @@ int main(int argc, char ** argv) {
                         // The same stages one by one, to find the step where the decoding departs and whether the error
                         // explains it.
                         const std::vector<float> encoded = *recognizer.encoder().encode(recognizer.frontend().features(Frontend::normalize(audio.f32)));
-                        decoder.prefill(decoder.embeddings(prompt, encoded), n, [](int64_t) { return true; });
+                        followed.prefill(decoder.embeddings(prompt, encoded), n, [](int64_t) { return true; });
                         Steps from_audio;
-                        follow(decoder, ids, top_ids, top_logits, from_audio);
+                        follow(followed, ids, top_ids, top_logits, from_audio);
                         from_audio.print("greedy from the audio");
                         ok = ok && from_audio.unexplained == 0;
                     }

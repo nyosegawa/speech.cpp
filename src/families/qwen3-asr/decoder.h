@@ -30,9 +30,11 @@ class Decoder {
 public:
     /**
      * The decoder of the model file `m`, which outlives it, computing on `backend` with a cache of `cache_type`, attending
-     * as `attention` says or, without it, as qwen3_attention() chooses.
+     * as `attention` says or, without it, as qwen3_attention() chooses, and reading back each step's pick, as a
+     * recognition does, or its logits, as a check that compares them does (Qwen3Readback::Pick or Logits).
      */
-    Decoder(const ModelFile & m, ggml_backend_t backend, ggml_type cache_type, std::optional<Qwen3Attention> attention = std::nullopt);
+    Decoder(const ModelFile & m, ggml_backend_t backend, ggml_type cache_type, Qwen3Readback readback,
+            std::optional<Qwen3Attention> attention = std::nullopt);
     ~Decoder();
     Decoder(const Decoder &) = delete;
     Decoder & operator=(const Decoder &) = delete;
@@ -53,7 +55,7 @@ public:
     /** Feeds the token `id` after the sequence, leaving the logits of the next. */
     void step(int32_t id);
 
-    /** The logits of the next token, [vocabulary]. */
+    /** The logits of the next token, [vocabulary], where the decoder reads logits. */
     const std::vector<float> & logits() const { return stack_.logits(); }
 
     /**

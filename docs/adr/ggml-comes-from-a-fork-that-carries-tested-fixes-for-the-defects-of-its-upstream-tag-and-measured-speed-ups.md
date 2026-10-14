@@ -3,7 +3,7 @@
 ## Context
 
 speech.cpp builds ggml from a git submodule. ggml-org/ggml v0.25.3 gives speech.cpp's models wrong results on two
-supported platforms, in three places:
+supported platforms, in four places:
 
 - **Metal's tensor API.** On the M5, M6, A19 and A20, Metal runs matrix products through Metal 4's tensor API by
   default. On an Apple M5 its `kernel_mul_mm` stores its tile past the output when 64 columns remain, so an output of 64
@@ -25,6 +25,10 @@ supported platforms, in three places:
   alignment rotated by another row's positions. Qwen3-TTS's code predictor, which reads each step's positions as a view
   of one input when it runs a frame in one graph, gave logits 1.37 in relative error from the reference on an RTX 2080
   (16 bytes of alignment), against 0.034 a step at a time, and its CER rose from 15.9% to 20.0% (2026-10-13).
+- **argmax's equal values.** torch.argmax takes the first of equal values, and so do the greedy decoders that
+  speech.cpp checks against it. ggml's argmax took the last on the CPU and on Metal, and on Vulkan whichever its
+  threads' layout gave, so that a decoder that picks its tokens on the device and one that picks them from the logits
+  on the host could write different tokens at a tie.
 
 ggml reads no setting that avoids the first two through its API, only environment variables: `GGML_METAL_TENSOR_DISABLE`,
 which it reads only while it lists its devices, so that a library sets it in its host's process, unsafely while another
@@ -37,7 +41,10 @@ which it writes as five operations (a product, a sine, a square, a product and a
 activations. ggml-org/ggml and llama.cpp master on 2026-10-13 run those five as one kernel on Metal and Vulkan only
 when the channels run along `ne[1]`, while the codecs of Irodori-TTS and Qwen3-TTS keep their activations with the
 channels along `ne[0]`, the layout in which their convolutions run as matrix products and their strided convolutions
-as reshapes.
+as reshapes. And ggml's argmax reads a row with one threadgroup of at most 256 threads shared among the rows on Metal,
+and with one subgroup, 32 threads on NVIDIA, on Vulkan: an argmax over Qwen3's 151,936 tokens took 59 µs on an Apple M5
+and 190 µs on an RTX 2080 (2026-10-15), longer than the head's product that made the logits on the RTX 2080, so that
+picking Qwen3-ASR's tokens on the device was slower than reading the logits back.
 
 ## Decision
 
@@ -53,6 +60,8 @@ as reshapes.
 - **Vulkan's ROPE adds the offsets of its positions and frequency factors in a view**, as it adds those of its input
   and output.
 - **Metal and Vulkan fuse Snake with the channels along `ne[0]`** as they fuse it with the channels along `ne[1]`.
+- **Every backend's argmax takes the first of equal values**, and **Metal and Vulkan read a row of argmax with as many
+  threads as a threadgroup takes**, up to 512 on Vulkan.
 - **A speed-up is a commit of its own, with `test-backend-ops` cases that show it correct in the same commit, and its
   effect measured on Metal and on the Windows machine's Vulkan GPU, with the numbers and their conditions (the model,
   the type, the device and the date) in its commit message.** A speed-up whose effect on one of speech.cpp's models
@@ -65,6 +74,8 @@ as reshapes.
   | Vulkan's q8_1 block sums | `test-backend-ops -o MUL_MAT -p large_b`: Q4_0, Q5_0, Q4_K and Q5_K products of activations from 2048 to 4096, and of activations from 512 to 1024 with weights from 0.5 to 1, on Vulkan | the tag passes those cases |
   | Vulkan's ROPE offsets | `test-backend-ops -o ROPE` and `-o ROPE_BACK`: the cases with `v=4`, whose positions and frequency factors are views one element into a longer tensor, on Vulkan | the tag passes those cases |
   | Snake fused with the channels along `ne[0]` (speed-up) | `test-backend-ops -o SNAKE_FUSE`: the cases with `channels_first=1`, on Metal and Vulkan | the tag fuses Snake in that layout |
+  | argmax takes the first of equal values | `test-backend-ops -o ARGMAX`: the cases with `ties=1`, whose rows repeat their largest value in every thread, on Metal and Vulkan | the tag's argmax takes the first of equal values on every backend |
+  | argmax reads a row with a threadgroup's threads (speed-up) | `test-backend-ops -o ARGMAX`: rows of 151,936 values, one to eight of them, on Metal and Vulkan | the tag reads a row of argmax with more than one subgroup on Vulkan and more than 256 threads among all rows on Metal |
 
   Between tags, a fix found later is a commit of its own on top, with its cases. Moving ggml to a newer tag starts the
   branch again from that tag: the commit of cases first, on which they run on the
