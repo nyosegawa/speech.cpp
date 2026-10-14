@@ -7,6 +7,12 @@
 
 namespace irodori {
 
+namespace {
+
+constexpr double kPi = 3.14159265358979323846;
+
+}  // namespace
+
 /*
  * Activations are channel-first ([channels, tokens]), so a linear layer is one matrix product. Both backbones rotate
  * the two halves of each head (GGML_ROPE_TYPE_NEOX), with another base in their global layers.
@@ -132,7 +138,7 @@ ggml_tensor * TextEncoder::t5gemma2(Graph & g, const std::vector<int32_t> & ids,
     // half-precision values.
     auto gelu_tanh = [&](ggml_tensor * a) {
         ggml_tensor * cube = ggml_mul(ctx, ggml_mul(ctx, a, a), a);
-        ggml_tensor * inner = ggml_scale(ctx, ggml_add(ctx, a, ggml_scale(ctx, cube, 0.044715f)), std::sqrt(2.0f / (float) M_PI));
+        ggml_tensor * inner = ggml_scale(ctx, ggml_add(ctx, a, ggml_scale(ctx, cube, 0.044715f)), (float) std::sqrt(2.0 / kPi));
         return ggml_mul(ctx, a, ggml_scale_bias(ctx, ggml_tanh(ctx, inner), 0.5f, 0.5f));
     };
     for (int l = 0; l < layers_; l++) {
