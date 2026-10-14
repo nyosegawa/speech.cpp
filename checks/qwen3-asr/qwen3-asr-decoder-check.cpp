@@ -129,55 +129,45 @@ struct Steps {
 
 /**
  * Decodes greedily from the decoder's prefill, comparing each step with the dump's until the first that differs;
- * returns the ids it wrote, and gives `seen`, where given, the logits it picked each from.
+ * returns the ids it wrote.
  */
-std::vector<int32_t> follow(Decoder & decoder, const Npy & ids, const Npy & top_ids, const Npy & top_logits, Steps & steps,
-                            std::vector<std::vector<float>> * seen = nullptr) {
+std::vector<int32_t> follow(Decoder & decoder, const Npy & ids, const Npy & top_ids, const Npy & top_logits, Steps & steps) {
     bool same = true;
     const auto compare_step = [&](size_t i) {
         if (same && i < (size_t) ids.shape[0]) same = steps.add(i, decoder.logits(), top_ids, top_logits, ids.i32[i]);
     };
     // The decoding calls back after each token but the last, before it feeds the token; the logits of the last stay.
-    const Generation g = *decoder.generate(
-        [&](size_t n) {
-            compare_step(n - 1);
-            return true;
-        },
-        nullptr, seen);
+    const Generation g = *decoder.generate([&](size_t n) {
+        compare_step(n - 1);
+        return true;
+    });
     compare_step(g.ids.size() - 1);
     return g.ids;
 }
 
 /**
- * Decodes greedily from the decoder's prefill with a draft of `draft`, and checks that it writes `written`, the ids of a
- * decoding without one whose logits `single` holds, but where a step that checked several rows put two tokens' logits
- * across the margin that one row of each step gave them: there, the margin must lie within the difference between the
- * two steps' logits of those tokens.
+ * Decodes greedily from the decoder's prefill with a draft of `draft`, compares each step with the dump's as `greedy`, a
+ * decoding without one, compared, until the first that differs, and checks the steps against the dump as that
+ * decoding's: no choice of ours that the error does not explain, and top logits no more than 6 dB further from the
+ * dump's than its, twice the error, which a step of several rows rounding otherwise than one of each stays within and
+ * a step that read another position's cache does not. Prints whether it wrote the ids written without a draft, `written`.
  */
 bool drafted(Decoder & decoder, const char * what, const std::vector<int32_t> & draft, const Recognizer & recognizer, bool forced,
-             const std::vector<int32_t> & written, const std::vector<std::vector<float>> & single) {
+             const Npy & ids, const Npy & top_ids, const Npy & top_logits, const Steps & greedy, const std::vector<int32_t> & written) {
     Draft d(draft, recognizer.asr_text(), forced);
     std::vector<std::vector<float>> seen;
-    const std::vector<int32_t> ids = decoder.generate([](size_t) { return true; }, &d, &seen)->ids;
-    size_t i = 0;
-    while (i < ids.size() && i < written.size() && ids[i] == written[i]) i++;
-    const std::string kept = std::to_string(d.kept) + " of " + std::to_string(d.checked) + " drafted tokens kept in " + std::to_string(d.checks) + " steps";
-    if (i == ids.size() && i == written.size()) {
-        std::printf("  %-32s the ids without one, %s\n", what, kept.c_str());
-        return true;
+    const std::vector<int32_t> got = decoder.generate([](size_t) { return true; }, &d, &seen)->ids;
+    Steps steps;
+    for (size_t i = 0; i < got.size() && i < (size_t) ids.shape[0]; i++) {
+        if (!steps.add(i, seen.at(i), top_ids, top_logits, ids.i32[i])) break;
     }
-    if (i == ids.size() || i == written.size()) {
-        std::printf("  %-32s DIFFER: %zu ids where without one %zu, %s\n", what, ids.size(), written.size(), kept.c_str());
-        return false;
-    }
-    const std::vector<float> & one = single.at(i), & several = seen.at(i);
-    const int32_t a = written[i], b = ids[i];
-    const float margin = one[(size_t) a] - one[(size_t) b];
-    const float error = std::fabs(one[(size_t) a] - several[(size_t) a]) + std::fabs(one[(size_t) b] - several[(size_t) b]);
-    const bool explained = margin <= error;
-    std::printf("  %-32s token %zu %d where without one %d, margin %.4f, the steps' difference on the two %.4f, %s; %s\n", what, i, b, a,
-                margin, error, explained ? "a near tie" : "UNEXPLAINED", kept.c_str());
-    return explained;
+    const bool close = steps.worst_snr >= greedy.worst_snr - 6;
+    std::printf("  %-32s %zu of %zu steps the dump's, top logits' worst SNR %.1f dB against %.1f without one, %s; %d of %d drafted tokens "
+                "kept in %d steps\n",
+                what, steps.steps - steps.differ, steps.steps, steps.worst_snr, greedy.worst_snr, got == written ? "the ids without one" : "other ids",
+                d.kept, d.checked, d.checks);
+    if (!close) std::printf("    the drafted steps lie more than 6 dB further from the dump than the steps without a draft\n");
+    return close && steps.unexplained == 0;
 }
 
 }  // namespace
@@ -308,9 +298,8 @@ int main(int argc, char ** argv) {
 
                     // Greedy from the dump's projector output, the prompt and the embeddings ours.
                     Steps greedy;
-                    std::vector<std::vector<float>> single;
                     followed.prefill(ours, n, [](int64_t) { return true; });
-                    const std::vector<int32_t> written = follow(followed, ids, top_ids, top_logits, greedy, &single);
+                    const std::vector<int32_t> written = follow(followed, ids, top_ids, top_logits, greedy);
                     decoder.prefill(ours, n, [](int64_t) { return true; });
                     const bool same_picks = decoder.generate([](size_t) { return true; })->ids == written;
                     std::printf("  %-32s %s\n", "picks on the device", same_picks ? "the first of the largest logits" : "DIFFER");
@@ -327,7 +316,7 @@ int main(int argc, char ** argv) {
                     for (const auto & [what, draft] : {std::pair<const char *, const std::vector<int32_t> &>{"drafted, its own text", right},
                                                        {"drafted, half reversed", wrong}}) {
                         followed.prefill(ours, n, [](int64_t) { return true; });
-                        ok = drafted(followed, what, draft, recognizer, request.language.has_value(), written, single) && ok;
+                        ok = drafted(followed, what, draft, recognizer, request.language.has_value(), ids, top_ids, top_logits, greedy, written) && ok;
                     }
 
                     // The text from the audio, every stage ours.
