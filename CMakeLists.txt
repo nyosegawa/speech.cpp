@@ -301,8 +301,8 @@ add_executable(qwen3-decoder-check checks/common/qwen3-decoder-check.cpp)
 target_include_directories(qwen3-decoder-check PRIVATE checks)
 target_link_libraries(qwen3-decoder-check PRIVATE qwen3tts)
 
-add_executable(irodori-text-check checks/irodori-tts/irodori-text-check.cpp)
-target_include_directories(irodori-text-check PRIVATE checks)
+add_executable(irodori-text-check checks/irodori-tts/irodori-text-check.cpp tools/common/json-reader.cpp)
+target_include_directories(irodori-text-check PRIVATE checks tools/common)
 target_link_libraries(irodori-text-check PRIVATE irodoritts)
 
 add_executable(irodori-window-check checks/irodori-tts/irodori-window-check.cpp)

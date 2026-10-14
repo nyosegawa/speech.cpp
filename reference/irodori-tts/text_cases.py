@@ -1,11 +1,14 @@
 """Writes the cases the C++ text normalization, tokenizer and text encoder are checked against.
 
-usage: uv run python text_cases.py <prompts.json> <out dir>
+usage: uv run python text_cases.py <large|mf|rf> <prompts.json> <out dir>
 
   text-cases.tsv     one line per text: the text's UTF-8 in hex, a tab, the official normalize_text() of it
                      (stripped, as the runtime does) in hex, a tab, and the ids the runtime gives it with <s>
-  long-<i>/          for texts longer than ModernBERT's local window of 64 tokens on each side, the text
+  long-<i>/          for long texts, longer than ModernBERT's local window of 64 tokens on each side, the text
                      encoder's outputs as dump.py writes them: input_ids, text_layers and text_state
+  meta.json          in the folder and in each long-<i>/, the model, as dump.py names it
+
+The model's tokenizer and text encoder make the cases, so the checks take the cases of the model they check.
 
 The texts are the prompts' sentences, texts that reach each rule of the normalization, the byte fallback
 and the added tokens, and each of the emoji the runtime reads as a direction (a laugh, a sigh, a whisper), alone,
@@ -28,10 +31,17 @@ from irodori_tts.text_normalization import normalize_text
 from irodori_tts.tokenizer import PretrainedTextTokenizer
 from pins import MODELS, snapshot
 
-prompts_path, out_dir = sys.argv[1:3]
+name, prompts_path, out_dir = sys.argv[1:4]
 os.makedirs(out_dir, exist_ok=True)
 torch.set_grad_enabled(False)
-model_dir = snapshot(MODELS["mf"])
+model_dir = snapshot(MODELS[name])
+
+
+def write_meta(folder):
+    json.dump({"model": MODELS[name]}, open(os.path.join(folder, "meta.json"), "w", encoding="utf-8"), indent=1)
+
+
+write_meta(out_dir)
 tokenizer = PretrainedTextTokenizer.from_pretrained(os.path.join(model_dir, "tokenizer"), add_bos=True,
                                                     local_files_only=True)
 
@@ -104,4 +114,5 @@ for i, text in enumerate(long_texts):
     np.save(os.path.join(d, "input_ids.npy"), ids[0, :n].numpy().astype(np.int32))
     np.save(os.path.join(d, "text_layers.npy"), torch.stack([h[0] for h in layers]).numpy())
     np.save(os.path.join(d, "text_state.npy"), state.numpy())
+    write_meta(d)
     print(d, n, "tokens")

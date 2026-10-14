@@ -239,10 +239,20 @@ def irodori_tts(model, devices, ctx):
         # Dumps of the same references at the same loudness check the encoder alike; the first of them checks it.
         if all((refs, m.get("ref_normalize_db", "model")) != (r, n) for _, r, n in codec):
             codec.append((os.path.join(out, d), refs, m.get("ref_normalize_db", "model")))
+    def cases_of(file):
+        """The cases text_cases.py or caption_cases.py made with the model, in the folder whose meta.json names it."""
+        for d in sorted(os.listdir(out)):
+            meta = os.path.join(out, d, "meta.json")
+            if os.path.isfile(os.path.join(out, d, file)) and os.path.isfile(meta):
+                with open(meta, encoding="utf-8") as f:
+                    if "https://huggingface.co/" + json.load(f)["model"]["repository"] == model.repository:
+                        return os.path.join(out, d, file)
+        return os.path.join(out, f"<{model.name}'s folder>", file)
+
     for i, device in enumerate(devices):
-        cases = [os.path.join(out, "text", "text-cases.tsv")]
+        cases = [cases_of("text-cases.tsv")]
         if model.captions:
-            cases.append(os.path.join(out, "caption", "caption-cases.tsv"))
+            cases.append(cases_of("caption-cases.tsv"))
         runs += reading(cases, [runs_on(device, "irodori-text-check", model, [out])])
         runs.append(runs_on(device, "irodori-condition-check", model, [out]))
         runs += attentions(device, "irodori-dit-check", model, [out])
