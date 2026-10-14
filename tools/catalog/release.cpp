@@ -124,18 +124,54 @@ std::vector<std::string> question(int seconds) {
             "--max-time", std::to_string(seconds), kLatest};
 }
 
-/** The version curl's answer names, from its exit code, its stdout and its stderr. */
-std::string answered(int code, const std::string & out, std::string err) {
-    if (code != 0) {
+/** What curl gave: its exit code, its stdout and its stderr. */
+struct Answer {
+    int code = 0;
+    std::string out, err;
+};
+
+/**
+ * Runs curl to its end, reading its stdout and stderr on threads of their own while it runs: a configuration such as a
+ * .curlrc with `trace = "-"` makes curl write more than a pipe holds, and curl would then wait for a reader forever.
+ * Once `stop` is true, curl is ended.
+ */
+Answer ask(const std::vector<std::string> & args, const std::string & missing, const std::atomic<bool> & stop) {
+    Curl curl(args, missing);
+    Answer answer;
+    std::thread out([&] { answer.out = read_to_end(curl.out()); });
+    std::thread err([&] { answer.err = read_to_end(curl.err()); });
+    bool stopped = false;
+    while (!curl.wait(20, answer.code)) {
+        if (stop && !stopped) {
+            curl.stop();
+            stopped = true;
+        }
+    }
+    out.join();
+    err.join();
+    return answer;
+}
+
+/**
+ * The version curl's answer names. --write-out writes the address the redirect ends at to stdout, among what a
+ * configuration such as `trace = "-"` writes there before and after it, so the version is read after the last tag.
+ */
+std::string answered(Answer answer) {
+    if (answer.code != 0) {
+        std::string & err = answer.err;
         while (!err.empty() && (err.back() == '\n' || err.back() == '\r')) err.pop_back();
-        throw io_failure("cannot reach github.com to find the latest release: curl's exit code " + std::to_string(code) +
+        // curl's own message is its last line; a trace before it is of no use in a message.
+        const size_t line = err.find_last_of('\n');
+        if (line != std::string::npos) err = err.substr(line + 1);
+        throw io_failure("cannot reach github.com to find the latest release: curl's exit code " + std::to_string(answer.code) +
                          (err.empty() ? "" : " (" + err + ")") + "; check the network and run this again");
     }
     const std::string tag = "/releases/tag/v";
-    const size_t at = out.rfind(tag);
-    const std::string version = at == std::string::npos ? "" : out.substr(at + tag.size());
+    const size_t at = answer.out.rfind(tag);
+    const std::string rest = at == std::string::npos ? "" : answer.out.substr(at + tag.size());
+    const std::string version = rest.substr(0, rest.find_first_not_of("0123456789."));
     if (!version_numbers(version)) {
-        throw io_failure("github.com sends " + kLatest + " to " + out + ", which is no release's page; run this again later");
+        throw io_failure("github.com sends " + kLatest + " to " + answer.out.substr(0, 200) + ", which is no release's page; run this again later");
     }
     return version;
 }
@@ -155,13 +191,11 @@ std::string latest_release() {
     const std::optional<Kept> kept = read_kept();
     Kept next{now_seconds(), kept ? kept->latest : ""};
     try {
-        Curl curl(question(10), "speech asks github.com for the latest release with the system's curl, which is not there; install curl and run "
-                                "this again");
-        int code = 0;
-        while (!curl.wait(100, code)) {
-        }
-        const std::string out = read_to_end(curl.out());
-        next.latest = answered(code, out, read_to_end(curl.err()));
+        const std::atomic<bool> never{false};
+        next.latest = answered(ask(question(10),
+                                   "speech asks github.com for the latest release with the system's curl, which is not there; install curl and run "
+                                   "this again",
+                                   never));
     } catch (const std::exception &) {
         keep_quietly(next);
         throw;
@@ -200,17 +234,7 @@ std::string ReleaseCheck::latest() const {
 void ReleaseCheck::run() {
     Kept next{now_seconds(), latest()};
     try {
-        Curl curl(question(5), "there is no curl");
-        int code = 0;
-        bool stopped = false;
-        while (!curl.wait(20, code)) {
-            if (stopping_ && !stopped) {
-                curl.stop();
-                stopped = true;
-            }
-        }
-        const std::string out = read_to_end(curl.out());
-        next.latest = answered(code, out, read_to_end(curl.err()));
+        next.latest = answered(ask(question(5), "there is no curl", stopping_));
         const std::lock_guard<std::mutex> lock(mutex_);
         latest_ = next.latest;
     } catch (const std::exception &) {
