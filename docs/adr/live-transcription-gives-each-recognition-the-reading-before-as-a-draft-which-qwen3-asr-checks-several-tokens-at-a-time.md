@@ -28,9 +28,10 @@ two tokens score almost the same, the two can choose different ones.
   recordings changed on the M5, 3 of 135 and 7 of 135 changed on an RTX 2080 with Vulkan, and 1 of 52 changed on the
   M5's CPU, each at the end of a reading cut in the middle of a word or between a comma and a full stop. Over
   /v1/realtime (below), 2 of the 58 completed transcripts on the RTX 2080 differed from the same samples recognized
-  without a draft, a full stop at the end and タイマー for タイマ, and none of the 58 on the M5. The decoder's check fails
-  where a draft changes a token whose margin is wider than the difference between the two steps' logits of the two
-  tokens, which points to a defect of the drafting.
+  without a draft, a full stop at the end and タイマー for タイマ, and none of the 58 on the M5. The decoder's check
+  compares the steps of a drafted decoding with the official implementation's as it compares those without a draft,
+  and fails where they lie more than 12 dB further from it: the drafted steps lay up to 6.9 dB further on the RTX 2080,
+  and 21.8 dB further with the rewind one row short.
 
 measure/live_latency.py, FLEURS's Japanese and English test clips in two rounds of two sessions of five clips over
 /v1/realtime with server_vad, Q8_0, the utterances the detection did not cut (2026-10-15): the p50 of the time from
