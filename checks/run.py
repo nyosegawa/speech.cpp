@@ -11,7 +11,7 @@ GPU once with each attention. A check whose dumps or inputs are missing is skipp
 A check that exits with 2 refused its arguments, as a check refuses weights it cannot judge; that is reported apart and
 does not fail the run. Any other exit but 0 fails it. Each check's whole output goes to a log of its own in --logs.
 
-families: qwen3-tts, irodori-tts, qwen3-asr, fastconformer, silero-vad, common (the checks that take no model), all
+families: qwen3-tts, irodori-tts, drama3, qwen3-asr, fastconformer, silero-vad, common (the checks that take no model), all
 
 usage: python3 checks/run.py <family>... [--build DIR] [--devices cpu,gpu] [--types F32] [--models PATH...]
                              [--reference DIR] [--references DIR] [--decoder-text FILE] [--only CHECK...]
@@ -29,7 +29,7 @@ import tempfile
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FAMILIES = ["qwen3-tts", "irodori-tts", "qwen3-asr", "fastconformer", "silero-vad", "common"]
+FAMILIES = ["qwen3-tts", "irodori-tts", "drama3", "qwen3-asr", "fastconformer", "silero-vad", "common"]
 # general.file_type's values of the weight types speech.cpp writes, as weight_types() of src/common/storage.cpp lists
 # them; a script cannot read that table.
 FILE_TYPES = {0: "F32", 1: "F16", 7: "Q8_0", 18: "Q6_K", 16: "Q5_K", 14: "Q4_K"}
@@ -272,6 +272,22 @@ def irodori_tts(model, devices, ctx):
     return runs
 
 
+def drama3(model, devices, ctx):
+    out = os.path.join(ctx.reference, "drama3", "out")
+    dumps = []
+    if os.path.isdir(out):
+        for d in sorted(os.listdir(out)):
+            meta = os.path.join(out, d, "meta.json")
+            if os.path.isfile(meta):
+                with open(meta, encoding="utf-8") as f:
+                    m = json.load(f)
+                if "https://huggingface.co/" + m["model"]["repository"] == model.repository and m.get("reference"):
+                    dumps.append(os.path.join(out, d))
+    if not dumps:
+        return [missing("drama3-codec-check", model.label(), f"dump of {model.name} with a reference under {out}")]
+    return [runs_on(device, "drama3-codec-check", model, [d], " " + os.path.basename(d)) for device in devices for d in dumps]
+
+
 def qwen3_asr(model, devices, ctx):
     out = os.path.join(ctx.reference, "qwen3-asr", "out")
     absent = named_dumps("qwen3-asr", model, out)
@@ -317,7 +333,7 @@ def common(ctx):
     return runs
 
 
-PLANS = {"qwen3-tts": qwen3_tts, "irodori-tts": irodori_tts, "qwen3-asr": qwen3_asr, "fastconformer": fastconformer, "silero-vad": silero_vad}
+PLANS = {"qwen3-tts": qwen3_tts, "irodori-tts": irodori_tts, "drama3": drama3, "qwen3-asr": qwen3_asr, "fastconformer": fastconformer, "silero-vad": silero_vad}
 
 
 def executable(build, check):

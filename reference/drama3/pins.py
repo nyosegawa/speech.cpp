@@ -42,10 +42,11 @@ def check(path, size, sha256):
 
 
 def snapshot():
-    """The local folder of the pinned checkpoint with its configuration, tokenizer, weights and codec, downloaded and
-    checked on first use; a folder already checked holds a file that says so, since hashing 41.5 GB takes minutes."""
+    """The local folder of the pinned checkpoint with its configuration, tokenizer, weights, codec, model card and license,
+    downloaded and checked on first use; a folder already checked holds a file that says so, since hashing 41.5 GB takes
+    minutes."""
     folder = snapshot_download(
-        MODEL["repository"], revision=MODEL["revision"], allow_patterns=["*.json", "*.safetensors", "codec.pth"])
+        MODEL["repository"], revision=MODEL["revision"], allow_patterns=["*.json", "*.safetensors", "codec.pth", "README.md", "LICENSE"])
     stamp = os.path.join(folder, ".pins-checked")
     if not os.path.exists(stamp):
         for name, (size, sha256) in MODEL["files"].items():
