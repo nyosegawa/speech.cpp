@@ -63,9 +63,9 @@ The alternatives were turned down:
 ## Consequences
 
 On the RTX 2080 a model holds the experts of 5 layers on the GPU and speaks at 0.5 to 0.6 times real time, with its
-first audio after 1.1 to 1.8 s, where a GPU of 12 or 16 GB keeps about 18 or 27 layers' experts and comes nearer real
-time. The worst request, a voice of about 8,000 rows of recordings, peaked at 6.7 GiB of the GPU's memory above the
-desktop's 0.6 GiB. The CPU computes its
+first audio after 1.1 to 1.3 s, where a GPU of 12 or 16 GB keeps about 18 or 27 layers' experts and comes nearer real
+time. The model holds 6.8 GiB of the GPU's memory from its load on, beside the desktop's 0.6 GiB, and the worst
+request, a voice of about 8,000 rows of recordings, took it to 6.9 GiB. The CPU computes its
 experts in its own arithmetic, which differs from the GPU's: the text model's check against the official dumps gives
 the experts' output at 67.9 dB with them on the CPU against 65.4 dB on Metal, in F32. A prompt of 8,000 rows of
 references takes about a minute before the first audio with most experts on the CPU. Every model holds the memory of

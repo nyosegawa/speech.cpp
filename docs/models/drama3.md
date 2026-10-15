@@ -88,12 +88,12 @@ speech tts Drama-35B-A3B-v3-Q4_K.gguf --add-voice cast=cast.voice.gguf --voice c
   | Machine, Q4_K file | Experts on the CPU | RTFx | Time to first audio |
   |---|---|---|---|
   | Apple M5, Metal | none | 1.1 to 1.3 | 0.3 to 0.4 s |
-  | RTX 2080 (8 GB), Vulkan, i9-9900K | those of 35 of 40 layers | 0.5 to 0.6 | 1.1 to 1.8 s |
+  | RTX 2080 (8 GB), Vulkan, i9-9900K | those of 35 of 40 layers | 0.5 to 0.6 | 1.1 to 1.3 s |
 
-  The RTX 2080's figures are for a Japanese sentence of 8 s and a paragraph of 11 s with the voice `none`, on
-  2026-10-15; the GPU's memory peaked at 5.1 GiB above what the desktop held. A voice's recordings lengthen every
-  chunk's prompt, which the CPU computes for the layers it holds: a voice of about 8,000 rows of recordings took a
-  minute before its first audio, and the GPU's memory peaked at 6.7 GiB.
+  The RTX 2080's figures are for a Japanese sentence of 7 s and a paragraph of 19 s with the voice `none`, on
+  2026-10-16; the model held 6.8 GiB of the GPU's memory from its load on, beside the desktop's 0.6 GiB. A voice's
+  recordings lengthen every chunk's prompt, which the CPU computes for the layers it holds: a voice of about 8,000 rows
+  of recordings took a minute before its first audio, and the model's memory on the GPU peaked at 6.9 GiB.
 
 ## Options
 
