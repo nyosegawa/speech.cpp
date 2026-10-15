@@ -286,6 +286,21 @@ static int check_drama3_cast(speech_model * model, const speech_model_info * inf
     speech_request * r = new_request(model, "<|speaker:0|> こんにちは。<|speaker:1|> こんばんは。", "cast", 5);
     ok &= expect(speak(r, &a, NULL, NULL), SPEECH_OK, NULL, "a scene of the cast's two speakers") && a.n > 0;
     if (ok) printf("the cast's voices are described by their speakers, and a scene of both spoke %zu samples\n", a.n);
+    // The model keeps the head of the prompt of the voice it spoke last: a request in another voice, then the first
+    // voice's again, speaks the same samples as when its head was run first.
+    Audio first = {NULL, 0, 0}, other = {NULL, 0, 0}, again = {NULL, 0, 0};
+    ok &= expect(speak(new_request(model, "はい、そうです。", "made", 9), &first, NULL, NULL), SPEECH_OK, NULL, "a request in the voice made") &&
+          expect(speak(new_request(model, "はい、そうです。", "cast", 9), &other, NULL, NULL), SPEECH_OK, NULL, "the same request in the cast") &&
+          expect(speak(new_request(model, "はい、そうです。", "made", 9), &again, NULL, NULL), SPEECH_OK, NULL, "the first request again");
+    if (ok && (first.n != again.n || memcmp(first.samples, again.samples, first.n * sizeof(float)) != 0)) {
+        fprintf(stderr, "FAIL: a voice's request spoken again after another voice's differs from when it was spoken first\n");
+        ok = 0;
+    } else if (ok) {
+        printf("a voice's request spoken again after another voice's gave the same %zu samples\n", again.n);
+    }
+    free(first.samples);
+    free(other.samples);
+    free(again.samples);
     free(a.samples);
     return ok ? 0 : 1;
 }

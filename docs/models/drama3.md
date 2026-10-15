@@ -62,9 +62,11 @@ speech tts Drama-35B-A3B-v3-Q4_K.gguf --add-voice cast=cast.voice.gguf --voice c
   codes of a 12.8 s recording were all the official encoder's; on Metal, 88 to 99% of each codebook's were.
 - A voice file holds the codec's codes, not the audio, and works with every file of Drama 3 whose codec has the hash it
   carries, whatever its weight type.
-- Every chunk of a text is prompted with all of the voice's recordings, so they lengthen the prompt and the wait for the
-  first audio: with two recordings of 28 s in all, the first audio came after 1.6 s on the Apple M5 with the Q4_K file.
-  A voice whose recordings leave a chunk no room for a text is refused.
+- Every chunk of a text is prompted with all of the voice's recordings. The model runs them once and keeps them for the
+  next chunks and requests in the same voice, until a request in another voice: with two recordings of 28 s in all on
+  the Apple M5 with the Q4_K file, the first request's first audio came after 1.6 s and the next ones' after 0.25 to
+  0.33 s. The same request with the same seed gives the same samples either way. A voice whose recordings leave a
+  chunk no room for a text is refused.
 - A WAVE file given to `--add-voice` is refused, since it lacks its words; make a voice file of it first. The page of
   `speech serve` makes no voices of Drama 3 for the same reason.
 
