@@ -26,7 +26,12 @@ M5). A model needs its whole file in memory: speaking a short text with the Q4_K
 - **Speakers** are written in the text as `<|speaker:0|>` to `<|speaker:15|>`; text before the first tag is speaker 0's.
   The voice `none` gives every speaker a voice of the model's choosing, and a voice file gives its speakers the voices
   of its recordings ([Voices](#voices)).
-- **Cues** in brackets, such as `[laughs]` or `[sighs]`, and the words of the text steer how it is spoken.
+- **Cues** in brackets, such as `[laughs]`, `[whispers]` or `[小声でささやく]`, and the words of the text steer how it is
+  spoken, from the point where they are written. A cue that changes the voice, such as a whisper or a laugh, takes effect
+  readily; a large change of feeling, such as shouting, follows the words of the text more than the cue.
+- **A voice described in words**: with the voice `none`, a cue at the start such as `[deep, low male voice]` or
+  `[明るく元気な若い女性の声]` steers the voice the model chooses for that speaker. A description of several traits may
+  come out otherwise with some seeds; a voice file gives the same voice every time.
 - **The language** is read from the text. `language` is checked against the model's languages and changes nothing.
 - **A long text** is spoken in chunks of about 300 bytes of UTF-8 with at most three speakers, cut at sentence ends,
   then at commas, then at spaces, never inside a tag or a cue. Each chunk is prompted with the first and the latest chunk

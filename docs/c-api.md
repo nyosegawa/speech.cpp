@@ -269,6 +269,7 @@ Each model takes some of them, with ranges and defaults from its file, and `spee
 | `draft` | string | `""` | [Qwen3-ASR](models/qwen3-asr.md#options) |
 | `decoding` | string | none | reazonspeech-nemo-v2 |
 | `decode_on_cpu` | bool | none | FastConformer |
+| `experts_on_cpu` | bool | true | [Drama 3](models/drama3.md#devices-and-memory) |
 | `do_sample`, `top_k`, `top_p`, `temperature`, `repetition_penalty` | bool, int, float, float, float | none | Qwen3-TTS; `top_k`, `top_p` and `temperature` also Drama 3 |
 | `code_predictor_do_sample`, `code_predictor_top_k`, `code_predictor_top_p`, `code_predictor_temperature` | bool, int, float, float | none | Qwen3-TTS |
 | `instructions` | string | `""` | Qwen3-TTS 1.7B, Irodori-TTS |
@@ -347,5 +348,6 @@ loaded on Metal, with two of its nine voices and four of its options shown:
   `minimum` or `exclusive_minimum`, `maximum`, and `choices`.
 - `device` and `threads` are there for a loaded model alone. `threads` is the number of CPU threads in effect for a model
   on the CPU or for a model on a GPU that can compute part of a request on the CPU (FastConformer's decoding with
-  `decode_on_cpu`), and 0 for a model on a GPU that computes nothing there. Setting threads is never an error, since
+  `decode_on_cpu`, or Drama 3's experts that its GPU does not hold), and 0 for a model on a GPU that computes nothing
+  there. Setting threads is never an error, since
   with the device `auto` a caller cannot know where the model will run.
