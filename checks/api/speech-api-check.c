@@ -122,20 +122,22 @@ static int check_voices(speech_model * model, const char * model_path, char ** n
                      "a voice file made for a model with its own voices");
         return ok ? 0 : 1;
     }
-    ok &= expect(speech_voice_add(model, names[0], paths[0]), SPEECH_ERROR_INVALID_ARGUMENT, "name", "a voice under a name the model has");
-    ok &= expect(speech_voice_add(model, "", paths[0]), SPEECH_ERROR_INVALID_ARGUMENT, "name", "a voice without a name");
+    // The name is checked before the file, so a model given no voice is refused names with a file that is not there.
+    const char * path = n_voices ? paths[0] : "no-such-folder/voice.gguf";
+    if (n_voices) ok &= expect(speech_voice_add(model, names[0], path), SPEECH_ERROR_INVALID_ARGUMENT, "name", "a voice under a name the model has");
+    ok &= expect(speech_voice_add(model, "", path), SPEECH_ERROR_INVALID_ARGUMENT, "name", "a voice without a name");
     ok &= expect(speech_voice_add(model, "missing", "no-such-folder/voice.gguf"), SPEECH_ERROR_IO, "path", "a voice file that is not there");
     // The voice none speaks without a reference in a file that holds the null speaker, and its name stays its own in
     // one that does not.
-    ok &= expect(speech_voice_add(model, "none", paths[0]), SPEECH_ERROR_INVALID_ARGUMENT, "name", "a voice added under the name none");
+    ok &= expect(speech_voice_add(model, "none", path), SPEECH_ERROR_INVALID_ARGUMENT, "name", "a voice added under the name none");
     if (recording && !recordings) {
         ok &= expect(speech_voice_add(model, "recording", recording), SPEECH_ERROR_INVALID_ARGUMENT, "path",
                      "a recording added to a model that takes voice files alone");
     }
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
     ok &= speech_model_info_voice_count(info) == own + n_voices &&
-          !strcmp(speech_model_info_voice_name(info, own + n_voices - 1), names[n_voices - 1]) &&
-          !strcmp(speech_model_info_voice_language(info, own), "");
+          (!n_voices || (!strcmp(speech_model_info_voice_name(info, own + n_voices - 1), names[n_voices - 1]) &&
+                         !strcmp(speech_model_info_voice_language(info, own), "")));
     if (!ok) fprintf(stderr, "FAIL: the information does not list the voices added\n");
     speech_model_info_free(info);
     return ok ? 0 : 1;
