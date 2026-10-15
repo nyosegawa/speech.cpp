@@ -149,4 +149,6 @@ the seconds they took, so larger is faster, and the CER is of the speech as Qwen
 
 On the same H100, the official implementation, fish-speech in BF16 with its experts in FP8, gives a CER of 2.2% with
 seed 1 on the same sentences and reference, RTFx 1.9 with 44.2 GiB of the GPU's memory, and its first audio after
-2.1 s, since it returns each sentence whole.
+2.1 s, since it returns each sentence whole. SGLang Omni, the server of Fish Audio's own measurements, runs the official checkpoint with
+CUDA at RTFx 6.9 and its first audio after 0.12 s, with a CER of 1.5% over three runs and 63 GiB of the GPU's memory
+taken at its start; the unofficial int4 checkpoint in it gives RTFx 7.4 and 3.2%.
