@@ -35,21 +35,50 @@ Synthesizer::Synthesizer(const ModelFile & m, ggml_backend_t backend, ggml_backe
     // The memory of a chunk's longest prompt and speech, taken as the model loads, so that no model loaded after it
     // leaves a request short of it.
     const int64_t prompt_rows = m.size("drama3.generation.max_prompt_rows");
-    const int64_t rows = prompt_rows + m.size("drama3.generation.max_frames");
-    text_.reserve(rows, prompt_rows);
-    decoder_.reserve(rows, prompt_rows);
+    rows_most_ = prompt_rows + m.size("drama3.generation.max_frames");
+    text_.reserve(rows_most_, prompt_rows);
+    decoder_.reserve(rows_most_, prompt_rows);
     codec_.reserve_decoding(window_frames(5));
 }
 
-Synthesizer::Chunk Synthesizer::speak(const std::vector<int32_t> & rows, const Request & r, const FrameSampler & sampler, std::mt19937_64 & rng,
-                                      const AudioSink & sink) {
+std::vector<float> Synthesizer::run_head(const std::vector<int32_t> & rows, int64_t head) {
+    const int width = prompt_.width();
+    const std::vector<int32_t> rows_of_head(rows.begin(), rows.begin() + head * width);
+    if (rows_of_head == held_head_) {
+        text_.rewind(head);
+        decoder_.rewind(head - 1);
+        return held_last_;
+    }
+    held_head_.clear();
+    text_.start(rows_most_);
+    decoder_.start(rows_most_);
+    const std::vector<float> hidden = text_.run(text_.embed(rows_of_head, head), head);
+    const int h = text_.hidden();
+    // The audio decoder runs each row with the frame after it, which the head's last row has in the rest of the prompt.
+    if (head > 1) {
+        decoder_.prefill(std::vector<float>(hidden.begin(), hidden.end() - h),
+                         std::vector<int32_t>(rows.begin(), rows.begin() + head * width), head - 1);
+    }
+    text_.keep_states();
+    held_last_.assign(hidden.end() - h, hidden.end());
+    held_head_ = rows_of_head;
+    return held_last_;
+}
+
+Synthesizer::Chunk Synthesizer::speak(const std::vector<int32_t> & rows, int64_t head, const Request & r, const FrameSampler & sampler,
+                                      std::mt19937_64 & rng, const AudioSink & sink) {
     const int width = prompt_.width(), codebooks = width - 1, h = text_.hidden();
     const int64_t n = (int64_t) rows.size() / width;
-    text_.start(n + r.max_frames);
-    decoder_.start(n + r.max_frames);
-    const std::vector<float> hidden = text_.run(text_.embed(rows, n), n);
-    // The audio decoder runs each prompt row with the frame after it, which the last row has yet to draw.
-    decoder_.prefill(std::vector<float>(hidden.begin(), hidden.end() - h), rows, n - 1);
+    if (head < 1 || head >= n || n + r.max_frames > rows_most_) throw std::invalid_argument("a chunk's prompt and speech outgrow the model's sequences");
+    // The head is run apart from the rest even where it is run first, so that a request speaks the same whether the
+    // models still hold it or not.
+    std::vector<float> hidden = run_head(rows, head);
+    const std::vector<float> rest = text_.run(text_.embed(std::vector<int32_t>(rows.begin() + head * width, rows.end()), n - head), n - head);
+    hidden.insert(hidden.end(), rest.begin(), rest.end());
+    // The audio decoder runs the head's last row and the rest but the last, each with the frame after it, which the
+    // prompt's last row has yet to draw.
+    decoder_.prefill(std::vector<float>(hidden.begin(), hidden.end() - h), std::vector<int32_t>(rows.begin() + (head - 1) * width, rows.end()),
+                     n - head);
     std::vector<float> last(hidden.end() - h, hidden.end());
     std::vector<int32_t> frame(rows.end() - width, rows.end()), mains;
     for (int64_t i = 0; i < n; i++) mains.push_back(rows[(size_t) (i * width)]);
@@ -114,6 +143,7 @@ Ending Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
     // A text of no words has no chunk, and the prompt refuses it as empty.
     if (chunks.empty()) chunks.push_back(r.text);
     for (const std::string & text : chunks) prompt_.rows(text, voice.references, {});
+    const int64_t head = (int64_t) prompt_.head(voice.references).size() / prompt_.width();
 
     const FrameSampler sampler(m_, r.sampling);
     std::mt19937_64 rng(r.seed);
@@ -139,7 +169,7 @@ Ending Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
                 if (e.fault() != Fault::OutOfRange || i + 1 == histories.size()) throw;
             }
         }
-        const Chunk chunk = speak(rows, r, sampler, rng, sink);
+        const Chunk chunk = speak(rows, head, r, sampler, rng, sink);
         if (chunk.stopped) return Ending::Stopped;
         if (!chunk.ended) ending = Ending::MaxFrames;
         if (chunk.frames == 0) continue;

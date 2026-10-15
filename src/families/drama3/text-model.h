@@ -52,6 +52,15 @@ public:
     /** Starts a sequence of at most `rows` rows: the attention layers get room for them, and every state starts at 0. */
     void start(int64_t rows);
 
+    /** Keeps a copy of every Gated DeltaNet layer's state as it stands after n_past() rows, for rewind(). */
+    void keep_states();
+
+    /**
+     * Goes back to the row after the first `rows` rows of the sequence, where keep_states() kept the states: the
+     * attention layers keep the keys and values of those rows, and the states return to the copy.
+     */
+    void rewind(int64_t rows);
+
     /**
      * Allocates now the memory of a sequence of `rows` rows whose prompt takes `prompt_rows`, which its largest graphs
      * need later: the attention layers' room for the rows and the buffers of the graphs of the longest prompt, so that
@@ -114,6 +123,9 @@ private:
     int32_t semantic_begin_ = 0, semantic_end_ = 0;
     std::unique_ptr<KeysValues> keys_values_;
     std::unique_ptr<States> states_;
+    /** The copy keep_states() made of states_, and the rows run when it made it. */
+    std::unique_ptr<States> kept_;
+    int64_t kept_rows_ = -1;
     /** The index of each layer among the attention layers or the Gated DeltaNet layers of the run. */
     std::vector<int> slot_;
     int64_t capacity_ = 0, n_past_ = 0;

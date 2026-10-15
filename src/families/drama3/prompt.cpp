@@ -130,19 +130,7 @@ std::vector<int32_t> Prompt::rows(const std::string & text, const std::vector<Ut
         check_codes(history[i], "chunk " + std::to_string(i + 1) + " spoken before");
     }
 
-    std::vector<int32_t> rows;
-    append_text(rows, system_);
-    append_text(rows, references.empty() ? instruction_ : reference_instruction_);
-    for (size_t i = 0; i < references.size(); i++) {
-        // The speaker tag follows "Text: " directly, and the white space that led the transcript moves behind it.
-        const std::string tagged = with_speaker_tag(references[i].text);
-        const size_t lead = leading_space(tagged);
-        const size_t tag = speaker_tag_at(tagged, lead);
-        const std::string transcript = tagged.substr(lead, tag) + tagged.substr(0, lead) + tagged.substr(lead + tag);
-        append_text(rows, reference_open_ + std::to_string(i + 1) + reference_text_ + transcript + reference_speech_);
-        append_codes(rows, references[i]);
-    }
-    append_text(rows, end_);
+    std::vector<int32_t> rows = head(references);
     for (const Utterance & turn : history) {
         append_text(rows, user_);
         append_text(rows, with_speaker_tag(turn.text));
@@ -162,6 +150,23 @@ std::vector<int32_t> Prompt::rows(const std::string & text, const std::vector<Ut
                         "; give a shorter text or shorter references",
                     "text");
     }
+    return rows;
+}
+
+std::vector<int32_t> Prompt::head(const std::vector<Utterance> & references) const {
+    std::vector<int32_t> rows;
+    append_text(rows, system_);
+    append_text(rows, references.empty() ? instruction_ : reference_instruction_);
+    for (size_t i = 0; i < references.size(); i++) {
+        // The speaker tag follows "Text: " directly, and the white space that led the transcript moves behind it.
+        const std::string tagged = with_speaker_tag(references[i].text);
+        const size_t lead = leading_space(tagged);
+        const size_t tag = speaker_tag_at(tagged, lead);
+        const std::string transcript = tagged.substr(lead, tag) + tagged.substr(0, lead) + tagged.substr(lead + tag);
+        append_text(rows, reference_open_ + std::to_string(i + 1) + reference_text_ + transcript + reference_speech_);
+        append_codes(rows, references[i]);
+    }
+    append_text(rows, end_);
     return rows;
 }
 

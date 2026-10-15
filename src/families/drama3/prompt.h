@@ -37,6 +37,12 @@ public:
     std::vector<int32_t> rows(const std::string & text, const std::vector<Utterance> & references, const std::vector<Utterance> & history) const;
 
     /**
+     * The rows that every prompt of `references` begins with, whatever its text and history: the system turn, with
+     * the references' transcripts and codes, as rows() writes it.
+     */
+    std::vector<int32_t> head(const std::vector<Utterance> & references) const;
+
+    /**
      * Refuses `text`, which is `what` ("the text") of the caller's `input`, where it is empty, holds a token only the
      * prompt writes or a speaker tag other than <|speaker:0|> to the model's last, with an Error naming `input`.
      */

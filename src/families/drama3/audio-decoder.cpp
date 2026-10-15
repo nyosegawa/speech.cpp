@@ -63,6 +63,11 @@ void AudioDecoder::start(int64_t rows) {
     n_past_ = 0;
 }
 
+void AudioDecoder::rewind(int64_t rows) {
+    if (!cache_ || rows > n_past_) throw std::invalid_argument("the audio decoder rewinds only to rows it has run");
+    n_past_ = rows;
+}
+
 ggml_tensor * AudioDecoder::layer(Graph & g, int l, ggml_tensor * hidden, ggml_tensor * codes, const Rows & r) {
     ggml_context * c = g.ctx();
     const std::string p = layer_name(l, shared_);

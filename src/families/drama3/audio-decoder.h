@@ -42,6 +42,9 @@ public:
     /** Starts a sequence of at most `rows` rows, giving the layers' keys and values room for them. */
     void start(int64_t rows);
 
+    /** Goes back to the row after the first `rows` rows of the sequence, whose keys and values the layers keep. */
+    void rewind(int64_t rows);
+
     /**
      * Allocates now the memory of a sequence of `rows` rows whose prompt takes `prompt_rows`, which its largest graph
      * needs later: the layers' room for the rows and the buffer of a block of the longest prompt, so that no memory

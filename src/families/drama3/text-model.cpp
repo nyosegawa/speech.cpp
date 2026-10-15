@@ -110,6 +110,28 @@ void TextModel::start(int64_t rows) {
     if (states_->buffer) ggml_backend_buffer_clear(states_->buffer, 0);
     capacity_ = rows;
     n_past_ = 0;
+    kept_rows_ = -1;
+}
+
+void TextModel::keep_states() {
+    if (!kept_) {
+        const int64_t channels = 2 * (int64_t) key_heads_ * key_dim_ + (int64_t) value_heads_ * value_dim_;
+        kept_ = std::make_unique<States>(backend_, (int) states_->delta.size(), key_dim_, value_dim_, value_heads_, conv_width_, channels);
+    }
+    for (size_t i = 0; i < states_->delta.size(); i++) {
+        ggml_backend_tensor_copy(states_->delta[i], kept_->delta[i]);
+        ggml_backend_tensor_copy(states_->conv[i], kept_->conv[i]);
+    }
+    kept_rows_ = n_past_;
+}
+
+void TextModel::rewind(int64_t rows) {
+    if (rows != kept_rows_) throw std::invalid_argument("the text model rewinds only to the rows whose states it kept");
+    for (size_t i = 0; i < states_->delta.size(); i++) {
+        ggml_backend_tensor_copy(kept_->delta[i], states_->delta[i]);
+        ggml_backend_tensor_copy(kept_->conv[i], states_->conv[i]);
+    }
+    n_past_ = rows;
 }
 
 ggml_tensor * TextModel::attention_mixer(Graph & g, int l, ggml_tensor * x, int64_t first, ggml_tensor * pos, ggml_tensor * mask) {

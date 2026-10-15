@@ -68,11 +68,18 @@ private:
     struct Chunk;
 
     /**
-     * Draws the frames that follow the prompt `rows` until the end of speech or `r.max_frames`, passing their audio to
-     * `sink` as it goes, and returns their codes and how the chunk ended.
+     * Draws the frames that follow the prompt `rows`, whose first `head` rows are the voice's (Prompt::head()), until
+     * the end of speech or `r.max_frames`, passing their audio to `sink` as it goes, and returns their codes and how the
+     * chunk ended.
      */
-    Chunk speak(const std::vector<int32_t> & rows, const Request & r, const FrameSampler & sampler, std::mt19937_64 & rng,
+    Chunk speak(const std::vector<int32_t> & rows, int64_t head, const Request & r, const FrameSampler & sampler, std::mt19937_64 & rng,
                 const AudioSink & sink);
+
+    /**
+     * Runs the first `head` rows of `rows` in the text model and the audio decoder, from the start of a sequence, or
+     * goes back to them where they are the rows the models ran last, and returns the text model's state of the last.
+     */
+    std::vector<float> run_head(const std::vector<int32_t> & rows, int64_t head);
 
     const ModelFile & m_;
     Prompt prompt_;
@@ -81,6 +88,14 @@ private:
     Codec codec_;
     size_t chunk_bytes_ = 0, chunk_speakers_ = 0, recent_turns_ = 0;
     int32_t eos_ = 0;
+    /** The rows of a chunk at most, its prompt's and its speech's, for which the models' sequences have room. */
+    int64_t rows_most_ = 0;
+    /**
+     * The head of the prompt the models ran last, whose keys and values they still hold and whose states the text
+     * model kept, and the text model's state of its last row; empty where none is held.
+     */
+    std::vector<int32_t> held_head_;
+    std::vector<float> held_last_;
 };
 
 }  // namespace drama3
