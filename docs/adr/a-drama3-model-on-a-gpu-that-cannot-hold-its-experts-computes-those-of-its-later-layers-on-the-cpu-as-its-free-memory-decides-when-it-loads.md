@@ -41,7 +41,7 @@ trips of about 0.3 ms each, the wait for a submission to end rather than the cop
   model's information reports the CPU's threads, as it does for a model on a GPU that computes part of a request on the
   CPU.
 - **The request option `experts_on_cpu`, true by default**, lets a request refuse a model that holds some of its
-  experts on the CPU, as out of memory naming the option, for a caller that wants the GPU's speed or nothing. A model
+  experts on the CPU, as a value out of the range such a model takes, naming the option, for a caller that wants the GPU's speed or nothing; the same request then runs with true. A model
   whose GPU holds every expert, or one loaded on the CPU, takes either value.
 - **The prompt's experts are computed on the CPU too**, without the scheduler's offload.
 

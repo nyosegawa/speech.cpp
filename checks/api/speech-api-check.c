@@ -257,7 +257,7 @@ static int check_drama3_experts(speech_model * model, const speech_model_info * 
     speech_request_set_float(r, SPEECH_OPT_MAX_SECONDS, 0.5);
     int ok = expect(speech_request_set_bool(r, SPEECH_OPT_EXPERTS_ON_CPU, 0), SPEECH_OK, NULL, "experts_on_cpu false");
     if (split) {
-        ok &= expect(speech_synthesize(r, collect, &a), SPEECH_ERROR_OUT_OF_MEMORY, "experts_on_cpu", "experts_on_cpu false where the CPU holds experts") &&
+        ok &= expect(speech_synthesize(r, collect, &a), SPEECH_ERROR_OUT_OF_RANGE, "experts_on_cpu", "experts_on_cpu false where the CPU holds experts") &&
               a.n == 0 && speech_request_set_bool(r, SPEECH_OPT_EXPERTS_ON_CPU, 1) == SPEECH_OK &&
               expect(speak(r, &a, NULL, NULL), SPEECH_OK, NULL, "the same request with experts_on_cpu true") && a.n > 0;
     } else {

@@ -417,7 +417,8 @@ typedef enum speech_option {
      * layers as its free memory holds beside the rest of the model and every request's caches, and the CPU's memory
      * holds the others, which the CPU computes with the load's threads; the model's information then reports those
      * threads (speech_model_info_threads()). True by default; false refuses a request to a model that holds some of its
-     * experts on the CPU with SPEECH_ERROR_OUT_OF_MEMORY, for a caller that wants the GPU's speed or nothing. A model on
+     * experts on the CPU with SPEECH_ERROR_OUT_OF_RANGE, a value such a model does not take, for a caller that wants the GPU's
+     * speed or nothing; the request then runs with true. A model on
      * the CPU, or one whose GPU holds every expert, takes either. Added in 3.3.
      */
     SPEECH_OPT_EXPERTS_ON_CPU = 46

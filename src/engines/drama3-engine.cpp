@@ -91,7 +91,7 @@ public:
 
     speech_stop speak(const std::string & text, const RequestValues & values, Run & run) override {
         if (cpu_ && !values.boolean(SPEECH_OPT_EXPERTS_ON_CPU)) {
-            throw Error(Fault::OutOfMemory,
+            throw Error(Fault::OutOfRange,
                         "the GPU holds the experts of " + std::to_string(placement_.held) + " of the model's " + std::to_string(placement_.layers) +
                             " layers and the CPU computes the rest, which experts_on_cpu false refuses; free the GPU's memory or load the model on a GPU with more",
                         "experts_on_cpu");
