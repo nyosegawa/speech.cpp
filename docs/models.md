@@ -91,6 +91,8 @@ A synthesis request needs a `voice`.
 - **Irodori-TTS** speaks in the voice of a reference recording that you add, or with the voice `none`, with which the
   model chooses a voice itself ([models/irodori-tts.md](models/irodori-tts.md#voices)). A voice is added from a WAVE
   file, which is encoded each time it is added, or from a voice file that `speech voice` made once.
+- **Drama 3** speaks with the voice `none`, with which the model chooses a voice for each speaker the text names
+  ([models/drama3.md](models/drama3.md#what-it-does)).
 
 | Entry point | How to add a voice |
 |---|---|
@@ -106,8 +108,8 @@ A voice's name is case-sensitive, and may be neither a voice of the model nor `n
 - A model's languages are BCP 47 tags: two letters, or three for a language without a two-letter code (`yue`, `fil`).
 - A request's `language` is one of them, a region or script of one (`ja-JP`, `zh-Hant`), or `auto`, the default, which
   leaves the choice to the model. Any other language is refused.
-- Qwen3-TTS and Qwen3-ASR are steered by the language. Irodori-TTS and the FastConformer models only check it against
-  their languages and do not use it. Silero VAD has no languages and takes `auto` alone.
+- Qwen3-TTS and Qwen3-ASR are steered by the language. Irodori-TTS, Drama 3 and the FastConformer models only check it
+  against their languages and do not use it. Silero VAD has no languages and takes `auto` alone.
 - Qwen3-ASR's results say which language it heard.
 
 ## Files on Hugging Face

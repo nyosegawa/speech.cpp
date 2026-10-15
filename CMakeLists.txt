@@ -147,6 +147,7 @@ add_library(drama3 STATIC
     src/families/drama3/text-model.cpp
     src/families/drama3/prompt.cpp
     src/families/drama3/chunking.cpp
+    src/families/drama3/synthesizer.cpp
 )
 target_include_directories(drama3 PUBLIC src/families)
 target_link_libraries(drama3 PUBLIC speechcommon)
@@ -155,17 +156,17 @@ target_link_libraries(drama3 PUBLIC speechcommon)
 # libspeech for bindings and other programs. On Windows the two would both write speech.lib, the static one as
 # the library and the shared one as its import library, hence speech-static.
 set(SPEECH_SOURCES src/api/speech.cpp src/api/info.cpp src/api/request.cpp src/api/detection.cpp src/api/voice.cpp
-    src/engines/qwen3-tts-engine.cpp src/engines/irodori-tts-engine.cpp src/engines/fastconformer-engine.cpp
+    src/engines/qwen3-tts-engine.cpp src/engines/irodori-tts-engine.cpp src/engines/drama3-engine.cpp src/engines/fastconformer-engine.cpp
     src/engines/qwen3-asr-engine.cpp src/engines/silero-vad-engine.cpp)
 
 add_library(speech-static STATIC ${SPEECH_SOURCES})
 target_include_directories(speech-static PUBLIC include PRIVATE src/engines)
-target_link_libraries(speech-static PUBLIC qwen3tts irodoritts fastconformer qwen3asr silerovad)
+target_link_libraries(speech-static PUBLIC qwen3tts irodoritts drama3 fastconformer qwen3asr silerovad)
 target_compile_definitions(speech-static PRIVATE SPEECH_VERSION="${PROJECT_VERSION}")
 
 add_library(speech SHARED ${SPEECH_SOURCES})
 target_include_directories(speech PUBLIC include PRIVATE src/engines)
-target_link_libraries(speech PRIVATE qwen3tts irodoritts fastconformer qwen3asr silerovad)
+target_link_libraries(speech PRIVATE qwen3tts irodoritts drama3 fastconformer qwen3asr silerovad)
 target_compile_definitions(speech PRIVATE SPEECH_BUILD_SHARED SPEECH_VERSION="${PROJECT_VERSION}" INTERFACE SPEECH_SHARED)
 set_target_properties(speech PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 # The shared library's SOVERSION is the C API's major version, which speech.h defines and nothing else repeats.

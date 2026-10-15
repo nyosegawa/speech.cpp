@@ -256,17 +256,17 @@ Each model takes some of them, with ranges and defaults from its file, and `spee
 
 | Option | Type | Neutral | Taken by |
 |---|---|---|---|
-| `voice` | string | none | [Qwen3-TTS](models/qwen3-tts.md#options), [Irodori-TTS](models/irodori-tts.md#options); required |
+| `voice` | string | none | [Qwen3-TTS](models/qwen3-tts.md#options), [Irodori-TTS](models/irodori-tts.md#options), [Drama 3](models/drama3.md#options); required |
 | `language` | string | `auto` | every model but Silero VAD, which takes `auto` alone |
-| `seed` | int | none | Qwen3-TTS, Irodori-TTS |
+| `seed` | int | none | Qwen3-TTS, Irodori-TTS, Drama 3 |
 | `speed`, `seconds`, `duration_scale`, `steps` | float, float, float, int | 1, none, 1, none | Irodori-TTS |
-| `max_seconds` | float | none | Qwen3-TTS |
+| `max_seconds` | float | none | Qwen3-TTS, Drama 3 (each chunk of a long text) |
 | `timestamps` | bool | false | [FastConformer](models/fastconformer.md#options) |
 | `prompt` | string | `""` | [Qwen3-ASR](models/qwen3-asr.md#options) |
 | `draft` | string | `""` | [Qwen3-ASR](models/qwen3-asr.md#options) |
 | `decoding` | string | none | reazonspeech-nemo-v2 |
 | `decode_on_cpu` | bool | none | FastConformer |
-| `do_sample`, `top_k`, `top_p`, `temperature`, `repetition_penalty` | bool, int, float, float, float | none | Qwen3-TTS |
+| `do_sample`, `top_k`, `top_p`, `temperature`, `repetition_penalty` | bool, int, float, float, float | none | Qwen3-TTS; `top_k`, `top_p` and `temperature` also Drama 3 |
 | `code_predictor_do_sample`, `code_predictor_top_k`, `code_predictor_top_p`, `code_predictor_temperature` | bool, int, float, float | none | Qwen3-TTS |
 | `instructions` | string | `""` | Qwen3-TTS 1.7B, Irodori-TTS |
 | `cfg_scale_text`, `cfg_scale_speaker`, `cfg_guidance_mode`, `cfg_min_t`, `cfg_max_t`, `truncation_factor`, `rescale_k`, `rescale_sigma`, `speaker_uncond_mode`, `sway_coeff`, `speaker_kv_scale`, `speaker_kv_min_t`, `speaker_kv_max_layers`, `cfg_scale_instructions` | float, but `cfg_guidance_mode` and `speaker_uncond_mode` string and `speaker_kv_max_layers` int | none | Irodori-TTS v4.1-Small (RF) |
@@ -327,10 +327,10 @@ loaded on Metal, with two of its nine voices and four of its options shown:
 - `organization` to `weight_type` are the model's identity, from the general keys of its file.
   `finetune` and `version` are left out for a model whose name has none. `source` is the repository the file was
   converted from and the revision. `weight_type` is the type that holds most of the weights: `F32`, `F16`, `Q8_0`, `Q6_K`, `Q5_K` or `Q4_K`.
-- `architecture` is the family: `qwen3-tts`, `irodori-tts`, `fastconformer`, `qwen3-asr` or `silero-vad`. `layout` is
+- `architecture` is the family: `qwen3-tts`, `irodori-tts`, `drama3`, `fastconformer`, `qwen3-asr` or `silero-vad`. `layout` is
   the version of the family's file layout. `task` is `synthesis`, `recognition` or `detection`; a detection model's
   `languages` is empty.
-- `incremental` is true for a model that passes audio while it still makes the rest (Qwen3-TTS), so that its first
+- `incremental` is true for a model that passes audio while it still makes the rest (Qwen3-TTS, Drama 3), so that its first
   audio does not wait on the length of the text, and false for one that makes a request's whole speech before it decodes
   it (Irodori-TTS).
 - Each voice's `language`, `gender` and `description` are `""` where the file does not say; a voice added from a voice

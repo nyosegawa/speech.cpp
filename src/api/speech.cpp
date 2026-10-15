@@ -12,6 +12,7 @@
 
 #include "api.h"
 #include "backend.h"
+#include "drama3/layout.h"
 #include "error.h"
 #include "fastconformer/layout.h"
 #include "irodori-tts/layout.h"
@@ -35,6 +36,7 @@ namespace {
 const Family families[] = {
     {SPEECH_TASK_SYNTHESIS, qwen3_tts_layout, describe_qwen3_tts, load_qwen3_tts, nullptr},
     {SPEECH_TASK_SYNTHESIS, irodori::model_layout, describe_irodori_tts, load_irodori_tts, make_irodori_tts_voice},
+    {SPEECH_TASK_SYNTHESIS, drama3::model_layout, describe_drama3, load_drama3, nullptr},
     {SPEECH_TASK_RECOGNITION, fastconformer::layout, describe_fastconformer, load_fastconformer, nullptr},
     {SPEECH_TASK_RECOGNITION, qwen3_asr::layout, describe_qwen3_asr, load_qwen3_asr, nullptr},
     {SPEECH_TASK_DETECTION, silero_vad::layout, describe_silero_vad, load_silero_vad, nullptr},

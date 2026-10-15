@@ -8,9 +8,10 @@
  * information read without loading with the loaded model's, adds the voices, refuses each option's values with the
  * category and the option's name and accepts the neutral ones, speaks one sentence into a WAVE file, repeats a drawn
  * seed's audio, gives the same audio with every option set at its default as with none, checks the family's rules of
- * the whole request (Qwen3-TTS's max_seconds, longest text, sampling and instructions, Irodori-TTS's lengths, steps,
- * progress, cut at the tail, guidance, voice none and instructions), cancels a request from another thread and one
- * before it runs, and runs requests from two threads at once. Irodori-TTS's own checks are in speech-api-irodori.c.
+ * the whole request (Qwen3-TTS's max_seconds, longest text, sampling and instructions, Drama 3's max_seconds, longest
+ * text and temperature, Irodori-TTS's lengths, steps, progress, cut at the tail, guidance, voice none and instructions),
+ * cancels a request from another thread and one before it runs, and runs requests from two threads at once.
+ * Irodori-TTS's own checks are in speech-api-irodori.c.
  *
  * With a recognition model (transcribe), speech-api-recognition.c, which takes F32 or F16 weights only, and with a
  * detection model (detect), speech-api-detection.c and speech-api-detection-stream.c.
@@ -99,7 +100,7 @@ static void on_log(speech_log_level level, const char * text, void * user_data) 
 }
 
 /** Adds the voices of the command line after the model's own, and checks the voices a model refuses. */
-static int check_voices(speech_model * model, const char * model_path, char ** names, char ** paths, size_t n_voices, int irodori) {
+static int check_voices(speech_model * model, const char * model_path, char ** names, char ** paths, size_t n_voices, int voice_files) {
     speech_model_info * info = NULL;
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
     const size_t own = speech_model_info_voice_count(info);
@@ -110,7 +111,7 @@ static int check_voices(speech_model * model, const char * model_path, char ** n
         printf("added the voice %s from %s in %.3f s\n", names[i], paths[i], now_seconds() - start);
     }
     int ok = 1;
-    if (!irodori) {
+    if (!voice_files) {
         ok &= expect(speech_voice_add(model, "added", "voice.gguf"), SPEECH_ERROR_UNSUPPORTED, NULL, "a voice added to a model with its own");
         ok &= expect(speech_voice_make(model_path, "reference.wav", "voice.gguf", NULL), SPEECH_ERROR_UNSUPPORTED, "model_path",
                      "a voice file made for a model with its own voices");
@@ -132,10 +133,11 @@ static int check_voices(speech_model * model, const char * model_path, char ** n
 }
 
 /**
- * Qwen3-TTS: max_seconds stops the speech and a refused value leaves it, and a text past the longest is refused and
- * leaves its request to run again with a shorter one.
+ * A model that decides the length of its speech as it goes, Qwen3-TTS or Drama 3: max_seconds stops the speech and a
+ * refused value leaves it, and a text past the longest is refused and leaves its request to run again with a shorter
+ * one.
  */
-static int check_qwen3_tts(speech_model * model, const speech_model_info * info, const char * voice) {
+static int check_length_limits(speech_model * model, const speech_model_info * info, const char * voice) {
     const int rate = speech_model_info_sample_rate(info);
     speech_request * r = new_request(model, "これは最大の長さで止める、少し長めの文です。止まったところで終わります。", voice, 3);
     int ok = expect(speech_request_set_float(r, SPEECH_OPT_MAX_SECONDS, 0.5), SPEECH_OK, NULL, "max_seconds 0.5");
@@ -214,6 +216,22 @@ static int check_qwen3_tts_sampling(speech_model * model, const char * voice) {
     if (!ok) fprintf(stderr, "FAIL: Qwen3-TTS's sampling options are not followed\n");
     free(a.samples);
     free(b.samples);
+    return ok ? 0 : 1;
+}
+
+/**
+ * Drama 3's temperature, which every draw of a frame divides by: one that the sampler's float rounds to 0 is refused
+ * before any work, naming the option, and leaves the request to run once fixed.
+ */
+static int check_drama3_sampling(speech_model * model, const char * voice) {
+    Audio a = {NULL, 0, 0};
+    speech_request * r = new_request(model, "はい。", voice, 3);
+    int ok = expect(speech_request_set_float(r, SPEECH_OPT_TEMPERATURE, 1e-50), SPEECH_OK, NULL, "temperature 1e-50") &&
+             expect(speech_synthesize(r, collect, &a), SPEECH_ERROR_OUT_OF_RANGE, "temperature", "a temperature that a float rounds to 0") &&
+             a.n == 0 && speech_request_set_float(r, SPEECH_OPT_TEMPERATURE, 1) == SPEECH_OK &&
+             expect(speak(r, &a, NULL, NULL), SPEECH_OK, NULL, "the same request run again with temperature 1") && a.n > 0;
+    if (!ok) fprintf(stderr, "FAIL: Drama 3's temperature is not followed\n");
+    free(a.samples);
     return ok ? 0 : 1;
 }
 
@@ -351,13 +369,14 @@ static int check_model(speech_model * model, const char * model_path, const char
     if (check_info_matches(model_path, model) != 0) return 1;
     speech_model_info * info = NULL;
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
-    const int irodori = speech_model_info_voice_files(info);
+    const int irodori = !strcmp(speech_model_info_architecture(info), "irodori-tts");
+    const int drama3 = !strcmp(speech_model_info_architecture(info), "drama3");
     if (speech_model_info_task(info) != SPEECH_TASK_SYNTHESIS || speech_model_info_max_text_tokens(info) == 0 ||
         (irodori && (!speech_model_info_voice_codec(info) || n_voices == 0)) || (!irodori && speech_model_info_voice_count(info) == 0)) {
         fprintf(stderr, "FAIL: a synthesis model is not described as speech.h declares, or Irodori-TTS was given no voice\n");
         return 1;
     }
-    if (check_voices(model, model_path, names, paths, n_voices, irodori) != 0 || check_option_refusals(model) != 0) return 1;
+    if (check_voices(model, model_path, names, paths, n_voices, speech_model_info_voice_files(info)) != 0 || check_option_refusals(model) != 0) return 1;
     speech_model_info_free(info);
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
     const int rate = speech_model_info_sample_rate(info);
@@ -427,8 +446,9 @@ static int check_model(speech_model * model, const char * model_path, const char
 
     if (check_defaults(model, info, voice) != 0) return 1;
     if (irodori ? check_irodori(model, info, voice) != 0
-                : check_qwen3_tts(model, info, voice) != 0 || check_qwen3_tts_sampling(model, voice) != 0 ||
-                      check_qwen3_tts_instructions(model, info, voice) != 0) {
+        : drama3 ? check_length_limits(model, info, voice) != 0 || check_drama3_sampling(model, voice) != 0
+                 : check_length_limits(model, info, voice) != 0 || check_qwen3_tts_sampling(model, voice) != 0 ||
+                       check_qwen3_tts_instructions(model, info, voice) != 0) {
         return 1;
     }
     if (check_threads(model, voice) != 0) return 1;
