@@ -3,7 +3,7 @@
 ## Context
 
 speech.cpp builds ggml from a git submodule. ggml-org/ggml v0.25.3 gives speech.cpp's models wrong results on two
-supported platforms, in five places:
+supported platforms, in six places:
 
 - **Metal's tensor API.** On the M5, M6, A19 and A20, Metal runs matrix products through Metal 4's tensor API by
   default, on the matrix units those chips have. ggml's `kernel_mul_mm` for it has two defects on an Apple M5. Its
@@ -35,6 +35,13 @@ supported platforms, in five places:
   alignment rotated by another row's positions. Qwen3-TTS's code predictor, which reads each step's positions as a view
   of one input when it runs a frame in one graph, gave logits 1.37 in relative error from the reference on an RTX 2080
   (16 bytes of alignment), against 0.034 a step at a time, and its CER rose from 15.9% to 20.0% (2026-10-13).
+- **Vulkan's batch stride of a view.** A tensor contiguous in its first two dimensions can be a view whose batches lie
+  farther apart than its rows fill, such as the first rows of each head of an attention cache with room for more.
+  Vulkan's matrix products read such a tensor in place but took `ne00*ne01` as its batch stride, so that every batch
+  past the first read other rows. Drama 3's attention reads the keys of its 2 kv heads from such a cache, so that on an
+  RTX 2080 the 8 heads of its second kv head read the rows after the first head's, past those the cache held: a request
+  spoke otherwise once another had filled them (2026-10-16). llama.cpp's master fixed it on 2026-09-28 (5262471615),
+  after the tag.
 - **argmax's equal values.** torch.argmax takes the first of equal values, and so do the greedy decoders that
   speech.cpp checks against it. ggml's argmax took the last on the CPU and on Metal, and on Vulkan whichever its
   threads' layout gave, so that a decoder that picks its tokens on the device and one that picks them from the logits
@@ -81,6 +88,7 @@ picking Qwen3-ASR's tokens on the device was slower than reading the logits back
   the q8_1 path.
 - **Vulkan's ROPE adds the offsets of its positions and frequency factors in a view**, as it adds those of its input
   and output.
+- **Vulkan reads the batch stride of a tensor it multiplies in place from `nb[2]`**, as llama.cpp's master does.
 - **Metal and Vulkan fuse Snake with the channels along `ne[0]`** as they fuse it with the channels along `ne[1]`.
 - **Metal divides the 4-bit scales by 16 in float**, as it already did for Q5_K.
 - **Every backend's argmax takes the first of equal values**, and **Metal and Vulkan read a row of argmax with as many
@@ -101,6 +109,7 @@ picking Qwen3-ASR's tokens on the device was slower than reading the logits back
   | argmax reads a row with a threadgroup's threads (speed-up) | `test-backend-ops -o ARGMAX`: rows of 151,936 values, one to eight of them, on Metal and Vulkan | the tag reads a row of argmax with more than one subgroup on Vulkan and more than 256 threads among all rows on Metal |
   | Metal's matrix units without relaxed precision (fix and speed-up) | `test-backend-ops -o MUL_MAT` on an M5, M6, A19 or A20: the F16 products of 64 and 192 columns, and the products of F32, F16, BF16, Q8_0, Q4_K, Q5_K and Q6_K weights whose outputs end inside a tile, whose K does not fill a step, with broadcast batches, permuted or strided activations and activations in half precision; and the stage checks of speech.cpp on Metal | the tag's tensor-API `kernel_mul_mm` passes those cases, gives the simdgroup kernel's products up to the order of the float sums, and is no slower |
   | Metal's 4-bit scales in float | `test-backend-ops -o GET_ROWS`: the Q4_0, Q4_1 and Q4_K cases with `range` 0.04 and 0.004, on Metal | the tag passes those cases |
+  | Vulkan's batch stride of a view (llama.cpp's 5262471615) | `test-backend-ops -o MUL_MAT` and `-o MUL_MAT_ID`: the cases with `m_v` above 0, whose `a` takes the first rows of each batch of a longer tensor, among them Drama 3's keys of 2 kv heads for 16 heads in a cache of room for 1024 rows, on Vulkan | the tag passes those cases |
 
   Between tags, a fix found later is a commit of its own on top, with its cases. Moving ggml to a newer tag starts the
   branch again from that tag: the commit of cases first, on which they run on the
