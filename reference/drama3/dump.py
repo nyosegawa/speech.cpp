@@ -135,12 +135,14 @@ def main():
         record.output(layer.mlp, "backbone_moe", lambda o: o[0])
     delta_layers = [layer.linear_attn for layer in layers if layer.layer_type != "full_attention"]
 
-    def after_prompt(module, args, kwargs):
-        if kwargs["inputs_embeds"].shape[1] == 1 and "delta_state" not in record.saved:
+    # The prefill runs the prompt in chunks of 128 rows, the last of which may be one row as a decode step is, so the
+    # state is taken after the call whose rows end at the prompt's last position.
+    def after_prompt(module, args, kwargs, output):
+        if int(kwargs["input_pos"][-1]) == len(prompt) - 1:
             record.add("delta_state", np.stack([array(d.recurrent_state[0]) for d in delta_layers]))
             record.add("conv_state", np.stack([array(d.conv_state[0]) for d in delta_layers]))
 
-    record.handles.append(backbone.register_forward_pre_hook(after_prompt, with_kwargs=True))
+    record.handles.append(backbone.register_forward_hook(after_prompt, with_kwargs=True))
     tower_layers = [*tower.shared_layers, *tower.residual_layers]
     phase = {"name": None}
     for layer in tower_layers:
