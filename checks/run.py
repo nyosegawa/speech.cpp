@@ -283,8 +283,10 @@ def drama3(model, devices, ctx):
                     m = json.load(f)
                 if "https://huggingface.co/" + m["model"]["repository"] == model.repository and m.get("reference"):
                     dumps.append(os.path.join(out, d))
-    sampling = os.path.join(out, "sampling")
-    runs = [Run("drama3-sampler-check", [model.path, sampling], None, model.label()) if os.path.isdir(sampling)
+    sampling, prompts = os.path.join(out, "sampling"), os.path.join(out, "prompt-cases.jsonl")
+    runs = [Run("drama3-prompt-check", [model.path, prompts], None, model.label()) if os.path.isfile(prompts)
+            else missing("drama3-prompt-check", model.label(), prompts),
+            Run("drama3-sampler-check", [model.path, sampling], None, model.label()) if os.path.isdir(sampling)
             else missing("drama3-sampler-check", model.label(), sampling)]
     if not dumps:
         return runs + [missing("drama3-codec-check", model.label(), f"dump of {model.name} with a reference under {out}")]

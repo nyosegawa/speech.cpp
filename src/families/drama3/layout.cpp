@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "error.h"
+#include "qwen2-tokenizer.h"
 
 namespace drama3 {
 
@@ -225,16 +226,20 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
     m.size(p + "generation.chunk_speakers");
     m.u32(p + "generation.recent_turns");
     m.size(p + "generation.speakers");
-    m.str(p + "prompt.template");
-    m.str(p + "prompt.instruction");
-    m.str(p + "prompt.reference_instruction");
-    const size_t tokens = m.str_array(p + "tokenizer.tokens").size();
-    require(tokens <= (size_t) vocab, m, "drama3.tokenizer.tokens has more tokens than the text model's vocabulary");
+    require(m.str(p + "prompt.template") == "reference-bracket-v1", m, "drama3.prompt.template names a prompt this release does not write");
+    for (const char * key : {"system", "instruction", "reference_instruction", "reference_open", "reference_text", "reference_speech", "end",
+                             "user", "assistant"}) {
+        m.str(p + "prompt." + key);
+    }
+    m.str_array(p + "prompt.reserved");
+    const std::vector<std::string> tokens = m.str_array(p + "tokenizer.tokens");
+    require(tokens.size() <= (size_t) vocab, m, "drama3.tokenizer.tokens has more tokens than the text model's vocabulary");
     m.str_array(p + "tokenizer.merges");
-    const std::vector<int32_t> special = m.i32_array(p + "tokenizer.special_ids");
-    require(std::all_of(special.begin(), special.end(), [&](int32_t id) { return id >= 0 && (size_t) id < tokens; }), m,
-            "drama3.tokenizer.special_ids holds an id that is not one of the tokens");
-    m.str(p + "tokenizer.pre_tokenizer");
+    const std::vector<int32_t> added = m.i32_array(p + "tokenizer.added_ids");
+    require(std::all_of(added.begin(), added.end(), [&](int32_t id) { return id >= 0 && (size_t) id < tokens.size() && !tokens[(size_t) id].empty(); }),
+            m, "drama3.tokenizer.added_ids holds an id that is not one of the tokens");
+    Qwen2Pattern pattern;
+    require(qwen2_pattern(m.str(p + "tokenizer.pre_tokenizer"), &pattern), m, "drama3.tokenizer.pre_tokenizer is a pattern this release does not split by");
 
     std::vector<TensorSpec> t = {{"token_embd", {h, vocab}, kMatrix},
                                  {"output", {h, (int64_t) ids.size()}, kMatrix},

@@ -237,9 +237,23 @@ w.add_uint32(q + "chunk_bytes", fish_chunking.DRAMA3_CHUNK_BYTES)
 w.add_uint32(q + "chunk_speakers", fish_chunking.DRAMA3_CHUNK_MAX_SPEAKERS)
 w.add_uint32(q + "recent_turns", fish_chunking.DRAMA3_HISTORY_RECENT_TURNS)
 w.add_uint32(q + "speakers", fish_generate.MAX_SPEAKER_ID + 1)
+# The prompt of the checkpoint's template, the pieces build_drama3_prompt() writes around the texts and the codes: the
+# system turn and its instruction, each reference as "\n\n[Reference <n>]\nText: <transcript>\nSpeech: <codes>", the end of
+# a turn, a user turn, and the assistant's voice turn the frames follow. The system, reference and user pieces are
+# literals of build_drama3_prompt() itself; the rest are its module's constants.
+assert config["speech_template_version"] == "reference-bracket-v1", "the checkpoint's prompt template is not the one build_drama3_prompt() writes"
 w.add_string(p + "prompt.template", config["speech_template_version"])
+w.add_string(p + "prompt.system", "<|im_start|>system\n")
 w.add_string(p + "prompt.instruction", fish_generate.DRAMA3_TTS_INSTRUCTION)
 w.add_string(p + "prompt.reference_instruction", fish_generate.DRAMA3_REFERENCE_INSTRUCTION)
+w.add_string(p + "prompt.reference_open", "\n\n[Reference ")
+w.add_string(p + "prompt.reference_text", "]\nText: ")
+w.add_string(p + "prompt.reference_speech", "\nSpeech: ")
+w.add_string(p + "prompt.end", fish_generate.DRAMA3_MESSAGE_END)
+w.add_string(p + "prompt.user", "<|im_start|>user\n")
+w.add_string(p + "prompt.assistant", fish_generate.DRAMA3_GENERATION_START)
+# The tokens only the prompt builder writes, which a text that contains one is refused for.
+add_array(p + "prompt.reserved", list(fish_generate.DRAMA3_STRUCTURAL_TOKENS), GGUFValueType.STRING)
 
 k = p + "tokenizer."
 vocab = tokenizer["model"]["vocab"]
@@ -254,7 +268,10 @@ for id_, entry in added.items():
 assert all(tokens) and size <= int(text["vocab_size"])
 add_array(k + "tokens", tokens, GGUFValueType.STRING)
 add_array(k + "merges", [m if isinstance(m, str) else " ".join(m) for m in tokenizer["model"]["merges"]], GGUFValueType.STRING)
-add_array(k + "special_ids", sorted(id_ for id_, entry in added.items() if entry["special"]), GGUFValueType.INT32)
+# Every added token, special or not, which the tokenizers library finds in a text before its pre-tokenizer runs.
+assert all(not (e["lstrip"] or e["rstrip"] or e["single_word"] or e["normalized"]) for e in added.values()), \
+    "an added token strips space, matches whole words or matches the normalized text, which the C++ does not"
+add_array(k + "added_ids", sorted(added), GGUFValueType.INT32)
 w.add_string(k + "pre_tokenizer", tokenizer["pre_tokenizer"]["pretokenizers"][0]["pattern"]["Regex"])
 
 c = p + "codec."

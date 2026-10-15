@@ -50,6 +50,7 @@ add_library(speechcommon STATIC
     src/common/log.cpp
     src/common/qwen3-decoder.cpp
     src/common/qwen2-tokenizer.cpp
+    src/common/added-vocabulary.cpp
     src/common/utf8.cpp
     src/common/unicode.cpp
 )
@@ -144,6 +145,8 @@ add_library(drama3 STATIC
     src/families/drama3/attention.cpp
     src/families/drama3/audio-decoder.cpp
     src/families/drama3/text-model.cpp
+    src/families/drama3/prompt.cpp
+    src/families/drama3/chunking.cpp
 )
 target_include_directories(drama3 PUBLIC src/families)
 target_link_libraries(drama3 PUBLIC speechcommon)
@@ -416,6 +419,11 @@ target_link_libraries(drama3-audio-decoder-check PRIVATE drama3)
 add_executable(drama3-text-model-check checks/drama3/drama3-text-model-check.cpp)
 target_include_directories(drama3-text-model-check PRIVATE checks)
 target_link_libraries(drama3-text-model-check PRIVATE drama3)
+
+# Drama 3's tokenizer, prompt and chunking against fish-speech's, on the cases of reference/drama3/prompt_cases.py.
+add_executable(drama3-prompt-check checks/drama3/drama3-prompt-check.cpp tools/common/json-reader.cpp)
+target_include_directories(drama3-prompt-check PRIVATE checks tools/common)
+target_link_libraries(drama3-prompt-check PRIVATE drama3)
 
 add_executable(fft-check checks/common/fft-check.cpp)
 target_link_libraries(fft-check PRIVATE speechcommon)
