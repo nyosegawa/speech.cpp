@@ -123,7 +123,10 @@ private:
     int32_t semantic_begin_ = 0, semantic_end_ = 0;
     std::unique_ptr<KeysValues> keys_values_;
     std::unique_ptr<States> states_;
-    /** The copy keep_states() made of states_, and the rows run when it made it. */
+    /**
+     * The copy keep_states() makes of states_, allocated with them so that the model holds its memory from its load on,
+     * and the rows run when it was made.
+     */
     std::unique_ptr<States> kept_;
     int64_t kept_rows_ = -1;
     /** The index of each layer among the attention layers or the Gated DeltaNet layers of the run. */

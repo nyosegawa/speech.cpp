@@ -13,9 +13,10 @@ namespace {
 /**
  * What the graphs and the backend allocate while a model computes, beyond its weights and its caches: the buffers of
  * the text model's, the audio decoder's and the codec's graphs at their largest, a block of 512 prompt rows attending
- * to the most rows and a window of 128 frames of the codec, the Gated DeltaNet's states, and the backend's own. For a
- * prompt of 8,018 rows and 327 frames of speech with the Q4_K file on an Apple M5 the three buffers took 271, 275 and
- * 497 MiB and the states 64 MiB; on an RTX 2080 with Vulkan the backend's own took about 0.3 GB more (2026-10-15).
+ * to the most rows and a window of 128 frames of the codec, the Gated DeltaNet's states and their copy at the end of a
+ * voice's head of the prompt, and the backend's own. For a prompt of 8,018 rows and 327 frames of speech with the Q4_K
+ * file on an Apple M5 the three buffers took 271, 275 and 497 MiB and the states 64 MiB, as their copy does; on an RTX
+ * 2080 with Vulkan the backend's own took about 0.3 GB more (2026-10-15).
  */
 constexpr uint64_t kComputeBytes = (uint64_t) 1536 << 20;
 
