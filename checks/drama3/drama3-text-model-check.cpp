@@ -73,15 +73,12 @@ std::vector<T> rows_of(const std::vector<T> & a, int64_t width, int64_t first, i
     return std::vector<T>(a.begin() + first * width, a.begin() + (first + n) * width);
 }
 
-/**
- * The least SNR of a kind of stage over the layers or the rows, and where it was; a comparison whose SNR is not a number,
- * which NaNs in a result give, is the least.
- */
+/** The least SNR of a kind of stage over the layers or the rows, as keep_worst() keeps it, and where it was. */
 struct Worst {
     Diff diff;
     int layer = -1;
     void keep(const Diff & d, int l) {
-        if (!(d.snr_db >= diff.snr_db)) diff = d, layer = l;
+        if (keep_worst(diff, d)) layer = l;
     }
     void print(const std::string & what) const { print_diff(what + " (" + std::to_string(layer) + ")", diff); }
 };

@@ -18,6 +18,13 @@ inline ggml_tensor * mul_mat(ggml_context * ctx, ggml_tensor * a, ggml_tensor * 
     return t;
 }
 
+/** The matrix products of the experts `ids` chooses, asking for float32 accumulation as mul_mat() does. */
+inline ggml_tensor * mul_mat_id(ggml_context * ctx, ggml_tensor * experts, ggml_tensor * b, ggml_tensor * ids) {
+    ggml_tensor * t = ggml_mul_mat_id(ctx, experts, b, ids);
+    ggml_prec_set_acc(t, GGML_PREC_F32);
+    return t;
+}
+
 /**
  * Computes `gf`, whose tensors have their memory, on `backend`. A backend that runs out of memory while it computes
  * throws an Error of Fault::OutOfMemory, and one that fails otherwise an Error of Fault::Device.

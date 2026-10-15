@@ -35,11 +35,6 @@ double seconds_since(std::chrono::steady_clock::time_point t0) {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 }
 
-/** Keeps in `worst` the comparison of lower SNR, and a comparison whose SNR is not a number, which NaNs in a result give. */
-void keep_worst(Diff & worst, const Diff & d) {
-    if (!(d.snr_db >= worst.snr_db)) worst = d;
-}
-
 /** The settings dump.py drew the dump's frames with, from its meta.json. */
 Sampling dump_sampling(const std::string & dir) {
     std::ifstream f(std::filesystem::u8path(dir + "/meta.json"));
@@ -105,8 +100,7 @@ int main(int argc, char ** argv) {
     int worst_layer = 0;
     for (int l = 0; l < layers; l++) {
         const Diff dl = compare(outputs[(size_t) l], rows_of(prefill.f32, (rows - 1) * d, l, 1));
-        if (!(dl.snr_db >= worst.snr_db)) worst_layer = l;
-        keep_worst(worst, dl);
+        if (keep_worst(worst, dl)) worst_layer = l;
         ok = ok && outputs[(size_t) l].size() == (size_t) ((rows - 1) * d);
     }
     print_diff("prompt, least of " + std::to_string(layers) + " layers (" + std::to_string(worst_layer) + ")", worst);
