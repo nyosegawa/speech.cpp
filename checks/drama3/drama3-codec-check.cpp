@@ -2,7 +2,9 @@
 // in the order data flows. Encoder: its blocks, the downsampling and the transformer before the quantizer on the dump's
 // reference audio; the quantizer on the dump's own input to it, and the codes of the whole encoding. Decoder: the
 // codebooks' vectors, the transformer after the quantizer, the upsampling and the decoder's blocks on the codes of the
-// dump's frames, and the audio.
+// dump's frames, and the audio. Decoding a few frames at a time, as a synthesis passes its audio: the reference's codes,
+// longer than the transformer's attention reaches through its layers, in windows of 4, 8, 16, 32, 64 and then 128
+// frames, against decoding them at once.
 //
 // usage: drama3-codec-check <model.gguf> <dump dir> [gpu|cpu|device name] [out.wav]
 
@@ -126,6 +128,26 @@ int main(int argc, char ** argv) {
     print_diff("audio", da);
     ok = ok && decoded.size() == official.f32.size() && da.snr_db > decoder_db;
     if (args.size() > 4) write_wav(args[4], decoded, codec.sample_rate());
+
+    const int64_t reference_frames = reference_codes.shape[1];
+    const std::vector<float> whole = codec.decode(reference_codes.i32, reference_frames);
+    std::vector<float> windowed;
+    codec.start_decoding();
+    for (int64_t first = 0, i = 0; first < reference_frames; i++) {
+        const int64_t n = std::min<int64_t>(int64_t(4) << std::min<int64_t>(i, 5), reference_frames - first);
+        std::vector<int32_t> part((size_t) (n * codec.codebooks()));
+        for (int b = 0; b < codec.codebooks(); b++)
+            for (int64_t f = 0; f < n; f++) part[(size_t) (b * n + f)] = reference_codes.i32[(size_t) (b * reference_frames + first + f)];
+        const std::vector<float> audio = codec.decode_more(part, n);
+        windowed.insert(windowed.end(), audio.begin(), audio.end());
+        first += n;
+    }
+    const Diff dw = compare(windowed, whole);
+    print_diff(std::to_string(reference_frames) + " frames in windows against at once", dw);
+    // Measured on an Apple M5 on 2026-10-15: 128.9 dB on the CPU in F32 and 61.5 dB on Metal, whose matrix kernel
+    // rounds its inputs to half precision. Windows decoded at once from the 136 frames before them, which one layer's
+    // attention reaches but not the eight layers together, give 34.6 dB on the CPU.
+    ok = ok && windowed.size() == whole.size() && dw.snr_db > (cpu ? 100 : 50);
     ggml_backend_free(backend);
     return ok ? 0 : 1;
 }

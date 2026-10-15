@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -58,12 +59,41 @@ public:
      */
     std::vector<float> decode(const std::vector<int32_t> & codes, int64_t frames, CodecStages * stages = nullptr);
 
+    /** Starts decoding an utterance's frames a few at a time with decode_more(). */
+    void start_decoding();
+
+    /**
+     * The audio of the next `frames` frames of the utterance, `codes` as decode() takes them, after those decoded since
+     * start_decoding(): the transformer after the quantizer carries each layer's inputs of the rows its attention reaches,
+     * at their positions, and the convolutions start from its outputs of the kHeldFrames frames before, so that the
+     * audio is that of decoding every frame at once but for the rounding of other shapes of products.
+     */
+    std::vector<float> decode_more(const std::vector<int32_t> & codes, int64_t frames);
+
+    /**
+     * The frames of the transformer's outputs that the convolutions after it decode the next frames from: they reach
+     * fewer than 10 frames before a frame, and 16 leave a margin.
+     */
+    static constexpr int64_t kHeldFrames = 16;
+
 private:
+    /**
+     * Builds the decoding of `frames` frames of `codes` from position_: the codebooks' vectors, the transformer, whose
+     * rows before these `before` carries where given, and the convolutions, from the transformer's outputs `held` of the
+     * frames before where given; `post` receives the transformer's outputs and `stage` each stage.
+     */
+    ggml_tensor * build_decoder(Graph & g, const std::vector<int32_t> & codes, int64_t frames, std::vector<ggml_tensor *> * before,
+                                ggml_tensor * held, ggml_tensor ** post, const std::function<void(const std::string &, ggml_tensor *)> & stage);
+
     ggml_backend_t backend_;
     const ModelFile & m_;
     ggml_gallocr_t allocr_ = nullptr;
     int sample_rate_ = 0, hop_ = 0, latent_ = 0, residual_codebooks_ = 0, semantic_size_ = 0, codebook_size_ = 0;
     std::vector<int32_t> encoder_rates_, decoder_rates_, factors_;
+    /** The frames decoded since start_decoding(), each transformer layer's inputs of the last rows, and the held outputs. */
+    int64_t position_ = 0;
+    std::vector<std::vector<float>> before_;
+    std::vector<float> held_;
 };
 
 }  // namespace drama3

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <string>
 
 #include "error.h"
@@ -151,14 +152,15 @@ struct Layers {
     }
 
     /**
-     * Attention of `q`, `k` and `v`, [head_dim, heads, t], each frame to itself and the `window` - 1 frames before it, in
-     * blocks of `window` queries, so that no block holds more than 2 * window - 1 keys however long the input.
+     * Attention of the queries `q`, [head_dim, heads, t], to the keys and values `k` and `v`, [head_dim, heads, c + t],
+     * whose last t rows are the queries' own: each row to itself and the `window` - 1 rows before it, in blocks of
+     * `window` queries, so that no block holds more than 2 * window - 1 keys however long the input.
      */
     ggml_tensor * windowed_attention(ggml_tensor * q, ggml_tensor * k, ggml_tensor * v, int64_t window) {
-        const int64_t hd = q->ne[0], heads = q->ne[1], t = q->ne[2];
+        const int64_t hd = q->ne[0], heads = q->ne[1], t = q->ne[2], c = k->ne[2] - t;
         ggml_tensor * out = nullptr;
         for (int64_t a = 0; a < t; a += window) {
-            const int64_t qn = std::min(window, t - a), k0 = std::max<int64_t>(0, a - window + 1), kn = a + qn - k0;
+            const int64_t qn = std::min(window, t - a), k0 = std::max<int64_t>(0, c + a - window + 1), kn = c + a + qn - k0;
             const auto block = [&](ggml_tensor * x, int64_t first, int64_t n) { return ggml_view_3d(ctx(), x, hd, heads, n, x->nb[1], x->nb[2], first * x->nb[2]); };
             ggml_tensor * qb = ggml_cont(ctx(), ggml_permute(ctx(), block(q, a, qn), 0, 2, 1, 3));
             ggml_tensor * kb = ggml_cont(ctx(), ggml_permute(ctx(), block(k, k0, kn), 0, 2, 1, 3));
@@ -166,7 +168,7 @@ struct Layers {
             std::vector<float> mask((size_t) (kn * qn));
             for (int64_t i = 0; i < qn; i++) {
                 for (int64_t j = 0; j < kn; j++) {
-                    const int64_t qp = a + i, kp = k0 + j;
+                    const int64_t qp = c + a + i, kp = k0 + j;
                     mask[(size_t) (i * kn + j)] = kp <= qp && qp - kp < window ? 0.0f : -INFINITY;
                 }
             }
@@ -179,30 +181,49 @@ struct Layers {
     }
 
     /**
-     * The codec's transformer of `prefix` on `x`, [dim, t]: pre-norm layers of windowed causal attention with RoPE and a
-     * gated feed-forward, each scaled before it is added, then a final norm. The official module computes its RoPE
+     * The RoPE tables of `rows` rows from position `first`, [1, head_dim / 2, 1, rows]. The official module computes its
      * tables once, in bfloat16, so the angles here are rounded to bfloat16 too.
      */
-    ggml_tensor * transformer(ggml_tensor * x, const std::string & prefix, const std::string & keys) {
+    std::pair<ggml_tensor *, ggml_tensor *> rope_tables(int64_t first, int64_t rows, int hd, float base) {
+        std::vector<float> cos((size_t) (hd / 2 * rows)), sin(cos.size());
+        for (int64_t r = 0; r < rows; r++) {
+            for (int i = 0; i < hd / 2; i++) {
+                const float inv = 1.0f / std::pow(base, (float) (2 * i) / (float) hd);
+                const float angle = (float) (first + r) * inv;
+                cos[(size_t) (r * (hd / 2) + i)] = bf16_round(std::cos(angle));
+                sin[(size_t) (r * (hd / 2) + i)] = bf16_round(std::sin(angle));
+            }
+        }
+        return {g.input(cos, 1, hd / 2, 1, rows), g.input(sin, 1, hd / 2, 1, rows)};
+    }
+
+    /**
+     * The codec's transformer of `prefix` on `x`, [dim, t], the rows from position `first`: pre-norm layers of windowed
+     * causal attention with RoPE and a gated feed-forward, each scaled before it is added, then a final norm. `before`,
+     * where given, holds each layer's inputs of the rows before these that its attention reaches, [dim, c] or none,
+     * and receives its inputs of the last window - 1 rows, for the rows that follow.
+     */
+    ggml_tensor * transformer(ggml_tensor * x, const std::string & prefix, const std::string & keys, int64_t first = 0,
+                              std::vector<ggml_tensor *> * before = nullptr) {
         const int layers = m.count(keys + "layers"), heads = m.size(keys + "heads"), hd = m.size(keys + "head_dim");
         const int64_t window = m.size(keys + "window"), t = x->ne[1];
         const float base = m.f32(keys + "rope_base"), eps = m.f32(keys + "norm_eps");
-        std::vector<float> cos((size_t) (hd / 2 * t)), sin(cos.size());
-        for (int64_t p = 0; p < t; p++) {
-            for (int i = 0; i < hd / 2; i++) {
-                const float inv = 1.0f / std::pow(base, (float) (2 * i) / (float) hd);
-                const float angle = (float) p * inv;
-                cos[(size_t) (p * (hd / 2) + i)] = bf16_round(std::cos(angle));
-                sin[(size_t) (p * (hd / 2) + i)] = bf16_round(std::sin(angle));
-            }
-        }
-        ggml_tensor * c = g.input(cos, 1, hd / 2, 1, t), * s = g.input(sin, 1, hd / 2, 1, t);
+        // Every layer holds the same rows before these, its inputs at the same positions.
+        const int64_t c = before && (*before)[0] ? (*before)[0]->ne[1] : 0;
+        const auto [kc, ks] = rope_tables(first - c, c + t, hd, base);
+        const auto [qc, qs] = c ? rope_tables(first, t, hd, base) : std::make_pair(kc, ks);
         for (int l = 0; l < layers; l++) {
             const std::string b = prefix + ".blk." + std::to_string(l) + ".";
-            ggml_tensor * h = ggml_mul(ctx(), ggml_rms_norm(ctx(), x, eps), m.tensor(b + "attn_norm"));
-            ggml_tensor * q = rope(ggml_reshape_3d(ctx(), mul_mat(ctx(), m.tensor(b + "attn_q"), h), hd, heads, t), c, s);
-            ggml_tensor * k = rope(ggml_reshape_3d(ctx(), mul_mat(ctx(), m.tensor(b + "attn_k"), h), hd, heads, t), c, s);
-            ggml_tensor * v = ggml_reshape_3d(ctx(), mul_mat(ctx(), m.tensor(b + "attn_v"), h), hd, heads, t);
+            ggml_tensor * rows = c ? ggml_concat(ctx(), (*before)[(size_t) l], x, 1) : x;
+            if (before) {
+                const int64_t kept = std::min(window - 1, c + t);
+                (*before)[(size_t) l] = ggml_cont(ctx(), ggml_view_2d(ctx(), rows, rows->ne[0], kept, rows->nb[1], (size_t) (c + t - kept) * rows->nb[1]));
+            }
+            ggml_tensor * h = ggml_mul(ctx(), ggml_rms_norm(ctx(), rows, eps), m.tensor(b + "attn_norm"));
+            ggml_tensor * own = c ? ggml_view_2d(ctx(), h, h->ne[0], t, h->nb[1], (size_t) c * h->nb[1]) : h;
+            ggml_tensor * q = rope(ggml_reshape_3d(ctx(), mul_mat(ctx(), m.tensor(b + "attn_q"), own), hd, heads, t), qc, qs);
+            ggml_tensor * k = rope(ggml_reshape_3d(ctx(), mul_mat(ctx(), m.tensor(b + "attn_k"), h), hd, heads, c + t), kc, ks);
+            ggml_tensor * v = ggml_reshape_3d(ctx(), mul_mat(ctx(), m.tensor(b + "attn_v"), h), hd, heads, c + t);
             ggml_tensor * o = mul_mat(ctx(), m.tensor(b + "attn_o"), windowed_attention(q, k, v, window));
             x = ggml_add(ctx(), x, ggml_mul(ctx(), o, m.tensor(b + "attn_scale")));
             h = ggml_mul(ctx(), ggml_rms_norm(ctx(), x, eps), m.tensor(b + "ffn_norm"));
@@ -316,18 +337,12 @@ std::vector<int32_t> Codec::quantize(const std::vector<float> & latent, int64_t 
     return out;
 }
 
-std::vector<float> Codec::decode(const std::vector<int32_t> & codes, int64_t frames, CodecStages * stages) {
+ggml_tensor * Codec::build_decoder(Graph & g, const std::vector<int32_t> & codes, int64_t frames, std::vector<ggml_tensor *> * before,
+                                   ggml_tensor * held, ggml_tensor ** post, const std::function<void(const std::string &, ggml_tensor *)> & stage) {
     if (frames < 1 || (int64_t) codes.size() != frames * codebooks()) {
         throw Error(Fault::OutOfRange, "the codec's decoder takes a whole number of frames of " + std::to_string(codebooks()) + " codes");
     }
-    Graph g;
     Layers l{g, m_};
-    std::vector<std::pair<std::string, ggml_tensor *>> kept;
-    const auto stage = [&](const std::string & name, ggml_tensor * t) {
-        if (!stages) return;
-        g.output(t);
-        kept.push_back({name, t});
-    };
     const auto lookup = [&](int book, const std::string & prefix, int size) {
         std::vector<int32_t> ids(codes.begin() + book * frames, codes.begin() + (book + 1) * frames);
         // The official decoder clamps a code past its codebook to the codebook's last, which the audio decoder may draw
@@ -343,8 +358,10 @@ std::vector<float> Codec::decode(const std::vector<int32_t> & codes, int64_t fra
     }
     ggml_tensor * x = ggml_add(g.ctx(), semantic, rest);
     stage("quantized", x);
-    x = l.transformer(x, "codec.q.post", "drama3.codec.quantizer_transformer.");
+    x = l.transformer(x, "codec.q.post", "drama3.codec.quantizer_transformer.", position_, before);
     stage("post_module", x);
+    *post = x;
+    if (held) x = ggml_concat(g.ctx(), held, x, 1);
     for (size_t i = 0; i < factors_.size(); i++) {
         x = l.up_framed(x, "codec.q.up." + std::to_string(i) + ".conv", factors_[factors_.size() - 1 - i]);
         x = l.convnext(x, "codec.q.up." + std::to_string(i) + ".convnext");
@@ -364,12 +381,55 @@ std::vector<float> Codec::decode(const std::vector<int32_t> & codes, int64_t fra
     stage("decoder_" + std::to_string(decoder_rates_.size() + 2), x);
     x = ggml_tanh(g.ctx(), x);
     stage("decoder_" + std::to_string(decoder_rates_.size() + 3), x);
-    g.output(x);
+    return x;
+}
+
+std::vector<float> Codec::decode(const std::vector<int32_t> & codes, int64_t frames, CodecStages * stages) {
+    start_decoding();
+    Graph g;
+    std::vector<std::pair<std::string, ggml_tensor *>> kept;
+    ggml_tensor * post = nullptr;
+    ggml_tensor * audio = build_decoder(g, codes, frames, nullptr, nullptr, &post, [&](const std::string & name, ggml_tensor * t) {
+        if (!stages) return;
+        g.output(t);
+        kept.push_back({name, t});
+    });
+    g.output(audio);
     g.compute(backend_, allocr_);
     if (stages) {
         for (const auto & [name, t] : kept) (*stages)[name] = Graph::read(t);
     }
-    return Graph::read(x);
+    return Graph::read(audio);
+}
+
+void Codec::start_decoding() {
+    position_ = 0;
+    before_.clear();
+    held_.clear();
+}
+
+std::vector<float> Codec::decode_more(const std::vector<int32_t> & codes, int64_t frames) {
+    Graph g;
+    const int layers = m_.count("drama3.codec.quantizer_transformer.layers");
+    std::vector<ggml_tensor *> before((size_t) layers, nullptr);
+    for (size_t i = 0; i < before_.size(); i++) before[i] = g.input(before_[i], latent_, (int64_t) before_[i].size() / latent_);
+    const int64_t held = (int64_t) held_.size() / latent_;
+    ggml_tensor * post = nullptr;
+    ggml_tensor * audio = build_decoder(g, codes, frames, &before, held ? g.input(held_, latent_, held) : nullptr, &post, [](const std::string &, ggml_tensor *) {});
+    // The convolutions of the next frames start from the transformer's outputs of the last kHeldFrames frames.
+    ggml_tensor * outputs = held ? ggml_concat(g.ctx(), g.input(held_, latent_, held), post, 1) : post;
+    const int64_t keep = std::min<int64_t>(kHeldFrames, held + frames);
+    ggml_tensor * next = ggml_cont(g.ctx(), ggml_view_2d(g.ctx(), outputs, latent_, keep, outputs->nb[1], (size_t) (held + frames - keep) * outputs->nb[1]));
+    g.output(audio);
+    g.output(next);
+    for (ggml_tensor * t : before) g.output(t);
+    g.compute(backend_, allocr_);
+    before_.clear();
+    for (ggml_tensor * t : before) before_.push_back(Graph::read(t));
+    held_ = Graph::read(next);
+    position_ += frames;
+    const std::vector<float> all = Graph::read(audio);
+    return std::vector<float>(all.begin() + held * hop_, all.end());
 }
 
 }  // namespace drama3

@@ -12,13 +12,6 @@ namespace drama3 {
 
 namespace {
 
-/**
- * The frames before a window that its decoding starts from: every convolution of the codec is causal and its
- * transformer attends to 128 frames at most, so a window decoded from 136 frames before it gives the samples of
- * decoding the whole chunk at once, but for the rounding of the transformer's RoPE tables at other positions.
- */
-constexpr int64_t kContextFrames = 136;
-
 /** The frames of window `i` of a chunk's audio: 4, 8, 16, 32, 64 and then 128. */
 int64_t window_frames(int i) {
     return int64_t(4) << std::min(i, 5);
@@ -58,19 +51,24 @@ Synthesizer::Chunk Synthesizer::speak(const std::vector<int32_t> & rows, const R
     std::vector<std::vector<int32_t>> drawn;
     int64_t sent = 0;
     int windows = 0;
+    codec_.start_decoding();
     const auto pass = [&](int64_t until) {
         if (until <= sent) return true;
-        const int64_t first = std::max<int64_t>(0, sent - kContextFrames), count = until - first;
+        const int64_t count = until - sent;
         std::vector<int32_t> codes((size_t) (codebooks * count));
         for (int64_t f = 0; f < count; f++)
-            for (int b = 0; b < codebooks; b++) codes[(size_t) (b * count + f)] = drawn[(size_t) (first + f)][(size_t) b];
-        const std::vector<float> audio = codec_.decode(codes, count);
-        const size_t skip = (size_t) ((sent - first) * codec_.hop());
+            for (int b = 0; b < codebooks; b++) codes[(size_t) (b * count + f)] = drawn[(size_t) (sent + f)][(size_t) b];
+        const std::vector<float> audio = codec_.decode_more(codes, count);
         sent = until;
         windows++;
-        return sink(audio.data() + skip, audio.size() - skip);
+        return sink(audio.data(), audio.size());
     };
     for (int64_t step = 0; step < r.max_frames; step++) {
+        // A cancel stops the chunk between frames, rather than at the next window of audio.
+        if (r.stopped && r.stopped()) {
+            chunk.stopped = true;
+            return chunk;
+        }
         const int32_t main = sampler.main(text_.logits(last), mains, uniform(rng), uniform(rng));
         if (main == eos_) {
             chunk.ended = true;

@@ -22,6 +22,8 @@ struct Request {
     uint64_t seed = 0;
     /** The frames each chunk of the text may take at most, within the file's generation.max_frames. */
     int64_t max_frames = 0;
+    /** Whether the synthesis is to stop, asked before each frame; none never stops it. */
+    std::function<bool()> stopped;
 };
 
 /** The references of a voice's speakers, which the prompt lists; none for the built-in voice none. */
@@ -39,8 +41,9 @@ using AudioSink = std::function<bool(const float * samples, size_t n)>;
  * Text in, audio out: the prompt, the text model, the audio decoder, the sampler and the codec of one model file. A text
  * is spoken in the chunks split_text() cuts it into, one after another, each prompted with the voice's references and
  * with the first and the latest chunks before it, which the prompt leaves out, the latest first, while it would take
- * more rows than the model does. Each chunk's frames are drawn until the end of speech or max_frames, and its audio
- * is decoded and passed on in windows of 4, 8, 16, 32, 64 and then 128 frames as the frames are drawn.
+ * more rows than the model does. Each chunk's frames are drawn until the end of speech, max_frames or a stop, and its
+ * audio is decoded with Codec::decode_more() and passed on in windows of 4, 8, 16, 32, 64 and then 128 frames as the
+ * frames are drawn; the windows are fixed, so that the same request with the same seed gives the same samples.
  */
 class Synthesizer {
 public:

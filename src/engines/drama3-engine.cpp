@@ -62,6 +62,7 @@ public:
                                                std::to_string(seconds_of(model_, 1)) + " seconds",
                         "max_seconds");
         }
+        r.stopped = [&] { return run.stopped(); };
         const drama3::Ending ending = synth_.synthesize(r, voices_.at(values.string(SPEECH_OPT_VOICE)),
                                                         [&](const float * samples, size_t n) { return run.audio(samples, n); });
         // A synthesis the sink stopped is cancelled, which the request reports whatever this returns.
