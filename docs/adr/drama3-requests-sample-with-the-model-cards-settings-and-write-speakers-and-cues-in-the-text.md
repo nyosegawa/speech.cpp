@@ -26,8 +26,11 @@ training recipe fixes. The text carries the speakers as `<|speaker:N|>` tags and
 - **`seed`**, as fish-speech takes it; the same seed gives the same speech on the same device.
 - **`max_seconds` bounds each chunk's speech**, as `max_new_tokens` bounds a chunk in fish-speech: by default its 1,024
   frames (47.6 s), and at most 2,048 frames (95 s), the most it gives a text it speaks in one pass.
-- **Speakers and cues are written in the text**, as both implementations take them: no option names a speaker, a
-  language or an instruction, and a request that sets `language` or `instructions` is refused, naming it.
+- **Speakers and cues are written in the text**, as both implementations take them: no option names a speaker or an
+  instruction, and a request that sets `instructions` is refused, naming it.
+- **A request's `language` is only checked** against the model's languages, as Irodori-TTS's and FastConformer's are
+  ([the record of languages](languages-are-shortest-iso-639-codes-in-the-file-and-bcp-47-tags-in-requests.md)): the
+  model reads the language from the text, and an OpenAI client sends one as a hint.
 - **The references and the stored reference are the voice**
   ([the record of Drama 3's voice files](a-drama3-voice-file-holds-the-codes-and-transcripts-of-the-references-of-each-of-its-speakers.md)).
 - **Not offered:** `repetition_penalty`, which neither implementation applies; `chunk_length`, `normalize` and
@@ -43,12 +46,9 @@ The alternatives were turned down:
   model card measured Drama 3 with 1.0 and 0.9, which SGLang-Omni takes by default and the official implementation was
   measured with in speech-bench.
 - A fixed top-k of 30, as fish-speech has it. SGLang-Omni takes it, and the sampler takes it at no cost.
-- `language` taken and only checked against the model's languages. The model would ignore it, and an option without
-  effect is refused.
 - `instructions` carrying the cues. The model takes them in the text, at the place they act, which one instruction for
   the whole text cannot say.
 
 ## Consequences
 
-A caller writes `<|speaker:1|>` and `[laughs]` into the text it sends, through every entry point alike. A program that
-sends `language` with every request, as speech-bench's worker requests do, leaves it out for Drama 3.
+A caller writes `<|speaker:1|>` and `[laughs]` into the text it sends, through every entry point alike.
