@@ -232,10 +232,10 @@ speech voice MODEL ((REFERENCE.wav | VOICE.gguf)... | EMBEDDING.speaker.safetens
   So a voice for a scene is put together from voices made before, without encoding them again:
 
   ```sh
-  speech voice Drama-35B-A3B-v3-Q4_K.gguf woman.wav --transcript "今日はいい天気ですね。" woman.voice.gguf
-  speech voice Drama-35B-A3B-v3-Q4_K.gguf man.wav --transcript "明日は雨の予報です。" man.voice.gguf
-  speech voice Drama-35B-A3B-v3-Q4_K.gguf woman.voice.gguf man.voice.gguf --speaker 0 --speaker 1 cast.voice.gguf
-  speech tts Drama-35B-A3B-v3-Q4_K.gguf --add-voice cast=cast.voice.gguf --voice cast -o scene.wav \
+  speech voice drama-3 woman.wav --transcript "今日はいい天気ですね。" woman.voice.gguf
+  speech voice drama-3 man.wav --transcript "明日は雨の予報です。" man.voice.gguf
+  speech voice drama-3 woman.voice.gguf man.voice.gguf --speaker 0 --speaker 1 cast.voice.gguf
+  speech tts drama-3 --add-voice cast=cast.voice.gguf --voice cast -o scene.wav \
     "<|speaker:0|> 晴れたね。<|speaker:1|> 明日は雨だって。"
   ```
 

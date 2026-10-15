@@ -4,24 +4,38 @@ This page describes speech.cpp's port of Fish Audio's [Drama 3](https://huggingf
 model of 35B parameters, 3B of them active, that speaks a text as one speaker or as a scene of several, with cues such as
 laughter written in the text.
 
+| Name | Upstream | File |
+|---|---|---|
+| `drama-3` | [fishaudio/drama-3](https://huggingface.co/fishaudio/drama-3) | `Drama-35B-A3B-v3-Q4_K.gguf`, 20.8 GB |
+
 Built with Fish Audio. The weights are under the
 [Fish Audio Community License 1.0](https://huggingface.co/fishaudio/drama-3/blob/main/LICENSE): commercial use is allowed
 up to a yearly revenue of 500,000 US dollars, and a speech or voice-cloning service for others needs a separate agreement
 with Fish Audio.
 
 ```sh
-speech tts Drama-35B-A3B-v3-Q4_K.gguf --voice none -o out.wav "こんにちは、今日はいい天気ですね。"
-speech tts Drama-35B-A3B-v3-Q4_K.gguf --voice none -o out.wav "<|speaker:0|> ねえ、聞いた？ <|speaker:1|> [laughs] うん、本当に驚いたよね。"
-speech worker Drama-35B-A3B-v3-Q4_K.gguf     # behind the worker protocol
+speech tts drama-3 --voice none -o out.wav "こんにちは、今日はいい天気ですね。"
+speech tts drama-3 --voice none -o out.wav "<|speaker:0|> ねえ、聞いた？ <|speaker:1|> [laughs] うん、本当に驚いたよね。"
+speech worker drama-3                         # behind the worker protocol
 ```
 
-## Files
+## Weight types
 
-[`reference/drama3/convert.py`](../../reference/drama3/convert.py) converts the checkpoint into one F32 file of 143 GB,
-and `speech quantize` makes the other types from it (`--type q4_k` writes 20.8 GB in three and a half minutes on an Apple
-M5). A model needs its whole file in memory, the GPU's or, for the experts a GPU cannot hold, the CPU's
+The model comes in five types; `drama-3` fetches Q4_K, and `NAME:TYPE` another (`speech tts drama-3:q8_0`). A model
+needs its whole file in memory, the GPU's or, for the experts a GPU cannot hold, the CPU's
 ([Devices and memory](#devices-and-memory)), and holds the memory of its largest request from its load on, about 2.1 GB
-of caches and graph buffers: speaking a short text with the Q4_K file took 21.1 GB at its peak on the M5.
+of caches and graph buffers. speech-bench on 2026-10-16 on an H100 with Vulkan: the 20 sentences of its
+`prompts/speak-ja-JP.json` in a voice file of one reference, seeds 1, 2 and 3, as Qwen3-ASR 1.7B hears them over the 60
+takes. The CER of one type moves by a point or so from seed to seed, so the types are heard alike, and Q4_K speaks as
+fast as Q8_0 in half the memory.
+
+| Type | File | CER | The GPU's memory | RTFx |
+|---|---|---|---|---|
+| F16 | 71.6 GB | 1.1% | 69.1 GiB | 1.9 |
+| Q8_0 | 38.5 GB | 1.3% | 38.2 GiB | 2.5 |
+| Q6_K | 29.9 GB | 1.3% | 30.2 GiB | 2.5 |
+| Q5_K | 25.2 GB | 0.9% | 25.8 GiB | 2.6 |
+| Q4_K | 20.8 GB | 1.5% | 21.7 GiB | 2.6 |
 
 ## What it does
 
@@ -49,10 +63,10 @@ another; a voice file given to `speech voice` adds its recordings as they are, s
 from voices made before:
 
 ```sh
-speech voice Drama-35B-A3B-v3-Q4_K.gguf woman.wav --transcript "今日はいい天気ですね。" woman.voice.gguf
-speech voice Drama-35B-A3B-v3-Q4_K.gguf man.wav --transcript "明日は雨の予報です。" man.voice.gguf
-speech voice Drama-35B-A3B-v3-Q4_K.gguf woman.voice.gguf man.voice.gguf --speaker 0 --speaker 1 cast.voice.gguf
-speech tts Drama-35B-A3B-v3-Q4_K.gguf --add-voice cast=cast.voice.gguf --voice cast -o scene.wav \
+speech voice drama-3 woman.wav --transcript "今日はいい天気ですね。" woman.voice.gguf
+speech voice drama-3 man.wav --transcript "明日は雨の予報です。" man.voice.gguf
+speech voice drama-3 woman.voice.gguf man.voice.gguf --speaker 0 --speaker 1 cast.voice.gguf
+speech tts drama-3 --add-voice cast=cast.voice.gguf --voice cast -o scene.wav \
   "<|speaker:0|> 晴れたね。<|speaker:1|> 明日は雨だって。"
 ```
 
@@ -85,17 +99,9 @@ speech tts Drama-35B-A3B-v3-Q4_K.gguf --add-voice cast=cast.voice.gguf --voice c
 
 - **`experts_on_cpu` false** refuses a request to such a model, for a caller that wants the GPU's speed or nothing.
 - **Speed**: each layer whose experts the CPU computes costs about 1.15 ms of each frame's 46 ms of speech on an
-  i9-9900K, so a GPU of 12 or 16 GB, which keeps about 18 or 27 layers' experts, speaks faster than an 8 GB one:
-
-  | Machine, Q4_K file | Experts on the CPU | RTFx | Time to first audio |
-  |---|---|---|---|
-  | Apple M5, Metal | none | 1.1 to 1.3 | 0.3 to 0.4 s |
-  | RTX 2080 (8 GB), Vulkan, i9-9900K | those of 35 of 40 layers | 0.5 to 0.6 | 1.1 to 1.3 s |
-
-  The RTX 2080's figures are for a Japanese sentence of 7 s and a paragraph of 19 s with the voice `none`, on
-  2026-10-16; the model held 6.8 GiB of the GPU's memory from its load on, beside the desktop's 0.6 GiB. A voice's
-  recordings lengthen every chunk's prompt, which the CPU computes for the layers it holds: a voice of about 8,000 rows
-  of recordings took a minute before its first audio, and the model's memory on the GPU peaked at 6.9 GiB.
+  i9-9900K, so a GPU of 12 or 16 GB, which keeps about 18 or 27 layers' experts, speaks faster than an 8 GB one
+  ([Speed](#speed)). A voice's recordings lengthen every chunk's prompt, which the CPU computes for the layers it holds:
+  with an RTX 2080, a voice of about 8,000 rows of recordings took a minute before its first audio.
 
 ## Options
 
@@ -129,9 +135,18 @@ Every stage is checked against the official implementation's tensors, on the CPU
 
 ## Speed
 
-`speech tts` on an Apple M5 with Metal and the Q4_K file, the voice `none`, on 2026-10-15: five Japanese and English
-texts of 6.0 to 27.4 s of speech, each from a fresh process.
+speech-bench on 2026-10-16: the 20 sentences of its `prompts/speak-ja-JP.json` in a voice file of one reference of
+12.8 s, seeds 1 to 3, one request at a time through the worker, the Q4_K file; the medians of the three seeds. The
+voice's recordings run with the first request, and the later ones start from them. The RTFx is the seconds of audio over
+the seconds they took, so larger is faster, and the CER is of the speech as Qwen3-ASR 1.7B hears it, over the 60 takes.
 
-| Time to first audio | RTFx |
-|---|---|
-| 0.31 to 0.42 s | 1.1 to 1.2 |
+| Device | Experts on the CPU | Time to first audio, p50 | Time to first audio, p90 | RTFx | CER | Memory |
+|---|---|---|---|---|---|---|
+| Apple M5 (32 GB), Metal | none | 0.28 s | 0.32 s | 1.1 | 1.8% | 19.6 GiB |
+| RTX 2080 (8 GB), Vulkan, i9-9900K | those of 35 of 40 layers | 0.58 s | 0.76 s | 0.57 | 2.4% | 6.9 GiB of the GPU's, 15.1 GiB of the CPU's |
+| RTX 5090 (32 GB), Vulkan | none | 0.14 s | 0.16 s | 2.6 | 1.2% | 21.6 GiB of the GPU's |
+| H100 (80 GB), Vulkan | none | 0.12 s | 0.14 s | 2.6 | 1.5% | 21.7 GiB of the GPU's |
+
+On the same H100, the official implementation, fish-speech in BF16 with its experts in FP8, gives a CER of 2.2% with
+seed 1 on the same sentences and reference, RTFx 1.9 with 44.2 GiB of the GPU's memory, and its first audio after
+2.1 s, since it returns each sentence whole.
