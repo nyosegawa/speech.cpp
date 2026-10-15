@@ -33,9 +33,11 @@ class TextModel {
 public:
     /**
      * Layers [first, last) of the text model of the model file `m`, which outlives it, and the final norm where `last`
-     * is the model's last; -1 takes every layer from `first`. Only their tensors need be loaded.
+     * is the model's last; -1 takes every layer from `first`. Only their tensors need be loaded. Where `m` holds some
+     * of their tensors in the CPU's memory, `cpu` is the CPU's backend, which outlives it and computes what reads them,
+     * the rest computing on `backend`.
      */
-    TextModel(const ModelFile & m, ggml_backend_t backend, int first = 0, int last = -1);
+    TextModel(const ModelFile & m, ggml_backend_t backend, int first = 0, int last = -1, ggml_backend_t cpu = nullptr);
     ~TextModel();
     TextModel(const TextModel &) = delete;
     TextModel & operator=(const TextModel &) = delete;
@@ -85,6 +87,8 @@ private:
     ggml_backend_t backend_;
     const ModelFile & m_;
     ggml_gallocr_t allocr_ = nullptr;
+    /** The scheduler of the layers' graphs over `backend` and the CPU, where the CPU holds some of their tensors. */
+    ggml_backend_sched_t sched_ = nullptr;
     int first_ = 0, last_ = 0;
     std::vector<bool> types_;
     int h_ = 0, heads_ = 0, kv_heads_ = 0, head_dim_ = 0, rotary_dim_ = 0;

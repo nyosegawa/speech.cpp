@@ -149,6 +149,7 @@ add_library(drama3 STATIC
     src/families/drama3/chunking.cpp
     src/families/drama3/synthesizer.cpp
     src/families/drama3/voice-file.cpp
+    src/families/drama3/placement.cpp
 )
 target_include_directories(drama3 PUBLIC src/families)
 target_link_libraries(drama3 PUBLIC speechcommon)

@@ -47,8 +47,11 @@ using AudioSink = std::function<bool(const float * samples, size_t n)>;
  */
 class Synthesizer {
 public:
-    /** The synthesizer of the loaded model file `m`, which outlives it. */
-    Synthesizer(const ModelFile & m, ggml_backend_t backend);
+    /**
+     * The synthesizer of the loaded model file `m`, which outlives it; where `m` holds the experts of some layers in the
+     * CPU's memory, `cpu` is the CPU's backend, which outlives it too.
+     */
+    Synthesizer(const ModelFile & m, ggml_backend_t backend, ggml_backend_t cpu = nullptr);
 
     int sample_rate() const { return codec_.sample_rate(); }
     int samples_per_frame() const { return codec_.hop(); }

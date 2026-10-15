@@ -245,6 +245,29 @@ static int check_drama3_sampling(speech_model * model, const char * voice) {
 }
 
 /**
+ * Drama 3's experts_on_cpu: a model on a GPU that holds some of its experts on the CPU reports the CPU's threads and
+ * refuses false, and one whose GPU holds every expert, or one on the CPU, takes it.
+ */
+static int check_drama3_experts(speech_model * model, const speech_model_info * info, const char * voice) {
+    const int on_gpu = strcmp(speech_model_info_device(info), "CPU") != 0, split = on_gpu && speech_model_info_threads(info) > 0;
+    Audio a = {NULL, 0, 0};
+    speech_request * r = new_request(model, "はい。", voice, 3);
+    speech_request_set_float(r, SPEECH_OPT_MAX_SECONDS, 0.5);
+    int ok = expect(speech_request_set_bool(r, SPEECH_OPT_EXPERTS_ON_CPU, 0), SPEECH_OK, NULL, "experts_on_cpu false");
+    if (split) {
+        ok &= expect(speech_synthesize(r, collect, &a), SPEECH_ERROR_OUT_OF_MEMORY, "experts_on_cpu", "experts_on_cpu false where the CPU holds experts") &&
+              a.n == 0 && speech_request_set_bool(r, SPEECH_OPT_EXPERTS_ON_CPU, 1) == SPEECH_OK &&
+              expect(speak(r, &a, NULL, NULL), SPEECH_OK, NULL, "the same request with experts_on_cpu true") && a.n > 0;
+    } else {
+        ok &= expect(speak(r, &a, NULL, NULL), SPEECH_OK, NULL, "experts_on_cpu false where the model's device holds every expert") && a.n > 0;
+    }
+    if (ok) printf("experts_on_cpu false %s\n", split ? "refused, since the CPU holds some experts, and true spoke" : "spoke, since the model's device holds every expert");
+    else fprintf(stderr, "FAIL: experts_on_cpu is not followed\n");
+    free(a.samples);
+    return ok ? 0 : 1;
+}
+
+/**
  * Drama 3's voices made by check_drama3_voices(): the information names their speakers, and a scene of the two speakers
  * of the cast speaks. Nothing to check where no voice was made.
  */
@@ -477,7 +500,8 @@ static int check_model(speech_model * model, const char * model_path, const char
 
     if (check_defaults(model, info, voice) != 0) return 1;
     if (irodori ? check_irodori(model, info, voice) != 0
-        : drama3 ? check_length_limits(model, info, voice) != 0 || check_drama3_sampling(model, voice) != 0 || check_drama3_cast(model, info, made)
+        : drama3 ? check_length_limits(model, info, voice) != 0 || check_drama3_sampling(model, voice) != 0 || check_drama3_experts(model, info, voice) != 0 ||
+                       check_drama3_cast(model, info, made)
                  : check_length_limits(model, info, voice) != 0 || check_qwen3_tts_sampling(model, voice) != 0 ||
                        check_qwen3_tts_instructions(model, info, voice) != 0) {
         return 1;

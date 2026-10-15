@@ -55,7 +55,7 @@ struct TextModel::States {
     States & operator=(const States &) = delete;
 };
 
-TextModel::TextModel(const ModelFile & m, ggml_backend_t backend, int first, int last) : backend_(backend), m_(m) {
+TextModel::TextModel(const ModelFile & m, ggml_backend_t backend, int first, int last, ggml_backend_t cpu) : backend_(backend), m_(m) {
     const std::string x = "drama3.text.", a = "drama3.audio_decoder.";
     for (const std::string & type : m.str_array(x + "layer_types")) types_.push_back(type == "full_attention");
     first_ = first;
@@ -87,9 +87,17 @@ TextModel::TextModel(const ModelFile & m, ggml_backend_t backend, int first, int
     const int64_t channels = 2 * (int64_t) key_heads_ * key_dim_ + (int64_t) value_heads_ * value_dim_;
     states_ = std::make_unique<States>(backend_, delta_layers, key_dim_, value_dim_, value_heads_, conv_width_, channels);
     allocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+    if (cpu) {
+        ggml_backend_t backends[] = {backend_, cpu};
+        // Without offloading the prompt's experts to the GPU: copying a layer's experts over for a prompt of 46 rows
+        // made it take 2.5 s where the CPU took 1.0 s, on an RTX 2080 with Vulkan and an i9-9900K (2026-10-15).
+        sched_ = ggml_backend_sched_new(backends, nullptr, 2, 32768, false, false);
+        if (!sched_) throw Error(Fault::OutOfMemory, "cannot create the scheduler of the text model's graphs");
+    }
 }
 
 TextModel::~TextModel() {
+    if (sched_) ggml_backend_sched_free(sched_);
     if (allocr_) ggml_gallocr_free(allocr_);
 }
 
@@ -263,7 +271,8 @@ std::vector<float> TextModel::run(const std::vector<float> & input, int64_t n, T
         }
         if (last_ == layers()) x = ggml_mul(c, ggml_rms_norm(c, x, eps_), m_.tensor("output_norm"));
         g.output(x);
-        g.compute(backend_, allocr_);
+        if (sched_) g.compute(sched_);
+        else g.compute(backend_, allocr_);
         if (stages) {
             for (int i = 0; i < count; i++) {
                 std::vector<float> * where[] = {&stages->mixer[(size_t) i], &stages->router[(size_t) i], &stages->moe[(size_t) i],

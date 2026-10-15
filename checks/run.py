@@ -297,6 +297,10 @@ def drama3(model, devices, ctx):
                 wav = os.path.join(ctx.references, json.load(f)["reference"]["file"]) if ctx.references else None
             runs.append(runs_on(device, "drama3-codec-check", model, [d] + ([wav] if wav and os.path.isfile(wav) else []), " " + os.path.basename(d)))
         runs += [runs_on(device, f"drama3-{stage}-check", model, [d], " " + os.path.basename(d)) for stage in ("text-model", "audio-decoder") for d in dumps]
+        # On a GPU, the text model again with its experts on the CPU, as a GPU that does not hold them runs it.
+        if device != "cpu":
+            runs += [Run("drama3-text-model-check", [model.path, d, device, "experts-on-cpu"], device,
+                         f"{model.label()} {device} experts-on-cpu {os.path.basename(d)}") for d in dumps]
     return runs
 
 

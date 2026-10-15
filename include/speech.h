@@ -410,7 +410,17 @@ typedef enum speech_option {
      * where it is wrong. A step that checks several tokens computes several rows at once, which rounds differently from
      * a step of one, so that where two tokens score almost the same the draft can choose the other. Added in 3.3.
      */
-    SPEECH_OPT_DRAFT = 45
+    SPEECH_OPT_DRAFT = 45,
+    /**
+     * "experts_on_cpu", a boolean: whether a synthesis may compute on the CPU the experts of the layers that the GPU of a
+     * mixture-of-experts model does not hold (Drama 3). Such a model loaded on a GPU keeps there the experts of as many
+     * layers as its free memory holds beside the rest of the model and every request's caches, and the CPU's memory
+     * holds the others, which the CPU computes with the load's threads; the model's information then reports those
+     * threads (speech_model_info_threads()). True by default; false refuses a request to a model that holds some of its
+     * experts on the CPU with SPEECH_ERROR_OUT_OF_MEMORY, for a caller that wants the GPU's speed or nothing. A model on
+     * the CPU, or one whose GPU holds every expert, takes either. Added in 3.3.
+     */
+    SPEECH_OPT_EXPERTS_ON_CPU = 46
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */
@@ -729,8 +739,8 @@ SPEECH_API const char * speech_model_info_device(const speech_model_info * info)
 /**
  * The number of threads the CPU computes a loaded model's graphs with: the number the load parameters set, or the
  * library's default, for a model on the CPU and for a model on a GPU that can compute some of its graphs on the CPU (a
- * model that takes decode_on_cpu), and 0 for a model on a GPU none of whose graphs runs on the CPU. 0 for information
- * read from a file.
+ * model that takes decode_on_cpu, or one whose GPU does not hold every expert, as experts_on_cpu says), and 0 for a model
+ * on a GPU none of whose graphs runs on the CPU. 0 for information read from a file.
  */
 SPEECH_API int speech_model_info_threads(const speech_model_info * info);
 

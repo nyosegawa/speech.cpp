@@ -70,6 +70,12 @@ public:
     /** Allocates the graph with `allocr`, uploads the inputs and computes it on `backend`. */
     void compute(ggml_backend_t backend, ggml_gallocr_t allocr);
 
+    /**
+     * Allocates the graph with `sched`, uploads the inputs and computes it on the scheduler's backends, each node on
+     * the one that holds the weights it reads.
+     */
+    void compute(ggml_backend_sched_t sched);
+
     /** Gives `input`, an input of this graph, the data `data` from the next compute on, converted to its type. */
     void set(ggml_tensor * input, const std::vector<float> & data);
     void set(ggml_tensor * input, const std::vector<int32_t> & data);

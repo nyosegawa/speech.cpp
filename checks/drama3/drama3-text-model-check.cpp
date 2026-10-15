@@ -8,9 +8,11 @@
 // state and its convolution's inputs after the prompt; after the last layer, the final norm and the head's logits of
 // the row before each frame. A row whose 8th and 9th experts' logits lie closer than twice the largest difference of
 // its router's logits from the official ones may take the other of the two, which changes its experts' output and no
-// other row's: such a row is left out of the experts' and the layer's comparisons, and counted.
+// other row's: such a row is left out of the experts' and the layer's comparisons, and counted. With experts-on-cpu
+// after a GPU, each layer's routed experts are loaded into the CPU's memory and computed there, the rest on the GPU, as
+// a model whose GPU does not hold them runs.
 //
-// usage: drama3-text-model-check <model.gguf> <dump dir> [gpu|cpu|device name]
+// usage: drama3-text-model-check <model.gguf> <dump dir> [gpu|cpu|device name] [experts-on-cpu]
 
 #include <algorithm>
 #include <chrono>
@@ -24,6 +26,7 @@
 #include "backend.h"
 #include "compare.h"
 #include "drama3/layout.h"
+#include "drama3/placement.h"
 #include "drama3/text-model.h"
 #include "ggml-cpu.h"
 #include "npy.h"
@@ -88,13 +91,19 @@ struct Worst {
 int main(int argc, char ** argv) {
     const std::vector<std::string> args = utf8_args(argc, argv);
     if (args.size() < 3) {
-        std::fprintf(stderr, "usage: %s <model.gguf> <dump dir> [gpu|cpu|device name]\n", args[0].c_str());
+        std::fprintf(stderr, "usage: %s <model.gguf> <dump dir> [gpu|cpu|device name] [experts-on-cpu]\n", args[0].c_str());
         return 2;
     }
     const std::string path = args[1], dir = args[2];
     if (!takes_weights(path, model_layout, {"F32"}, "its thresholds are those measured with them")) return 2;
     ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
-    std::printf("backend: %s\n", ggml_backend_name(backend));
+    const bool split = args.size() > 4 && args[4] == "experts-on-cpu";
+    if (args.size() > 4 && (!split || ggml_backend_is_cpu(backend))) {
+        std::fprintf(stderr, "%s: experts-on-cpu follows a GPU, and nothing else follows the device\n", args[0].c_str());
+        return 2;
+    }
+    ggml_backend_t cpu = split ? init_backend("cpu") : nullptr;
+    std::printf("backend: %s%s\n", ggml_backend_name(backend), split ? ", the experts on the CPU" : "");
 
     const Npy prompt = read_npy(dir + "/prompt.npy");
     const Npy frames = read_npy(dir + "/frames.npy");
@@ -135,10 +144,11 @@ int main(int argc, char ** argv) {
     const auto t0 = std::chrono::steady_clock::now();
     for (int l = 0;; l++) {
         const std::string prefix = "blk." + std::to_string(l) + ".";
-        const ModelFile model(path, backend, model_layout, [&](const std::string & name) {
-            return name.rfind(prefix, 0) == 0 || name == "output_norm" || name == "output";
+        const ModelFile model(path, model_layout, [&](const std::string & name) -> ggml_backend_t {
+            if (name.rfind(prefix, 0) != 0 && name != "output_norm" && name != "output") return nullptr;
+            return split && is_routed_experts(name) ? cpu : backend;
         });
-        TextModel text(model, backend, l, l + 1);
+        TextModel text(model, backend, l, l + 1, cpu);
         layer_count = text.layers();
         text.start(total);
         const std::vector<float> & x = l == 0 ? input.f32 : rows_of(layers_out.f32, total * h, l - 1, 1);
@@ -198,6 +208,7 @@ int main(int argc, char ** argv) {
     conv.print("convolutions' inputs");
     std::printf("%-34s %lld of %lld\n", "rows whose experts tie, left out", (long long) tied_count, (long long) (total * layer_count));
     for (const Worst * w : {&mixer, &router, &moe, &layer, &state, &conv}) ok = ok && w->diff.snr_db > bound_db;
+    if (cpu) ggml_backend_free(cpu);
     ggml_backend_free(backend);
     return ok ? 0 : 1;
 }

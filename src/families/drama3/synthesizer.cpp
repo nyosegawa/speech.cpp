@@ -26,8 +26,8 @@ struct Synthesizer::Chunk {
     bool ended = false, stopped = false;
 };
 
-Synthesizer::Synthesizer(const ModelFile & m, ggml_backend_t backend)
-    : m_(m), prompt_(m), text_(m, backend), decoder_(m, backend), codec_(m, backend) {
+Synthesizer::Synthesizer(const ModelFile & m, ggml_backend_t backend, ggml_backend_t cpu)
+    : m_(m), prompt_(m), text_(m, backend, 0, -1, cpu), decoder_(m, backend), codec_(m, backend) {
     chunk_bytes_ = m.size("drama3.generation.chunk_bytes");
     chunk_speakers_ = m.size("drama3.generation.chunk_speakers");
     recent_turns_ = m.u32("drama3.generation.recent_turns");
