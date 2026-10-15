@@ -3,7 +3,7 @@
 ## Context
 
 speech.cpp builds ggml from a git submodule. ggml-org/ggml v0.25.3 gives speech.cpp's models wrong results on two
-supported platforms, in four places:
+supported platforms, in five places:
 
 - **Metal's tensor API.** On the M5, M6, A19 and A20, Metal runs matrix products through Metal 4's tensor API by
   default, on the matrix units those chips have. ggml's `kernel_mul_mm` for it has two defects on an Apple M5. Its
@@ -39,6 +39,11 @@ supported platforms, in four places:
   speech.cpp checks against it. ggml's argmax took the last on the CPU and on Metal, and on Vulkan whichever its
   threads' layout gave, so that a decoder that picks its tokens on the device and one that picks them from the logits
   on the host could write different tokens at a tie.
+- **Metal's 4-bit scales.** Metal dequantized Q4_0, Q4_1 and Q4_K dividing the half-precision scale by 16 in half
+  precision. For a model's weights, a few hundredths at most, a Q4_K scale is about 1e-4 and its sixteenth falls among
+  half precision's subnormal numbers, so every Metal kernel read the weights of the upper nibbles about 1% off: rows of
+  Q4_K weights drawn from [-0.04, 0.04] came back 2.3e-5 in NMSE from the CPU's, and from [-0.004, 0.004] 1.8e-3, on an
+  Apple M5 (2026-10-15).
 
 ggml reads no setting that avoids the first two through its API, only environment variables: `GGML_METAL_TENSOR_DISABLE`,
 which it reads only while it lists its devices, so that a library sets it in its host's process, unsafely while another
@@ -77,6 +82,7 @@ picking Qwen3-ASR's tokens on the device was slower than reading the logits back
 - **Vulkan's ROPE adds the offsets of its positions and frequency factors in a view**, as it adds those of its input
   and output.
 - **Metal and Vulkan fuse Snake with the channels along `ne[0]`** as they fuse it with the channels along `ne[1]`.
+- **Metal divides the 4-bit scales by 16 in float**, as it already did for Q5_K.
 - **Every backend's argmax takes the first of equal values**, and **Metal and Vulkan read a row of argmax with as many
   threads as a threadgroup takes**, up to 512 on Vulkan.
 - **A speed-up is a commit of its own, with `test-backend-ops` cases that show it correct in the same commit, and its
@@ -94,6 +100,7 @@ picking Qwen3-ASR's tokens on the device was slower than reading the logits back
   | argmax takes the first of equal values | `test-backend-ops -o ARGMAX`: the cases with `ties=1`, whose rows repeat their largest value in every thread, on Metal and Vulkan | the tag's argmax takes the first of equal values on every backend |
   | argmax reads a row with a threadgroup's threads (speed-up) | `test-backend-ops -o ARGMAX`: rows of 151,936 values, one to eight of them, on Metal and Vulkan | the tag reads a row of argmax with more than one subgroup on Vulkan and more than 256 threads among all rows on Metal |
   | Metal's matrix units without relaxed precision (fix and speed-up) | `test-backend-ops -o MUL_MAT` on an M5, M6, A19 or A20: the F16 products of 64 and 192 columns, and the products of F32, F16, BF16, Q8_0, Q4_K, Q5_K and Q6_K weights whose outputs end inside a tile, whose K does not fill a step, with broadcast batches, permuted or strided activations and activations in half precision; and the stage checks of speech.cpp on Metal | the tag's tensor-API `kernel_mul_mm` passes those cases, gives the simdgroup kernel's products up to the order of the float sums, and is no slower |
+  | Metal's 4-bit scales in float | `test-backend-ops -o GET_ROWS`: the Q4_0, Q4_1 and Q4_K cases with `range` 0.04 and 0.004, on Metal | the tag passes those cases |
 
   Between tags, a fix found later is a commit of its own on top, with its cases. Moving ggml to a newer tag starts the
   branch again from that tag: the commit of cases first, on which they run on the
