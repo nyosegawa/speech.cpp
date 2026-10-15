@@ -179,6 +179,7 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
     const int64_t nk = m.size(x + "linear_num_key_heads"), nv = m.size(x + "linear_num_value_heads");
     const int64_t dk = m.size(x + "linear_key_head_dim"), dv = m.size(x + "linear_value_head_dim");
     require(nv % nk == 0, m, "the Gated DeltaNet's value heads do not share its key heads evenly");
+    require(dk == dv, m, "the Gated DeltaNet's key and value heads differ in width, which ggml_gated_delta_net() does not take");
     const int64_t conv_width = m.size(x + "linear_conv_kernel_dim"), conv = 2 * nk * dk + nv * dv;
     const int64_t experts = m.size(x + "num_experts"), used = m.size(x + "num_experts_per_tok");
     require(used <= experts, m, "drama3.text.num_experts_per_tok is more than the experts");

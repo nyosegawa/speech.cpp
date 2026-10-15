@@ -5,6 +5,7 @@
 #include <memory>
 #include <vector>
 
+#include "attention.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 #include "graph.h"
@@ -60,7 +61,6 @@ public:
 
 private:
     struct Rows;
-    struct Cache;
 
     /**
      * The inputs of the `n` rows after n_past(), whose own frames are `frames`, n frames of 1 + codebooks ids, and whose
@@ -80,7 +80,7 @@ private:
     int d_ = 0, heads_ = 0, kv_heads_ = 0, head_dim_ = 0, rotary_dim_ = 0, codebooks_ = 0, vocab_ = 0, shared_ = 0, seen_ = 0;
     float eps_ = 0, rope_base_ = 0;
     int32_t semantic_begin_ = 0, semantic_end_ = 0;
-    std::unique_ptr<Cache> cache_;
+    std::unique_ptr<KeysValues> cache_;
     int64_t n_past_ = 0;
 };
 

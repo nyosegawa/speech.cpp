@@ -1,8 +1,6 @@
 #include "audio-decoder.h"
 
 #include <algorithm>
-#include <cmath>
-#include <numeric>
 #include <stdexcept>
 #include <string>
 
@@ -24,41 +22,10 @@ std::string layer_name(int l, int shared) {
 
 }  // namespace
 
-/** The keys of each layer, [head_dim, rows, kv heads], and its values transposed, [rows, head_dim, kv heads]. */
-struct AudioDecoder::Cache {
-    ggml_context * ctx = nullptr;
-    ggml_backend_buffer_t buffer = nullptr;
-    std::vector<ggml_tensor *> k, v;
-    int64_t capacity = 0;
-
-    Cache(ggml_backend_t backend, int layers, int head_dim, int kv_heads, int64_t rows) : capacity(rows) {
-        ggml_init_params params = {ggml_tensor_overhead() * (size_t) (2 * layers), nullptr, true};
-        ctx = ggml_init(params);
-        if (!ctx) throw Error(Fault::OutOfMemory, "cannot create a ggml context");
-        for (int l = 0; l < layers; l++) {
-            k.push_back(ggml_new_tensor_3d(ctx, GGML_TYPE_F32, head_dim, rows, kv_heads));
-            v.push_back(ggml_new_tensor_3d(ctx, GGML_TYPE_F32, rows, head_dim, kv_heads));
-        }
-        buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
-        if (!buffer) {
-            ggml_free(ctx);
-            throw Error(Fault::OutOfMemory, "cannot allocate the audio decoder's keys and values of " + std::to_string(rows) + " rows");
-        }
-    }
-    ~Cache() {
-        ggml_backend_buffer_free(buffer);
-        ggml_free(ctx);
-    }
-    Cache(const Cache &) = delete;
-    Cache & operator=(const Cache &) = delete;
-};
-
 /** What the layers of one graph read of its rows. */
 struct AudioDecoder::Rows {
     int64_t first = 0, n = 0;
-    /** The rows' positions, I32 [n]. */
     ggml_tensor * positions = nullptr;
-    /** Which positions each row attends to, [first + n, n], or none for one row, which attends to every one. */
     ggml_tensor * mask = nullptr;
     /** 1 where the frame after the row is audio, whose codes the layers mix in, and 0 where it is text, [1, n]. */
     ggml_tensor * audio = nullptr;
@@ -89,9 +56,9 @@ AudioDecoder::~AudioDecoder() {
 }
 
 void AudioDecoder::start(int64_t rows) {
-    if (!cache_ || cache_->capacity < rows) {
+    if (!cache_ || cache_->capacity() < rows) {
         cache_.reset();
-        cache_ = std::make_unique<Cache>(backend_, layers(), head_dim_, kv_heads_, rows);
+        cache_ = std::make_unique<KeysValues>(backend_, layers(), head_dim_, kv_heads_, rows);
     }
     n_past_ = 0;
 }
@@ -100,7 +67,7 @@ ggml_tensor * AudioDecoder::layer(Graph & g, int l, ggml_tensor * hidden, ggml_t
     ggml_context * c = g.ctx();
     const std::string p = layer_name(l, shared_);
     const auto norm = [&](ggml_tensor * x, const std::string & name) { return ggml_mul(c, ggml_rms_norm(c, x, eps_), m_.tensor(p + name)); };
-    const int64_t n = r.n, total = r.first + n;
+    const int64_t n = r.n;
 
     ggml_tensor * e = ggml_mul(c, ggml_get_rows(c, m_.tensor(p + "embd"), codes), r.audio);
     if (l == 0 && r.unseen) e = ggml_add(c, e, r.unseen);
@@ -115,17 +82,7 @@ ggml_tensor * AudioDecoder::layer(Graph & g, int l, ggml_tensor * hidden, ggml_t
     q = ggml_rope_ext(c, norm(q, "attn_q_norm"), r.positions, nullptr, rotary_dim_, GGML_ROPE_TYPE_NORMAL, 0, rope_base_, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
     k = ggml_rope_ext(c, norm(k, "attn_k_norm"), r.positions, nullptr, rotary_dim_, GGML_ROPE_TYPE_NORMAL, 0, rope_base_, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
 
-    ggml_tensor * kc = cache_->k[(size_t) l], * vc = cache_->v[(size_t) l];
-    g.copy(ggml_permute(c, k, 0, 2, 1, 3), ggml_view_3d(c, kc, head_dim_, n, kv_heads_, kc->nb[1], kc->nb[2], (size_t) r.first * kc->nb[1]));
-    g.copy(ggml_permute(c, v, 1, 2, 0, 3), ggml_view_3d(c, vc, n, head_dim_, kv_heads_, vc->nb[1], vc->nb[2], (size_t) r.first * vc->nb[0]));
-    ggml_tensor * keys = ggml_view_3d(c, kc, head_dim_, total, kv_heads_, kc->nb[1], kc->nb[2], 0);
-    ggml_tensor * values = ggml_view_3d(c, vc, total, head_dim_, kv_heads_, vc->nb[1], vc->nb[2], 0);
-    // A matrix product broadcasts the kv heads over the heads as repeat_interleave() does: head i reads kv head
-    // i / (heads / kv heads).
-    ggml_tensor * scores = mul_mat(c, keys, ggml_cont(c, ggml_permute(c, q, 0, 2, 1, 3)));
-    scores = ggml_soft_max_ext(c, scores, r.mask, 1.0f / std::sqrt((float) head_dim_), 0.0f);
-    ggml_tensor * o = ggml_cont(c, ggml_permute(c, mul_mat(c, values, scores), 0, 2, 1, 3));
-    o = ggml_mul(c, ggml_reshape_2d(c, o, (int64_t) head_dim_ * heads_, n), gate);
+    ggml_tensor * o = ggml_mul(c, cache_->attend(g, l, q, k, v, r.first, r.mask), gate);
     x = ggml_add(c, x, mul_mat(c, m_.tensor(p + "attn_output"), o));
 
     h = norm(x, "ffn_norm");
@@ -138,16 +95,8 @@ AudioDecoder::Rows AudioDecoder::rows(Graph & g, int64_t n, const int32_t * fram
     Rows r;
     r.first = n_past_;
     r.n = n;
-    std::vector<int32_t> positions((size_t) n);
-    std::iota(positions.begin(), positions.end(), (int32_t) r.first);
-    r.positions = g.input(positions, n);
-    if (n > 1) {
-        const int64_t total = r.first + n;
-        std::vector<float> mask((size_t) (total * n));
-        for (int64_t i = 0; i < n; i++)
-            for (int64_t j = 0; j < total; j++) mask[(size_t) (i * total + j)] = j <= r.first + i ? 0.0f : -INFINITY;
-        r.mask = g.input(mask, total, n);
-    }
+    r.positions = positions(g, r.first, n);
+    r.mask = causal_mask(g, r.first, n);
     r.audio = g.input(audio, 1, n);
     if (!unseen) return r;
 
@@ -182,7 +131,7 @@ void AudioDecoder::prefill(const std::vector<float> & hidden, const std::vector<
     if (n < 1 || (int64_t) hidden.size() != n * d_ || (int64_t) frames.size() != (n + 1) * width) {
         throw std::invalid_argument("the audio decoder's prefill takes a state of each row and the frames of the rows and the one after");
     }
-    if (!cache_ || n_past_ + n > cache_->capacity) throw std::invalid_argument("the audio decoder's rows outgrow the sequence it was started for");
+    if (!cache_ || n_past_ + n > cache_->capacity()) throw std::invalid_argument("the audio decoder's rows outgrow the sequence it was started for");
     if (outputs) outputs->assign((size_t) layers(), {});
     for (int64_t from = 0; from < n; from += kBlockRows) {
         const int64_t rows_n = std::min(kBlockRows, n - from);
@@ -221,7 +170,7 @@ std::vector<int32_t> AudioDecoder::step(const std::vector<float> & hidden, const
     if ((int64_t) hidden.size() != d_ || (int64_t) frame.size() != 1 + codebooks_) {
         throw std::invalid_argument("the audio decoder's step takes the state and the frame of one row");
     }
-    if (!cache_ || n_past_ + 1 > cache_->capacity) throw std::invalid_argument("the audio decoder's rows outgrow the sequence it was started for");
+    if (!cache_ || n_past_ + 1 > cache_->capacity()) throw std::invalid_argument("the audio decoder's rows outgrow the sequence it was started for");
     if (outputs) outputs->clear();
     const std::vector<float> audio = {semantic(main) ? 1.0f : 0.0f};
     std::vector<int32_t> codes = {std::clamp(main - semantic_begin_, 0, vocab_ - 1)};

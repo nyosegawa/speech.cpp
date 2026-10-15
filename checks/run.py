@@ -289,7 +289,7 @@ def drama3(model, devices, ctx):
     if not dumps:
         return runs + [missing("drama3-codec-check", model.label(), f"dump of {model.name} with a reference under {out}")]
     for device in devices:
-        runs += [runs_on(device, f"drama3-{stage}-check", model, [d], " " + os.path.basename(d)) for stage in ("codec", "audio-decoder") for d in dumps]
+        runs += [runs_on(device, f"drama3-{stage}-check", model, [d], " " + os.path.basename(d)) for stage in ("codec", "text-model", "audio-decoder") for d in dumps]
     return runs
 
 
