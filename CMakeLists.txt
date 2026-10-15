@@ -407,8 +407,8 @@ add_executable(drama3-sampler-check checks/drama3/drama3-sampler-check.cpp tools
 target_include_directories(drama3-sampler-check PRIVATE checks tools/common)
 target_link_libraries(drama3-sampler-check PRIVATE drama3)
 
-add_executable(drama3-audio-decoder-check checks/drama3/drama3-audio-decoder-check.cpp)
-target_include_directories(drama3-audio-decoder-check PRIVATE checks)
+add_executable(drama3-audio-decoder-check checks/drama3/drama3-audio-decoder-check.cpp tools/common/json-reader.cpp)
+target_include_directories(drama3-audio-decoder-check PRIVATE checks tools/common)
 target_link_libraries(drama3-audio-decoder-check PRIVATE drama3)
 
 add_executable(fft-check checks/common/fft-check.cpp)

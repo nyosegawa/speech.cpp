@@ -2,7 +2,7 @@
 // states of the dump as its input. The prompt: each layer's output for every row, with the frame after each row known.
 // Each frame drawn: each layer's output and each head's logits, with the dump's frames drawn in place of the draws, and
 // the share of the dump's codes that this decoder's logits give a place among the tokens the model card's settings draw
-// from, where a code outside them is one these logits could not have drawn. The last step drew the end of speech,
+// from with the dump's settings, where a code outside them is one these logits could not have drawn. The last step drew the end of speech,
 // whose frame the dump does not hold: there the shared layers mix in nothing, as the official layers do.
 //
 // usage: drama3-audio-decoder-check <model.gguf> <dump dir> [gpu|cpu|device name]
@@ -10,6 +10,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -20,6 +23,7 @@
 #include "drama3/layout.h"
 #include "drama3/sampler.h"
 #include "ggml-cpu.h"
+#include "json-reader.h"
 #include "npy.h"
 #include "weight-types.h"
 
@@ -29,6 +33,29 @@ namespace {
 
 double seconds_since(std::chrono::steady_clock::time_point t0) {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+}
+
+/** Keeps in `worst` the comparison of lower SNR, and a comparison whose SNR is not a number, which NaNs in a result give. */
+void keep_worst(Diff & worst, const Diff & d) {
+    if (!(d.snr_db >= worst.snr_db)) worst = d;
+}
+
+/** The settings dump.py drew the dump's frames with, from its meta.json. */
+Sampling dump_sampling(const std::string & dir) {
+    std::ifstream f(std::filesystem::u8path(dir + "/meta.json"));
+    if (!f) throw std::runtime_error("cannot open " + dir + "/meta.json");
+    const JsonValue meta = parse_json(std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()));
+    const JsonValue * s = meta.member("sampling");
+    const auto number = [&](const char * name) {
+        const JsonValue * v = s ? s->member(name) : nullptr;
+        if (!v) throw std::runtime_error(dir + "/meta.json has no sampling." + name);
+        return v->text;
+    };
+    Sampling out;
+    out.temperature = std::stof(number("temperature"));
+    out.top_k = std::stoi(number("top_k"));
+    out.top_p = std::stof(number("top_p"));
+    return out;
 }
 
 /** Rows [first, first + n) of a row-major array of rows of `width` values. */
@@ -51,7 +78,7 @@ int main(int argc, char ** argv) {
     std::printf("backend: %s\n", ggml_backend_name(backend));
     const ModelFile model(args[1], backend, model_layout, [](const std::string & name) { return name.rfind("ad.", 0) == 0; });
     AudioDecoder decoder(model, backend);
-    const FrameSampler sampler(model, file_sampling(model));
+    const Sampling drawn_with = dump_sampling(dir);
     const int d = decoder.dim(), width = 1 + decoder.codebooks(), layers = decoder.layers();
     const int32_t eos = (int32_t) model.u32("drama3.eos_token_id");
 
@@ -78,7 +105,8 @@ int main(int argc, char ** argv) {
     int worst_layer = 0;
     for (int l = 0; l < layers; l++) {
         const Diff dl = compare(outputs[(size_t) l], rows_of(prefill.f32, (rows - 1) * d, l, 1));
-        if (dl.snr_db < worst.snr_db) worst = dl, worst_layer = l;
+        if (!(dl.snr_db >= worst.snr_db)) worst_layer = l;
+        keep_worst(worst, dl);
         ok = ok && outputs[(size_t) l].size() == (size_t) ((rows - 1) * d);
     }
     print_diff("prompt, least of " + std::to_string(layers) + " layers (" + std::to_string(worst_layer) + ")", worst);
@@ -93,10 +121,10 @@ int main(int argc, char ** argv) {
         const int32_t main = ended ? eos : frames.i32[(size_t) (s * width)];
         const ChooseCode choose = [&](int codebook, const std::vector<float> & logits) {
             const Diff dl = compare(logits, rows_of(heads.f32, (int64_t) logits.size(), s * (width - 2) + codebook - 1, 1));
-            if (dl.snr_db < worst_logits.snr_db) worst_logits = dl;
+            keep_worst(worst_logits, dl);
             if (ended) return 0;
             const int32_t code = frames.i32[(size_t) (s * width + 1 + codebook)];
-            const Candidates c = candidates(logits, file_sampling(model));
+            const Candidates c = candidates(logits, drawn_with);
             inside += std::find(c.tokens.begin(), c.tokens.end(), code) != c.tokens.end();
             codes++;
             return code;
@@ -104,7 +132,7 @@ int main(int argc, char ** argv) {
         decoder.step(rows_of(hidden.f32, d, rows - 1 + s, 1), frame, main, choose, &outputs);
         for (int l = 0; l < layers; l++) {
             const Diff dl = compare(outputs[(size_t) l], rows_of(steps.f32, d, s * layers + l, 1));
-            if (dl.snr_db < worst_step.snr_db) worst_step = dl;
+            keep_worst(worst_step, dl);
         }
     }
     std::printf("%lld frames: %.3f s (%.1f ms a frame)\n", (long long) n_steps, seconds_since(t0), 1000 * seconds_since(t0) / n_steps);
