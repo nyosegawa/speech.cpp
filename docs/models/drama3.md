@@ -19,7 +19,8 @@ speech worker Drama-35B-A3B-v3-Q4_K.gguf     # behind the worker protocol
 
 [`reference/drama3/convert.py`](../../reference/drama3/convert.py) converts the checkpoint into one F32 file of 143 GB,
 and `speech quantize` makes the other types from it (`--type q4_k` writes 20.8 GB in three and a half minutes on an Apple
-M5). A model needs its whole file in memory: speaking a short text with the Q4_K file took 21.1 GB at its peak on the M5.
+M5). A model needs its whole file in memory, the GPU's or, for the experts a GPU cannot hold, the CPU's
+([Devices and memory](#devices-and-memory)): speaking a short text with the Q4_K file took 21.1 GB at its peak on the M5.
 
 ## What it does
 
@@ -66,6 +67,33 @@ speech tts Drama-35B-A3B-v3-Q4_K.gguf --add-voice cast=cast.voice.gguf --voice c
 - A WAVE file given to `--add-voice` is refused, since it lacks its words; make a voice file of it first. The page of
   `speech serve` makes no voices of Drama 3 for the same reason.
 
+## Devices and memory
+
+- **A GPU that holds the whole model computes it all**, as an Apple M5 with 32 GB does with the Q4_K file.
+- **A GPU that does not hold it keeps the experts of as many layers as its free memory holds**, beside the rest of the
+  model and what the largest request needs, and the CPU computes the experts of the other layers with the load's
+  threads (`--threads`). The model then needs about 5.2 GB free on the GPU for its weights outside the experts (2.7 GB),
+  the caches of the largest request and the graphs, and the CPU's memory holds the experts the GPU leaves out, 15 GB
+  with an 8 GB GPU. The load says so:
+
+  ```
+  Drama 3 computes the experts of 35 of its 40 layers on the CPU, since Vulkan0 holds those of 5 beside the rest of the model; a GPU with more memory free speaks faster
+  ```
+
+- **`experts_on_cpu` false** refuses a request to such a model, for a caller that wants the GPU's speed or nothing.
+- **Speed**: each layer whose experts the CPU computes costs about 1.15 ms of each frame's 46 ms of speech on an
+  i9-9900K, so a GPU of 12 or 16 GB, which keeps about 18 or 27 layers' experts, speaks faster than an 8 GB one:
+
+  | Machine, Q4_K file | Experts on the CPU | RTFx | Time to first audio |
+  |---|---|---|---|
+  | Apple M5, Metal | none | 1.1 to 1.3 | 0.3 to 0.4 s |
+  | RTX 2080 (8 GB), Vulkan, i9-9900K | those of 35 of 40 layers | 0.5 to 0.6 | 1.1 to 1.8 s |
+
+  The RTX 2080's figures are for a Japanese sentence of 8 s and a paragraph of 11 s with the voice `none`, on
+  2026-10-15; the GPU's memory peaked at 5.1 GiB above what the desktop held. A voice's recordings lengthen every
+  chunk's prompt, which the CPU computes for the layers it holds: a voice of about 8,000 rows of recordings took a
+  minute before its first audio, and the GPU's memory peaked at 6.7 GiB.
+
 ## Options
 
 | Option | Default | Notes |
@@ -77,6 +105,7 @@ speech tts Drama-35B-A3B-v3-Q4_K.gguf --add-voice cast=cast.voice.gguf --voice c
 | `top_k` | 30 | the most likely tokens a draw keeps, 1 to 4097 |
 | `top_p` | 0.9 | the share of probability a draw keeps; the token that passes it is dropped |
 | `temperature` | 1 | what the logits are divided by |
+| `experts_on_cpu` | true | false refuses a request to a model whose GPU does not hold every expert ([Devices and memory](#devices-and-memory)) |
 
 The defaults are those of the model card, and they apply to every draw of a frame. A text may have up to 8,192 tokens,
 and a chunk's prompt up to 8,192 rows. A text is refused when it is empty, holds `<|im_start|>`, `<|im_end|>`,
