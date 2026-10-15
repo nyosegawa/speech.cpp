@@ -68,9 +68,9 @@ speech info irodori-tts-mf
 - An argument that begins with `-`, such as a text, follows `--`.
 - stdout carries the output alone, and every log goes to stderr.
 - On Windows the command line is read as UTF-8, and stdin and stdout are binary.
-- `speech --version` prints the release and the C API's version: `speech.cpp 0.8.7, C API 3.3`.
+- `speech --version` prints the release and the C API's version: `speech.cpp 0.8.8, C API 3.3`.
 - On a terminal, a subcommand says on stderr when a later release is out, once it ends (`speech serve` as it starts):
-  `speech: speech.cpp 0.8.8 is out (this is 0.8.7); run speech update to install it`. It asks github.com at most once a
+  `speech: speech.cpp 0.8.9 is out (this is 0.8.8); run speech update to install it`. It asks github.com at most once a
   day, and only when stderr is a terminal, so a script or a program that starts `speech` never makes the request; the
   worker never asks. `SPEECH_NO_UPDATE_CHECK=1` turns it off.
 
@@ -381,7 +381,7 @@ exits with the installer's status. `--check` only says whether a later release i
 
 ```
 $ speech update
-speech.cpp 0.8.8 is out (this is 0.8.7); running the installer
+speech.cpp 0.8.9 is out (this is 0.8.8); running the installer
 Downloading https://github.com/nyosegawa/speech.cpp/releases/download/v0.8.8/speech-0.8.8-macos-arm64-metal.zip
 ...
 ```
