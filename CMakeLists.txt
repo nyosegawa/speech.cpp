@@ -46,6 +46,7 @@ add_library(speechcommon STATIC
     src/common/graph.cpp
     src/common/resample.cpp
     src/common/fft.cpp
+    src/common/sampling.cpp
     src/common/log.cpp
     src/common/qwen3-decoder.cpp
     src/common/qwen2-tokenizer.cpp
@@ -139,6 +140,8 @@ target_link_libraries(silerovad PUBLIC speechcommon)
 add_library(drama3 STATIC
     src/families/drama3/layout.cpp
     src/families/drama3/codec.cpp
+    src/families/drama3/sampler.cpp
+    src/families/drama3/audio-decoder.cpp
 )
 target_include_directories(drama3 PUBLIC src/families)
 target_link_libraries(drama3 PUBLIC speechcommon)
@@ -398,6 +401,15 @@ target_link_libraries(silero-vad-check PRIVATE silerovad)
 add_executable(drama3-codec-check checks/drama3/drama3-codec-check.cpp)
 target_include_directories(drama3-codec-check PRIVATE checks)
 target_link_libraries(drama3-codec-check PRIVATE drama3)
+
+# Drama 3's sampler against fish-speech's, on the cases of reference/drama3/sampling_cases.py.
+add_executable(drama3-sampler-check checks/drama3/drama3-sampler-check.cpp tools/common/json-reader.cpp)
+target_include_directories(drama3-sampler-check PRIVATE checks tools/common)
+target_link_libraries(drama3-sampler-check PRIVATE drama3)
+
+add_executable(drama3-audio-decoder-check checks/drama3/drama3-audio-decoder-check.cpp)
+target_include_directories(drama3-audio-decoder-check PRIVATE checks)
+target_link_libraries(drama3-audio-decoder-check PRIVATE drama3)
 
 add_executable(fft-check checks/common/fft-check.cpp)
 target_link_libraries(fft-check PRIVATE speechcommon)

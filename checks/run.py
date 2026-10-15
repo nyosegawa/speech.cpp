@@ -283,9 +283,14 @@ def drama3(model, devices, ctx):
                     m = json.load(f)
                 if "https://huggingface.co/" + m["model"]["repository"] == model.repository and m.get("reference"):
                     dumps.append(os.path.join(out, d))
+    sampling = os.path.join(out, "sampling")
+    runs = [Run("drama3-sampler-check", [model.path, sampling], None, model.label()) if os.path.isdir(sampling)
+            else missing("drama3-sampler-check", model.label(), sampling)]
     if not dumps:
-        return [missing("drama3-codec-check", model.label(), f"dump of {model.name} with a reference under {out}")]
-    return [runs_on(device, "drama3-codec-check", model, [d], " " + os.path.basename(d)) for device in devices for d in dumps]
+        return runs + [missing("drama3-codec-check", model.label(), f"dump of {model.name} with a reference under {out}")]
+    for device in devices:
+        runs += [runs_on(device, f"drama3-{stage}-check", model, [d], " " + os.path.basename(d)) for stage in ("codec", "audio-decoder") for d in dumps]
+    return runs
 
 
 def qwen3_asr(model, devices, ctx):

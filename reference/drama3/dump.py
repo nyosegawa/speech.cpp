@@ -60,7 +60,10 @@ MODEL_CARD_SAMPLING = {"temperature": 1.0, "top_p": 0.9, "top_k": 30}
 
 
 def array(tensor):
-    return tensor.detach().to("cpu", torch.float32).numpy()
+    """A copy of `tensor` as float32. Without the copy, the array shares the memory of a float32 tensor on the CPU, and a
+    dump on Modal's Linux read the audio decoder's prompt outputs of layers 3 to 5 back as other values and zeros
+    (2026-10-15)."""
+    return tensor.detach().to("cpu", torch.float32, copy=True).numpy()
 
 
 class Recorder:
