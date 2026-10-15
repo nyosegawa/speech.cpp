@@ -20,7 +20,8 @@ speech worker Drama-35B-A3B-v3-Q4_K.gguf     # behind the worker protocol
 [`reference/drama3/convert.py`](../../reference/drama3/convert.py) converts the checkpoint into one F32 file of 143 GB,
 and `speech quantize` makes the other types from it (`--type q4_k` writes 20.8 GB in three and a half minutes on an Apple
 M5). A model needs its whole file in memory, the GPU's or, for the experts a GPU cannot hold, the CPU's
-([Devices and memory](#devices-and-memory)): speaking a short text with the Q4_K file took 21.1 GB at its peak on the M5.
+([Devices and memory](#devices-and-memory)), and holds the memory of its largest request from its load on, about 2.1 GB
+of caches and graph buffers: speaking a short text with the Q4_K file took 21.1 GB at its peak on the M5.
 
 ## What it does
 

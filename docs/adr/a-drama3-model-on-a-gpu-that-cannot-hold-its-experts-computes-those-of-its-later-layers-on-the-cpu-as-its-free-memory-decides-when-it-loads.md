@@ -31,7 +31,9 @@ trips of about 0.3 ms each, the wait for a submission to end rather than the cop
 
 - **A model loaded on a GPU keeps there the experts of as many layers, from the first, as the GPU's free memory holds**
   when it loads, beside the rest of the model's weights, the caches of the largest request and a reserve for the graphs
-  and the backend measured at the worst request. The CPU's memory holds the experts of the later layers, which the CPU
+  and the backend measured at the worst request. The model allocates those caches and the buffers of its largest graphs
+  as it loads, so that a model loaded after it, as `speech serve` loads one of each task, cannot take their memory. The
+  CPU's memory holds the experts of the later layers, which the CPU
   computes with the load's threads, in a pool that waits between graphs. A GPU that holds every expert computes them
   all; one that cannot hold the rest of the model beside the reserve refuses the load as out of memory, naming what it
   has free and what the model needs.
@@ -66,6 +68,5 @@ time. The worst request, a voice of about 8,000 rows of recordings, peaked at 6.
 desktop's 0.6 GiB. The CPU computes its
 experts in its own arithmetic, which differs from the GPU's: the text model's check against the official dumps gives
 the experts' output at 67.9 dB with them on the CPU against 65.4 dB on Metal, in F32. A prompt of 8,000 rows of
-references takes about a minute before the first audio with most experts on the CPU. The reserve stays free for the
-model's own requests, so a model loaded after it on the same GPU, as `speech serve` holds one of each task, finds that
-much less.
+references takes about a minute before the first audio with most experts on the CPU. Every model holds the memory of
+its largest request from its load on, about 2.1 GB beyond its weights on the M5, whatever requests it serves.
