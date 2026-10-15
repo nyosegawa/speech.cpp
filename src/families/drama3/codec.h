@@ -66,6 +66,12 @@ public:
     void start_decoding();
 
     /**
+     * Allocates now the memory of decode_more() of up to `frames` frames, which its largest graph needs later, so that
+     * no memory taken after it leaves the decoding short. It ends with a decoding started.
+     */
+    void reserve_decoding(int64_t frames);
+
+    /**
      * The audio of the next `frames` frames of the utterance, `codes` as decode() takes them, after those decoded since
      * start_decoding(): the transformer after the quantizer carries each layer's inputs of the rows its attention reaches,
      * at their positions, and the convolutions start from its outputs of the kHeldFrames frames before, so that the
@@ -80,6 +86,11 @@ public:
     static constexpr int64_t kHeldFrames = 16;
 
 private:
+    /**
+     * The graph of decode_more() of `frames` frames of `codes` after the carried state: the audio, the transformer's
+     * rows to carry in `before`, and the outputs to hold for the next frames in `next`.
+     */
+    ggml_tensor * build_more(Graph & g, const std::vector<int32_t> & codes, int64_t frames, std::vector<ggml_tensor *> & before, ggml_tensor ** next);
     /**
      * Builds the decoding of `frames` frames of `codes` from position_: the codebooks' vectors, the transformer, whose
      * rows before these `before` carries where given, and the convolutions, from the transformer's outputs `held` of the

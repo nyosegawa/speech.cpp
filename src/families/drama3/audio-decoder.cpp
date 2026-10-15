@@ -136,26 +136,10 @@ void AudioDecoder::prefill(const std::vector<float> & hidden, const std::vector<
     for (int64_t from = 0; from < n; from += kBlockRows) {
         const int64_t rows_n = std::min(kBlockRows, n - from);
         const int32_t * own = frames.data() + from * width;
-        const int32_t * next = own + width;
-        std::vector<float> audio((size_t) rows_n);
-        for (int64_t i = 0; i < rows_n; i++) audio[(size_t) i] = semantic(next[i * width]) ? 1.0f : 0.0f;
         Graph g;
-        const Rows r = rows(g, rows_n, own, audio, true);
-        ggml_tensor * x = g.input(std::vector<float>(hidden.begin() + from * d_, hidden.begin() + (from + rows_n) * d_), d_, rows_n);
         std::vector<ggml_tensor *> kept;
-        for (int l = 0; l < layers(); l++) {
-            // The shared layers mix in the first code of the frame after each row, and the layer of residual codebook
-            // b the code of codebook b - 1, each clamped to its embeddings as the official layer clamps it.
-            const int column = 1 + (l < shared_ ? 0 : l - shared_);
-            std::vector<int32_t> codes((size_t) rows_n);
-            for (int64_t i = 0; i < rows_n; i++) codes[(size_t) i] = std::clamp(next[i * width + column], 0, vocab_ - 1);
-            x = layer(g, l, x, g.input(codes, rows_n), r);
-            if (outputs) {
-                g.output(x);
-                kept.push_back(x);
-            }
-        }
-        g.output(x);
+        build_prefill(g, g.input(std::vector<float>(hidden.begin() + from * d_, hidden.begin() + (from + rows_n) * d_), d_, rows_n), own,
+                      outputs ? &kept : nullptr);
         g.compute(backend_, allocr_);
         for (size_t l = 0; l < kept.size(); l++) {
             const std::vector<float> out = Graph::read(kept[l]);
@@ -163,6 +147,44 @@ void AudioDecoder::prefill(const std::vector<float> & hidden, const std::vector<
         }
         n_past_ += rows_n;
     }
+}
+
+ggml_tensor * AudioDecoder::build_prefill(Graph & g, ggml_tensor * x, const int32_t * own, std::vector<ggml_tensor *> * kept) {
+    const int width = 1 + codebooks_;
+    const int64_t rows_n = x->ne[1];
+    const int32_t * next = own + width;
+    std::vector<float> audio((size_t) rows_n);
+    for (int64_t i = 0; i < rows_n; i++) audio[(size_t) i] = semantic(next[i * width]) ? 1.0f : 0.0f;
+    const Rows r = rows(g, rows_n, own, audio, true);
+    for (int l = 0; l < layers(); l++) {
+        // The shared layers mix in the first code of the frame after each row, and the layer of residual codebook b
+        // the code of codebook b - 1, each clamped to its embeddings as the official layer clamps it.
+        const int column = 1 + (l < shared_ ? 0 : l - shared_);
+        std::vector<int32_t> codes((size_t) rows_n);
+        for (int64_t i = 0; i < rows_n; i++) codes[(size_t) i] = std::clamp(next[i * width + column], 0, vocab_ - 1);
+        x = layer(g, l, x, g.input(codes, rows_n), r);
+        if (kept) {
+            g.output(x);
+            kept->push_back(x);
+        }
+    }
+    g.output(x);
+    return x;
+}
+
+void AudioDecoder::reserve(int64_t rows, int64_t prompt_rows) {
+    if (prompt_rows < 2 || prompt_rows > rows) throw std::invalid_argument("the audio decoder reserves for a prompt within its sequence");
+    start(rows);
+    // The largest graph of such a sequence: a block of the prompt's rows that attends to every row before it.
+    const int64_t block = std::min(kBlockRows, prompt_rows - 1);
+    n_past_ = prompt_rows - 1 - block;
+    const std::vector<int32_t> frames((size_t) ((block + 1) * (1 + codebooks_)), 0);
+    Graph g;
+    build_prefill(g, g.zeros(d_, block), frames.data(), nullptr);
+    if (!ggml_gallocr_reserve(allocr_, g.cgraph())) {
+        throw Error(Fault::OutOfMemory, "cannot reserve the memory of the audio decoder's graphs on " + std::string(ggml_backend_name(backend_)));
+    }
+    start(rows);
 }
 
 std::vector<int32_t> AudioDecoder::step(const std::vector<float> & hidden, const std::vector<int32_t> & frame, int32_t main,

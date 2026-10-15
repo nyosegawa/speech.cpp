@@ -43,6 +43,13 @@ public:
     void start(int64_t rows);
 
     /**
+     * Allocates now the memory of a sequence of `rows` rows whose prompt takes `prompt_rows`, which its largest graph
+     * needs later: the layers' room for the rows and the buffer of a block of the longest prompt, so that no memory
+     * taken after it leaves such a sequence short. It ends with a sequence started.
+     */
+    void reserve(int64_t rows, int64_t prompt_rows);
+
+    /**
      * Runs the `n` rows after n_past() with the frames after them known, as the official decoder runs a prompt:
      * `hidden`, [dim, n] with the channel fastest, the text model's states of the rows, and `frames`, n + 1 frames of
      * 1 + codebooks ids, the rows' own and the one after the last. `outputs`, when given, receives each layer's output,
@@ -60,6 +67,11 @@ public:
                               const ChooseCode & choose, std::vector<std::vector<float>> * outputs = nullptr);
 
 private:
+    /**
+     * The graph of the prompt's rows of `x`, [dim, rows], after n_past(), whose frames and the one after the last start
+     * at `own`; `kept`, when given, receives each layer's output.
+     */
+    ggml_tensor * build_prefill(Graph & g, ggml_tensor * x, const int32_t * own, std::vector<ggml_tensor *> * kept);
     struct Rows;
 
     /**

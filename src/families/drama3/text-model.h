@@ -53,6 +53,13 @@ public:
     void start(int64_t rows);
 
     /**
+     * Allocates now the memory of a sequence of `rows` rows whose prompt takes `prompt_rows`, which its largest graphs
+     * need later: the attention layers' room for the rows and the buffers of the graphs of the longest prompt, so that
+     * no memory taken after it, by another model, leaves such a sequence short. It ends with a sequence started.
+     */
+    void reserve(int64_t rows, int64_t prompt_rows);
+
+    /**
      * The inputs of `n` frames of 1 + codebooks ids, row-major, [hidden, n]: the main token's embedding, and for a frame
      * whose main token is a semantic id, the mean of it and the embeddings of the codes the text model sees. It reads
      * token_embd and the audio decoder's ad.codebook_embd.
@@ -81,6 +88,13 @@ private:
 
     ggml_tensor * attention_mixer(Graph & g, int l, ggml_tensor * x, int64_t first, ggml_tensor * pos, ggml_tensor * mask);
     ggml_tensor * delta_mixer(Graph & g, int l, ggml_tensor * x);
+    /** The graph of the embeddings of `n` frames, which embed() computes. */
+    ggml_tensor * build_embed(Graph & g, const std::vector<int32_t> & frames, int64_t n);
+    /**
+     * The graph of the layers on the rows of `x`, [hidden, rows], after n_past(), and the final norm where the run
+     * ends with the model's last layer; `kept`, when given, receives each layer's mixer, router, experts and output.
+     */
+    ggml_tensor * build_rows(Graph & g, ggml_tensor * x, std::vector<std::vector<ggml_tensor *>> * kept);
     /** The experts and the shared expert on `x`, and the router's logits in `router`. */
     ggml_tensor * experts(Graph & g, int l, ggml_tensor * x, ggml_tensor ** router);
 

@@ -402,6 +402,40 @@ std::vector<float> Codec::decode(const std::vector<int32_t> & codes, int64_t fra
     return Graph::read(audio);
 }
 
+ggml_tensor * Codec::build_more(Graph & g, const std::vector<int32_t> & codes, int64_t frames, std::vector<ggml_tensor *> & before, ggml_tensor ** next) {
+    const int layers = m_.count("drama3.codec.quantizer_transformer.layers");
+    before.assign((size_t) layers, nullptr);
+    for (size_t i = 0; i < before_.size(); i++) before[i] = g.input(before_[i], latent_, (int64_t) before_[i].size() / latent_);
+    const int64_t held = (int64_t) held_.size() / latent_;
+    ggml_tensor * post = nullptr;
+    ggml_tensor * audio = build_decoder(g, codes, frames, &before, held ? g.input(held_, latent_, held) : nullptr, &post, [](const std::string &, ggml_tensor *) {});
+    // The convolutions of the next frames start from the transformer's outputs of the last kHeldFrames frames.
+    ggml_tensor * outputs = held ? ggml_concat(g.ctx(), g.input(held_, latent_, held), post, 1) : post;
+    const int64_t keep = std::min<int64_t>(kHeldFrames, held + frames);
+    *next = ggml_cont(g.ctx(), ggml_view_2d(g.ctx(), outputs, latent_, keep, outputs->nb[1], (size_t) (held + frames - keep) * outputs->nb[1]));
+    g.output(audio);
+    g.output(*next);
+    for (ggml_tensor * t : before) g.output(t);
+    return audio;
+}
+
+void Codec::reserve_decoding(int64_t frames) {
+    // The largest graph of decode_more(): `frames` frames after a transformer that carries every row its attention
+    // reaches and the held frames of the convolutions.
+    const int layers = m_.count("drama3.codec.quantizer_transformer.layers");
+    const int64_t carried = m_.size("drama3.codec.quantizer_transformer.window") - 1;
+    before_.assign((size_t) layers, std::vector<float>((size_t) (carried * latent_), 0.0f));
+    held_.assign((size_t) (kHeldFrames * latent_), 0.0f);
+    Graph g;
+    std::vector<ggml_tensor *> before;
+    ggml_tensor * next = nullptr;
+    build_more(g, std::vector<int32_t>((size_t) (frames * codebooks()), 0), frames, before, &next);
+    start_decoding();
+    if (!ggml_gallocr_reserve(allocr_, g.cgraph())) {
+        throw Error(Fault::OutOfMemory, "cannot reserve the memory of the codec's decoding on " + std::string(ggml_backend_name(backend_)));
+    }
+}
+
 void Codec::start_decoding() {
     position_ = 0;
     before_.clear();
@@ -410,19 +444,10 @@ void Codec::start_decoding() {
 
 std::vector<float> Codec::decode_more(const std::vector<int32_t> & codes, int64_t frames) {
     Graph g;
-    const int layers = m_.count("drama3.codec.quantizer_transformer.layers");
-    std::vector<ggml_tensor *> before((size_t) layers, nullptr);
-    for (size_t i = 0; i < before_.size(); i++) before[i] = g.input(before_[i], latent_, (int64_t) before_[i].size() / latent_);
+    std::vector<ggml_tensor *> before;
+    ggml_tensor * next = nullptr;
+    ggml_tensor * audio = build_more(g, codes, frames, before, &next);
     const int64_t held = (int64_t) held_.size() / latent_;
-    ggml_tensor * post = nullptr;
-    ggml_tensor * audio = build_decoder(g, codes, frames, &before, held ? g.input(held_, latent_, held) : nullptr, &post, [](const std::string &, ggml_tensor *) {});
-    // The convolutions of the next frames start from the transformer's outputs of the last kHeldFrames frames.
-    ggml_tensor * outputs = held ? ggml_concat(g.ctx(), g.input(held_, latent_, held), post, 1) : post;
-    const int64_t keep = std::min<int64_t>(kHeldFrames, held + frames);
-    ggml_tensor * next = ggml_cont(g.ctx(), ggml_view_2d(g.ctx(), outputs, latent_, keep, outputs->nb[1], (size_t) (held + frames - keep) * outputs->nb[1]));
-    g.output(audio);
-    g.output(next);
-    for (ggml_tensor * t : before) g.output(t);
     g.compute(backend_, allocr_);
     before_.clear();
     for (ggml_tensor * t : before) before_.push_back(Graph::read(t));
