@@ -89,9 +89,14 @@ public:
             }
             char shown[96];
             std::snprintf(shown, sizeof shown, "%3d%%  %s of %s  %.1f MB/s", (int) (done * 100 / total), megabytes(done).c_str(), megabytes(total).c_str(), rate);
-            std::string left;
-            if (rate > 0) left = "  " + std::to_string((long long) ((total - done) / (rate * 1e6)) + 1) + " s left";
-            std::fprintf(stderr, "\r\033[K  %s  %s", terminal::bar(done, total, 30).c_str(), terminal::paint(terminal::Color::Gray, shown + left).c_str());
+            std::string text = shown;
+            if (rate > 0) text += "  " + std::to_string((long long) ((total - done) / (rate * 1e6)) + 1) + " s left";
+            // The line stays narrower than the terminal, since a line that wraps is no longer the one "\r" returns to: the
+            // bar takes what the numbers leave, up to 30 columns, and goes where fewer than 10 are left.
+            const int room = terminal::columns(stderr) - 1 - 2;
+            const int width = std::min(30, room - 2 - (int) text.size());
+            const std::string bar = width >= 10 ? terminal::bar(done, total, width) + "  " : "";
+            std::fprintf(stderr, "\r\033[K  %s%s", bar.c_str(), terminal::paint(terminal::Color::Gray, terminal::head(text, width >= 10 ? (int) text.size() : room)).c_str());
             std::fflush(stderr);
         } else if (tenth > tenth_) {
             std::fprintf(stderr, "  %s\n", line);
