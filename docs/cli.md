@@ -66,6 +66,10 @@ speech info irodori-tts-mf
 - A value follows its flag or an `=`: `--seed 7` or `--seed=7`. A number is read whole: `--steps 4x` is a usage error.
 - A boolean flag alone means true, and takes `true` or `false` only after an `=`: `--timestamps`, `--do-sample=false`.
 - An argument that begins with `-`, such as a text, follows `--`.
+- A flag, a subcommand or a model's name with a slip in it is answered with the one it was likely meant to be:
+  `speech tts has no flag --vioce; did you mean --voice?`.
+- A request option the model requires, such as `--voice` for Qwen3-TTS, is checked before the model loads, and the
+  failure lists the voices to choose from.
 - stdout carries the output alone, and every log goes to stderr.
 - On a terminal, stderr shows a step that takes time, such as loading a model, speaking a text or transcribing a file,
   as a line with a spinner and its seconds, and marks it when it is done. Colors are off with `NO_COLOR=1`. In a pipe or a file the same lines come

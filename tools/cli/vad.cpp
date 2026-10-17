@@ -71,6 +71,7 @@ int run_vad(const CommandLine & line, FILE * out) {
 
     // A model named for the first time is fetched here, before the load is timed.
     const std::string path = model_file(line.args[0]);
+    require_options(path, line);
     const auto t0 = Clock::now();
     // The device and threads of every other detection, unless the command line names its own.
     Loading loading = line.loading(false);

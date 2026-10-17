@@ -7,6 +7,7 @@
 
 #include "failure.h"
 #include "json-reader.h"
+#include "spelling.h"
 
 /** catalog.json's bytes and a terminating zero, written into the build by CMake. */
 extern const unsigned char speech_catalog_json[];
@@ -125,7 +126,11 @@ CatalogChoice find_model(const std::string & argument) {
     const auto [name, type] = split_argument(argument);
     const CatalogModel * model = model_named(name);
     if (!model) {
-        throw UsageError("\"" + argument + "\" is neither a model file, whose path ends in .gguf, nor a model of the catalog: " + names_by_task() +
+        std::vector<std::string> names;
+        for (const CatalogModel & m : catalog()) names.push_back(m.name);
+        const std::string near = nearest(name, names);
+        throw UsageError("\"" + argument + "\" is neither a model file, whose path ends in .gguf, nor a model of the catalog" +
+                         (near.empty() ? ": " : "; did you mean " + near + "? The catalog holds ") + names_by_task() +
                          ". `speech models` lists them with their types and languages");
     }
     const std::string wanted = type.empty() ? model->type : type;

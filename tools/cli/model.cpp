@@ -343,6 +343,28 @@ int run_devices(const CommandLine & line, FILE * out) {
 
 }  // namespace
 
+void require_options(const std::string & path, const CommandLine & line) {
+    const ModelInfo info = file_info(path);
+    const speech_model_info * m = info.get();
+    for (size_t i = 0; i < speech_model_info_option_count(m); i++) {
+        const speech_option o = speech_model_info_option(m, i);
+        const bool given = std::any_of(line.options.begin(), line.options.end(), [&](const RequestOption & r) { return r.option == o; });
+        if (given || !speech_model_info_option_required(m, o)) continue;
+        std::string message = std::string(speech_model_info_name(m)) + " needs " + option_flag(o);
+        if (o == SPEECH_OPT_VOICE) {
+            std::string voices;
+            for (size_t v = 0; v < speech_model_info_voice_count(m); v++) voices += (voices.empty() ? "" : ", ") + std::string(speech_model_info_voice_name(m, v));
+            for (const auto & added : line.loading(false).voices) voices += (voices.empty() ? "" : ", ") + added.first;
+            message += " NAME: ";
+            if (!voices.empty()) message += "one of its voices (" + voices + ")";
+            if (speech_model_info_voice_files(m)) message += (voices.empty() ? "" : " or ") + std::string("one added with --add-voice NAME=FILE");
+        } else {
+            message += "; `speech info " + line.args[0] + "` says what it takes";
+        }
+        throw Failure(speech_status_name(SPEECH_ERROR_INVALID_ARGUMENT), speech_option_name(o), message);
+    }
+}
+
 std::string loaded_line(const std::vector<const speech_model_info *> & models, double seconds) {
     std::string out = "Loaded";
     for (size_t i = 0; i < models.size(); i++) {

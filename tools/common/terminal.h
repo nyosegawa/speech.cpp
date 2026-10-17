@@ -30,7 +30,10 @@ bool draws_on(FILE * stream);
 /** Whether the tools draw on stderr (draws_on()). */
 bool draws();
 
-/** Whether what the tools draw has colors: they draw, and NO_COLOR is unset or empty, as no-color.org asks. */
+/** Whether what the tools draw on `stream` has colors: they draw, and NO_COLOR is unset or empty, as no-color.org asks. */
+bool colors_on(FILE * stream);
+
+/** Whether what the tools draw on stderr has colors (colors_on()). */
 bool colors();
 
 /** The columns of the terminal `stream` is, or 80. */
@@ -48,8 +51,8 @@ std::string tail(const std::string & text, int width);
  */
 enum class Color { Mint, Pink, Lavender, Sky, Peach, Red, Gray, Bold };
 
-/** `text` in `color` where colors() holds; otherwise `text` as it is. */
-std::string paint(Color color, const std::string & text);
+/** `text` in `color` where `stream` has colors; otherwise `text` as it is. */
+std::string paint(Color color, const std::string & text, FILE * stream = stderr);
 
 /** The marks a line begins with where the tools draw: a step done, audio made, a fetch, and a warning. */
 enum class Mark { Done, Audio, Fetch, Warning };
@@ -57,8 +60,8 @@ enum class Mark { Done, Audio, Fetch, Warning };
 /** `text` after its mark and a space where draws() holds; otherwise `text` alone. */
 std::string marked(Mark mark, const std::string & text);
 
-/** The waveform a banner begins with, where draws() holds; otherwise "". */
-std::string logo();
+/** The waveform a banner begins with, where the tools draw on `stream`; otherwise "". */
+std::string logo(FILE * stream = stderr);
 
 /** A bar `width` columns wide, its first `done` of `total` filled. */
 std::string bar(uint64_t done, uint64_t total, int width);

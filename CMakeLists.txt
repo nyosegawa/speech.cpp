@@ -248,6 +248,7 @@ add_executable(speech-cli
     tools/common/realtime-session.cpp
     tools/common/regions.cpp
     tools/common/sentences.cpp
+    tools/common/spelling.cpp
     tools/common/terminal.cpp
     tools/common/transcript.cpp
     tools/common/utterances.cpp

@@ -103,6 +103,7 @@ int run_asr(const CommandLine & line, FILE * out) {
 
     // The models named for the first time are fetched here, before the load is timed.
     const std::string path = model_file(line.args[0]);
+    require_options(path, line);
     const std::optional<std::string> detector = detection_file(line);
     const auto t0 = Clock::now();
     terminal::Status loading("Loading " + argument_label(line.args[0]) + (detector ? " and " + argument_label(*line.value("--vad")) : ""));

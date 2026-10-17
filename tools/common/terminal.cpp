@@ -110,9 +110,13 @@ bool draws() {
     return draws_on(stderr);
 }
 
-bool colors() {
+bool colors_on(FILE * stream) {
     const char * off = std::getenv("NO_COLOR");
-    return draws() && !(off && *off);
+    return draws_on(stream) && !(off && *off);
+}
+
+bool colors() {
+    return colors_on(stderr);
 }
 
 int columns(FILE * stream) {
@@ -148,8 +152,8 @@ std::string tail(const std::string & text, int width) {
     return kEllipsis + encode_utf8(std::vector<uint32_t>(cps.begin() + (long) first, cps.end()));
 }
 
-std::string paint(Color color, const std::string & text) {
-    if (!colors()) return text;
+std::string paint(Color color, const std::string & text, FILE * stream) {
+    if (!colors_on(stream)) return text;
     const char * code = "";
     switch (color) {
         case Color::Mint: code = "38;5;78"; break;
@@ -175,10 +179,10 @@ std::string marked(Mark mark, const std::string & text) {
     return text;
 }
 
-std::string logo() {
-    if (!draws()) return "";
-    return paint(Color::Pink, "\xE2\x96\x81\xE2\x96\x83") + paint(Color::Lavender, "\xE2\x96\x85\xE2\x96\x87") +
-           paint(Color::Sky, "\xE2\x96\x85\xE2\x96\x83\xE2\x96\x81");
+std::string logo(FILE * stream) {
+    if (!draws_on(stream)) return "";
+    return paint(Color::Pink, "\xE2\x96\x81\xE2\x96\x83", stream) + paint(Color::Lavender, "\xE2\x96\x85\xE2\x96\x87", stream) +
+           paint(Color::Sky, "\xE2\x96\x85\xE2\x96\x83\xE2\x96\x81", stream);
 }
 
 std::string bar(uint64_t done, uint64_t total, int width) {

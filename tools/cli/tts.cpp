@@ -211,6 +211,7 @@ int run_tts(const CommandLine & line, FILE * out) {
 
     // A model named for the first time is fetched here, before the load is timed.
     const std::string path = model_file(line.args[0]);
+    require_options(path, line);
     const auto t0 = Clock::now();
     terminal::Status loading("Loading " + argument_label(line.args[0]));
     const Model model = load_model(path, line.loading(false));
