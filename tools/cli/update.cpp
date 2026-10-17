@@ -208,12 +208,12 @@ int run_update(const CommandLine & line, FILE *) {
     const std::string current = speech_version();
     const std::string latest = latest_release();
     if (!later_version(latest, current)) {
-        if (latest == current) std::fprintf(stderr, "speech.cpp %s is the latest release\n", current.c_str());
+        if (latest == current) std::fprintf(stderr, "%s\n", terminal::marked(terminal::Mark::Done, "speech.cpp " + current + " is the latest release").c_str());
         else std::fprintf(stderr, "this is speech.cpp %s, and the latest release is %s\n", current.c_str(), latest.c_str());
         return 0;
     }
     if (line.has("--check")) {
-        std::fprintf(stderr, "%s; speech update installs it\n", newer_release(latest).c_str());
+        std::fprintf(stderr, "%s\n", terminal::paint(terminal::Color::Lavender, newer_release(latest) + "; speech update installs it").c_str());
         return 0;
     }
     const fs::path self = this_executable();
@@ -240,7 +240,7 @@ NewerReleaseNotice::NewerReleaseNotice(ReleaseNotice when) : when_(when) {
     check_ = std::make_unique<ReleaseCheck>();
     const std::string latest = check_->latest();
     if (when == ReleaseNotice::AtStart && later_version(latest, speech_version())) {
-        std::fprintf(stderr, "speech: %s; run speech update to install it\n", newer_release(latest).c_str());
+        std::fprintf(stderr, "%s\n", terminal::paint(terminal::Color::Lavender, "speech: " + newer_release(latest) + "; run speech update to install it").c_str());
     }
 }
 
@@ -248,7 +248,7 @@ void NewerReleaseNotice::ended() {
     if (!check_) return;
     const std::string latest = check_->finish();
     if (when_ == ReleaseNotice::AtEnd && later_version(latest, speech_version())) {
-        std::fprintf(stderr, "speech: %s; run speech update to install it\n", newer_release(latest).c_str());
+        std::fprintf(stderr, "%s\n", terminal::paint(terminal::Color::Lavender, "speech: " + newer_release(latest) + "; run speech update to install it").c_str());
     }
 }
 

@@ -266,7 +266,7 @@ if info["task"] == "synthesis":
         two = b"".join(base64.b64decode(m["pcm"]) for m in w.until("two") if m["type"] == "chunk")
         w.close()
         r = run("tts", model, "-o", path, "--voice", voice, "--seed", str(seed), *options, lines[0] + lines[1])
-        assert " requests:" not in r.stderr.decode(), r.stderr
+        assert " requests in " not in r.stderr.decode(), r.stderr
         with open(path, "rb") as f:
             expect("a text of two sentences", f.read()[44:], two)
         os.remove(path)
@@ -274,7 +274,7 @@ if info["task"] == "synthesis":
         # A paragraph is spoken one request a sentence, every one with the seed the first drew, which -v reports.
         again = os.path.join(work, "speech-cli-smoke-again.wav")
         r = run("tts", model, "-o", path, "--voice", voice, "-v", *options, "".join(PARAGRAPH))
-        said = re.search(r"([0-9.]+) s of audio in (\d+) requests: .*, seed (\d+), complete\n", r.stderr.decode())
+        said = re.search(r"([0-9.]+) s of audio from (\d+) requests in .*, seed (\d+), complete\n", r.stderr.decode())
         assert said and int(said.group(2)) == len(PARAGRAPH), r.stderr.decode()[-400:]
         run("tts", model, "-o", again, "--voice", voice, "--seed", said.group(3), *options, "".join(PARAGRAPH))
         with open(path, "rb") as f, open(again, "rb") as g:

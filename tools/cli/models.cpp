@@ -7,6 +7,7 @@
 #include "cache.h"
 #include "commands.h"
 #include "fetch.h"
+#include "terminal.h"
 
 // The subcommands about the catalog of models a release fetches by name: speech models lists it with what is in the
 // model folder and which model to start with for each language, speech pull fetches models ahead of their use, and
@@ -92,7 +93,7 @@ std::vector<CatalogChoice> choices(const std::vector<std::string> & args) {
 int run_pull(const CommandLine & line, FILE * out) {
     for (const CatalogChoice & c : choices(line.args)) {
         const Presence p = presence(c);
-        if (p.whole) std::fprintf(stderr, "%s is fetched already\n", choice_name(c).c_str());
+        if (p.whole) std::fprintf(stderr, "%s\n", terminal::marked(terminal::Mark::Done, choice_name(c) + " is fetched already").c_str());
         const fs::path path = p.whole ? model_path(c) : fetch_on_stderr(c);
         std::fprintf(out, "%s\n", path.u8string().c_str());
         std::fflush(out);
@@ -113,14 +114,14 @@ int run_rm(const CommandLine & line, FILE *) {
     }
     for (const CatalogChoice & c : named) {
         const uint64_t removed = remove_from_folder(model_path(c));
-        std::fprintf(stderr, "removed %s, %s\n", choice_name(c).c_str(), gigabytes(removed).c_str());
+        std::fprintf(stderr, "%s\n", terminal::marked(terminal::Mark::Done, "Removed " + choice_name(c) + ", " + gigabytes(removed)).c_str());
     }
     if (old) {
         const std::vector<OldFile> files = old_files();
-        if (files.empty()) std::fprintf(stderr, "no old files in %s\n", model_dir().u8string().c_str());
+        if (files.empty()) std::fprintf(stderr, "%s\n", terminal::marked(terminal::Mark::Done, "No old files in " + model_dir().u8string()).c_str());
         for (const OldFile & f : files) {
             const uint64_t removed = remove_from_folder(f.path);
-            std::fprintf(stderr, "removed %s, %s\n", in_folder(f.path).c_str(), gigabytes(removed).c_str());
+            std::fprintf(stderr, "%s\n", terminal::marked(terminal::Mark::Done, "Removed " + in_folder(f.path) + ", " + gigabytes(removed)).c_str());
         }
     }
     return 0;

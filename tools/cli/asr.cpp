@@ -131,25 +131,29 @@ int run_asr(const CommandLine & line, FILE * out) {
         size_t regions = 0;
         double audio = 0;
         const auto start = Clock::now();
-        try {
-            const Wav wav = read_audio(path);
-            const std::vector<float> samples = wav.mono();
-            audio = (double) samples.size() / wav.sample_rate;
-            Cancellation never;
-            if (detection) {
-                const Request request = detection_request(detection->model.get(), samples, wav.sample_rate, detection->options);
-                const std::vector<Region> found = *detect_regions(request.get(), never);
-                regions = found.size();
-                transcript = *transcribe_regions(model.get(), samples, wav.sample_rate, found, options, timestamps, never);
-            } else {
-                const Request request = new_request(model.get());
-                check(speech_request_set_audio(request.get(), samples.data(), samples.size(), wav.sample_rate));
-                apply_options(request.get(), options);
-                check(speech_transcribe(request.get()));
-                transcript = transcript_of(speech_request_result(request.get()), timestamps);
+        {
+            // The line is erased before the text reaches stdout, which may be the same terminal.
+            const terminal::Status status("Transcribing " + path);
+            try {
+                const Wav wav = read_audio(path);
+                const std::vector<float> samples = wav.mono();
+                audio = (double) samples.size() / wav.sample_rate;
+                Cancellation never;
+                if (detection) {
+                    const Request request = detection_request(detection->model.get(), samples, wav.sample_rate, detection->options);
+                    const std::vector<Region> found = *detect_regions(request.get(), never);
+                    regions = found.size();
+                    transcript = *transcribe_regions(model.get(), samples, wav.sample_rate, found, options, timestamps, never);
+                } else {
+                    const Request request = new_request(model.get());
+                    check(speech_request_set_audio(request.get(), samples.data(), samples.size(), wav.sample_rate));
+                    apply_options(request.get(), options);
+                    check(speech_transcribe(request.get()));
+                    transcript = transcript_of(speech_request_result(request.get()), timestamps);
+                }
+            } catch (const Failure & e) {
+                throw Failure(e.code(), e.option(), path + ": " + e.what());
             }
-        } catch (const Failure & e) {
-            throw Failure(e.code(), e.option(), path + ": " + e.what());
         }
         const double took = seconds_since(start);
         if (format == "json") {
@@ -160,19 +164,23 @@ int run_asr(const CommandLine & line, FILE * out) {
             for (const Timed & s : transcript.segments) std::fprintf(out, "%s\t%.3f\t%.3f\t%s\n", path.c_str(), s.start, s.end, s.text.c_str());
         }
         std::fflush(out);
-        std::fprintf(stderr, "%s: %.2f s of audio in %.3f s, RTFx %.1f", path.c_str(), audio, took, audio / took);
-        if (detection) std::fprintf(stderr, ", %zu region%s", regions, regions == 1 ? "" : "s");
-        std::fprintf(stderr, "\n");
+        char said[128];
+        std::snprintf(said, sizeof said, "%.2f s of audio in %.3f s, RTFx %.1f", audio, took, audio / took);
+        std::string details = said;
+        if (detection) details += ", " + std::to_string(regions) + (regions == 1 ? " region" : " regions");
+        std::fprintf(stderr, "%s\n", terminal::marked(terminal::Mark::Done, path + ": " + terminal::paint(terminal::Color::Gray, details)).c_str());
         if (transcript.stop == SPEECH_STOP_MODEL_LIMIT) {
-            std::fprintf(stderr, "%s: the recognition reached the most the model writes and was stopped there; its text is what was written\n",
-                         path.c_str());
+            std::fprintf(stderr, "%s\n", terminal::marked(terminal::Mark::Warning, path + ": the recognition reached the most the model writes and was "
+                                                                                      "stopped there; its text is what was written").c_str());
             model_limit = true;
         }
         audio_total += audio;
         busy += took;
     }
     if (line.args.size() > 2) {
-        std::fprintf(stderr, "%zu files, %.2f s of audio in %.3f s, RTFx %.1f\n", line.args.size() - 1, audio_total, busy, audio_total / busy);
+        char said[128];
+        std::snprintf(said, sizeof said, "%zu files, %.2f s of audio in %.3f s, RTFx %.1f", line.args.size() - 1, audio_total, busy, audio_total / busy);
+        std::fprintf(stderr, "%s\n", terminal::marked(terminal::Mark::Done, said).c_str());
     }
     return model_limit ? 3 : 0;
 }

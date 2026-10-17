@@ -169,6 +169,8 @@ std::string marked(Mark mark, const std::string & text) {
     switch (mark) {
         case Mark::Done: return paint(Color::Mint, "\xE2\x9C\x93") + " " + text;
         case Mark::Audio: return paint(Color::Pink, "\xE2\x99\xAA") + " " + text;
+        case Mark::Fetch: return paint(Color::Sky, "\xE2\x86\x93") + " " + text;
+        case Mark::Warning: return paint(Color::Peach, "!") + " " + text;
     }
     return text;
 }
@@ -177,6 +179,14 @@ std::string logo() {
     if (!draws()) return "";
     return paint(Color::Pink, "\xE2\x96\x81\xE2\x96\x83") + paint(Color::Lavender, "\xE2\x96\x85\xE2\x96\x87") +
            paint(Color::Sky, "\xE2\x96\x85\xE2\x96\x83\xE2\x96\x81");
+}
+
+std::string bar(uint64_t done, uint64_t total, int width) {
+    const int filled = total ? (int) (done * (uint64_t) width / total) : 0;
+    std::string full, empty;
+    for (int i = 0; i < filled; i++) full += "\xE2\x94\x81";
+    for (int i = filled; i < width; i++) empty += "\xE2\x94\x80";
+    return paint(Color::Lavender, full) + paint(Color::Gray, empty);
 }
 
 Status::Status(std::string doing, int indent) : doing_(std::move(doing)), indent_(indent) {
@@ -195,6 +205,11 @@ Status::~Status() {
     stop();
     std::fputs(kErase, stderr);
     std::fflush(stderr);
+}
+
+void Status::set(std::string doing) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    doing_ = std::move(doing);
 }
 
 void Status::done(const std::string & line, Mark mark) {

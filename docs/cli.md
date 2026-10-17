@@ -67,8 +67,8 @@ speech info irodori-tts-mf
 - A boolean flag alone means true, and takes `true` or `false` only after an `=`: `--timestamps`, `--do-sample=false`.
 - An argument that begins with `-`, such as a text, follows `--`.
 - stdout carries the output alone, and every log goes to stderr.
-- On a terminal, stderr shows a step that takes time, such as loading a model, as a line with a spinner and its
-  seconds, and marks it when it is done. Colors are off with `NO_COLOR=1`. In a pipe or a file the same lines come
+- On a terminal, stderr shows a step that takes time, such as loading a model, speaking a text or transcribing a file,
+  as a line with a spinner and its seconds, and marks it when it is done. Colors are off with `NO_COLOR=1`. In a pipe or a file the same lines come
   without color, mark or spinner.
 - On Windows the command line is read as UTF-8, and stdin and stdout are binary.
 - `speech --version` prints the release and the C API's version: `speech.cpp 0.8.9, C API 3.3`.
@@ -321,7 +321,8 @@ speech pull NAME[:TYPE]...
 
 Fetches each model's file unless it is in the model folder, and prints its path on stdout, so that
 `model=$(speech pull qwen3-asr-0.6b)` gives a script the path. On stderr it says what it fetches, from where, how far it
-is and how fast, and that it checked the SHA-256. On a terminal the progress is one line, rewritten as it moves.
+is and how fast, and that it checked the SHA-256. On a terminal the progress is one line, a bar with the share, the
+sizes, the rate and the time left, rewritten as it moves.
 
 ```
 fetching qwen3-asr-0.6b, Qwen3-ASR-0.6B-Q8_0.gguf (0.84 GB), from https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF into ...

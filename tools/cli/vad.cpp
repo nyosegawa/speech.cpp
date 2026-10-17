@@ -106,16 +106,20 @@ int run_vad(const CommandLine & line, FILE * out) {
         int rate = 0;
         double audio = 0;
         const auto start = Clock::now();
-        try {
-            const Wav wav = read_audio(path);
-            samples = wav.mono();
-            rate = wav.sample_rate;
-            audio = (double) samples.size() / rate;
-            const Request request = detection_request(model.get(), samples, rate, line.options);
-            Cancellation never;
-            regions = *detect_regions(request.get(), never);
-        } catch (const Failure & e) {
-            throw Failure(e.code(), e.option(), path + ": " + e.what());
+        {
+            // The line is erased before the regions reach stdout, which may be the same terminal.
+            const terminal::Status status("Detecting speech in " + path);
+            try {
+                const Wav wav = read_audio(path);
+                samples = wav.mono();
+                rate = wav.sample_rate;
+                audio = (double) samples.size() / rate;
+                const Request request = detection_request(model.get(), samples, rate, line.options);
+                Cancellation never;
+                regions = *detect_regions(request.get(), never);
+            } catch (const Failure & e) {
+                throw Failure(e.code(), e.option(), path + ": " + e.what());
+            }
         }
         const double took = seconds_since(start);
         const size_t n = regions.size();
@@ -145,12 +149,16 @@ int run_vad(const CommandLine & line, FILE * out) {
         }
         if (format == "json") std::fprintf(out, "%s]}\n", json.c_str());
         std::fflush(out);
-        std::fprintf(stderr, "%s: %.2f s of audio in %.3f s, RTFx %.0f, %zu region%s\n", path.c_str(), audio, took, audio / took, n, n == 1 ? "" : "s");
+        char said[128];
+        std::snprintf(said, sizeof said, "%.2f s of audio in %.3f s, RTFx %.0f, %zu region%s", audio, took, audio / took, n, n == 1 ? "" : "s");
+        std::fprintf(stderr, "%s\n", terminal::marked(terminal::Mark::Done, path + ": " + terminal::paint(terminal::Color::Gray, said)).c_str());
         audio_total += audio;
         busy += took;
     }
     if (line.args.size() > 2) {
-        std::fprintf(stderr, "%zu files, %.2f s of audio in %.3f s, RTFx %.0f\n", line.args.size() - 1, audio_total, busy, audio_total / busy);
+        char said[128];
+        std::snprintf(said, sizeof said, "%zu files, %.2f s of audio in %.3f s, RTFx %.0f", line.args.size() - 1, audio_total, busy, audio_total / busy);
+        std::fprintf(stderr, "%s\n", terminal::marked(terminal::Mark::Done, said).c_str());
     }
     return 0;
 }

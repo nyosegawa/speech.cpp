@@ -51,14 +51,17 @@ enum class Color { Mint, Pink, Lavender, Sky, Peach, Red, Gray, Bold };
 /** `text` in `color` where colors() holds; otherwise `text` as it is. */
 std::string paint(Color color, const std::string & text);
 
-/** The marks a line begins with where the tools draw: a step done, and audio made. */
-enum class Mark { Done, Audio };
+/** The marks a line begins with where the tools draw: a step done, audio made, a fetch, and a warning. */
+enum class Mark { Done, Audio, Fetch, Warning };
 
 /** `text` after its mark and a space where draws() holds; otherwise `text` alone. */
 std::string marked(Mark mark, const std::string & text);
 
 /** The waveform a banner begins with, where draws() holds; otherwise "". */
 std::string logo();
+
+/** A bar `width` columns wide, its first `done` of `total` filled. */
+std::string bar(uint64_t done, uint64_t total, int width);
 
 /**
  * A step under way: where draws() holds, one line of stderr after `indent` spaces, which a spinner and the seconds since
@@ -73,6 +76,9 @@ public:
     ~Status();
     Status(const Status &) = delete;
     Status & operator=(const Status &) = delete;
+
+    /** Says what the step does as it goes on: "Speaking hello.wav, 3.1 s of audio". */
+    void set(std::string doing);
 
     /** Ends the step with `line`: in place of the spinner, after `mark`, where draws() holds; on a line of its own elsewhere. */
     void done(const std::string & line, Mark mark = Mark::Done);

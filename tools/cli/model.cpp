@@ -20,6 +20,7 @@
 #include "fetch.h"
 #include "json-reader.h"
 #include "json.h"
+#include "terminal.h"
 
 // The subcommands about models and devices rather than requests: speech voice makes a voice file, speech info prints
 // what a model file says without loading it, and speech devices lists the devices a model can run on.
@@ -168,10 +169,14 @@ int run_voice(const CommandLine & line, FILE *) {
     }
     if (line.has("--keep-loudness")) check(speech_voice_params_keep_loudness(raw));
     const std::string & out = line.args.back();
+    // A model named for the first time is fetched here, with its own progress, before the voice is made.
+    const std::string path = model_file(line.args[0]);
     const auto t0 = std::chrono::steady_clock::now();
-    check(speech_voice_make_from(model_file(line.args[0]).c_str(), raw, out.c_str(), params.get()));
-    const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    std::fprintf(stderr, "wrote %s in %.2f s\n", out.c_str(), took);
+    terminal::Status status("Making the voice with " + argument_label(line.args[0]));
+    check(speech_voice_make_from(path.c_str(), raw, out.c_str(), params.get()));
+    char took[32];
+    std::snprintf(took, sizeof took, " in %.2f s", std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    status.done("Wrote " + out + took);
     if (line.has("-v")) std::fprintf(stderr, "speech.cpp %s, device %s\n", speech_version(), loading.device->c_str());
     return 0;
 }
