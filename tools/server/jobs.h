@@ -248,7 +248,7 @@ void run_in_turn(Job & job, Turns & turns, uint64_t ticket, const std::string & 
         job.what = what;
         // A stream's status, sent before the run, is 200, which a failure breaks off.
         const std::string ended = !ran || job.abandoned ? "gone" : failure ? "failed" : status == SPEECH_OK ? "200" : speech_status_name(status);
-        if (job.handler_left) log(request_text(job.method, job.path, ended, what, job.client));
+        if (job.handler_left) log_request(job.method, job.path, ended, what, job.client);
     }
     turns.pass();
 }

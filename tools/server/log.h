@@ -11,19 +11,24 @@
 
 namespace server {
 
-/** Writes `text` on stderr after the time of day: "10:42:13  text", the time in gray where colors are drawn. */
+/**
+ * Writes `text` on stderr after the time of day: "10:42:13  text", the time in gray where colors are drawn. Every control
+ * character in `text` is written as an escape ("\n" as \n, ESC as \x1b), since what a client sends reaches the log in
+ * a request's path and in the messages of the errors it caused, and a line break or a terminal's escape there would
+ * write lines of its own.
+ */
 void log(const std::string & text);
 
 /** Has the lines of requests name their clients' addresses, as for a server that listens for other machines. */
 void log_clients(bool name_them);
 
 /**
- * A request's line: its method and path, its status or how it ended ("gone" for a client that went away, "failed"),
- * colored by it where colors are drawn, then `what`, what it did, in gray, and the client's address where log_clients()
- * asks for it.
+ * Writes a request's line as log() writes text: its method and path, its status or how it ended ("gone" for a client
+ * that went away, "failed"), colored by it where colors are drawn, then `what`, what it did, in gray, and the client's
+ * address where log_clients() asks for it.
  */
-std::string request_text(const std::string & method, const std::string & path, const std::string & status, const std::string & what,
-                         const std::string & client);
+void log_request(const std::string & method, const std::string & path, const std::string & status, const std::string & what,
+                 const std::string & client);
 
 /**
  * Leaves the logger, which cpp-httplib calls on the same thread once the handler has returned, what the request this

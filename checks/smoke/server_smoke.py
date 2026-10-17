@@ -304,6 +304,12 @@ elif info["task"] == "synthesis":
                  "response_format", "sse with wav")
     expect_error(call("POST", "/v1/audio/speech", b"{not json", {"Content-Type": "application/json"}), 400, None, None, "a body that is not JSON")
     expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": "no-such-voice"}), 400, "unsupported_value", "voice", "an unknown voice")
+    # The message of an error a client caused carries what it sent, and the log writes a line break in it as an escape
+    # rather than a line of the client's own.
+    forged = "no-such-voice\n12:34:56  POST /forged  200"
+    expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": forged}), 400, "unsupported_value", "voice", "a voice with a line break")
+    server.wait_for_line(lambda line: "no-such-voice\\n12:34:56" in line, "the voice with its line break escaped")
+    assert not any(line.startswith("POST /forged") for line in server.logged()), "a client's line break wrote a line of the log"
     expect_error(post_json("/v1/audio/speech", {"input": "", "voice": voice}), 400, "invalid_value", "input", "an empty input")
     expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": voice, "timestamps": True}), 400, "unsupported_parameter",
                  "timestamps", "timestamps")

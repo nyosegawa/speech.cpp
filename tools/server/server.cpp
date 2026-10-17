@@ -94,7 +94,7 @@ public:
         });
         http.set_logger([](const httplib::Request & req, const httplib::Response & res) {
             const auto [what, skip] = take_request_note();
-            if (!skip) log(request_text(req.method, req.path, std::to_string(res.status), what.empty() ? error_message(res) : what, req.remote_addr));
+            if (!skip) log_request(req.method, req.path, std::to_string(res.status), what.empty() ? error_message(res) : what, req.remote_addr);
         });
         http.Get("/health", [](const httplib::Request &, httplib::Response & res) { res.set_content("{\"status\":\"ok\"}", "application/json"); });
         http.Get("/v1/models", [this](const httplib::Request &, httplib::Response & res) {
