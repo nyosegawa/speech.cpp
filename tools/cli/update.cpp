@@ -27,6 +27,7 @@ extern char ** environ;
 #include "commands.h"
 #include "failure.h"
 #include "speech.h"
+#include "terminal.h"
 
 // speech update asks github.com for the latest release and, when this speech is the one the installer put in place,
 // runs the installer with the option that leaves PATH alone, which downloads the release, checks it against the
@@ -47,13 +48,7 @@ Failure io_failure(const std::string & message) {
 bool notices_wanted() {
     const char * off = std::getenv("SPEECH_NO_UPDATE_CHECK");
     if (off && *off) return false;
-#ifdef _WIN32
-    // _isatty() is true of any character device, NUL among them; only a console has a console mode.
-    DWORD mode = 0;
-    return GetConsoleMode(GetStdHandle(STD_ERROR_HANDLE), &mode) != 0;
-#else
-    return isatty(STDERR_FILENO) != 0;
-#endif
+    return terminal::is_terminal(stderr);
 }
 
 std::string newer_release(const std::string & latest) {

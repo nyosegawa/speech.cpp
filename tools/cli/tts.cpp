@@ -27,6 +27,7 @@
 #include "fetch.h"
 #include "ggml.h"
 #include "sentences.h"
+#include "terminal.h"
 
 // speech tts: speaks the text, or each non-empty line of stdin as a text of its own, into one 16-bit mono WAVE at the
 // model's rate, written as the audio is made so that a player reading stdout starts before the rest is made; a model
@@ -202,10 +203,11 @@ int run_tts(const CommandLine & line, FILE * out) {
     // A model named for the first time is fetched here, before the load is timed.
     const std::string path = model_file(line.args[0]);
     const auto t0 = Clock::now();
+    terminal::Status loading("Loading " + argument_label(line.args[0]));
     const Model model = load_model(path, line.loading(false));
     const ModelInfo info = model_info(model.get());
     const speech_model_info * m = info.get();
-    std::fprintf(stderr, "load time %.2f s: %s on %s\n", seconds_since(t0), speech_model_info_name(m), speech_model_info_device(m));
+    loading.done(loaded_line({m}, seconds_since(t0)));
     if (verbose) {
         std::fprintf(stderr, "speech.cpp %s, %d Hz, voices: %s; languages: %s\n", speech_version(), speech_model_info_sample_rate(m),
                      joined(speech_model_info_voice_count(m), speech_model_info_voice_name, m).c_str(),

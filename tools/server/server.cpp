@@ -14,8 +14,11 @@
 #include "commands.h"
 #include "fetch.h"
 #include "jobs.h"
+#include "json-reader.h"
 #include "json.h"
+#include "log.h"
 #include "openai-api.h"
+#include "terminal.h"
 
 #include "access.h"
 #include "audio-speech.h"
@@ -80,8 +83,8 @@ public:
                                                                : std::string(httplib::status_message(res.status)) + ".", "", ""});
             }
         });
-        http.set_logger([](const httplib::Request & req, const httplib::Response & res) {
-            std::fprintf(stderr, "%s %s %s %d\n", req.remote_addr.c_str(), req.method.c_str(), req.path.c_str(), res.status);
+        http.set_logger([this](const httplib::Request & req, const httplib::Response & res) {
+            if (!take_job_logs_request()) log(request_text(req.method, req.path, std::to_string(res.status), answered(req, res)));
         });
         http.Get("/health", [](const httplib::Request &, httplib::Response & res) { res.set_content("{\"status\":\"ok\"}", "application/json"); });
         http.Get("/v1/models", [this](const httplib::Request &, httplib::Response & res) {
@@ -135,10 +138,28 @@ private:
     }
 
     /**
+     * What the log line of a request the logger writes says it did: the message of an error, and the client's address
+     * where the server listens for other machines.
+     */
+    std::string answered(const httplib::Request & req, const httplib::Response & res) const {
+        std::string out;
+        if (res.status >= 400 && res.get_header_value("Content-Type") == "application/json") {
+            const JsonValue body = parse_json(res.body);
+            const JsonValue * error = body.member("error");
+            const JsonValue * message = error ? error->member("message") : nullptr;
+            if (message) out = message->text;
+        }
+        if (!access_.loopback()) out += (out.empty() ? "from " : ", from ") + req.remote_addr;
+        return out;
+    }
+
+    /**
      * Refuses a request from an origin that may not call the server, adds the CORS headers for an origin --cors-origin
      * allows, and answers a preflight.
      */
     httplib::Server::HandlerResponse admit(const httplib::Request & req, httplib::Response & res) const {
+        // A mark left by a request whose logger never ran, as when its connection broke, must not hide the next one.
+        take_job_logs_request();
         if (const auto refusal = access_.origin_refusal(req)) {
             send_error(res, *refusal);
             return httplib::Server::HandlerResponse::Handled;
@@ -192,6 +213,8 @@ private:
         job->duration = (double) asked.samples.size() / asked.sample_rate;
         job->served = served;
         job->timestamps = asked.timestamps;
+        job->method = req.method;
+        job->path = req.path;
         if (asked.regions) {
             job->detector = detector(speech_model_info_name(info.get()), res);
             if (!job->detector) return;
@@ -222,6 +245,7 @@ private:
         }
         const uint64_t ticket = served->turns().take();
         std::thread(transcribe, job, std::ref(served->turns()), ticket).detach();
+        job_logs_request();
         std::unique_lock<std::mutex> lock(job->mutex);
         if (!wait_for(*job, lock, [] { return false; }, [&] { return req.is_connection_closed(); })) return;
         if (job->failure) {
@@ -259,15 +283,15 @@ private:
     }
 };
 
-/** Says on stderr which model a task has, as the server starts or the page loads one. */
-void report(const Served & served) {
+/** A model's row in the list the server starts with: its name, then its task, its device and its load time in gray. */
+std::string model_row(const Served & served) {
     const auto info = served.info();
-    std::fprintf(stderr, "speech serve: %s (%s) on %s, %d Hz, for %s\n", speech_model_info_name(info.get()), speech_model_info_architecture(info.get()),
-                 speech_model_info_device(info.get()), speech_model_info_sample_rate(info.get()),
-                 use_of(speech_model_info_task(info.get())));
-    if (!served.defaults().empty()) {
-        std::fprintf(stderr, "speech serve: %s by default %s\n", speech_model_info_name(info.get()), options_text(served.defaults()).c_str());
-    }
+    char rest[64];
+    std::snprintf(rest, sizeof rest, "%-11s  %-5s  %.2f s", task_name(speech_model_info_task(info.get())), speech_model_info_device(info.get()),
+                  served.load_seconds());
+    std::string name = speech_model_info_name(info.get());
+    if (name.size() < 32) name += std::string(32 - name.size(), ' ');
+    return name + "  " + terminal::paint(terminal::Color::Gray, rest);
 }
 
 /** The flag of an option given for one task's model: "--asr.language". */
@@ -341,16 +365,28 @@ int run_serve(const CommandLine & line, FILE *) {
     }
     const Loading loading = line.loading(true);
     ServedModels models(loading);
+    const std::string logo = terminal::logo();
+    std::fprintf(stderr, "%s%s %s\n\n", logo.empty() ? "" : (logo + " ").c_str(), terminal::paint(terminal::Color::Bold, "speech.cpp").c_str(),
+                 terminal::paint(terminal::Color::Gray, std::string(speech_version()) + " \xC2\xB7 serve").c_str());
     for (const std::string & argument : line.args) {
-        models.load_given(model_file(argument), is_model_path(argument) ? "" : choice_name(find_model(argument)));
+        // A model named for the first time is fetched here, with its own progress, before its load is shown.
+        const std::string path = model_file(argument);
+        terminal::Status status("Loading " + argument_label(argument), 2);
+        const auto served = models.load_given(path, is_model_path(argument) ? "" : choice_name(find_model(argument)));
+        status.done(model_row(*served));
     }
+    if (line.args.empty()) std::fprintf(stderr, "  %s\n", terminal::paint(terminal::Color::Gray, "No model yet: pick one of each task on the page").c_str());
     if (!loading.voices.empty()) {
         const auto synthesis = models.of(SPEECH_TASK_SYNTHESIS);
         if (!synthesis) throw UsageError("--add-voice adds voices to the synthesis model, and none is given");
         for (const auto & [name, file] : loading.voices) synthesis->add_voice(name, file);
     }
     give_defaults(models, line);
-    for (const auto & served : models.all()) report(*served);
+    for (const auto & served : models.all()) {
+        if (served->defaults().empty()) continue;
+        std::fprintf(stderr, "      %s\n", terminal::paint(terminal::Color::Gray, std::string(speech_model_info_name(served->info().get())) + " by default " +
+                                                                              options_text(served->defaults())).c_str());
+    }
 
     httplib::Server http;
     // Nagle's algorithm would hold a small chunk of a stream until the client acknowledges the previous one.
@@ -368,14 +404,15 @@ int run_serve(const CommandLine & line, FILE *) {
     Server server(models, access, realtime);
     server.route(http);
     realtime.route(http);
-    Page page(models, access, report);
+    Page page(models, access);
     page.route(http);
     const std::string address = host.find(':') == std::string::npos ? host : "[" + host + "]";
-    std::fprintf(stderr, "speech serve: speech.cpp %s, listening on http://%s:%d\n", speech_version(), address.c_str(), bound);
-    if (access.loopback()) {
-        std::fprintf(stderr, "speech serve: the page, which fetches and loads models, is at %s\n", access.page_url().c_str());
-        if (open) open_in_browser(access.page_url());
-    }
+    const std::string api = "http://" + address + ":" + std::to_string(bound) + "/v1";
+    const std::string stop = "Ctrl-C stops the server";
+    std::fprintf(stderr, "\n  %s\n",
+                 terminal::marked(terminal::Mark::Audio, "Ready at " + terminal::paint(terminal::Color::Sky, access.loopback() ? access.page_url() : api)).c_str());
+    std::fprintf(stderr, "    %s\n\n", terminal::paint(terminal::Color::Gray, access.loopback() ? "API at " + api + "; " + stop : stop).c_str());
+    if (open) open_in_browser(access.page_url());
     if (!http.listen_after_bind()) throw Failure(speech_status_name(SPEECH_ERROR_IO), "", "the server stopped listening");
     return 0;
 }

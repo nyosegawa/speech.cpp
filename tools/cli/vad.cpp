@@ -14,6 +14,7 @@
 #include "fetch.h"
 #include "json.h"
 #include "regions.h"
+#include "terminal.h"
 #include "wave-input.h"
 
 // speech vad: finds where someone speaks in WAVE files and writes each file's regions to stdout in the order the files
@@ -76,10 +77,11 @@ int run_vad(const CommandLine & line, FILE * out) {
     const Loading usual = detection_loading(loading);
     if (!loading.device) loading.device = usual.device;
     if (!loading.threads) loading.threads = usual.threads;
+    terminal::Status status("Loading " + argument_label(line.args[0]));
     const Model model = load_model(path, loading);
     const ModelInfo info = model_info(model.get());
     const speech_model_info * m = info.get();
-    std::fprintf(stderr, "load time %.2f s: %s on %s\n", seconds_since(t0), speech_model_info_name(m), speech_model_info_device(m));
+    status.done(loaded_line({m}, seconds_since(t0)));
     if (line.has("-v")) std::fprintf(stderr, "speech.cpp %s, %d Hz\n", speech_version(), speech_model_info_sample_rate(m));
     const std::optional<std::string> split = line.value("--split");
     if (split) {

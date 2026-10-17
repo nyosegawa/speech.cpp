@@ -53,15 +53,16 @@ class Server:
         """The page's address as the server printed it before it listened, or None where it has no page."""
         for _ in range(50):
             for line in self.lines:
-                found = re.search(r"the page, which fetches and loads models, is at (http://\S+/)", line)
+                # The page's address ends in "/", and the API's, where the server has no page, in "/v1".
+                found = re.search(r"Ready at (http://\S+)$", line.strip())
                 if found:
-                    return found.group(1)
-            if any("listening on" in line for line in self.lines):
-                time.sleep(0.1)
-                if not any("the page, which" in line for line in self.lines):
-                    return None
+                    return found.group(1) if found.group(1).endswith("/") else None
             time.sleep(0.1)
         return None
+
+    def logged(self):
+        """The lines of the log so far, each without the time of day it begins with."""
+        return [re.sub(r"^\d\d:\d\d:\d\d  ", "", line) for line in list(self.lines)]
 
     def call(self, method, path, body=None, headers=None, stream=False):
         """The status, the headers by lower-case name and the body, or the open response of a stream."""

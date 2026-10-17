@@ -67,6 +67,9 @@ speech info irodori-tts-mf
 - A boolean flag alone means true, and takes `true` or `false` only after an `=`: `--timestamps`, `--do-sample=false`.
 - An argument that begins with `-`, such as a text, follows `--`.
 - stdout carries the output alone, and every log goes to stderr.
+- On a terminal, stderr shows a step that takes time, such as loading a model, as a line with a spinner and its
+  seconds, and marks it when it is done. Colors are off with `NO_COLOR=1`. In a pipe or a file the same lines come
+  without color, mark or spinner.
 - On Windows the command line is read as UTF-8, and stdin and stdout are binary.
 - `speech --version` prints the release and the C API's version: `speech.cpp 0.8.9, C API 3.3`.
 - On a terminal, a subcommand says on stderr when a later release is out, once it ends (`speech serve` as it starts):

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <stdexcept>
 
 #include "failure.h"
@@ -110,6 +111,10 @@ bool is_model_path(const std::string & argument) {
     std::string extension = argument.substr(argument.size() - 5);
     std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return (char) std::tolower(c); });
     return extension == ".gguf";
+}
+
+std::string argument_label(const std::string & argument) {
+    return is_model_path(argument) ? std::filesystem::u8path(argument).filename().u8string() : argument;
 }
 
 bool names_a_model(const std::string & argument) {

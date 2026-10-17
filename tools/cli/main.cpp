@@ -26,6 +26,7 @@
 #include "args.h"
 #include "commands.h"
 #include "take-stdout.h"
+#include "terminal.h"
 #include "update.h"
 
 namespace {
@@ -115,6 +116,7 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "speech: io: %s\n", e.what());
         return 1;
     }
+    terminal::setup(out);
     const int status = run(utf8_args(argc, argv), out);
     std::fflush(out);
     return status;

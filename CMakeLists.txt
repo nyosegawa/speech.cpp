@@ -248,6 +248,7 @@ add_executable(speech-cli
     tools/common/realtime-session.cpp
     tools/common/regions.cpp
     tools/common/sentences.cpp
+    tools/common/terminal.cpp
     tools/common/transcript.cpp
     tools/common/utterances.cpp
     tools/worker/worker.cpp
@@ -256,6 +257,7 @@ add_executable(speech-cli
     tools/server/audio-speech.cpp
     tools/server/openai-api.cpp
     tools/server/served-models.cpp
+    tools/server/log.cpp
     tools/server/access.cpp
     tools/server/page.cpp
     tools/server/realtime.cpp

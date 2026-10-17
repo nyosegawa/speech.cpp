@@ -13,6 +13,7 @@
 
 #include "cancellation.h"
 #include "library.h"
+#include "log.h"
 #include "regions.h"
 
 // How the server runs requests on a model it holds: each set up by its HTTP handler as it arrives, so that the library
@@ -94,6 +95,8 @@ private:
 
 /** What every request's run shares: the library's request, its state, which the HTTP handler waits on, and its client's departure. */
 struct Job {
+    /** The HTTP request's method and path, which its log line begins with. */
+    std::string method, path;
     /** The model the request runs on, which the server keeps until the request has ended and been freed. */
     std::shared_ptr<Served> served;
     /**
@@ -170,8 +173,9 @@ inline double seconds_between(Clock::time_point t0, Clock::time_point t1) {
 
 /**
  * Runs a request on the model in its turn, on a thread of its own, unless its client went away while it waited, and
- * logs how it went: `name` begins the line, `run` runs the request through the job's cancellation and returns its
- * status or throws the library's Failure, and `outcome`, called with the job locked, says what the run made.
+ * writes the request's log line, which says how it went: `name` begins what it did, `run` runs the request through the
+ * job's cancellation and returns its status or throws the library's Failure, and `outcome`, called with the job locked,
+ * says what the run made.
  */
 template <typename Run, typename Outcome>
 void run_in_turn(Job & job, Turns & turns, uint64_t ticket, const std::string & name, Run run, Outcome outcome) {
@@ -201,20 +205,21 @@ void run_in_turn(Job & job, Turns & turns, uint64_t ticket, const std::string & 
         const Clock::time_point now = Clock::now();
         char line[256];
         std::snprintf(line, sizeof line, ": waited %.3f s", seconds_between(job.arrived, started));
-        std::string log = name + line;
+        std::string what = name + line;
         if (!ran) {
-            log += ", not started: the client went away while it waited";
+            what += ", not started: the client went away while it waited";
         } else {
-            log += outcome(started);
+            what += outcome(started);
             std::snprintf(line, sizeof line, " in %.3f s", seconds_between(started, now));
-            log += line;
-            if (failure) log += ", failed: " + failure->code() + ": " + failure->what();
+            what += line;
+            if (failure) what += ", failed: " + failure->code() + ": " + failure->what();
             if (job.abandoned) {
                 std::snprintf(line, sizeof line, ", stopped %.3f s after the client went away", seconds_between(job.gone, now));
-                log += line;
+                what += line;
             }
         }
-        std::fprintf(stderr, "%s\n", log.c_str());
+        const std::string ended = !ran || job.abandoned ? "gone" : failure ? "failed" : status == SPEECH_OK ? "200" : speech_status_name(status);
+        log(request_text(job.method, job.path, ended, what));
     }
     turns.pass();
 }
@@ -222,7 +227,7 @@ void run_in_turn(Job & job, Turns & turns, uint64_t ticket, const std::string & 
 /** Runs a transcription, by the regions of its detection request where it has one, and keeps its recognition in the job. */
 inline void transcribe(const std::shared_ptr<TranscriptionJob> & job, Turns & turns, uint64_t ticket) {
     char name[256];
-    std::snprintf(name, sizeof name, "transcription: %.2f s of audio at %d Hz", job->duration, job->sample_rate);
+    std::snprintf(name, sizeof name, "%.2f s of audio at %d Hz", job->duration, job->sample_rate);
     run_in_turn(*job, turns, ticket, name, [&] {
         if (!job->detection) {
             speech_request * r = job->request.get();

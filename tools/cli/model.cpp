@@ -338,6 +338,16 @@ int run_devices(const CommandLine & line, FILE * out) {
 
 }  // namespace
 
+std::string loaded_line(const std::vector<const speech_model_info *> & models, double seconds) {
+    std::string out = "Loaded";
+    for (size_t i = 0; i < models.size(); i++) {
+        out += std::string(i ? " and " : " ") + speech_model_info_name(models[i]) + " on " + speech_model_info_device(models[i]);
+    }
+    char took[32];
+    std::snprintf(took, sizeof took, " in %.2f s", seconds);
+    return out + took;
+}
+
 Command voice_command() {
     Command c;
     c.name = "voice";

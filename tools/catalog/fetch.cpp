@@ -10,18 +10,13 @@
 #include <thread>
 #include <vector>
 
-#ifdef _WIN32
-#include <io.h>
-#else
-#include <unistd.h>
-#endif
-
 #include "cache.h"
 #include "curl.h"
 #include "failure.h"
 #include "ggml.h"
 #include "sha256.h"
 #include "speech.h"
+#include "terminal.h"
 
 namespace fs = std::filesystem;
 
@@ -95,11 +90,7 @@ public:
     }
 
 private:
-#ifdef _WIN32
-    const bool terminal_ = _isatty(_fileno(stderr));
-#else
-    const bool terminal_ = isatty(fileno(stderr));
-#endif
+    const bool terminal_ = terminal::draws();
     bool open_ = false;
     int tenth_ = 0;
     std::optional<std::pair<uint64_t, Clock::time_point>> first_;

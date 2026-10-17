@@ -12,6 +12,7 @@
 #include "fetch.h"
 #include "json.h"
 #include "regions.h"
+#include "terminal.h"
 #include "wave-input.h"
 
 // speech asr: recognizes the speech in WAVE files and writes each file's text to stdout in the order the files are
@@ -104,17 +105,16 @@ int run_asr(const CommandLine & line, FILE * out) {
     const std::string path = model_file(line.args[0]);
     const std::optional<std::string> detector = detection_file(line);
     const auto t0 = Clock::now();
+    terminal::Status loading("Loading " + argument_label(line.args[0]) + (detector ? " and " + argument_label(*line.value("--vad")) : ""));
     const Model model = load_model(path, line.loading(false));
     const ModelInfo info = model_info(model.get());
     const speech_model_info * m = info.get();
     std::vector<RequestOption> options = line.options;
     const std::optional<Detection> detection = detection_of(line, detector, m, options);
-    std::string by;
-    if (detection) {
-        const ModelInfo d = model_info(detection->model.get());
-        by = ", by the regions of " + std::string(speech_model_info_name(d.get())) + " on " + speech_model_info_device(d.get());
-    }
-    std::fprintf(stderr, "load time %.2f s: %s on %s%s\n", seconds_since(t0), speech_model_info_name(m), speech_model_info_device(m), by.c_str());
+    const ModelInfo detecting = detection ? model_info(detection->model.get()) : ModelInfo(nullptr, speech_model_info_free);
+    std::vector<const speech_model_info *> loaded{m};
+    if (detecting) loaded.push_back(detecting.get());
+    loading.done(loaded_line(loaded, seconds_since(t0)));
     if (line.has("-v")) {
         std::string languages;
         for (size_t i = 0; i < speech_model_info_language_count(m); i++) languages += (i ? ", " : "") + std::string(speech_model_info_language(m, i));
