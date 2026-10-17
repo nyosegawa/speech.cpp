@@ -71,6 +71,15 @@ std::string model_json(const Served & served) {
            ",\"defaults\":" + options_json(served.defaults()) + ",\"speech\":" + speech_model_info_json(info.get()) + "}";
 }
 
+/** The message of an error the server answered with, for the request's log line, or "". */
+std::string error_message(const httplib::Response & res) {
+    if (res.status < 400 || res.get_header_value("Content-Type") != "application/json") return "";
+    const JsonValue body = parse_json(res.body);
+    const JsonValue * error = body.member("error");
+    const JsonValue * message = error ? error->member("message") : nullptr;
+    return message ? message->text : "";
+}
+
 class Server {
 public:
     Server(ServedModels & models, const Access & access, const Realtime & realtime) : models_(models), access_(access), realtime_(realtime) {}
@@ -83,8 +92,9 @@ public:
                                                                : std::string(httplib::status_message(res.status)) + ".", "", ""});
             }
         });
-        http.set_logger([this](const httplib::Request & req, const httplib::Response & res) {
-            if (!take_job_logs_request()) log(request_text(req.method, req.path, std::to_string(res.status), answered(req, res)));
+        http.set_logger([](const httplib::Request & req, const httplib::Response & res) {
+            const auto [what, skip] = take_request_note();
+            if (!skip) log(request_text(req.method, req.path, std::to_string(res.status), what.empty() ? error_message(res) : what, req.remote_addr));
         });
         http.Get("/health", [](const httplib::Request &, httplib::Response & res) { res.set_content("{\"status\":\"ok\"}", "application/json"); });
         http.Get("/v1/models", [this](const httplib::Request &, httplib::Response & res) {
@@ -138,28 +148,12 @@ private:
     }
 
     /**
-     * What the log line of a request the logger writes says it did: the message of an error, and the client's address
-     * where the server listens for other machines.
-     */
-    std::string answered(const httplib::Request & req, const httplib::Response & res) const {
-        std::string out;
-        if (res.status >= 400 && res.get_header_value("Content-Type") == "application/json") {
-            const JsonValue body = parse_json(res.body);
-            const JsonValue * error = body.member("error");
-            const JsonValue * message = error ? error->member("message") : nullptr;
-            if (message) out = message->text;
-        }
-        if (!access_.loopback()) out += (out.empty() ? "from " : ", from ") + req.remote_addr;
-        return out;
-    }
-
-    /**
      * Refuses a request from an origin that may not call the server, adds the CORS headers for an origin --cors-origin
      * allows, and answers a preflight.
      */
     httplib::Server::HandlerResponse admit(const httplib::Request & req, httplib::Response & res) const {
-        // A mark left by a request whose logger never ran, as when its connection broke, must not hide the next one.
-        take_job_logs_request();
+        // A note left by a request whose logger never ran, as when its connection broke, must not reach the next one.
+        take_request_note();
         if (const auto refusal = access_.origin_refusal(req)) {
             send_error(res, *refusal);
             return httplib::Server::HandlerResponse::Handled;
@@ -215,6 +209,7 @@ private:
         job->timestamps = asked.timestamps;
         job->method = req.method;
         job->path = req.path;
+        job->client = req.remote_addr;
         if (asked.regions) {
             job->detector = detector(speech_model_info_name(info.get()), res);
             if (!job->detector) return;
@@ -245,7 +240,7 @@ private:
         }
         const uint64_t ticket = served->turns().take();
         std::thread(transcribe, job, std::ref(served->turns()), ticket).detach();
-        job_logs_request();
+        const LogLine log_line(*job);
         std::unique_lock<std::mutex> lock(job->mutex);
         if (!wait_for(*job, lock, [] { return false; }, [&] { return req.is_connection_closed(); })) return;
         if (job->failure) {
@@ -400,6 +395,7 @@ int run_serve(const CommandLine & line, FILE *) {
         throw Failure(speech_status_name(SPEECH_ERROR_IO), "", "cannot listen on " + host + ":" + std::to_string(port) + "; choose another --port or --host");
     }
     const Access access(host, bound, line.values("--cors-origin"));
+    log_clients(!access.loopback());
     Realtime realtime(models, access, kUpload);
     Server server(models, access, realtime);
     server.route(http);

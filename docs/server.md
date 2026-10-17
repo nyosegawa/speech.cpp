@@ -34,7 +34,8 @@ transcriptions with `chunking_strategy` and Realtime sessions with `server_vad` 
 ```
 
 Each request is one line: the time, the method and path, the status (`gone` when the client went away before the
-answer, `failed` when the model failed), and what it made or the error's message.
+answer, `failed` when the model failed), what it made or the error's message, and on a server that listens for other
+machines the client's address.
 
 | Option | Meaning |
 |---|---|

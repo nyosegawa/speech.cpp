@@ -23,10 +23,11 @@ speech.cpp depends on ggml and two vendored headers alone, and a program reading
 - **On Windows, `speech` sets the console's output code page to UTF-8** where stdout or stderr is a console, and puts
   back the one it found as it ends, Ctrl-C included, so that the marks, the waveform and the text of a transcript in
   any language are drawn as the UTF-8 they are written in.
-- **`speech serve` writes one line a request**, after the time of day: its method, its path, its status or how it
-  ended (`gone` for a client that went away, `failed`), and what it did. A request a model runs has the line its run
-  writes as it ends, which says what it made; every other request, the line of the HTTP logger, with the message of an
-  error.
+- **`speech serve` writes one line a request**, after the time of day: its method, its path, the status it was
+  answered with or how it ended (`gone` for a client that went away, `failed`), what it did, and its client where the
+  server listens for other machines. The HTTP logger writes the line with the status sent and, for a request a model
+  ran, what the run made; a run that ends after its answer has begun, a stream's or one whose client went away, writes
+  its request's line itself as it ends.
 
 The alternatives were turned down:
 
@@ -41,6 +42,8 @@ The alternatives were turned down:
   subcommand would have to go through one function.
 - Two lines a request in `speech serve`'s log, the HTTP logger's and the run's. The logger writes a stream's line
   before the stream, so the two came in either order and a reader matched them by hand.
+- The run's line alone for a request a model runs. The run does not know the status sent, which a `Range` header makes
+  206 or 416 after it.
 
 ## Consequences
 

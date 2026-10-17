@@ -391,6 +391,11 @@ assert status == 404 and headers["content-type"].startswith("text/html") and b"1
 expect_error(elsewhere.call("GET", "/speech/models", headers={"Authorization": "Bearer " + "0" * 32}), 404, "page_off", None,
              "/speech/models on 0.0.0.0")
 assert elsewhere.call("GET", "/v1/models")[0] == 200
+voices = info["synthesis"]["voices"]
+said = elsewhere.post_json("/v1/audio/speech", {"input": "明日の東京は晴れです。", "seed": 5} | ({"voice": voices[0]["name"]} if voices else {}))
+assert said[0] == 200, said[2][:200]
+# A server that listens for other machines names the client in the line of each request, one a model ran among them.
+elsewhere.wait_for_line(lambda line: line.startswith("POST /v1/audio/speech ") and "from 127.0.0.1" in line, "a speech naming its client")
 elsewhere.stop()
 print("on 0.0.0.0: no page address printed, the page saying how to reach it, and its endpoints off")
 shutil.rmtree(folder)

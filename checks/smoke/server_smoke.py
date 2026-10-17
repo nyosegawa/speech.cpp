@@ -368,6 +368,12 @@ else:
         print(f"{name}: json, text and verbose_json give the expected text and stop, verbose_json no language and {len(segments)} segments joining "
               f"into it, with or without a segment granularity{others}")
     wav, want, samples = first
+    if first:
+        # A request's log line gives the status sent, which a range of the answer makes 206.
+        status, _, body = transcribe([("response_format", "text")], [("file", "range.wav", first[0])], {"Range": "bytes=0-1"})
+        assert status == 206 and body == first[1].encode()[:2], (status, body)
+        server.wait_for_line(lambda line: line.startswith("POST /v1/audio/transcriptions ") and " 206 " in line, "a transcription answered with 206")
+        print("a transcription with a Range header: 206, which its log line gives")
     status, _, body = transcribe([], [("file", "x.wav", wav_file([x for x in samples for _ in range(3)], rate * 3))])
     assert status == 200, body
     print(f"WAV at {rate * 3} Hz: {'the dump' if json.loads(body)['text'] == want else 'another'}'s text")

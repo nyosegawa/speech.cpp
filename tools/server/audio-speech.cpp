@@ -204,9 +204,10 @@ void answer_speech(std::shared_ptr<Served> served, const httplib::Request & req,
     std::snprintf(name, sizeof name, "voice %s, seed %lld", voice.c_str(), (long long) seed.value_or(-1));
     job->method = req.method;
     job->path = req.path;
+    job->client = req.remote_addr;
     const uint64_t ticket = served->turns().take();
     std::thread(synthesize, job, std::ref(served->turns()), ticket, std::string(name)).detach();
-    job_logs_request();
+    const LogLine log_line(*job);
 
     // A wav is sent whole, so it waits for the end; a stream waits until the library has begun a request's work, so
     // that a request it refuses is answered with an error status rather than a stream that breaks off.

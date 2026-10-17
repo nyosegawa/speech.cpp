@@ -9,7 +9,8 @@ namespace server {
 
 namespace {
 
-thread_local bool t_job_logs = false;
+thread_local std::pair<std::string, bool> t_note;
+bool g_clients = false;
 
 std::string padded(const std::string & s, size_t width) {
     return s.size() >= width ? s : s + std::string(width - s.size(), ' ');
@@ -31,24 +32,31 @@ void log(const std::string & text) {
     std::fputs((terminal::paint(terminal::Color::Gray, time) + "  " + text + "\n").c_str(), stderr);
 }
 
-std::string request_text(const std::string & method, const std::string & path, const std::string & status, const std::string & what) {
+void log_clients(bool name_them) {
+    g_clients = name_them;
+}
+
+std::string request_text(const std::string & method, const std::string & path, const std::string & status, const std::string & what,
+                         const std::string & client) {
     terminal::Color color = terminal::Color::Mint;
     if (status == "gone" || status[0] == '4') color = terminal::Color::Peach;
     else if (status == "failed" || status[0] == '5') color = terminal::Color::Red;
     else if (status[0] == '1' || status[0] == '3') color = terminal::Color::Sky;
-    std::string out = padded(method, 4) + " " + padded(path, 26) + "  " + terminal::paint(color, what.empty() ? status : padded(status, 6));
-    if (!what.empty()) out += "  " + terminal::paint(terminal::Color::Gray, what);
+    std::string rest = what;
+    if (g_clients) rest += (rest.empty() ? "from " : ", from ") + client;
+    std::string out = padded(method, 4) + " " + padded(path, 26) + "  " + terminal::paint(color, rest.empty() ? status : padded(status, 6));
+    if (!rest.empty()) out += "  " + terminal::paint(terminal::Color::Gray, rest);
     return out;
 }
 
-void job_logs_request() {
-    t_job_logs = true;
+void note_request(std::string what, bool skip) {
+    t_note = {std::move(what), skip};
 }
 
-bool take_job_logs_request() {
-    const bool marked = t_job_logs;
-    t_job_logs = false;
-    return marked;
+std::pair<std::string, bool> take_request_note() {
+    std::pair<std::string, bool> note;
+    note.swap(t_note);
+    return note;
 }
 
 }  // namespace server

@@ -1,30 +1,37 @@
 #pragma once
 
 #include <string>
+#include <utility>
 
 // The server's log on stderr once it listens: a line for each request, each realtime session and item, and each model
 // or voice the page adds, after the time of day it was written at, so that a log kept in a file says when each happened.
-// A request run by a job (jobs.h) has the line the job writes as it ends, which says what it made; every other request
-// has the line of cpp-httplib's logger.
+// cpp-httplib's logger writes a request's line with the status sent, and what a model's run made where the run has
+// ended by then; a run that ends after its handler has returned, a stream's or one whose client went away, writes its
+// request's line itself.
 
 namespace server {
 
 /** Writes `text` on stderr after the time of day: "10:42:13  text", the time in gray where colors are drawn. */
 void log(const std::string & text);
 
+/** Has the lines of requests name their clients' addresses, as for a server that listens for other machines. */
+void log_clients(bool name_them);
+
 /**
  * A request's line: its method and path, its status or how it ended ("gone" for a client that went away, "failed"),
- * colored by it where colors are drawn, then `what`, what it did, in gray.
+ * colored by it where colors are drawn, then `what`, what it did, in gray, and the client's address where log_clients()
+ * asks for it.
  */
-std::string request_text(const std::string & method, const std::string & path, const std::string & status, const std::string & what);
+std::string request_text(const std::string & method, const std::string & path, const std::string & status, const std::string & what,
+                         const std::string & client);
 
 /**
- * Marks the request this thread handles as one whose job writes its line, so that the logger, which cpp-httplib calls
- * on the same thread once the handler has returned, leaves it out.
+ * Leaves the logger, which cpp-httplib calls on the same thread once the handler has returned, what the request this
+ * thread handles did, or with `skip` to leave the request out, as one whose run writes its own line.
  */
-void job_logs_request();
+void note_request(std::string what, bool skip = false);
 
-/** Whether job_logs_request() marked the request this thread handles, which it then clears. */
-bool take_job_logs_request();
+/** The note of the request this thread handles, which it then clears: what it did, and whether the logger leaves it out. */
+std::pair<std::string, bool> take_request_note();
 
 }  // namespace server
