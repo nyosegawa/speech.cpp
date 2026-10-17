@@ -288,6 +288,8 @@ speech models [--json]
 Lists the catalog: each file of each model, by the name that fetches it, the name alone for the type the name means and
 `NAME:TYPE` for the others, with its type, size, whether it is fetched (`yes`, `no`, or how much of a stopped fetch is
 there), its task and languages; the model to start with for each language; and the old files in the model folder.
+The table below is what a pipe or a file gets. On a terminal the list groups the models by task, marks a fetched file
+with a check, and gives a model's languages once, on its own type's row, cut to the terminal's width.
 
 ```
 NAME                           TYPE  SIZE     FETCHED  TASK         LANGUAGES

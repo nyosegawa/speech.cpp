@@ -19,6 +19,9 @@ speech.cpp depends on ggml and two vendored headers alone, and a program reading
 - **Colors are a few of xterm's 256, in mid tones** (mint, pink, lavender, sky, peach, red and gray), which read on a
   dark background and on a light one, such as the default profile of macOS's Terminal. `NO_COLOR` set to anything but
   an empty value turns them off, as no-color.org asks, and leaves the marks and the spinner.
+- **A listing on stdout that a person reads, `speech models`, takes the terminal's shape** where stdout is a terminal,
+  as `ls` lays out its columns: the models grouped by task, a check for a fetched file, and a model's languages once,
+  cut to the width. Through a pipe it keeps one row per file with every column, and `--json` gives every pin.
 - **The escapes are speech's own**, a few dozen lines in the tools, with no library and no terminal database.
 - **On Windows, `speech` sets the console's output code page to UTF-8** where stdout or stderr is a console, and puts
   back the one it found as it ends, Ctrl-C included, so that the marks, the waveform and the text of a transcript in

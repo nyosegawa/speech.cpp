@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -40,6 +41,67 @@ std::string in_folder(const fs::path & path) {
     return path.lexically_relative(model_dir()).u8string();
 }
 
+/** `words` joined with spaces in at most `room` columns, the ones that do not fit counted after an ellipsis. */
+std::string fitted(const std::vector<std::string> & words, size_t room) {
+    const std::string whole = joined(words);
+    if (whole.size() <= room) return whole;
+    std::string out;
+    for (size_t i = 0; i < words.size(); i++) {
+        const std::string more = " \xE2\x80\xA6 " + std::to_string(words.size() - i) + " more";
+        if (out.size() + (out.empty() ? 0 : 1) + words[i].size() + more.size() - 2 > room) return out + more;
+        out += (out.empty() ? "" : " ") + words[i];
+    }
+    return out;
+}
+
+/**
+ * The listing as a terminal shows it: the models by task, each file a row with a check where it is fetched, a model's
+ * languages on the row of its own type alone and cut to the terminal's width.
+ */
+std::string drawn_listing(FILE * out, size_t width) {
+    using terminal::Color;
+    using terminal::paint;
+    const size_t columns = (size_t) terminal::columns(out);
+    std::string text = paint(Color::Bold, "Models of speech.cpp " + std::string(speech_version()), out) +
+                       paint(Color::Gray, ", fetched into " + model_dir().u8string(), out) + "\n";
+    for (const char * task : {"synthesis", "recognition", "detection"}) {
+        std::string title = task;
+        title[0] = (char) std::toupper((unsigned char) title[0]);
+        text += "\n" + paint(Color::Bold, title, out) + "\n";
+        for (const CatalogModel & m : catalog()) {
+            if (m.task != task) continue;
+            for (const CatalogFile & f : m.files) {
+                const Presence p = presence({&m, &f});
+                const bool own = f.type == m.type;
+                const std::string share = p.partial ? std::to_string(p.partial * 100 / f.size) + "%" : "";
+                const std::string fetched = p.whole ? paint(Color::Mint, "\xE2\x9C\x93", out) + "   "
+                                            : p.partial ? paint(Color::Peach, share, out) + std::string(4 - std::min<size_t>(share.size(), 3), ' ')
+                                                        : paint(Color::Gray, "-", out) + "   ";
+                const std::string row = "  " + paint(own ? Color::Bold : Color::Gray, padded(choice_name({&m, &f}), width), out) + padded(f.type, 6) +
+                                        padded(gigabytes(f.size), 10) + fetched;
+                const size_t used = 2 + width + 6 + 10 + 4;
+                std::string line = row + (own && columns > used + 8 ? fitted(m.languages, columns - used - 1) : "");
+                while (!line.empty() && line.back() == ' ') line.pop_back();
+                text += line + "\n";
+            }
+        }
+    }
+    text += "\n" + paint(Color::Bold, "Start with", out) + "\n";
+    for (const char * task : {"synthesis", "recognition"}) {
+        bool first = true;
+        for (const CatalogModel & m : catalog()) {
+            if (m.task != task || m.start.empty()) continue;
+            const size_t used = 2 + 13 + width;
+            text += "  " + paint(Color::Gray, padded(first ? task : "", 13), out) + padded(m.name, width) +
+                    (columns > used + 8 ? fitted(m.start, columns - used - 1) : "") + "\n";
+            first = false;
+        }
+    }
+    text += "\n" + paint(Color::Gray, "A subcommand given a NAME[:TYPE] fetches its file the first time; speech pull fetches it ahead, and speech rm removes it.",
+                         out) + "\n";
+    return text;
+}
+
 int run_models(const CommandLine & line, FILE * out) {
     if (line.has("--json")) {
         std::fprintf(out, "%s\n", models_json().c_str());
@@ -50,6 +112,17 @@ int run_models(const CommandLine & line, FILE * out) {
         for (const CatalogFile & f : m.files) width = std::max(width, choice_name({&m, &f}).size());
     }
     width += 2;
+    if (terminal::draws_on(out)) {
+        std::string text = drawn_listing(out, width);
+        const std::vector<OldFile> old = old_files();
+        if (!old.empty()) {
+            text += "\nOld files, which no model of this release names; speech rm --old removes them:\n";
+            for (const OldFile & f : old) text += "  " + padded(gigabytes(f.size), 9) + in_folder(f.path) + "\n";
+        }
+        std::fputs(text.c_str(), out);
+        std::fflush(out);
+        return 0;
+    }
     std::string text = "The models of speech.cpp " + std::string(speech_version()) + ", fetched into " + model_dir().u8string() + "\n\n" +
                        padded("NAME", width) + "TYPE  SIZE     FETCHED  TASK         LANGUAGES\n";
     for (const CatalogModel & m : catalog()) {

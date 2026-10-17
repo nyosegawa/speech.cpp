@@ -238,9 +238,11 @@ std::string meta_text(const std::string & value) {
 
 void print_info(const speech_model_info * m, bool meta, FILE * out) {
     const bool synthesis = speech_model_info_task(m) == SPEECH_TASK_SYNTHESIS;
-    std::string text = std::string(speech_model_info_name(m)) + "\n";
+    using terminal::Color;
+    using terminal::paint;
+    std::string text = paint(Color::Bold, speech_model_info_name(m), out) + "\n";
     const auto row = [&](const std::string & label, const std::string & value) {
-        text += label + std::string(label.size() < 15 ? 15 - label.size() : 1, ' ') + value + "\n";
+        text += paint(Color::Gray, label + std::string(label.size() < 15 ? 15 - label.size() : 1, ' '), out) + value + "\n";
     };
     const char * finetune = speech_model_info_finetune(m), * version = speech_model_info_version(m);
     const char * repository = nullptr, * revision = nullptr;
@@ -267,7 +269,7 @@ void print_info(const speech_model_info * m, bool meta, FILE * out) {
             if (!gender.empty()) about += (about.empty() ? "" : ", ") + gender;
             if (!description.empty()) about += (about.empty() ? "" : ": ") + description;
             std::string name = speech_model_info_voice_name(m, i);
-            row(i == 0 ? "voices" : "", name + std::string(name.size() < 14 ? 14 - name.size() : 1, ' ') + about);
+            row(i == 0 ? "voices" : "", paint(Color::Lavender, name + std::string(name.size() < 14 ? 14 - name.size() : 1, ' '), out) + about);
         }
         if (!speech_model_info_voice_files(m)) {
             row("voice files", "no");
@@ -284,7 +286,7 @@ void print_info(const speech_model_info * m, bool meta, FILE * out) {
     for (size_t i = 0; i < speech_model_info_option_count(m); i++) {
         const speech_option o = speech_model_info_option(m, i);
         const std::string name = speech_option_name(o);
-        row(i == 0 ? "options" : "", name + std::string(width - name.size(), ' ') + option_line(m, o));
+        row(i == 0 ? "options" : "", paint(Color::Lavender, name + std::string(width - name.size(), ' '), out) + option_line(m, o));
     }
     row("size", gigabytes(speech_model_info_file_bytes(m)) + " file, " + gigabytes(speech_model_info_weight_bytes(m)) + " of weights");
     if (meta) {
@@ -329,10 +331,13 @@ int run_devices(const CommandLine & line, FILE * out) {
                     json_string(speech_device_description(i)) + ",\"kind\":\"" + device_kind_name(i) + "\",\"memory_total\":" +
                     std::to_string(total) + ",\"memory_free\":" + std::to_string(free) + "}";
         } else {
-            char row[512];
-            std::snprintf(row, sizeof row, "%-10s %-5s %s, %.1f GB, %.1f GB free\n", speech_device_name(i), device_kind_name(i),
-                          speech_device_description(i), total / 1e9, free / 1e9);
-            text += row;
+            char name[32], kind[16], about[448];
+            std::snprintf(name, sizeof name, "%-10s", speech_device_name(i));
+            std::snprintf(kind, sizeof kind, "%-5s", device_kind_name(i));
+            std::snprintf(about, sizeof about, "%s, %.1f GB, %.1f GB free", speech_device_description(i), total / 1e9, free / 1e9);
+            const bool cpu = std::string(device_kind_name(i)) == "cpu";
+            text += terminal::paint(terminal::Color::Bold, name, out) + " " + terminal::paint(cpu ? terminal::Color::Gray : terminal::Color::Mint, kind, out) +
+                    " " + about + "\n";
         }
     }
     if (json) text += "]}\n";
