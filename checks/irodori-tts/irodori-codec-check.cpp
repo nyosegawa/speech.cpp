@@ -2,7 +2,8 @@
 // reference/irodori-tts/dump.py, each stage from the dump's own input.
 //
 // Encoder: reading the reference WAVE file, bringing its loudness to the dump's (the model's, another target, or kept
-// as recorded), encoding it, encoding in windows against at once, and the whole path from the file; for a dump of
+// as recorded), encoding it, encoding in windows against at once, and the whole path from the file, the loudness and the
+// whole path only for a recording at the codec's rate, which the library and the runtime resample differently; for a dump of
 // several references, the latent of each file joined in order, as a voice file of them holds it.
 // Decoder: each stage on the dump's latent, decoding in windows of several patterns against at once, bit for bit, and,
 // when the device is not the CPU, the same decoding on the CPU: how far below the voice the device's error lies, and
@@ -73,15 +74,23 @@ bool check_encoder(Codec & codec, const ReferenceRules & rules, const std::strin
     const Npy ref_latent = read_npy(dir + "/ref_latent.npy");
     bool ok = true;
 
-    const std::vector<float> read = read_wav(wav_path).mono();
+    const Wav wav = read_wav(wav_path);
+    const std::vector<float> read = wav.mono();
     const Diff dr = compare(read, ref_wav.f32);
     print_diff("reading the WAVE file", dr);
     ok = ok && read.size() == ref_wav.f32.size() && dr.max_abs == 0;
 
-    const std::vector<float> normalized = rules.lufs ? normalize_loudness(ref_wav.f32, codec.sample_rate(), *rules.lufs) : bound_peak(ref_wav.f32);
-    const Diff dn = compare(normalized, ref_normalized.f32);
-    print_diff(rules.lufs ? "loudness normalization to " + std::to_string(*rules.lufs) + " LUFS" : std::string("loudness kept"), dn);
-    ok = ok && dn.snr_db > 80;
+    // A recording at another rate reaches the encoder through kaiser_best here and torchaudio's defaults in the
+    // runtime, so its loudness and its latent from the file are not the runtime's; the encoder is checked on the
+    // dump's own input at any rate.
+    const bool at_codec_rate = wav.sample_rate == codec.sample_rate();
+    if (at_codec_rate) {
+        const std::vector<float> normalized =
+            rules.lufs ? normalize_loudness(ref_wav.f32, codec.sample_rate(), *rules.lufs) : bound_peak(ref_wav.f32);
+        const Diff dn = compare(normalized, ref_normalized.f32);
+        print_diff(rules.lufs ? "loudness normalization to " + std::to_string(*rules.lufs) + " LUFS" : std::string("loudness kept"), dn);
+        ok = ok && dn.snr_db > 80;
+    }
 
     auto t0 = std::chrono::steady_clock::now();
     const std::vector<float> windowed = codec.encode(ref_normalized.f32);
@@ -97,12 +106,17 @@ bool check_encoder(Codec & codec, const ReferenceRules & rules, const std::strin
     print_diff("encoder in windows against at once", dw);
     std::printf("encoding %.2f s of audio: %.3f s in windows, %.3f s at once\n",
                 (double) ref_normalized.f32.size() / codec.sample_rate(), windowed_s, whole_s);
-    // Measured on mf-weather on 2026-10-19: 99 dB on the CPU in F32, 40 dB on an Apple M5's Metal and 39 dB on an
-    // RTX 2080's Vulkan, whose matrix products round their activations to half precision; Vulkan gave 33 dB with the
-    // waveform's convolution as a matrix product. In windows and at once agree to the bit on the CPU and Metal. A frame
-    // that a window's edge reaches would differ by far more.
+    // Measured on 2026-10-19: on mf-weather 99 dB on the CPU in F32, 40 dB on an Apple M5's Metal and 39 dB on an
+    // RTX 2080's Vulkan, whose matrix products round their activations to half precision; on mf-weather-24k, whose
+    // recording at 24 kHz leaves the band above 12 kHz empty, 98, 37 and 38 dB. With the waveform's convolution as a
+    // matrix product Vulkan gave 33 dB on mf-weather and a voice of the 24 kHz recording 20 dB from the CPU's. In windows
+    // and at once agree to the bit on the CPU and Metal. A frame that a window's edge reaches would differ by far more.
     ok = ok && windowed.size() == ref_latent.f32.size() && de.snr_db > 36 && dw.snr_db > 60;
 
+    if (!at_codec_rate) {
+        std::printf("the recording is at %d Hz: its loudness and its latent from the file are not compared\n", wav.sample_rate);
+        return ok;
+    }
     t0 = std::chrono::steady_clock::now();
     const std::vector<float> from_file = encode_reference(codec, wav_path, rules).latent;
     std::printf("reference file to latent: %.3f s\n", seconds_since(t0));

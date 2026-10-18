@@ -8,10 +8,14 @@ enum class ResampleFilter {
     /**
      * The parameters torchaudio's documentation gives for librosa's kaiser_best: 64 zero crossings on each side, cut
      * off at 0.9475937167399596 of the lower rate's Nyquist frequency, under a Kaiser window of beta 14.769656459379492,
-     * which torchaudio rounds to float32 together with the window's peak i0(beta). Irodori-TTS's runtime takes it.
+     * which torchaudio rounds to float32 together with the window's peak i0(beta). The library resamples a recognition's
+     * and a detection's audio and Irodori-TTS's references with it.
      */
     KaiserBest,
-    /** torchaudio's defaults: 6 zero crossings, cut off at 0.99, under a Hann window. fish-speech takes it. */
+    /**
+     * torchaudio's defaults: 6 zero crossings, cut off at 0.99, under a Hann window. Irodori-TTS's runtime and
+     * fish-speech resample their references with them, and the library Drama 3's.
+     */
     Hann,
 };
 

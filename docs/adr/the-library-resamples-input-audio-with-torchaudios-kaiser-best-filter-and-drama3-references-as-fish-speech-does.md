@@ -32,15 +32,22 @@ The alternatives were turned down:
 
 - Refusing audio at any rate but the model's. Every caller and every OpenAI client would resample with a tool of its
   own.
-- torchaudio's defaults for all audio, which would give Irodori-TTS's references the official runtime's latent exactly,
-  at the aliasing measured above, which recognition would hear as well. Irodori-TTS's references keep kaiser_best: its
-  voice is a continuous latent, which another filter moves slightly, while a code either is the official's or is not.
+- torchaudio's defaults for all audio, at the aliasing measured above, which recognition would hear as well.
+- torchaudio's defaults for Irodori-TTS's references, which would give the official runtime's latent exactly. The
+  codec's encoder hears the band near a recording's own Nyquist frequency, where the two filters differ, so a reference
+  at another rate than 48 kHz gives another latent with kaiser_best, but a voice at least as like its speaker: from 100
+  JVS recordings at 24 kHz, encoded on the CPU on 2026-10-19, kaiser_best's latents lay 19.2 dB in median SNR from the
+  defaults', and v4.1-Small-MF, speaking five sentences in each voice on Metal from seed 1, came 0.0080 ± 0.0012 more
+  like the speaker's other recordings in ERes2NetV2's cosine similarity and named 92.6% of the sentences' speakers among
+  the 100 against 92.2%. A Drama 3 voice holds codes instead, each of which either is the official's or is not.
 - kaiser_best for Drama 3's references too. A quarter of some codebook's codes would differ from the official encoder's,
   and the codec's check could not compare the reading of a recording with fish-speech's.
 - A port of soxr, which NeMo's files go through: more code to port and check for a quality the Kaiser filter reaches.
 
 ## Consequences
 
-Audio at another rate gives a text or a latent slightly different from the official implementation's, whose resampler is
-not this one; a Drama 3 voice made on the CPU holds the official codes. Two rates whose ratio in lowest terms has a term
-above 4096 are refused, which no two common rates of recorded audio have.
+Audio at another rate gives a text slightly different from the official implementation's, whose resampler is not this
+one, and an Irodori-TTS reference at another rate a latent that is not the runtime's, so `irodori-codec-check` checks
+such a reference's encoding from the dump's own input and not from the file; a Drama 3 voice made on the CPU holds the
+official codes. Two rates whose ratio in lowest terms has a term above 4096 are refused, which no two common rates of
+recorded audio have.
