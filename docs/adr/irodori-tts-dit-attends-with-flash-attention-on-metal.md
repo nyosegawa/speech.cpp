@@ -6,7 +6,8 @@ Irodori-TTS's DiT attends from the latent's frames to themselves and to the text
 twelve layers of 20 heads of 64, every step of the sampler, for every branch of RF's guidance at once. It can attend
 through two matrix products and a softmax, or through ggml_flash_attn_ext. Metal's matrix kernel rounds both operands
 to half precision, the keys and values included; its flash attention reads keys and values of float32 as they are,
-rounds only the queries, and holds no scores. Vulkan's matrix product does not round the keys and values so. A request
+rounds only the queries, and holds no scores. Vulkan's matrix product rounds its operands to half precision as well on
+a GPU that computes in half precision, the RTX 2080 among them. A request
 that scales the speaker's keys and values in every layer makes the attention sensitive to the keys' rounding.
 
 Measured on an Apple M5 on 2026-10-13, irodori-dit-check over the dumps and `speech worker` with v4.1-Small-MF (4 steps)
@@ -47,8 +48,7 @@ official with flash attention and 50.9 dB with the products.
 
 The alternatives were turned down:
 
-- Flash attention on every GPU that computes it. On Vulkan it is no faster and about 4 dB further from the official,
-  since the products there lose nothing to rounding the keys and values.
+- Flash attention on every GPU that computes it. On Vulkan it is no faster and about 4 dB further from the official.
 - Flash attention on every device. On the CPU it is no faster at any length the DiT meets, and no more precise.
 - The products on every device. On Metal they round the keys and values to half precision, which costs 17 to 23 dB on
   a request that scales the speaker's keys, and they are slower for sentences of more than a few seconds.

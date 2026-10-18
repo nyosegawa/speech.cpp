@@ -40,7 +40,20 @@ struct Convolutions {
         ggml_tensor * w = m.tensor(name + ".weight");
         const int64_t in = w->ne[0], out = w->ne[1], k_width = w->ne[2], t = x->ne[1];
         ggml_tensor * y = nullptr;
-        if (k_width == 1) {
+        if (in == 1) {
+            // The waveform's convolution reads one channel, so each tap is the samples times a column of weights.
+            // Vulkan's matrix product rounds its activations to half precision, whose noise fills the band above a
+            // recording made at a lower rate, to which the encoder is sensitive; products of the samples by each tap's
+            // weights keep float32 on every backend.
+            const int64_t p = (k_width - 1) * dilation / 2;
+            ggml_tensor * xp = ggml_repeat_4d(ctx(), pad(x, p, p), out, t + 2 * p, 1, 1);
+            for (int64_t k = 0; k < k_width; k++) {
+                ggml_tensor * wk = ggml_view_2d(ctx(), w, out, 1, w->nb[2], k * w->nb[2]);
+                ggml_tensor * xk = ggml_view_2d(ctx(), xp, out, t, xp->nb[1], k * dilation * xp->nb[1]);
+                ggml_tensor * yk = ggml_mul(ctx(), xk, wk);
+                y = y ? ggml_add(ctx(), y, yk) : yk;
+            }
+        } else if (k_width == 1) {
             y = mul_mat(ctx(), ggml_reshape_2d(ctx(), w, in, out), x);
         } else {
             const int64_t p = (k_width - 1) * dilation / 2;

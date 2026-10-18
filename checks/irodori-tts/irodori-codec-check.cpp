@@ -97,17 +97,18 @@ bool check_encoder(Codec & codec, const ReferenceRules & rules, const std::strin
     print_diff("encoder in windows against at once", dw);
     std::printf("encoding %.2f s of audio: %.3f s in windows, %.3f s at once\n",
                 (double) ref_normalized.f32.size() / codec.sample_rate(), windowed_s, whole_s);
-    // Measured on an Apple M5: 99 dB on the CPU in F32, 40 dB on Metal, whose matrix kernel rounds its
-    // inputs to half precision, and 33 dB with F16 weights on the CPU. In windows and at once agree to
-    // the bit on both. A frame that a window's edge reaches would differ by far more.
-    ok = ok && windowed.size() == ref_latent.f32.size() && de.snr_db > 30 && dw.snr_db > 60;
+    // Measured on mf-weather on 2026-10-19: 99 dB on the CPU in F32, 40 dB on an Apple M5's Metal and 39 dB on an
+    // RTX 2080's Vulkan, whose matrix products round their activations to half precision; Vulkan gave 33 dB with the
+    // waveform's convolution as a matrix product. In windows and at once agree to the bit on the CPU and Metal. A frame
+    // that a window's edge reaches would differ by far more.
+    ok = ok && windowed.size() == ref_latent.f32.size() && de.snr_db > 36 && dw.snr_db > 60;
 
     t0 = std::chrono::steady_clock::now();
     const std::vector<float> from_file = encode_reference(codec, wav_path, rules).latent;
     std::printf("reference file to latent: %.3f s\n", seconds_since(t0));
     const Diff df = compare(from_file, ref_latent.f32);
     print_diff("reference file to latent", df);
-    return ok && df.snr_db > 30;
+    return ok && df.snr_db > 36;
 }
 
 /** The latent of several references, each encoded from its file and joined, against the dump's. */
@@ -119,7 +120,7 @@ bool check_references(Codec & codec, const ReferenceRules & rules, const std::st
     const Diff d = compare(latent, ref_latent.f32);
     print_diff(std::to_string(paths.size()) + " references, each encoded and joined", d);
     // The same bound as one reference's latent from its file.
-    return latent.size() == ref_latent.f32.size() && d.snr_db > 30;
+    return latent.size() == ref_latent.f32.size() && d.snr_db > 36;
 }
 
 /** The decoder's output for the whole latent at once. */
