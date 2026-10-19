@@ -52,6 +52,16 @@ which it reads only while it lists its devices, so that a library sets it in its
 thread reads the environment; and `GGML_VK_DISABLE_MMVQ`, which it reads when it first creates each Vulkan device, and
 which also moves Q8_0's batched products off their kernels. v0.27.0 reads them as before.
 
+ggml's Vulkan backend also creates its coopmat2 matrix product pipelines with robust buffer access disabled, through
+`VkPipelineRobustnessCreateInfoEXT`, for their speed. On an RTX 5090 with NVIDIA's Windows drivers 616.92 and 617.42,
+Irodori-TTS stopped the GPU in a dispatch of `matmul_f16` multiplying its codec: the driver reported a fault at an
+instruction pointer outside every buffer, Windows reset the GPU, and the driver ended the process with an access
+violation, within one to thirty runs of twenty sentences, and within the first run with submissions serialized
+(2026-10-19). Created keeping the robustness of both storage and uniform buffers, the pipelines gave thirty runs
+without a fault where the same build without it failed in its first, with the same samples; keeping one of the two
+alone still failed. The same products alone in test-backend-ops, 8,450,136 times, an RTX PRO 6000 Blackwell, the same
+GB202 chip, with the Linux driver 595.91.07 for 1,100 sentences, and the RTX 2080 never failed, so no case shows it.
+
 ggml's kernels also leave some of speech.cpp's graphs slower than they need be. On Metal on an Apple M5 (2026-10-13),
 Irodori-TTS v4.1-Small-MF spends 80 to 85% of its synthesis in its codec, and 23 to 26% of the codec's time in Snake,
 which it writes as five operations (a product, a sine, a square, a product and a sum), each a pass over the
@@ -82,6 +92,13 @@ picking Qwen3-ASR's tokens on the device was slower than reading the logits back
   past 65504 is clipped. Q8_0, Q6_K and the other types keep the q8_1 path.
 - **Vulkan's ROPE adds the offsets of its positions and frequency factors in a view**, as it adds those of its input
   and output.
+- **Vulkan keeps robust buffer access on its coopmat2 matrix product pipelines.** On an RTX 2080 with the driver 591.86
+  (2026-10-20), the audio of Irodori-TTS v4.1-Small-MF and Qwen3-TTS 0.6B is the same bit for bit, and the times lie
+  within their rounds' spread, without robustness against with it, the medians of three alternating rounds:
+  v4.1-Small-MF F16 at RTFx 17.40 against 17.53, v4.1-Small F16 at 40 steps 4.04 against 4.12, Qwen3-TTS 0.6B Q8_0
+  4.95 against 5.01, and 69 s recognized by Qwen3-ASR 0.6B Q8_0 in 2.41 against 2.39 s and by
+  parakeet-tdt_ctc-0.6b-ja F16 in 1.44 against 1.45 s. On the RTX 5090, a run of the twenty sentences took about 24 s
+  with robustness kept, as without it.
 - **Metal and Vulkan fuse Snake with the channels along `ne[0]`** as they fuse it with the channels along `ne[1]`.
 - **Metal divides the 4-bit scales by 16 in float**, as it already did for Q5_K.
 - **Every backend's argmax takes the first of equal values**, and **Metal and Vulkan read a row of argmax with as many
@@ -101,6 +118,7 @@ picking Qwen3-ASR's tokens on the device was slower than reading the logits back
   | argmax reads a row with a threadgroup's threads (speed-up) | `test-backend-ops -o ARGMAX`: rows of 151,936 values, one to eight of them, on Metal and Vulkan | the tag reads a row of argmax with more than one subgroup on Vulkan and more than 256 threads among all rows on Metal |
   | Metal's matrix units without relaxed precision (fix and speed-up) | `test-backend-ops -o MUL_MAT` on an M5, M6, A19 or A20: the F16 products of 64 and 192 columns, and the products of F32, F16, BF16, Q8_0, Q4_K, Q5_K and Q6_K weights whose outputs end inside a tile, whose K does not fill a step, with broadcast batches, permuted or strided activations and activations in half precision; and the stage checks of speech.cpp on Metal | the tag's tensor-API `kernel_mul_mm` passes those cases, gives the simdgroup kernel's products up to the order of the float sums, and is no slower |
   | Metal's 4-bit scales in float | `test-backend-ops -o GET_ROWS`: the Q4_0, Q4_1 and Q4_K cases with `range` 0.04 and 0.004, on Metal | the tag passes those cases |
+  | Vulkan's coopmat2 products keep robust buffer access | no `test-backend-ops` case; Irodori-TTS v4 Large Q8_0 speaking the twenty sentences of speech-bench's `prompts/speak-ja-JP.json` in a loop on an RTX 5090 with NVIDIA's Windows driver 616.92 or 617.42 and the pipelines without robustness, which faults within thirty runs | NVIDIA's Windows driver runs that loop thirty times without a fault with the pipelines without robustness, or the tag keeps robustness on them |
 
   Between tags, a fix found later is a commit of its own on top, with its cases. Moving ggml to a newer tag starts the
   branch again from that tag: the commit of cases first, on which they run on the
@@ -122,6 +140,10 @@ The alternatives were turned down:
 - Avoiding the shapes and the activations in speech.cpp, such as changing the codec's windows or keeping Qwen3-TTS
   from K-quants on Vulkan. Every graph can meet the shapes, and every model with large activations the sums.
 - Waiting for ggml-org/ggml to fix them. The models give wrong results on supported platforms until then.
+- Turning coopmat2 off on an affected GPU (`GGML_VK_DISABLE_COOPMAT2`). It avoids the fault, but a run of the twenty
+  sentences took 1.2 to 1.5 times as long on the RTX 5090.
+- Keeping the robustness of the storage buffers or of the uniform buffers alone on those pipelines. Each still failed.
+- Waiting for NVIDIA to fix its driver. Irodori-TTS fails on the drivers users hold until then.
 - A fork that carries fixes alone, with speed-ups only in speech.cpp's graphs. ggml's custom operations run on the CPU
   alone, and laying out the codecs' activations with the channels along `ne[1]` for upstream's Snake kernel would put a
   transposition of the activations before and after each Snake, or change every convolution of both codecs.
