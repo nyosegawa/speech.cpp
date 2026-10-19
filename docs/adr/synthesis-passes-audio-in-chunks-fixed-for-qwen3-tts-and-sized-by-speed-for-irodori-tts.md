@@ -18,8 +18,13 @@ lasts. Measured through the worker on speech-bench's 20 Japanese sentences on 20
   window came 0.288 s after the first on the M5, with 0.19 s of the first window's audio left to play, and 0.32 s after
   it on the RTX 2080; a machine about half as fast as the M5 would run dry between them in every sentence. The decoder
   is convolutions without a cache whose receptive field reaches 8 frames on either side of a frame, so a window that
-  decodes 8 frames on either side of its own and drops them gives the samples of one decode, bit for bit, whatever the
-  sizes of the windows: 12 frames decode 28, 24 decode 40, 48 decode 64.
+  decodes at least 8 frames on either side of its own, where the latent has them, and drops them gives the samples of
+  one decode, bit for bit, whatever the sizes of the windows, as long as each of its matrix products computes a column
+  as a longer product does: 12 frames decode 28, 24 decode 40, 48 decode 64. The products before the decoder's first
+  upsampling have a column for each frame a window decodes, and ggml v0.27.0 multiplies by 16 columns or fewer on Metal
+  with its few-row kernels, whose float sums run in another order than its kernel for more columns; on an Apple M5,
+  with the tensor API and without, every window that decoded 16 frames or fewer, such as a last window of 8 frames or
+  fewer, gave other samples than one decode (2026-10-19).
 
 ## Decision
 
@@ -35,9 +40,11 @@ lasts. Measured through the worker on speech-bench's 20 Japanese sentences on 20
   margins to decode. 48 frames are never exceeded, so that a cancel and the silence between a worker's chunks stay
   bounded. The decision is one function without a clock (`next_window()`), which `irodori-window-check` checks on
   simulated machines.
-- **Irodori-TTS's sizes may follow the clock because its audio does not depend on them**: `irodori-codec-check` checks
-  seven patterns of windows against one decode, bit for bit, on the CPU, Metal and Vulkan (an RTX 2080), so a seed
-  repeats its samples whatever the machine's load. Qwen3-TTS's samples depend on the chunking, so its sizes stay fixed.
+- **Irodori-TTS's sizes may follow the clock because its audio does not depend on them**: every window decodes at
+  least 17 frames, its margins included, taking the frames after its margin or, where the latent ends, before it, so
+  that no product of a window has 16 columns or fewer; `irodori-codec-check` checks seven
+  patterns of windows against one decode, bit for bit, on the CPU, Metal and Vulkan (an RTX 2080), so a seed repeats
+  its samples whatever the machine's load. Qwen3-TTS's samples depend on the chunking, so its sizes stay fixed.
 
 The alternatives were turned down:
 
@@ -59,9 +66,17 @@ The alternatives were turned down:
   the listener holds the audio of the frames it decodes kept that slack but gained 1.4%, within the noise, since only
   sentences longer than about 6.2 s reach a third window, and each frame a window decodes adds about 3.5 MiB to the
   codec's buffers on the device (226 MiB at 48 frames, 394 MiB at 96).
+- Metal multiplying few columns in the order of its longer products, in the ggml fork. ggml runs products of 2 to 16
+  columns on its few-row kernels for their speed, and Qwen3-ASR's steps that check a draft five tokens at a time make
+  such products, where the codec needs at most 8 frames more, once per latent.
+- Irodori-TTS's window sizes that never leave a last window of 8 frames or fewer, so that no window decodes more than
+  its margins. It widens `next_window()` and its check to save at most 8 frames once per latent: no measurable time on
+  a GPU, and about 0.3 s at most on the CPU.
 
 ## Consequences
 
 `qwen3-tts-codec-check` compares Qwen3-TTS's decode in chunks with the whole decode as an SNR. A machine that makes
 frames more slowly than the measured ones can still run a player dry, which then buffers. Irodori-TTS's windows of one
-request depend on the machine and its load, and its samples do not.
+request depend on the machine and its load, and its samples do not. A last Irodori-TTS window of 8 frames or fewer
+decodes up to 8 frames more than its own and its margin: on the CPU of an Apple M5, which decodes a frame in about
+37 ms, up to about 0.3 s at the end of such a sentence (2026-10-19).

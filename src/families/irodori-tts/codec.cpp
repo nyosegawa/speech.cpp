@@ -138,6 +138,15 @@ int decoder_reach(const ModelFile & m, const std::vector<int32_t> & rates) {
     return (int) reach;
 }
 
+/**
+ * The fewest frames a window of the decoder decodes, its margins included. The products before the first upsampling
+ * have a column for each frame of the window, and ggml v0.27.0 multiplies by 16 columns or fewer on Metal with its
+ * few-row kernels, whose float sums run in another order than kernel_mul_mm's: on an Apple M5 with the F32 files
+ * (2026-10-19), with the tensor API and without, every window that decoded 16 frames or fewer gave other samples than
+ * decoding at once.
+ */
+constexpr int64_t kDecoderLeastFrames = 17;
+
 }  // namespace
 
 Codec::Codec(const ModelFile & m, ggml_backend_t backend) : backend_(backend), m_(m) {
@@ -237,9 +246,13 @@ void Codec::decode(const std::vector<float> & latent, int64_t samples, const Win
             throw std::logic_error("a window of " + std::to_string(window) + " frames with " + std::to_string(progress.frames_left) + " left");
         }
         const int64_t b = a + window;
-        // The margin, and at least two frames, so that the window is long enough to decode.
+        // The margin, then frames past it up to the fewest a window decodes, after the window or, where the latent
+        // ends, before it.
         int64_t from = std::max<int64_t>(0, a - decoder_margin_), to = std::min(frames, b + decoder_margin_);
-        if (to - from < 2) from = std::max<int64_t>(0, to - 2);
+        if (to - from < kDecoderLeastFrames) {
+            to = std::min(frames, from + kDecoderLeastFrames);
+            from = std::max<int64_t>(0, to - kDecoderLeastFrames);
+        }
         const Clock::time_point start = Clock::now();
         Graph g;
         ggml_tensor * out = build_decoder(g, std::vector<float>(latent.begin() + from * latent_dim_, latent.begin() + to * latent_dim_));
