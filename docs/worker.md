@@ -32,7 +32,7 @@ stdout, in UTF-8.
 ## Start
 
 ```
-out {"type":"ready","protocol":3,"version":"0.8.10","defaults":{"steps":8},"model":{...model information...}}
+out {"type":"ready","protocol":3,"version":"0.8.11","defaults":{"steps":8},"model":{...model information...}}
 out {"type":"fatal","error":{"code":"model_file","option":null,"message":"..."}}
 ```
 

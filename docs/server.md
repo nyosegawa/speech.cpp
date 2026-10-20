@@ -21,7 +21,7 @@ The server holds at most one model of each task: synthesis, recognition and dete
 transcriptions with `chunking_strategy` and Realtime sessions with `server_vad` use. It loads the models given, listens once they are ready, and logs to stderr.
 
 ```
-▁▃▅▇▅▃▁ speech.cpp 0.8.10 · serve
+▁▃▅▇▅▃▁ speech.cpp 0.8.11 · serve
 
   ✓ Qwen3-TTS-12Hz-0.6B-CustomVoice   synthesis    MTL0   1.30 s
   ✓ Qwen3-ASR-0.6B                    recognition  MTL0   0.27 s
