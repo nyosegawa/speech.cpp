@@ -50,7 +50,7 @@ Gguf open_gguf(const std::string & path, ggml_context ** ctx) {
  * The architectures of the files that the releases before layouts began wrote, which have no speech.layout. A file of
  * any other architecture without it was written for another program, such as audio.cpp or parakeet.cpp.
  */
-const char * const kArchitecturesBeforeLayouts[] = {"fastconformer", "irodori-tts", "irodori-tts-voice", "qwen3tts-codec", "qwen3tts-talker"};
+const char * const kArchitecturesBeforeLayouts[] = {"dacvae", "fastconformer", "irodori-tts", "irodori-tts-voice", "qwen3tts-codec", "qwen3tts-talker"};
 
 /**
  * Throws unless the file has speech.layout, which every file written for a release with layouts has, saying whether
