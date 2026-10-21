@@ -47,7 +47,7 @@ bool seek_file(FILE * f, uint64_t offset);
 
 /**
  * The general.architecture of a GGUF file, read without loading its tensors. A file without speech.layout, written
- * for a release before layouts began, throws.
+ * for a release before layouts began or for another program, throws.
  */
 std::string gguf_architecture(const std::string & path);
 

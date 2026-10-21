@@ -46,12 +46,29 @@ Gguf open_gguf(const std::string & path, ggml_context ** ctx) {
     return gguf;
 }
 
-/** Throws unless the file has speech.layout, which every file written for a release with layouts has. */
+/**
+ * The architectures of the files that the releases before layouts began wrote, which have no speech.layout. A file of
+ * any other architecture without it was written for another program, such as audio.cpp or parakeet.cpp.
+ */
+const char * const kArchitecturesBeforeLayouts[] = {"fastconformer", "irodori-tts", "irodori-tts-voice", "qwen3tts-codec", "qwen3tts-talker"};
+
+/**
+ * Throws unless the file has speech.layout, which every file written for a release with layouts has, saying whether
+ * the file was written for an earlier release of speech.cpp or for another program.
+ */
 void require_layout_key(const gguf_context * gguf, const std::string & path, const std::string & remedy) {
-    if (gguf_find_key(gguf, "speech.layout") < 0) {
-        throw file_error(path + " has no speech.layout: it was written for a release of speech.cpp before " + kFirstLayoutRelease +
-                         ", which this release does not read; " + remedy);
+    if (gguf_find_key(gguf, "speech.layout") >= 0) return;
+    const int64_t id = gguf_find_key(gguf, "general.architecture");
+    const std::string architecture = id >= 0 && gguf_get_kv_type(gguf, id) == GGUF_TYPE_STRING ? gguf_get_val_str(gguf, id) : "";
+    for (const char * before : kArchitecturesBeforeLayouts) {
+        if (architecture == before) {
+            throw file_error(path + " has no speech.layout: it was written for a release of speech.cpp before " + kFirstLayoutRelease +
+                             ", which this release does not read; " + remedy);
+        }
     }
+    const std::string named = architecture.empty() ? " names no general.architecture" : " is a file of " + architecture;
+    throw file_error(path + named + " and has no speech.layout: it was written for another program, and speech.cpp reads only its own " +
+                     "files; use a model file for speech.cpp from its Hugging Face repository, or a voice file made with speech voice");
 }
 
 /** A key's type as the layouts write it: u32, or [i32] for an array. */
