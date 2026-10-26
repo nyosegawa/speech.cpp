@@ -1,0 +1,20 @@
+[project]
+name = "speech-cpp-sortformer-reference"
+version = "0"
+description = "Runs NVIDIA NeMo's Streaming Sortformer diarization models to dump reference tensors, and converts their weights to GGUF"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  # The asr extra, since SortformerEncLabelModel.restore_from() needs Lightning and Hydra. Nemotron 3 Diarization needs
+  # a commit after nemo-toolkit 3.0.0, which has neither high_resolution nor use_learnable_sil_emb.
+  "nemo-toolkit[asr] @ git+https://github.com/NVIDIA-NeMo/Speech.git@d32dd550ffb016cd7b4133bb2bc69f15ba866361",
+  "torch==2.10.0",
+  "torchaudio==2.10.0",
+  "numpy",
+  "soundfile",
+  "gguf",
+]
+
+[tool.uv]
+package = false
+# NeMo's own sources take torch from PyTorch's CPU index on Windows; the dumps run on macOS alone.
+environments = ["sys_platform == 'darwin'"]
