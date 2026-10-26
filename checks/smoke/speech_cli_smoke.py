@@ -31,7 +31,11 @@ on 32-bit float WAVE files of the dumps of reference/silero-vad/dump.py against 
 regions.json, the official's, with the flags of each set of options, as text and as JSON; with --split a WAVE file of
 each region holding its samples as 16-bit PCM, named so that they sort in order, and the refusals of two files of one
 name and of a file named as another's region in the folder, left as it was; and `speech asr` of the detection model with
---vad, refused on a file without speech.
+--vad, refused on a file without speech. For a diarization model, given the input folders of reference/sortformer/dump.py
+and run on the CPU (-- --device cpu) where the official's segments are compared exactly: `speech diarize` on 32-bit float
+WAVE files of their audio against the official segments of the offline and low_latency configurations, as text, as JSON
+and as RTTM, and the refusals of a streaming mode it does not have, of an option of another model, of an RTTM id with a
+space and of a file that is not there, and `speech asr` of the diarization model.
 
 usage: python3 checks/smoke/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav [--transcript TEXT]]
                                                 [--embedding E.speaker.safetensors] [--vad DETECTION.gguf] [--asr RECOGNITION.gguf]
@@ -84,7 +88,7 @@ if "--asr" in args:
 speech, work, model, *dumps = args
 os.makedirs(work, exist_ok=True)
 added = [o.split("=", 1)[0] for i, o in enumerate(options) if i > 0 and options[i - 1] == "--add-voice"]
-SUBCOMMANDS = ["tts", "asr", "vad", "voice", "info", "devices", "models", "pull", "rm", "quantize", "update", "serve", "worker"]
+SUBCOMMANDS = ["tts", "asr", "vad", "diarize", "voice", "info", "devices", "models", "pull", "rm", "quantize", "update", "serve", "worker"]
 
 
 def run(*command, input=None, stdout=subprocess.PIPE, code=0):
@@ -116,7 +120,9 @@ for s in SUBCOMMANDS:
 print(f"{version.strip()}; --help lists the subcommands and each has its own; no or an unknown subcommand exits with 2")
 
 info = json.loads(run("info", model, "--json").stdout)
-if info["task"] != "detection":
+# The worker refuses a detection or diarization model, which its protocol has no messages for.
+served_by_worker = info["task"] not in ("detection", "diarization")
+if served_by_worker:
     bare = Worker(speech, model, ["--no-warmup"] + [o for i, o in enumerate(options) if o == "--device" or (i and options[i - 1] == "--device")])
     loaded = bare.ready["model"]
     bare.close()
@@ -141,7 +147,7 @@ if len(longest) > 8:
 devices = json.loads(run("devices", "--json").stdout)["devices"]
 listed = [line.split()[0] for line in run("devices").stdout.decode().splitlines()]
 assert [d["name"] for d in devices] == listed and all(d["kind"] in ("cpu", "gpu", "igpu") for d in devices), devices
-print(f"info: {'the model information' if info['task'] == 'detection' else 'the worker' + chr(39) + 's model information without device and threads'}, with --meta {len(meta['meta'])} entries, the identity "
+print(f"info: {'the model information' if not served_by_worker else 'the worker' + chr(39) + 's model information without device and threads'}, with --meta {len(meta['meta'])} entries, the identity "
       f"{', '.join(str(v) for v in shown)} as the general keys give it; devices: {listed}")
 
 for command in [["tts", model, "-o", "x.wav", "--steps", "4x", "あ"], ["tts", model, "あ"], ["tts", model, "-o", "x.wav", "--bogus", "あ"],
@@ -157,8 +163,8 @@ fatal = json.loads(r.stdout)
 assert fatal["type"] == "fatal" and fatal["error"]["code"] == "invalid_argument", fatal
 r = run("worker", model, "--device", "no-such-device", code=1)
 fatal = json.loads(r.stdout)
-# The worker refuses a detection model, which its protocol has no messages for, before it touches a device.
-refused = ("unsupported", None) if info["task"] == "detection" else ("device", "device")
+# The worker refuses a detection or diarization model before it touches a device.
+refused = ("unsupported", None) if not served_by_worker else ("device", "device")
 assert fatal["type"] == "fatal" and (fatal["error"]["code"], fatal["error"]["option"]) == refused, fatal
 failure(r, *refused)
 print(f"the worker's usage error and its {refused[0]} error: fatal on stdout, exit 2 and 1")
@@ -432,6 +438,46 @@ if info["task"] == "detection":
     failure(run("vad", model, "--language", "ja", *options, files[0], code=1), "unsupported", "language")
     failure(run("vad", model, *options, os.path.join(work, "no-such.wav"), code=1), "io", "audio")
     print("a threshold above 1, a language and a file that is not there: exit 1 with the library's form")
+    for path in files:
+        os.remove(path)
+elif info["task"] == "diarization":
+    files, official = [], []
+    for d in dumps:
+        data = read_npy(os.path.join(d, "audio.npy")).tobytes()
+        path = os.path.join(work, os.path.basename(os.path.normpath(d)) + ".wav")
+        with open(path, "wb") as f:
+            f.write(b"RIFF" + struct.pack("<I", 36 + len(data)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 3, 1, rate, rate * 4, 4, 32)
+                    + b"data" + struct.pack("<I", len(data)) + data)
+        files.append(path)
+        modes = {}
+        for mode in ("offline", "low_latency"):
+            with open(os.path.join(d, mode, "meta.json"), encoding="utf-8") as f:
+                per_speaker = json.load(f)["segments"]
+            modes[mode] = sorted((start, speaker, end) for speaker, segments in enumerate(per_speaker) for start, end in segments)
+        official.append(modes)
+    for mode in ("offline", "low_latency"):
+        flags = [] if mode == "offline" else ["--streaming-mode", mode]
+        lines = [line.split("\t") for line in run("diarize", model, *flags, *options, *files).stdout.decode().splitlines()]
+        want = [[f, f"{start:.3f}", f"{end:.3f}", str(speaker)] for f, o in zip(files, official) for start, speaker, end in o[mode]]
+        assert lines == want, (mode, lines[:3], want[:3])
+        got = [json.loads(line) for line in run("diarize", model, "--format", "json", *flags, *options, *files).stdout.decode().splitlines()]
+        assert [g["file"] for g in got] == files, got
+        assert all([(x["start"], x["speaker"], x["end"]) for x in g["segments"]] == o[mode] for g, o in zip(got, official)), mode
+        rttm = [line.split() for line in run("diarize", model, "--format", "rttm", *flags, *options, *files).stdout.decode().splitlines()]
+        want = [["SPEAKER", os.path.splitext(os.path.basename(f))[0], "1", f"{start:.3f}", f"{end - start:.3f}", "<NA>", "<NA>", f"speaker_{speaker}",
+                 "<NA>", "<NA>"] for f, o in zip(files, official) for start, speaker, end in o[mode]]
+        assert rttm == want, (mode, rttm[:2], want[:2])
+    print(f"diarize: {len(files)} files, the official's segments in offline and low_latency as text, as JSON and as RTTM")
+    failure(run("diarize", model, "--streaming-mode", "slow", *options, files[0], code=1), "out_of_range", "streaming_mode")
+    failure(run("diarize", model, "--threshold", "0.5", *options, files[0], code=1), "unsupported", "threshold")
+    spaced = os.path.join(work, "a recording.wav")
+    shutil.copy(files[0], spaced)
+    run("diarize", model, "--format", "rttm", *options, spaced, code=2)
+    os.remove(spaced)
+    failure(run("diarize", model, *options, os.path.join(work, "no-such.wav"), code=1), "io", "audio")
+    failure(run("asr", model, *options, files[0], code=1), "unsupported", None)
+    print("a streaming mode the model does not have, Silero VAD's threshold, an RTTM id with a space (exit 2), a file that is not there "
+          "and asr of a diarization model: exit 1 with the library's form")
     for path in files:
         os.remove(path)
 elif info["task"] == "recognition":

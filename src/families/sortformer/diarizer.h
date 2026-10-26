@@ -56,8 +56,11 @@ private:
  */
 class ChunkStream {
 public:
-    /** A stream of `diarizer`, which outlives it, in `streaming`; `on_step` hears each step's number when given. */
-    ChunkStream(Diarizer & diarizer, const Streaming & streaming, std::function<void(int64_t step)> on_step = {});
+    /**
+     * A stream of `diarizer`, which outlives it, in `streaming`. `on_step`, when given, hears each step's number once it
+     * has run, and false stops the stream before its next step: the stream then runs no more and gives no more rows.
+     */
+    ChunkStream(Diarizer & diarizer, const Streaming & streaming, std::function<bool(int64_t step)> on_step = {});
 
     /** Takes `n` more samples at the model's rate and appends the rows of the steps it computes to `probs`. */
     void push(const float * samples, size_t n, std::vector<float> & probs);
@@ -74,7 +77,8 @@ private:
 
     Diarizer & diarizer_;
     Streaming streaming_;
-    std::function<void(int64_t)> on_step_;
+    std::function<bool(int64_t)> on_step_;
+    bool stopped_ = false;
     State state_;
     /** The samples received, the pre-emphasized ones from x_begin_ on, and the last sample, which pre-emphasis reads. */
     int64_t received_ = 0, x_begin_ = 0;

@@ -56,7 +56,7 @@ replace a mode's own:
 |---|---|---|
 | `onset` | 0.5 | from 0 to 1: the probability above which a speaker begins |
 | `offset` | 0.5 | from 0 to 1: the probability below which a speaker stops |
-| `pad_onset` | 0 | seconds added before each segment |
+| `pad_onset` | 0 | seconds added before each segment, up to 3600, as for the three that follow |
 | `pad_offset` | 0 | seconds added after each segment; a speaker's padded segments that meet are joined |
 | `min_duration_on` | 0 | seconds below which a segment is dropped |
 | `min_duration_off` | 0 | seconds below which a pause between a speaker's segments is filled |

@@ -16,6 +16,13 @@ namespace {
  */
 constexpr double kLongestSetting = 1 << 20;
 
+/**
+ * The longest pad or duration of the postprocessing, an hour: the segments' times are float32, as torch computes them,
+ * whose steps stay below the 10 ms the times are rounded to up to 36 hours of audio, and a stream's reach back stays a
+ * count of frames.
+ */
+constexpr double kLongestDuration = 3600;
+
 /** The streaming configuration of a request: the mode it sets, or `default_mode`, with each setting it gives. */
 sortformer::Streaming streaming_of(const sortformer::Diarizer & diarizer, const RequestValues & values, const std::string & default_mode) {
     sortformer::Streaming s = diarizer.mode(values.has(SPEECH_OPT_STREAMING_MODE) ? values.string(SPEECH_OPT_STREAMING_MODE) : default_mode);
@@ -90,7 +97,7 @@ public:
         const sortformer::Postprocessing post = postprocessing_of(values);
         const int64_t chunk = (int64_t) streaming.chunk_len * diarizer_.network().factor();
         const int64_t steps = (diarizer_.frontend().frames(samples.size()) + chunk - 1) / chunk;
-        sortformer::ChunkStream stream(diarizer_, streaming, [&](int64_t step) { run.progress((double) (step + 1) / (double) steps); });
+        sortformer::ChunkStream stream(diarizer_, streaming, [&](int64_t step) { return run.progress((double) (step + 1) / (double) steps); });
         const size_t piece = (size_t) streaming.chunk_len * diarizer_.network().factor() * diarizer_.frontend().hop_length();
         std::vector<float> probs;
         for (size_t at = 0; at < samples.size(); at += piece) {
@@ -150,10 +157,10 @@ FamilyInfo describe_sortformer(const std::shared_ptr<const ModelFile> & file) {
         {SPEECH_OPT_SPKCACHE_UPDATE_PERIOD, false, true, std::nullopt, 1, kLongestSetting},
         {SPEECH_OPT_ONSET, false, true, post("onset"), 0, 1},
         {SPEECH_OPT_OFFSET, false, true, post("offset"), 0, 1},
-        {SPEECH_OPT_PAD_ONSET, false, true, post("pad_onset"), 0},
-        {SPEECH_OPT_PAD_OFFSET, false, true, post("pad_offset"), 0},
-        {SPEECH_OPT_MIN_DURATION_ON, false, true, post("min_duration_on"), 0},
-        {SPEECH_OPT_MIN_DURATION_OFF, false, true, post("min_duration_off"), 0},
+        {SPEECH_OPT_PAD_ONSET, false, true, post("pad_onset"), 0, kLongestDuration},
+        {SPEECH_OPT_PAD_OFFSET, false, true, post("pad_offset"), 0, kLongestDuration},
+        {SPEECH_OPT_MIN_DURATION_ON, false, true, post("min_duration_on"), 0, kLongestDuration},
+        {SPEECH_OPT_MIN_DURATION_OFF, false, true, post("min_duration_off"), 0, kLongestDuration},
     };
     return info;
 }

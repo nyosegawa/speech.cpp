@@ -198,6 +198,35 @@ static int check_refusals(speech_model * model, const char * model_path, const f
     return ok ? 0 : 1;
 }
 
+/**
+ * Every chunk of `samples` waits for a right context longer than the audio, so that all of them run when the audio ends:
+ * a progress callback that stops at the first must stop them there, in a small share of the time they take together.
+ */
+static int check_stop_at_the_end(speech_model * model, const float * samples, size_t n, int rate) {
+    double took[2] = {0, 0};
+    speech_status status[2] = {SPEECH_OK, SPEECH_OK};
+    for (int stopping = 0; stopping < 2; stopping++) {
+        speech_request * r = NULL;
+        Progress progress;
+        memset(&progress, 0, sizeof progress);
+        progress.stop_at = 1e-9;
+        if (speech_request_new(model, &r) != SPEECH_OK || speech_request_set_audio(r, samples, n, rate) != SPEECH_OK ||
+            speech_request_set_int(r, SPEECH_OPT_CHUNK_LEN, 1) != SPEECH_OK || speech_request_set_int(r, SPEECH_OPT_CHUNK_RIGHT_CONTEXT, 100000) != SPEECH_OK ||
+            (stopping && speech_request_set_progress(r, record_progress, &progress) != SPEECH_OK)) {
+            speech_request_free(r);
+            return fail("a request of chunks that wait for the end");
+        }
+        const double start = now_seconds();
+        status[stopping] = speech_diarize(r);
+        took[stopping] = now_seconds() - start;
+        speech_request_free(r);
+    }
+    const int ok = status[0] == SPEECH_OK && status[1] == SPEECH_CANCELLED && took[1] < took[0] / 4;
+    printf("chunks of 80 ms that all wait for the end: %.3f s whole, %.3f s stopped at the first, %s\n", took[0], took[1],
+           ok ? "stopped there" : "NOT STOPPED");
+    return ok ? 0 : 1;
+}
+
 /** A thread that cancels a request a fixed time after it starts, and notes when it did. */
 typedef struct {
     speech_request * request;
@@ -302,6 +331,7 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
            whole[0].end);
     free(tripled);
     if (check_refusals(model, model_path, audio[with_speech], n, rate) != 0) return 1;
+    if (check_stop_at_the_end(model, audio[with_speech], n, rate) != 0) return 1;
 
     // A progress callback that stops halfway, in the mode of the most steps.
     Progress stopping;

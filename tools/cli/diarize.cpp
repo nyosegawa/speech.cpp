@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -27,6 +29,17 @@ double seconds_since(Clock::time_point t0) {
 int run_diarize(const CommandLine & line, FILE * out) {
     const std::string format = line.value("--format").value_or("text");
     if (format != "text" && format != "json" && format != "rttm") throw UsageError("--format takes text, json or rttm, not \"" + format + "\"");
+
+    // RTTM names a recording by an id without spaces, the file's name without its folder and extension.
+    if (format == "rttm") {
+        for (size_t i = 1; i < line.args.size(); i++) {
+            const std::string id = std::filesystem::u8path(line.args[i]).stem().u8string();
+            if (id.empty() || std::any_of(id.begin(), id.end(), [](char c) { return std::isspace((unsigned char) c); })) {
+                throw UsageError("--format rttm names each recording by its file's name, and " + line.args[i] +
+                                 "'s holds a space or is empty; rename the file, or write text or json");
+            }
+        }
+    }
 
     // A model named for the first time is fetched here, before the load is timed.
     const std::string path = model_file(line.args[0]);
@@ -60,7 +73,6 @@ int run_diarize(const CommandLine & line, FILE * out) {
             }
         }
         const double took = seconds_since(start);
-        // RTTM names a recording by an id without spaces: the file's name without its folder and extension.
         const std::string id = std::filesystem::u8path(file).stem().u8string();
         std::string json = "{\"file\":" + json_string(file) + ",\"segments\":[";
         std::set<int> speakers;

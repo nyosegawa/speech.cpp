@@ -31,7 +31,7 @@ Postprocessing Diarizer::postprocessing() const {
     return {at("onset"), at("offset"), at("pad_onset"), at("pad_offset"), at("min_duration_on"), at("min_duration_off")};
 }
 
-ChunkStream::ChunkStream(Diarizer & diarizer, const Streaming & streaming, std::function<void(int64_t step)> on_step)
+ChunkStream::ChunkStream(Diarizer & diarizer, const Streaming & streaming, std::function<bool(int64_t step)> on_step)
     : diarizer_(diarizer), streaming_(streaming), on_step_(std::move(on_step)) {}
 
 void ChunkStream::push(const float * samples, size_t n, std::vector<float> & probs) {
@@ -75,7 +75,7 @@ void ChunkStream::run_steps(bool ended, std::vector<float> & probs) {
     const int factor = network.factor(), mels = network.mels(), speakers = network.speakers();
     const int64_t chunk = (int64_t) streaming_.chunk_len * factor, right = (int64_t) streaming_.chunk_right_context * factor;
     const int64_t total = diarizer_.frontend().frames((size_t) received_);
-    for (;;) {
+    while (!stopped_) {
         const int64_t first = step_ * chunk;
         int64_t last = first + chunk, context = right;
         if (ended) {
@@ -111,7 +111,7 @@ void ChunkStream::run_steps(bool ended, std::vector<float> & probs) {
         // The chunk's rows of 10 ms, cut to the audio's frames.
         const float * out = &result.probs[(size_t) (rows * factor * speakers)];
         probs.insert(probs.end(), out, out + (last - first) * speakers);
-        if (on_step_) on_step_(step_);
+        if (on_step_ && !on_step_(step_)) stopped_ = true;
         step_++;
 
         const int64_t next = step_ * chunk;

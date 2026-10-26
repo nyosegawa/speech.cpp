@@ -468,7 +468,10 @@ typedef enum speech_option {
      * goes on as before where onset is not below offset, and changes at every frame where it is. Added in 3.4.
      */
     SPEECH_OPT_OFFSET = 54,
-    /** "pad_onset", a number of 0 or more: the seconds a diarization's segment begins before its speech. Added in 3.4. */
+    /**
+     * "pad_onset", a number from 0 to 3600: the seconds a diarization's segment begins before its speech; the durations
+     * that follow take the same range. Added in 3.4.
+     */
     SPEECH_OPT_PAD_ONSET = 55,
     /**
      * "pad_offset", a number of 0 or more: the seconds a segment ends after its speech; padded segments of one speaker that

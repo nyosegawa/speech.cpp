@@ -26,7 +26,7 @@ The C API's option table declares one default for each option, read by the sette
   and a largest value of 2^20 frames. An update period outside a chunk and the queue with a chunk is taken as
   streaming_update() takes it, not refused.
 - **The postprocessing takes PostProcessingParams' names and defaults**, from the file, the thresholds from 0 to 1 and
-  the durations of 0 or more seconds.
+  the pads and durations from 0 to 3600 s, within which the segments' float32 times keep their 10 ms.
 - **Not offered**: `chunk_left_context`, which no configuration of the card or the checkpoint gives; `max_num_of_spks`
   and `session_len_sec`, which change nothing a request computes or which a caller does by giving less audio.
 
