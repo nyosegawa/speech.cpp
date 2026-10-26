@@ -25,7 +25,7 @@ Diarization), whose speakers `diarized_json` and Realtime sessions with `diariza
 listens once they are ready, and logs to stderr.
 
 ```
-▁▃▅▇▅▃▁ speech.cpp 0.8.11 · serve
+▁▃▅▇▅▃▁ speech.cpp 0.9.0 · serve
 
   ✓ Qwen3-TTS-12Hz-0.6B-CustomVoice   synthesis    MTL0   1.30 s
   ✓ Qwen3-ASR-0.6B                    recognition  MTL0   0.27 s
