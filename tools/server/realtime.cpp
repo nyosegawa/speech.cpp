@@ -111,7 +111,7 @@ public:
         const auto on = models_.of(SPEECH_TASK_DIARIZATION);
         if (!on) {
             throw ApiError{400, "diarization gives each utterance the speakers a speech diarization model finds, and this server holds none. Give "
-                                "speech serve one beside the recognition model, or give diarization null.", "", "unsupported_value"};
+                                "speech serve one beside the recognition model, such as nemotron-3-diarization, or give diarization null.", "", "unsupported_value"};
         }
         return std::make_unique<Diarization>(on->get(), on, options, realtime::kRate);
     }

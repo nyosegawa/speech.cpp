@@ -13,7 +13,7 @@ speech serve [MODEL [MODEL [MODEL [MODEL]]]] [--open] [--host 127.0.0.1] [--port
 speech serve --open                                   # the page, without a model until one is picked there
 speech serve qwen3-tts-0.6b qwen3-asr-0.6b            # speech and transcriptions
 speech serve reazonspeech-v2 silero-vad               # transcriptions, also by the regions where someone speaks
-speech serve qwen3-asr-1.7b silero-vad Nemotron-3-Diarization-99M-F16.gguf   # and who speaks in each
+speech serve qwen3-asr-1.7b silero-vad nemotron-3-diarization   # and who speaks in each
 speech serve irodori-tts-mf --add-voice me=me.voice.gguf --cors-origin http://localhost:5173
 speech serve irodori-tts-mf --steps 8 --add-voice me=me.voice.gguf  # 8 steps unless a request sets steps
 speech serve qwen3-tts-0.6b qwen3-asr-0.6b --language ja --asr.language auto

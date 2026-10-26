@@ -237,7 +237,7 @@ private:
             job->diarizer = needed(SPEECH_TASK_DIARIZATION, "diarized_json",
                                    {400, "\"response_format\": \"diarized_json\" gives each region the speakers that a speech diarization model "
                                          "finds, and this server holds none. Give speech serve one beside the other models, as in speech serve " +
-                                         recognizer + " silero-vad Nemotron-3-Diarization-99M-F16.gguf, or ask for another response_format.",
+                                         recognizer + " silero-vad nemotron-3-diarization, or ask for another response_format.",
                                     "response_format", "unsupported_value"},
                                    res);
             if (!job->diarizer) return;

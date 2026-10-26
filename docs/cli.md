@@ -46,7 +46,7 @@ speech asr reazonspeech-v2 --vad silero-vad meeting.wav
 speech asr reazonspeech-v2 --vad silero-vad --live
 
 # Each region of a meeting with the speakers who speak in it
-speech asr qwen3-asr-1.7b --vad silero-vad --diarize Nemotron-3-Diarization-99M-F16.gguf meeting.wav
+speech asr qwen3-asr-1.7b --vad silero-vad --diarize nemotron-3-diarization meeting.wav
 
 # Where someone speaks in a recording, in regions of 10 s at most, and each region as a WAVE file of its own
 speech vad silero-vad --max-speech-duration-s 10 meeting.wav
