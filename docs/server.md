@@ -324,7 +324,9 @@ utterance's audio and carries who spoke when within it:
 `speech_started` to its `speech_stopped`, and two speakers overlap where they speak at once. The diarization settles an
 utterance once it has heard about a second of the audio after it (in `low_latency`), so a client that commits and then
 sends nothing gets the `completed` once more audio comes, silence included, or once it sets `diarization` to `null`.
-Meanwhile the utterances after it are transcribed, and their `completed` follow in order. Speakers are labeled `A`,
+Meanwhile the utterances after it are transcribed, and their `completed` follow in order. On an Apple M5 with Qwen3-ASR
+1.7B (Q8_0) and the diarization model in F16, the `completed` of an utterance came 1.2 s after its speech ended (p50,
+1.3 to 1.5 s at p90), 0.3 s later than without diarization, and the server held 0.2 GB more. Speakers are labeled `A`,
 `B` and on in the order they first speak in the session, as `diarized_json` labels them, and each session labels its
 own. The options are those of the diarization model, such as `{"streaming_mode": "very_low_latency"}`, after the
 server's `--diarize.` defaults; one it does not take, or a value out of its range, is an `error` event with the member

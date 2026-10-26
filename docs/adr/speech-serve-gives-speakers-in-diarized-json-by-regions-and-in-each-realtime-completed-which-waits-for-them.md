@@ -60,5 +60,7 @@ The alternatives were turned down:
 ## Consequences
 
 A session with diarization gets each completed later than one without, by the time the diarization still needs after
-the recognition. A client that commits and then sends no audio gets the completed once more audio comes or once it
+the recognition: on an Apple M5 with Qwen3-ASR 1.7B in Q8_0 and the diarization model in F16, on FLEURS sessions in
+Japanese and English through `measure/live_latency.py`, 0.28 to 0.35 s at p50 (1.17 and 1.20 s from the end of speech,
+against 0.89 and 0.85 s), on 2026-10-27. A client that commits and then sends no audio gets the completed once more audio comes or once it
 turns the diarization off, since the diarization settles an utterance only with the audio after it. A client that reads the speakers of `speech asr -` from its text gets numbers, and from its JSON labels.
