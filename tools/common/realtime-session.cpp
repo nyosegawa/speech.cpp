@@ -74,6 +74,8 @@ std::vector<RequestOption> diarization_options(const JsonValue & diarization) {
             throw refusal("invalid_type", at + "." + name, at + "." + name + " is " + json_excerpt(value) + "; " + e.what() + ".");
         }
     }
+    // The options are a set, whose order does not tell two diarizations apart.
+    std::sort(out.begin(), out.end(), [](const RequestOption & a, const RequestOption & b) { return a.option < b.option; });
     return out;
 }
 

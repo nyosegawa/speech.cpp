@@ -26,7 +26,8 @@ times within a region but FastConformer's segments.
   settles the rest of its audio.
 - **The completed event waits for the speakers and carries them**, as speech.cpp's own `speakers`: each speaker's parts
   of the utterance, from its `speech_started` to its `speech_stopped`. The wait begins once the utterance is recognized,
-  so it overlaps the recognition.
+  so it overlaps the recognition, and it holds only the completions: the utterances after it are recognized meanwhile,
+  each in the turn it took among the model's requests when it was committed, and their completions follow in order.
 - **Speakers in OpenAI's shapes are labels, in each one's units**: the Realtime events and `diarized_json` label them
   `A`, `B` and on, in the order they first speak; the Realtime events give times in milliseconds of the session's audio,
   as `audio_start_ms` does, and `diarized_json` in seconds, as its segments do. speech.cpp's own outputs (the C API,
@@ -44,6 +45,8 @@ The alternatives were turned down:
 
 - A separate event of speech.cpp's own after the completed, with the speakers. A client would hold each text until its
   speakers come, or show it twice, for an event that comes only a little sooner.
+- The session's recognition waiting for the speakers before it goes on. An utterance committed after one that waits
+  holds a turn on the model, so every request of the server behind it would wait for audio that may never come.
 - Diarization for every session of a server that holds a model. A session of one person's microphone would pay the wait
   for nothing, and would have no way to say so.
 - Speakers as numbers, or times in seconds, in the Realtime events. One server would write the same speaker two ways,
@@ -57,4 +60,5 @@ The alternatives were turned down:
 ## Consequences
 
 A session with diarization gets each completed later than one without, by the time the diarization still needs after
-the recognition. A client that reads the speakers of `speech asr -` from its text gets numbers, and from its JSON labels.
+the recognition. A client that commits and then sends no audio gets the completed once more audio comes or once it
+turns the diarization off, since the diarization settles an utterance only with the audio after it. A client that reads the speakers of `speech asr -` from its text gets numbers, and from its JSON labels.

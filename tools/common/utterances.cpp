@@ -101,6 +101,7 @@ Assembly::~Assembly() {
         std::lock_guard<std::mutex> lock(mutex_);
         closing_ = true;
         finals_.clear();
+        waiting_.clear();
         if (reading_) reading_->cancel();
         if (final_) final_->cancel();
     }
@@ -154,6 +155,7 @@ void Assembly::diarize(std::unique_ptr<Diarization> diarization) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (ending.diarization) next_speaker_ = ending.first_speaker + ending.diarization->numbers_used();
     diarized_ = diarization ? Diarized{std::move(diarization), heard_, next_speaker_} : Diarized{};
+    release();
     changed_.notify_all();
 }
 
@@ -181,6 +183,7 @@ void Assembly::push(const float * samples, size_t n) {
     if (diarized_.diarization) {
         diarized_.diarization->push(samples, n);
         std::lock_guard<std::mutex> lock(mutex_);
+        release();
         changed_.notify_all();
     }
 }
@@ -213,14 +216,15 @@ void Assembly::clear() {
 void Assembly::end() {
     std::unique_lock<std::mutex> lock(mutex_);
     end_detection();
-    // The diarization's end settles every utterance it has not, which the worker may wait on.
+    // The diarization's end settles every utterance it has not, whose completions wait for it.
     if (const std::shared_ptr<Diarization> diarization = diarized_.diarization) {
         lock.unlock();
         diarization->end();
         lock.lock();
+        release();
     }
     changed_.notify_all();
-    changed_.wait(lock, [&] { return finals_.empty() && !busy_; });
+    changed_.wait(lock, [&] { return finals_.empty() && !busy_ && waiting_.empty(); });
 }
 
 size_t Assembly::held() const {
@@ -365,21 +369,26 @@ void Assembly::send(const Event & e) {
     if (!closing_) emit_(e);
 }
 
-std::optional<std::vector<SpeakerSegment>> Assembly::speakers_of(const Final & f, std::unique_lock<std::mutex> & lock) {
-    const Diarization * diarization = f.diarized.diarization.get();
-    if (!diarization) return std::nullopt;
-    const double from = (double) f.diarized.from / rate_;
-    const double start = (double) f.first / rate_ - from, end = (double) f.last / rate_ - from;
-    // Each push or end of the diarization wakes the wait; another diarization takes its place only once it has ended.
-    changed_.wait(lock, [&] { return closing_ || diarization->covers(end); });
-    if (closing_) return std::nullopt;
-    std::vector<SpeakerSegment> within = diarization->within(std::max(start, 0.0), end);
-    for (SpeakerSegment & s : within) {
-        s.start += from;
-        s.end += from;
-        s.speaker += f.diarized.first_speaker;
+void Assembly::release() {
+    while (!waiting_.empty()) {
+        Waiting & w = waiting_.front();
+        // Each push of the diarization comes back here, and so does its end, which settles all of its audio, before
+        // another takes its place.
+        if (const Diarization * diarization = w.diarized.diarization.get()) {
+            const double from = (double) w.diarized.from / rate_;
+            const double start = (double) w.first / rate_ - from, end = (double) w.last / rate_ - from;
+            if (!diarization->covers(end)) return;
+            std::vector<SpeakerSegment> within = diarization->within(std::max(start, 0.0), end);
+            for (SpeakerSegment & s : within) {
+                s.start += from;
+                s.end += from;
+                s.speaker += w.diarized.first_speaker;
+            }
+            w.event.speakers = std::move(within);
+        }
+        send(w.event);
+        waiting_.pop_front();
     }
-    return within;
 }
 
 void Assembly::work() {
@@ -413,7 +422,6 @@ void Assembly::work() {
             lock.lock();
             final_.reset();
             committed_ -= f.length;
-            if (e.kind == Event::Kind::Completed) e.speakers = speakers_of(f, lock);
             busy_ = false;
             // The deltas join into the final text wherever it goes on from what they gave, so that a client that builds
             // the text from them, as OpenAI's guide does, gets it whole; one that differs keeps them as they were.
@@ -425,7 +433,13 @@ void Assembly::work() {
                 rest.delta = e.transcript.text.substr(f.sent.size());
                 send(rest);
             }
-            if (e.kind == Event::Kind::Completed || e.kind == Event::Kind::Failed) send(e);
+            if (e.kind == Event::Kind::Completed || e.kind == Event::Kind::Failed) {
+                // The completion waits for its speakers in a queue of its own, so that the recognitions after it, which
+                // hold their places among the model's requests, go on meanwhile.
+                Diarized diarized = e.kind == Event::Kind::Completed ? f.diarized : Diarized{};
+                waiting_.push_back({std::move(e), std::move(diarized), f.first, f.last});
+                release();
+            }
             changed_.notify_all();
             continue;
         }

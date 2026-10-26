@@ -4,7 +4,9 @@ session with session.audio.input.diarization carries the speakers within its utt
 audio_start_ms to speech_stopped's audio_end_ms, labeled A, B and on from the first in each session alone while two
 sessions run at once, one of them with the inputs one after another; a session.update with other diarization options
 starts a diarization of the audio from there, whose speakers take the labels after those of the one before, one with
-diarization null ends it, and one that starts it again goes on after both; a session without one gets no speakers. On
+diarization null ends it, and one that starts it again goes on after both, while the same options in another order keep
+the diarization and its labels; a session without one gets no speakers, and its transcription does not wait for a
+commit of another session whose speakers wait for audio that has not come. On
 /v1/audio/transcriptions, diarized_json gives each region of chunking_strategy the speakers of the whole file's
 diarization within it, and its speaker the one who speaks the most there. It also checks the refusals: diarized_json
 without chunking_strategy, a diarization member the model does not take or a value out of its range, and diarization on
@@ -61,10 +63,11 @@ work = tempfile.mkdtemp(prefix="speech-diarization-smoke-")
 pieces = [pcm24(read_npy(os.path.join(d, "audio.npy")).tolist()) + bytes(2 * 2 * RATE) for d in inputs]
 joined = b"".join(pieces)
 files = []
-for name, pcm in [(f"input{k}", p) for k, p in enumerate(pieces)] + [("joined", joined)]:
+for name, pcm in [(f"input{k}", p) for k, p in enumerate(pieces)] + [("joined", joined), ("two", pieces[0] + pieces[-1])]:
     files.append(os.path.join(work, name + ".wav"))
     with open(files[-1], "wb") as f:
         f.write(wav(pcm))
+two_file = files.pop()
 joined_file = files.pop()
 
 
@@ -91,23 +94,24 @@ class Socket(WebSocket):
 class Session:
     """A Realtime transcription session with server_vad whose server events a thread keeps as they arrive."""
 
-    def __init__(self, server, diarization):
+    def __init__(self, server, diarization, turns={"type": "server_vad"}):
         self.ws = Socket.open("127.0.0.1", server.port, "/v1/realtime", {})
         assert self.ws.event()["type"] == "session.created"
         self.events, self.changed = [], threading.Condition()
+        self.turns = turns
         self.update(diarization)
         threading.Thread(target=self.read, daemon=True).start()
 
     def update(self, diarization):
         """Sets the diarization, as in session.update, before the reader runs or while it does."""
         member = {} if diarization is False else {"diarization": diarization}
-        self.ws.send({"type": "session.update", "session": {"type": "transcription", "audio": {"input": {"turn_detection": {"type": "server_vad"}, **member}}}})
+        self.ws.send({"type": "session.update", "session": {"type": "transcription", "audio": {"input": {"turn_detection": self.turns, **member}}}})
 
     def read(self):
         while True:
             try:
                 e = self.ws.event()
-            except (OSError, ConnectionError, ValueError):
+            except (OSError, ConnectionError, ValueError, AssertionError):
                 return
             with self.changed:
                 self.events.append(e)
@@ -116,6 +120,18 @@ class Session:
     def append(self, pcm):
         for at in range(0, len(pcm), 4800):
             self.ws.send({"type": "input_audio_buffer.append", "audio": base64.b64encode(pcm[at:at + 4800]).decode()})
+
+    def completed(self):
+        with self.changed:
+            return sum(e["type"] == "conversation.item.input_audio_transcription.completed" for e in self.events)
+
+    def wait_for(self, count, what, seconds=600, kind="conversation.item.input_audio_transcription.completed"):
+        """Waits for the count-th event of `kind`."""
+        ended = time.time() + seconds
+        with self.changed:
+            while sum(e["type"] == kind for e in self.events) < count:
+                if not self.changed.wait(ended - time.time()):
+                    raise SystemExit(f"{what}: no {kind} within {seconds} s")
 
     def settle(self, mark):
         """Waits for the events of the audio appended so far: those before the answer to an event that is always
@@ -211,6 +227,40 @@ check_speakers(session.utterances(mark), streamed[0], "the utterances of a diari
 print("realtime: a session.update with other options labels the speakers of the audio after it after those before, null ends the "
       "diarization, and one started again goes on after both")
 
+# The same options in another order keep the diarization under way and its labels.
+session.close()
+session = Session(server, {"onset": 0.5, "offset": 0.5})
+session.append(pieces[0])
+session.settle("in order")
+session.update({"offset": 0.5, "onset": 0.5})
+session.append(pieces[-1])
+session.settle("reordered")
+check_speakers(session.utterances(), diarize(two_file, "--streaming-mode", "low_latency", "--onset", "0.5", "--offset", "0.5"),
+               "the utterances after the same options in another order")
+print("realtime: a session.update with the same options in another order keeps the diarization and its labels")
+
+# Commits whose speakers wait for audio that has not come hold up no other session: the second commit, which took its
+# place among the recognizer's requests before the other session's, is recognized while the first waits, the other
+# session's transcription completes, and the first session's two once audio follows.
+waiting, other = Session(server, {}, None), Session(server, False, None)
+# The second commit is 100 ms long, too short for the diarization to settle the first's audio.
+for at, end in ((0, 4 * RATE), (4 * RATE, 4 * RATE + RATE // 10)):
+    waiting.append(pieces[0][2 * at:2 * end])
+    waiting.ws.send({"type": "input_audio_buffer.commit"})
+# The other session commits once both commits have taken their places, after them.
+waiting.wait_for(2, "the session that waits for its speakers", 60, "input_audio_buffer.committed")
+other.append(pieces[0][:2 * 4 * RATE])
+other.ws.send({"type": "input_audio_buffer.commit"})
+other.wait_for(1, "the session without diarization", 120)
+assert waiting.completed() == 0, "a commit's speakers came before the audio that settles them"
+waiting.append(bytes(2 * 2 * RATE))
+waiting.wait_for(2, "the session that waits for its speakers")
+done = [e for e in waiting.events if e["type"] == "conversation.item.input_audio_transcription.completed"]
+assert all("speakers" in e for e in done) and done[0]["speakers"], done
+print("realtime: commits whose speakers wait for audio hold up no other session's transcription, and complete in order once audio follows")
+for s in (waiting, other):
+    s.close()
+
 # The session's refusals, each an error with the member at fault.
 for member, code, param in (({"threshold": 0.5}, "unsupported_parameter", "session.audio.input.diarization.threshold"),
                             ({"onset": 2}, "unsupported_value", "session.audio.input.diarization.onset"),
@@ -253,6 +303,6 @@ assert refused["type"] == "error" and refused["error"]["param"] == "session.audi
 ws.close()
 alone.stop()
 print(f"realtime diarization on a server without a diarization model: error {refused['error']['code']}: {refused['error']['message'][:80]}")
-for path in files + [joined_file]:
+for path in files + [joined_file, two_file]:
     os.remove(path)
 os.rmdir(work)

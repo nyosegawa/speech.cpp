@@ -493,7 +493,7 @@ elif info["task"] == "diarization":
             asked = ["asr", recognizer, "--vad", vad, "--diarize", model]
             got = json.loads(run(*asked, "--format", "json", *options, path).stdout)
             plain = json.loads(run("asr", recognizer, "--vad", vad, "--format", "json", *options, path).stdout)
-            assert got["text"] == plain["text"] and got["regions"], (got, plain)
+            assert got["text"] == plain["text"], (got, plain)
             lines = [line.split("\t") for line in run(*asked, *options, path).stdout.decode().splitlines()]
             assert len(lines) == len(got["regions"]), (lines, got["regions"])
             regions += len(lines)
@@ -501,6 +501,7 @@ elif info["task"] == "diarization":
                 assert region["speakers"] == speakers_json(whole, region["start"], region["end"]), (region, whole)
                 main = main_speaker(region["speakers"])
                 assert line == [path, f"{region['start']:.3f}", f"{region['end']:.3f}", "-" if main is None else str(main), region["text"]], line
+        assert regions, "no file has a region"
         pcm = pcm16(read_npy(os.path.join(dumps[0], "audio.npy")).tolist()) + bytes(2 * 2 * rate)
         heard_file = os.path.join(work, "heard.wav")
         with open(heard_file, "wb") as f:

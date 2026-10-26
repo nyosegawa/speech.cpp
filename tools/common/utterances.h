@@ -25,8 +25,9 @@
 // commit. While an utterance goes on, its beginning is read again and again, and the beginning that two readings in a
 // row agree on goes out as deltas, which only ever add text; once it is committed, it is recognized whole, and that
 // recognition, which may differ from the deltas, completes it. With a diarization, the completion waits until the
-// diarization has settled the utterance's audio, and carries the speakers within it. The events go out in order: an utterance's speech started,
-// its deltas, its speech stopped and its commit, then its completion, with the next utterance's events begun meanwhile.
+// diarization has settled the utterance's audio, and carries the speakers within it, while the recognitions after it go
+// on. The events go out in order: an utterance's speech started, its deltas, its speech stopped and its commit, then its
+// completion, with the next utterance's events begun meanwhile, and the completions in the order of the utterances.
 
 namespace utterances {
 
@@ -238,10 +239,16 @@ private:
 
     void work();
     /**
-     * The speakers of `f`'s samples, once its diarization has settled them, waiting with `lock` held as the condition
-     * does; none without a diarization, and none once the assembly closes.
+     * A completion or failure, which goes out once the speakers of its samples are settled, with them, and after those
+     * of the utterances before it.
      */
-    std::optional<std::vector<SpeakerSegment>> speakers_of(const Final & f, std::unique_lock<std::mutex> & lock);
+    struct Waiting {
+        Event event;
+        Diarized diarized;
+        uint64_t first = 0, last = 0;
+    };
+    /** Sends the completions that wait, from the first, while each one's speakers are settled. */
+    void release();
     // These run with the mutex held.
     void take_regions();
     void announce(Utterance & u);
@@ -284,6 +291,7 @@ private:
     uint64_t next_ = 0;
     std::optional<Utterance> current_;
     std::deque<Final> finals_;
+    std::deque<Waiting> waiting_;
     /** Whether the worker recognizes, an utterance or the beginning of one. */
     bool busy_ = false;
     std::shared_ptr<Cancellation> reading_, final_;
