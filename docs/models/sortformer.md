@@ -75,11 +75,29 @@ On an Apple M5:
 |---|---|---|
 | CPU, F32 | 3.2e-5 | none |
 | Metal, F32 | 0.12 | 0.41% in `low_latency`, none in the other modes |
+| RTX 2080, Vulkan, F32 | 1.2e-5 | none |
 
-On Metal the speaker cache once kept another frame, which then changed what the steps after it heard. Audio given in
+On Metal the speaker cache once kept another frame, which then changed what the steps after it heard. The Vulkan
+figures are of an NVIDIA GeForce RTX 2080, 2026-10-27. Audio given in
 pieces of 10 ms or of 150 ms gives the probabilities of the whole audio bit for bit on both devices.
 
 ## Speed
 
-98 s of a meeting on an Apple M5's GPU, F32: 0.22 s in `offline`, an RTFx (the seconds of audio over the seconds they
-took) of about 450, and 3.9 s in `low_latency`, whose 137 chunks take 28 ms each where audio brings one every 0.72 s.
+The RTFx (the seconds of audio over the seconds they took) of `speech diarize` on the 98 s meeting above, the median of
+three runs, with the peak memory of the process on the Apple M5 and the GPU's memory it adds on the RTX 2080:
+
+| Device | Type | `offline` | `low_latency` | Memory |
+|---|---|---|---|---|
+| Apple M5, Metal | F32 | 420 | 23 | 519 MiB |
+| | F16 | 460 | 25 | 329 MiB |
+| | Q8_0 | 455 | 24 | 240 MiB |
+| Apple M5, CPU | F32 | 24 | 1.2 | 525 MiB |
+| | F16 | 38 | 1.9 | 337 MiB |
+| | Q8_0 | 51 | 2.4 | 250 MiB |
+| RTX 2080, Vulkan | F32 | 390 | 33 | 430 MiB of VRAM |
+| | F16 | 425 | 35 | 240 MiB of VRAM |
+
+Each step hears the speaker cache and the queue again with its chunk: about 540 frames of 80 ms for 0.72 s of audio in
+`low_latency`, where `offline` hears about 680 for 27 s, so a stream takes about twenty times as long as `offline`. On
+the M5's GPU a chunk of `low_latency` takes about 30 ms where audio brings one every 0.72 s; on its CPU in F32 it takes
+0.62 s, which leaves little for a recognizer on the same CPU.
