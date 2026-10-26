@@ -24,7 +24,7 @@ struct TaskOption {
     RequestOption option;
 };
 
-/** The prefix of a task's options on the command line, the name of its subcommand: "tts", "asr" or "vad". */
+/** The prefix of a task's options on the command line, the name of its subcommand: "tts", "asr", "vad" or "diarize". */
 const char * task_prefix(speech_task task);
 
 /** A flag of a subcommand other than a request option. */

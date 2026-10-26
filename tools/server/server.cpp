@@ -49,6 +49,7 @@ const char * use_of(speech_task task) {
         case SPEECH_TASK_SYNTHESIS: return "/v1/audio/speech";
         case SPEECH_TASK_RECOGNITION: return "/v1/audio/transcriptions";
         case SPEECH_TASK_DETECTION: return "chunking_strategy of /v1/audio/transcriptions and server_vad of /v1/realtime";
+        case SPEECH_TASK_DIARIZATION: break;
     }
     throw std::logic_error("a task speech.h does not have");
 }
@@ -58,9 +59,10 @@ speech_task other_task(speech_task task) {
     switch (task) {
         case SPEECH_TASK_SYNTHESIS: return SPEECH_TASK_RECOGNITION;
         case SPEECH_TASK_RECOGNITION: return SPEECH_TASK_SYNTHESIS;
-        case SPEECH_TASK_DETECTION: break;
+        case SPEECH_TASK_DETECTION:
+        case SPEECH_TASK_DIARIZATION: break;
     }
-    throw std::logic_error("no endpoint takes a model of speech detection");
+    throw std::logic_error("no endpoint takes a model of speech detection or diarization");
 }
 
 /** OpenAI's model object, with the release of speech.cpp and the model's information. */

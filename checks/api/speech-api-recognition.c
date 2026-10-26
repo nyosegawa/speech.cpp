@@ -276,6 +276,10 @@ static int check_refusals(speech_model * model, const char * model_path, const f
     speech_detection * detection = NULL;
     ok &= expect(speech_detection_start(r, rate, &detection), SPEECH_ERROR_UNSUPPORTED, NULL, "a detection of a recognition model") &&
           detection == NULL;
+    ok &= expect(speech_diarize(r), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_diarize() of a recognition model");
+    speech_diarization * diarization = NULL;
+    ok &= expect(speech_diarization_start(r, rate, &diarization), SPEECH_ERROR_UNSUPPORTED, NULL, "a diarization of a recognition model") &&
+          diarization == NULL;
     speech_request_free(r);
     speech_model_info * info = NULL;
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");

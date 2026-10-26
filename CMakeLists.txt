@@ -46,6 +46,7 @@ add_library(speechcommon STATIC
     src/common/graph.cpp
     src/common/resample.cpp
     src/common/fft.cpp
+    src/common/nemo-frontend.cpp
     src/common/sampling.cpp
     src/common/log.cpp
     src/common/qwen3-decoder.cpp
@@ -97,7 +98,6 @@ target_link_libraries(irodoritts PUBLIC speechcommon)
 # FastConformer speech recognition (NVIDIA NeMo): the family.
 add_library(fastconformer STATIC
     src/families/fastconformer/layout.cpp
-    src/families/fastconformer/frontend.cpp
     src/families/fastconformer/encoder.cpp
     src/families/fastconformer/transducer.cpp
     src/families/fastconformer/decoder-step.cpp
@@ -137,6 +137,23 @@ add_library(silerovad STATIC
 target_include_directories(silerovad PUBLIC src/families)
 target_link_libraries(silerovad PUBLIC speechcommon)
 
+add_library(sortformer STATIC
+    src/families/sortformer/layout.cpp
+    src/families/sortformer/network.cpp
+    src/families/sortformer/cache.cpp
+    src/families/sortformer/segments.cpp
+    src/families/sortformer/diarizer.cpp
+)
+target_include_directories(sortformer PUBLIC src/families)
+target_link_libraries(sortformer PUBLIC speechcommon)
+# The speaker cache's scores and the segments' times are float32 arithmetic whose roundings decide which frames the cache
+# keeps and whether two padded segments meet, rounded after each operation as torch rounds them: a fused multiply-add
+# moves a value by a unit in its last place. GCC fuses across statements by default and Clang within one; MSVC's
+# /fp:precise does not fuse.
+if (NOT MSVC)
+    target_compile_options(sortformer PRIVATE -ffp-contract=off)
+endif()
+
 # Fish Audio Drama 3 speech synthesis (Fish Audio): the family.
 add_library(drama3 STATIC
     src/families/drama3/layout.cpp
@@ -157,18 +174,18 @@ target_link_libraries(drama3 PUBLIC speechcommon)
 # The C API, include/speech.h, twice: static for the executables, so that each stays one file, and shared as
 # libspeech for bindings and other programs. On Windows the two would both write speech.lib, the static one as
 # the library and the shared one as its import library, hence speech-static.
-set(SPEECH_SOURCES src/api/speech.cpp src/api/info.cpp src/api/request.cpp src/api/detection.cpp src/api/voice.cpp
+set(SPEECH_SOURCES src/api/speech.cpp src/api/info.cpp src/api/request.cpp src/api/detection.cpp src/api/diarization.cpp src/api/voice.cpp
     src/engines/qwen3-tts-engine.cpp src/engines/irodori-tts-engine.cpp src/engines/drama3-engine.cpp src/engines/fastconformer-engine.cpp
-    src/engines/qwen3-asr-engine.cpp src/engines/silero-vad-engine.cpp)
+    src/engines/qwen3-asr-engine.cpp src/engines/silero-vad-engine.cpp src/engines/sortformer-engine.cpp)
 
 add_library(speech-static STATIC ${SPEECH_SOURCES})
 target_include_directories(speech-static PUBLIC include PRIVATE src/engines)
-target_link_libraries(speech-static PUBLIC qwen3tts irodoritts drama3 fastconformer qwen3asr silerovad)
+target_link_libraries(speech-static PUBLIC qwen3tts irodoritts drama3 fastconformer qwen3asr silerovad sortformer)
 target_compile_definitions(speech-static PRIVATE SPEECH_VERSION="${PROJECT_VERSION}")
 
 add_library(speech SHARED ${SPEECH_SOURCES})
 target_include_directories(speech PUBLIC include PRIVATE src/engines)
-target_link_libraries(speech PRIVATE qwen3tts irodoritts drama3 fastconformer qwen3asr silerovad)
+target_link_libraries(speech PRIVATE qwen3tts irodoritts drama3 fastconformer qwen3asr silerovad sortformer)
 target_compile_definitions(speech PRIVATE SPEECH_BUILD_SHARED SPEECH_VERSION="${PROJECT_VERSION}" INTERFACE SPEECH_SHARED)
 set_target_properties(speech PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 # The shared library's SOVERSION is the C API's major version, which speech.h defines and nothing else repeats.
@@ -228,6 +245,7 @@ add_executable(speech-cli
     tools/cli/microphone.cpp
     tools/cli/miniaudio.c
     tools/cli/vad.cpp
+    tools/cli/diarize.cpp
     tools/cli/model.cpp
     tools/cli/models.cpp
     tools/cli/quantize.cpp
@@ -247,6 +265,7 @@ add_executable(speech-cli
     tools/common/realtime-events.cpp
     tools/common/realtime-session.cpp
     tools/common/regions.cpp
+    tools/common/speakers.cpp
     tools/common/sentences.cpp
     tools/common/spelling.cpp
     tools/common/terminal.cpp
@@ -352,7 +371,8 @@ add_executable(quantize-check checks/common/quantize-check.cpp)
 target_link_libraries(quantize-check PRIVATE speechcommon)
 
 add_executable(speech-api-check checks/api/speech-api-check.c checks/api/speech-api-irodori.c checks/api/speech-api-drama3.c checks/api/speech-api-recognition.c
-               checks/api/speech-api-detection.c checks/api/speech-api-detection-stream.c checks/api/speech-api-common.c
+               checks/api/speech-api-detection.c checks/api/speech-api-detection-stream.c checks/api/speech-api-diarization.c
+               checks/api/speech-api-common.c
                checks/api/speech-api-platform.c)
 target_link_libraries(speech-api-check PRIVATE speech)
 # The check compares the version the library reports with the one it was built against.
@@ -407,6 +427,13 @@ target_link_libraries(irodori-tts-timing PRIVATE irodoritts)
 add_executable(silero-vad-check checks/silero-vad/silero-vad-check.cpp tools/common/json-reader.cpp)
 target_include_directories(silero-vad-check PRIVATE checks tools/common)
 target_link_libraries(silero-vad-check PRIVATE silerovad)
+
+# Sortformer's stages against the dumps of reference/sortformer/dump.py, read with the JSON reader of `speech`.
+foreach(stage frontend network cache segments stream)
+    add_executable(sortformer-${stage}-check checks/sortformer/sortformer-${stage}-check.cpp tools/common/json-reader.cpp)
+    target_include_directories(sortformer-${stage}-check PRIVATE checks tools/common)
+    target_link_libraries(sortformer-${stage}-check PRIVATE sortformer)
+endforeach()
 
 # Drama 3's codec against the dumps of reference/drama3/dump.py.
 add_executable(drama3-codec-check checks/drama3/drama3-codec-check.cpp)

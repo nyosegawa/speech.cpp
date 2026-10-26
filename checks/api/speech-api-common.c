@@ -71,7 +71,9 @@ int check_library(void) {
                                      "tail_window_size", "tail_std_threshold", "tail_mean_threshold", "speaker_kv_scale",
                                      "speaker_kv_min_t", "speaker_kv_max_layers", "cfg_scale_instructions", "threshold",
                                      "min_speech_duration_ms", "min_silence_duration_ms", "speech_pad_ms", "max_speech_duration_s",
-                                     "decode_on_cpu", "draft", "experts_on_cpu"};
+                                     "decode_on_cpu", "draft", "experts_on_cpu", "streaming_mode", "spkcache_len", "fifo_len",
+                                     "chunk_len", "chunk_right_context", "spkcache_update_period", "onset", "offset", "pad_onset",
+                                     "pad_offset", "min_duration_on", "min_duration_off"};
     if (speech_option_count() != sizeof options / sizeof options[0]) {
         fprintf(stderr, "FAIL: the library knows %zu options\n", speech_option_count());
         return 1;

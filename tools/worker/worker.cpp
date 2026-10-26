@@ -177,9 +177,14 @@ int run_worker(const CommandLine & line, FILE * out) {
     const std::string path = model_file(line.args[0]);
     const Loading loading = line.loading(true);
     // The protocol has the messages of synthesis and recognition alone.
-    if (speech_model_info_task(file_info(path).get()) == SPEECH_TASK_DETECTION) {
+    const speech_task task = speech_model_info_task(file_info(path).get());
+    if (task == SPEECH_TASK_DETECTION) {
         throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "",
                       path + " is a model of speech detection, which the worker does not serve; use `speech vad` or the C API's speech_detect()");
+    }
+    if (task == SPEECH_TASK_DIARIZATION) {
+        throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "",
+                      path + " is a model of speech diarization, which the worker does not serve; use `speech diarize` or the C API's speech_diarize()");
     }
     const Model model = load_model(path, loading);
     const ModelInfo info = model_info(model.get());

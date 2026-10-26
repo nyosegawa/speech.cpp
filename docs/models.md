@@ -41,7 +41,7 @@ A detection model takes no language, and `speech vad` without a model lists ever
 
 ## Names
 
-Every subcommand that takes a model (`tts`, `asr`, `vad`, `voice`, `info`, `serve`, `worker`) takes a model file's path,
+Every subcommand that takes a model (`tts`, `asr`, `vad`, `diarize`, `voice`, `info`, `serve`, `worker`) takes a model file's path,
 which ends in `.gguf`, or `NAME[:TYPE]`:
 
 - NAME is a name of the catalog, or the Hugging Face repository of its converted files.

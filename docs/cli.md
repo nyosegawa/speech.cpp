@@ -7,6 +7,7 @@ This page lists the subcommands of `speech` and their options. `speech <subcomma
 | [`speech tts`](#speech-tts) | speaks text into a WAVE file or to stdout |
 | [`speech asr`](#speech-asr) | writes the text of WAVE files, or of the microphone as someone speaks |
 | [`speech vad`](#speech-vad) | writes where someone speaks in WAVE files |
+| [`speech diarize`](#speech-diarize) | writes who speaks where in WAVE files |
 | [`speech voice`](#speech-voice) | makes a voice file for Irodori-TTS or Drama 3 from reference recordings |
 | [`speech info`](#speech-info) | prints what a model file says of its model, without loading it |
 | [`speech devices`](#speech-devices) | lists the devices a model can run on |
@@ -48,6 +49,9 @@ speech asr reazonspeech-v2 --vad silero-vad --live
 speech vad silero-vad --max-speech-duration-s 10 meeting.wav
 speech vad silero-vad --split regions/ meeting.wav       # regions/meeting-01.wav, regions/meeting-02.wav, ...
 
+# Who speaks where in a recording, as RTTM
+speech diarize Nemotron-3-Diarization-99M-F16.gguf --format rttm meeting.wav > meeting.rttm
+
 # What a model file holds, without loading it
 speech info irodori-tts-mf
 ```
@@ -58,9 +62,10 @@ speech info irodori-tts-mf
   fetched the first time it is used ([models.md](models.md)).
 - **`--device NAME`** is `auto` (the default: the first GPU, or the CPU on a machine without one), `gpu`, `cpu`, or a
   name that `speech devices` lists. **`--threads N`** is the CPU's threads; by default the machine's performance cores.
-- **Request options.** `speech tts`, `speech asr` and `speech vad` take every option of the C API's vocabulary as a flag
-  of its name in kebab-case: `duration_scale` is `--duration-scale` ([c-api.md](c-api.md#options)). The model refuses
-  an option it does not take, as the C API does: Qwen3-TTS answers `--speed 1.5` with `speech: unsupported (speed): ...`.
+- **Request options.** `speech tts`, `speech asr`, `speech vad` and `speech diarize` take every option of the C API's
+  vocabulary as a flag of its name in kebab-case: `duration_scale` is `--duration-scale` ([c-api.md](c-api.md#options)).
+  The model refuses an option it does not take, as the C API does: Qwen3-TTS answers `--speed 1.5` with
+  `speech: unsupported (speed): ...`.
   `speech info MODEL` lists the options a model takes, with their defaults and ranges. `speech serve` and
   `speech worker` take the same flags as the defaults of their requests.
 - A value follows its flag or an `=`: `--seed 7` or `--seed=7`. A number is read whole: `--steps 4x` is a usage error.
@@ -219,6 +224,28 @@ speech vad MODEL [options] AUDIO.wav...
   in order. Files of one name in different folders are refused, since their regions would take the same names.
 - stderr reports the load time and, for each file, its seconds of audio, the time to its regions, the RTFx and the
   number of regions.
+
+## speech diarize
+
+```
+speech diarize MODEL [options] AUDIO.wav...
+  --format text|json|rttm  text (the default), one JSON object per file and line, or RTTM
+  --device NAME --threads N
+  -v                       also report the release and the sample rate
+  --streaming-mode NAME --chunk-len N --onset X --min-duration-off S ... every request option
+```
+
+- Finds who speaks where in each WAVE file in the order given, with a diarization model
+  ([models/sortformer.md](models/sortformer.md)), in chunks of `--streaming-mode`, `offline` unless given. It reads the
+  files as `speech asr` does, and runs on the GPU unless `--device` says otherwise.
+- `text` writes one line per segment, `FILE<TAB>START<TAB>END<TAB>SPEAKER`, in order of their starts, with the times in
+  seconds and three decimals and the speaker numbered from 0 in the order they first speak in the file. A file without
+  speech writes no line.
+- `json` writes `{"file":…,"segments":[{"start":…,"end":…,"speaker":…}]}` for each file.
+- `rttm` writes `SPEAKER <id> 1 <start> <duration> <NA> <NA> speaker_<n> <NA> <NA>` for each segment, the file's name
+  without its folder and extension as its id, which DER's scorers read.
+- stderr reports the load time and, for each file, its seconds of audio, the time to its segments, the RTFx, and the
+  number of segments and speakers.
 
 ## speech voice
 

@@ -414,6 +414,19 @@ speech_status speech_detect(speech_request * request) {
     });
 }
 
+speech_status speech_diarize(speech_request * request) {
+    return guarded([&] {
+        return hear(request, SPEECH_TASK_DIARIZATION, [&](const std::vector<float> & samples, const RequestValues & values, Run & run, speech_result & result) {
+            const std::vector<SpeakerSegment> segments = request->model->engine->diarize(samples, values, run);
+            if (run.stopped()) return;
+            for (const SpeakerSegment & s : segments) {
+                result.segments.push_back({s.start, s.end, ""});
+                result.speakers.push_back(s.speaker);
+            }
+        });
+    });
+}
+
 const speech_result * speech_request_result(const speech_request * request) {
     return request ? request->result.get() : nullptr;
 }
@@ -440,6 +453,10 @@ size_t speech_result_segment_count(const speech_result * result) {
 
 speech_status speech_result_segment(const speech_result * result, size_t index, double * start, double * end, const char ** text) {
     return timed_text(result, result ? &result->segments : nullptr, index, start, end, text, "segment");
+}
+
+int speech_result_segment_speaker(const speech_result * result, size_t index) {
+    return result && index < result->speakers.size() ? result->speakers[index] : -1;
 }
 
 size_t speech_result_token_count(const speech_result * result) {

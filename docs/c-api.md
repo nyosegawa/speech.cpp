@@ -101,6 +101,22 @@ if (check(speech_request_new(model, &request)) &&
 speech_detection_free(detection);
 ```
 
+Who speaks where in a recording, each speaker's segments in order of their starts:
+
+```c
+if (check(speech_model_load("Nemotron-3-Diarization-99M-F16.gguf", NULL, &model)) &&
+    check(speech_request_new(model, &request)) &&
+    check(speech_request_set_audio(request, samples, n_samples, 48000)) &&
+    check(speech_diarize(request))) {
+    const speech_result * result = speech_request_result(request);
+    for (size_t i = 0; i < speech_result_segment_count(result); i++) {
+        double start, end;
+        speech_result_segment(result, i, &start, &end, NULL);
+        printf("%.2f %.2f speaker %d\n", start, end, speech_result_segment_speaker(result, i));
+    }
+}
+```
+
 The library loads files and never reaches the network: a program passes a model file's path. `speech pull NAME` prints
 the path of a model of the catalog.
 
@@ -140,9 +156,9 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
   [models/drama3.md](models/drama3.md#voices)).
 - **Requests.** `speech_request_new()` makes a request for one model. It takes a text (`speech_request_set_text()`) or
   audio (`speech_request_set_audio()`), and options through the setter of each option's type. `speech_synthesize()`
-  passes the audio to its callback as it is made, `speech_transcribe()` recognizes the whole audio at once, and
-  `speech_detect()` finds where someone speaks in it. A model does one task, and the calls of the others are
-  `unsupported`.
+  passes the audio to its callback as it is made, `speech_transcribe()` recognizes the whole audio at once,
+  `speech_detect()` finds where someone speaks in it, and `speech_diarize()` who speaks where. A model does one task, and
+  the calls of the others are `unsupported`.
   `speech_request_set_progress()` gives a callback that hears how far a request has come while it passes no audio.
   `speech_request_cancel()` stops a request, from any thread, at the next audio, step or stage; a request cancelled
   before it runs returns at once. Either returns `SPEECH_CANCELLED`.
@@ -150,9 +166,14 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
   rate of the audio to come; `speech_detection_push()` gives it samples, `speech_detection_end()` ends the audio, and
   `speech_detection_region_count()`, `speech_detection_region()` and `speech_detection_speaking()` read what it has found
   so far ([below](#detections)).
+- **Diarizations of audio that arrives.** `speech_diarization_start()`, `speech_diarization_push()` and
+  `speech_diarization_end()` do the same with a diarization model, and `speech_diarization_segment_count()`,
+  `speech_diarization_segment()`, `speech_diarization_settled()` and `speech_diarization_speaking()` read what it has
+  found so far ([below](#diarizations)).
 - **Results.** `speech_request_result()` gives what a request that returned `SPEECH_OK` or `SPEECH_CANCELLED` did: why it
   stopped (`complete`, `max_seconds`, `model_limit` or `cancelled`), the seed of a synthesis, the samples it passed, and
-  the regions of a detection as its segments, each with an empty text and no result text, the text of a recognition with
+  the regions of a detection as its segments, each with an empty text and no result text, the segments of a
+  diarization the same way with each one's speaker (`speech_result_segment_speaker()`), the text of a recognition with
   its segments and tokens when the request set `timestamps`, and the languages it heard
   (`speech_result_language_count()`, `speech_result_language()`), none for a model that names none, such as
   FastConformer, and none for a cancelled request. The seed is the request's, or one the library drew
@@ -167,8 +188,9 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
 - Each value is checked against what the model declares as it is set, and the request as a whole when it runs, before
   any work. A refused value or request is left as it was, to be fixed and run again. A request that has started its work
   runs once.
-- Audio may be at any common rate. The library resamples a recording to recognize or to detect speech in, and a reference
-  recording of a voice, to the model's rate (`speech_model_info_sample_rate()`); the audio it makes is at the model's rate.
+- Audio may be at any common rate. The library resamples a recording to recognize, to detect speech in or to diarize,
+  and a reference recording of a voice, to the model's rate (`speech_model_info_sample_rate()`); the audio it makes is at
+  the model's rate.
 - Text is normalized as each model's official code normalizes it, so Japanese copied from a macOS file name gets the
   same tokens as typed text.
 - A text longer than `speech_model_info_max_text_tokens()` is `out_of_range`, option `text`.
@@ -203,10 +225,49 @@ A detection finds the regions of audio that arrives a piece at a time, with a de
   audio pushed from 24, 44.1 or 48 kHz (8.6 ms from 8 kHz) until more arrives. The model computes a chunk (32 ms for
   Silero VAD) once its samples have arrived.
 - **Refusals.** A request that has audio, and a rate `speech_request_set_audio()` refuses, are `invalid_argument` with
-  the option `audio`; a push after the end, or after a push that failed, is `invalid_argument`. A synthesis or
-  recognition model is `unsupported`.
+  the option `audio`; a push after the end, or after a push that failed, is `invalid_argument`. A model of another task
+  is `unsupported`.
 - **Threads.** A detection is used by one thread at a time. A push computes while the model does nothing else, so the
   pushes of several detections on one model and its requests wait for each other.
+
+## Diarizations
+
+A diarization finds who speaks where in audio that arrives a piece at a time, with a diarization model such as
+[Nemotron 3 Diarization](models/sortformer.md).
+
+```c
+speech_diarization * diarization = NULL;
+size_t given = 0;
+if (check(speech_request_new(model, &request)) &&
+    check(speech_diarization_start(request, 48000, &diarization))) {  /* streaming_mode low_latency */
+    while (next_piece(&samples, &n_samples)) {
+        check(speech_diarization_push(diarization, samples, n_samples));
+        double start, end;
+        int speaker;
+        for (; given < speech_diarization_segment_count(diarization); given++) {
+            speech_diarization_segment(diarization, given, &start, &end, &speaker);
+            printf("%.2f %.2f speaker %d\n", start, end, speaker);  /* a segment has ended */
+        }
+        for (int s = 0; s < 8; s++) {
+            if (speech_diarization_speaking(diarization, s, &start)) { /* speaker s speaks, from start */ }
+        }
+    }
+    check(speech_diarization_end(diarization));  /* and gives the segments left */
+}
+speech_diarization_free(diarization);
+```
+
+- **The segments are `speech_diarize()`'s.** Once the audio has ended, they are the segments `speech_diarize()` gives for
+  all of it with the same options, however it was cut into pieces. Each diarization numbers its own speakers, from 0 in
+  the order they first speak.
+- **A segment is given once it is final**, and never changes: segments come in the order they end, not the order they
+  begin. `speech_diarization_settled()` gives the time before which everything is final: every segment that ends before
+  it has been given, and `speech_diarization_speaking()` gives the start of a speaker's segment that began before it and
+  goes on. That time trails the audio pushed by the streaming mode's latency (1.04 s for `low_latency`), and by
+  `pad_onset`, `min_duration_on` and `min_duration_off`.
+- **Streaming modes.** A diarization takes `low_latency` unless the request sets `streaming_mode`; `speech_diarize()`
+  takes `offline`. `speech_model_info_speakers()` gives the most speakers the model tells apart.
+- **Any rate, refusals and threads** are as for detections.
 
 ## Errors
 
@@ -260,7 +321,7 @@ Each model takes some of them, with ranges and defaults from its file, and `spee
 | Option | Type | Neutral | Taken by |
 |---|---|---|---|
 | `voice` | string | none | [Qwen3-TTS](models/qwen3-tts.md#options), [Irodori-TTS](models/irodori-tts.md#options), [Drama 3](models/drama3.md#options); required |
-| `language` | string | `auto` | every model but Silero VAD, which takes `auto` alone |
+| `language` | string | `auto` | every model but Silero VAD and Sortformer, which take `auto` alone |
 | `seed` | int | none | Qwen3-TTS, Irodori-TTS, Drama 3 |
 | `speed`, `seconds`, `duration_scale`, `steps` | float, float, float, int | 1, none, 1, none | Irodori-TTS |
 | `max_seconds` | float | none | Qwen3-TTS, Drama 3 (each chunk of a long text) |
@@ -276,6 +337,8 @@ Each model takes some of them, with ranges and defaults from its file, and `spee
 | `cfg_scale_text`, `cfg_scale_speaker`, `cfg_guidance_mode`, `cfg_min_t`, `cfg_max_t`, `truncation_factor`, `rescale_k`, `rescale_sigma`, `speaker_uncond_mode`, `sway_coeff`, `speaker_kv_scale`, `speaker_kv_min_t`, `speaker_kv_max_layers`, `cfg_scale_instructions` | float, but `cfg_guidance_mode` and `speaker_uncond_mode` string and `speaker_kv_max_layers` int | none | Irodori-TTS v4.1-Small (RF) |
 | `keep_tail`, `tail_window_size`, `tail_std_threshold`, `tail_mean_threshold` | bool, int, float, float | none | Irodori-TTS |
 | `threshold`, `min_speech_duration_ms`, `min_silence_duration_ms`, `speech_pad_ms`, `max_speech_duration_s` | float, int, int, int, float | none | [Silero VAD](models/silero-vad.md#options) |
+| `streaming_mode`, `spkcache_len`, `fifo_len`, `chunk_len`, `chunk_right_context`, `spkcache_update_period` | string, then int | none | [Sortformer](models/sortformer.md#streaming-modes) |
+| `onset`, `offset`, `pad_onset`, `pad_offset`, `min_duration_on`, `min_duration_off` | float | none | [Sortformer](models/sortformer.md#options) |
 
 - A value at an option's neutral value is accepted by every model. Any other value of an option a model does not take is
   `unsupported`. An option whose neutral value is "none" has none.
@@ -332,15 +395,16 @@ loaded on Metal, with two of its nine voices and four of its options shown:
 - `organization` to `weight_type` are the model's identity, from the general keys of its file.
   `finetune` and `version` are left out for a model whose name has none. `source` is the repository the file was
   converted from and the revision. `weight_type` is the type that holds most of the weights: `F32`, `F16`, `Q8_0`, `Q6_K`, `Q5_K` or `Q4_K`.
-- `architecture` is the family: `qwen3-tts`, `irodori-tts`, `drama3`, `fastconformer`, `qwen3-asr` or `silero-vad`. `layout` is
-  the version of the family's file layout. `task` is `synthesis`, `recognition` or `detection`; a detection model's
-  `languages` is empty.
+- `architecture` is the family: `qwen3-tts`, `irodori-tts`, `drama3`, `fastconformer`, `qwen3-asr`, `silero-vad` or
+  `sortformer`. `layout` is the version of the family's file layout. `task` is `synthesis`, `recognition`, `detection` or
+  `diarization`; a detection or diarization model's `languages` is empty, and a diarization model's `speakers` follows
+  `max_text_tokens`'s place, the most speakers it tells apart.
 - `incremental` is true for a model that passes audio while it still makes the rest (Qwen3-TTS, Drama 3), so that its first
   audio does not wait on the length of the text, and false for one that makes a request's whole speech before it decodes
   it (Irodori-TTS).
 - Each voice's `language`, `gender` and `description` are `""` where the file does not say. A voice added from a voice
   file or a recording says none, but for Drama 3, whose description names the voice's speakers (`speakers 0 and 1`). A
-  recognition or detection model has no `voices`, `incremental` or `max_text_tokens`.
+  model of another task than synthesis has no `voices`, `incremental` or `max_text_tokens`.
 - `voice_files` is true for a model that takes voices made from recordings; `voice_codec` then follows it, the hash a
   voice file must carry. `voice_recordings` is true for a model that adds a voice from a WAVE file as well (Irodori-TTS),
   and false for one that needs a voice file (Drama 3, whose voice files hold each recording's words).

@@ -118,6 +118,8 @@ struct speech_result {
     uint64_t samples = 0;
     std::string text;
     std::vector<TimedText> segments, tokens;
+    /** The speaker of each segment of a diarization. */
+    std::vector<int> speakers;
     std::vector<std::string> languages;
 };
 
@@ -200,6 +202,7 @@ inline const char * task_name(speech_task task) {
         case SPEECH_TASK_SYNTHESIS: return "synthesis";
         case SPEECH_TASK_RECOGNITION: return "recognition";
         case SPEECH_TASK_DETECTION: return "detection";
+        case SPEECH_TASK_DIARIZATION: return "diarization";
     }
     throw std::logic_error("a task the library does not know");
 }
@@ -210,11 +213,15 @@ inline const char * call_of(speech_task task) {
         case SPEECH_TASK_SYNTHESIS: return "speech_synthesize() to speak with it";
         case SPEECH_TASK_RECOGNITION: return "speech_transcribe() to recognize speech with it";
         case SPEECH_TASK_DETECTION: return "speech_detect() to find where someone speaks";
+        case SPEECH_TASK_DIARIZATION: return "speech_diarize() to find who speaks where";
     }
     throw std::logic_error("a task the library does not know");
 }
 
-/** Whether a model of `task` has languages, which its file names in general.languages: a detection model takes none. */
+/**
+ * Whether a model of `task` has languages, which its file names in general.languages: a detection or diarization model
+ * takes none.
+ */
 inline bool task_has_languages(speech_task task) {
-    return task != SPEECH_TASK_DETECTION;
+    return task != SPEECH_TASK_DETECTION && task != SPEECH_TASK_DIARIZATION;
 }

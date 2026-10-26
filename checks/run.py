@@ -11,7 +11,8 @@ GPU once with each attention. A check whose dumps or inputs are missing is skipp
 A check that exits with 2 refused its arguments, as a check refuses weights it cannot judge; that is reported apart and
 does not fail the run. Any other exit but 0 fails it. Each check's whole output goes to a log of its own in --logs.
 
-families: qwen3-tts, irodori-tts, drama3, qwen3-asr, fastconformer, silero-vad, common (the checks that take no model), all
+families: qwen3-tts, irodori-tts, drama3, qwen3-asr, fastconformer, silero-vad, sortformer, common (the checks that take no
+model), all
 
 usage: python3 checks/run.py <family>... [--build DIR] [--devices cpu,gpu] [--types F32] [--models PATH...]
                              [--reference DIR] [--references DIR] [--decoder-text FILE] [--only CHECK...]
@@ -29,7 +30,7 @@ import tempfile
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FAMILIES = ["qwen3-tts", "irodori-tts", "drama3", "qwen3-asr", "fastconformer", "silero-vad", "common"]
+FAMILIES = ["qwen3-tts", "irodori-tts", "drama3", "qwen3-asr", "fastconformer", "silero-vad", "sortformer", "common"]
 # general.file_type's values of the weight types speech.cpp writes, as weight_types() of src/common/storage.cpp lists
 # them; a script cannot read that table.
 FILE_TYPES = {0: "F32", 1: "F16", 7: "Q8_0", 18: "Q6_K", 16: "Q5_K", 14: "Q4_K"}
@@ -339,6 +340,18 @@ def silero_vad(model, devices, ctx):
     return [absent] if absent else [runs_on(device, "silero-vad-check", model, [out]) for device in devices]
 
 
+def sortformer(model, devices, ctx):
+    out = os.path.join(ctx.reference, "sortformer", "out")
+    absent = named_dumps("sortformer", model, out)
+    if absent:
+        return [absent]
+    # The frontend, the cache's update and the postprocessing run on the host.
+    runs = [Run(f"sortformer-{stage}-check", [model.path, out], None, model.label()) for stage in ("frontend", "cache", "segments")]
+    for device in devices:
+        runs += [runs_on(device, f"sortformer-{stage}-check", model, [out]) for stage in ("network", "stream")]
+    return runs
+
+
 def common(ctx):
     runs = [Run("fft-check", [], None, "")]
     resample = os.path.join(ctx.reference, "resample", "out")
@@ -349,7 +362,8 @@ def common(ctx):
     return runs
 
 
-PLANS = {"qwen3-tts": qwen3_tts, "irodori-tts": irodori_tts, "drama3": drama3, "qwen3-asr": qwen3_asr, "fastconformer": fastconformer, "silero-vad": silero_vad}
+PLANS = {"qwen3-tts": qwen3_tts, "irodori-tts": irodori_tts, "drama3": drama3, "qwen3-asr": qwen3_asr, "fastconformer": fastconformer, "silero-vad": silero_vad,
+         "sortformer": sortformer}
 
 
 def executable(build, check):

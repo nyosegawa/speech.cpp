@@ -87,6 +87,7 @@ std::string info_json(const speech_model_info & info) {
     if (f.family->make_voice) out += ",\"voice_codec\":" + json_string(d.voice_codec);
     out += std::string(",\"voice_recordings\":") + (d.voice_recordings ? "true" : "false");
     if (synthesis) out += ",\"max_text_tokens\":" + std::to_string(d.max_text_tokens);
+    if (f.family->task == SPEECH_TASK_DIARIZATION) out += ",\"speakers\":" + std::to_string(d.speakers);
     out += ",\"options\":[";
     std::vector<std::string> voices;
     for (size_t i = 0; i < d.options.size(); i++) {
@@ -272,6 +273,10 @@ const char * speech_model_info_voice_codec(const speech_model_info * info) {
 
 int speech_model_info_voice_recordings(const speech_model_info * info) {
     return info && info->file->described.voice_recordings ? 1 : 0;
+}
+
+int speech_model_info_speakers(const speech_model_info * info) {
+    return info ? info->file->described.speakers : 0;
 }
 
 size_t speech_model_info_max_text_tokens(const speech_model_info * info) {

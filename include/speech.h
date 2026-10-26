@@ -5,11 +5,11 @@
 #include <stdint.h>
 
 /*
- * The C API of speech.cpp on ggml: speech synthesis, speech recognition and the detection of speech with the models of
- * the families the library runs. A model does one task (speech_model_info_task()): a synthesis model turns the text of
- * a request into audio through speech_synthesize(), a recognition model turns the audio of a request into text through
- * speech_transcribe(), and a detection model finds where someone speaks in the audio of a request through
- * speech_detect().
+ * The C API of speech.cpp on ggml: speech synthesis, speech recognition, the detection of speech and the diarization of
+ * speakers with the models of the families the library runs. A model does one task (speech_model_info_task()): a
+ * synthesis model turns the text of a request into audio through speech_synthesize(), a recognition model turns the
+ * audio of a request into text through speech_transcribe(), a detection model finds where someone speaks in the audio of
+ * a request through speech_detect(), and a diarization model finds who speaks where through speech_diarize().
  *
  * What a request may ask of a model is one vocabulary of options (speech_option), each with a fixed name that the
  * worker, the HTTP server and the command line use verbatim. Each family declares which options it takes, with their
@@ -62,7 +62,7 @@ extern "C" {
  * version and a minor version of m or more. Version 3.0 is first released with speech.cpp 0.7.0, the option prompt
  * included, and a declaration added since says the version that added it.
  */
-#define SPEECH_API_VERSION_MINOR 3
+#define SPEECH_API_VERSION_MINOR 4
 
 /** The SPEECH_API_VERSION_MAJOR the library was built with, for a caller that loads it at run time. */
 SPEECH_API int speech_api_version_major(void);
@@ -421,7 +421,67 @@ typedef enum speech_option {
      * speed or nothing; the request then runs with true. A model on
      * the CPU, or one whose GPU holds every expert, takes either. Added in 3.3.
      */
-    SPEECH_OPT_EXPERTS_ON_CPU = 46
+    SPEECH_OPT_EXPERTS_ON_CPU = 46,
+    /**
+     * "streaming_mode", a string: the streaming configuration of a diarization, one of the names the model's file gives
+     * its model card's configurations (speech_model_info_option_choice()), compared with case: for Nemotron 3
+     * Diarization "offline", chunks of 27.2 s, and "low_latency", "very_low_latency" and "ultra_low_latency", which wait
+     * 1.04, 0.64 and 0.32 s of audio for each chunk. It has no default: speech_diarize() takes "offline", and a
+     * diarization of audio given a piece at a time the file's mode for streams, "low_latency". spkcache_len, fifo_len,
+     * chunk_len, chunk_right_context and spkcache_update_period each replace the value the mode gives. Added in 3.4.
+     */
+    SPEECH_OPT_STREAMING_MODE = 47,
+    /**
+     * "spkcache_len", an integer: the 80 ms frames a diarization's speaker cache keeps of the speech before, by which it
+     * tells the speakers it has heard apart, at least as many as the model's speakers times the silence frames it keeps
+     * for each and one more. Without it the streaming mode's. Added in 3.4.
+     */
+    SPEECH_OPT_SPKCACHE_LEN = 48,
+    /**
+     * "fifo_len", an integer of 0 or more: the 80 ms frames a diarization's FIFO queue keeps of the latest chunks before it
+     * gives them to the speaker cache. Without it the streaming mode's. Added in 3.4.
+     */
+    SPEECH_OPT_FIFO_LEN = 49,
+    /**
+     * "chunk_len", an integer of 1 or more: the 80 ms frames of a diarization's chunk, each step's new audio. Without it
+     * the streaming mode's. Added in 3.4.
+     */
+    SPEECH_OPT_CHUNK_LEN = 50,
+    /**
+     * "chunk_right_context", an integer of 0 or more: the 80 ms frames after a chunk that its step hears without
+     * diarizing them, which a stream waits for. Without it the streaming mode's. Added in 3.4.
+     */
+    SPEECH_OPT_CHUNK_RIGHT_CONTEXT = 51,
+    /**
+     * "spkcache_update_period", an integer of 1 or more: the 80 ms frames the FIFO queue gives the speaker cache at once
+     * when it is full, or, where that is less than a chunk or more than the queue holds with a chunk, as many as a chunk
+     * or as the queue then holds. Without it the streaming mode's. Added in 3.4.
+     */
+    SPEECH_OPT_SPKCACHE_UPDATE_PERIOD = 52,
+    /**
+     * "onset", a number from 0 to 1: the probability above which a speaker begins to speak, as NeMo's postprocessing of a
+     * diarization names it. Added in 3.4.
+     */
+    SPEECH_OPT_ONSET = 53,
+    /**
+     * "offset", a number from 0 to 1: the probability below which a speaker stops speaking; between the two a speaker
+     * goes on as before where onset is not below offset, and changes at every frame where it is. Added in 3.4.
+     */
+    SPEECH_OPT_OFFSET = 54,
+    /** "pad_onset", a number of 0 or more: the seconds a diarization's segment begins before its speech. Added in 3.4. */
+    SPEECH_OPT_PAD_ONSET = 55,
+    /**
+     * "pad_offset", a number of 0 or more: the seconds a segment ends after its speech; padded segments of one speaker that
+     * meet are joined. Added in 3.4.
+     */
+    SPEECH_OPT_PAD_OFFSET = 56,
+    /** "min_duration_on", a number of 0 or more: the seconds below which a padded segment is dropped. Added in 3.4. */
+    SPEECH_OPT_MIN_DURATION_ON = 57,
+    /**
+     * "min_duration_off", a number of 0 or more: the seconds below which a pause between two segments of one speaker that
+     * min_duration_on keeps is filled. Added in 3.4.
+     */
+    SPEECH_OPT_MIN_DURATION_OFF = 58
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */
@@ -494,7 +554,9 @@ typedef enum speech_task {
     /** Audio to text, through speech_transcribe(). */
     SPEECH_TASK_RECOGNITION = 1,
     /** Audio to the regions where someone speaks, through speech_detect(). Added in 3.1. */
-    SPEECH_TASK_DETECTION = 2
+    SPEECH_TASK_DETECTION = 2,
+    /** Audio to who speaks where, through speech_diarize(). Added in 3.4. */
+    SPEECH_TASK_DIARIZATION = 3
 } speech_task;
 
 /*
@@ -581,25 +643,26 @@ SPEECH_API const char * speech_model_info_architecture(const speech_model_info *
 /** The version of the family's file layout that the file has. */
 SPEECH_API uint32_t speech_model_info_layout(const speech_model_info * info);
 
-/** Whether the model speaks, recognizes speech or detects it. */
+/** Whether the model speaks, recognizes speech, detects it or diarizes its speakers. */
 SPEECH_API speech_task speech_model_info_task(const speech_model_info * info);
 
 /**
- * The sample rate in Hz of the audio a synthesis model makes, or of the audio a recognition or detection model takes.
- * Audio given at another rate, to recognize, to detect speech in or as a voice's reference, is resampled to it.
+ * The sample rate in Hz of the audio a synthesis model makes, or of the audio a recognition, detection or diarization
+ * model takes. Audio given at another rate, to recognize, to detect speech in, to diarize or as a voice's reference, is
+ * resampled to it.
  */
 SPEECH_API int speech_model_info_sample_rate(const speech_model_info * info);
 
 /**
  * Whether a synthesis model passes audio while it is still generating the rest (1), so that its first audio does not
  * wait on the length of the text, or generates a request's whole speech before it decodes the speech into audio (0).
- * 0 for a recognition or detection model.
+ * 0 for a recognition, detection or diarization model.
  */
 SPEECH_API int speech_model_info_incremental(const speech_model_info * info);
 
 /**
- * The number of languages the model speaks or recognizes; 0 for a detection model, whose file names no language and
- * which takes the language "auto" alone.
+ * The number of languages the model speaks or recognizes; 0 for a detection or diarization model, whose file names no
+ * language and which takes the language "auto" alone.
  */
 SPEECH_API size_t speech_model_info_language_count(const speech_model_info * info);
 
@@ -646,16 +709,25 @@ SPEECH_API const char * speech_model_info_voice_codec(const speech_model_info * 
  */
 SPEECH_API int speech_model_info_voice_recordings(const speech_model_info * info);
 
-/** The most tokens of text a synthesis request may have, in the model's own tokens; 0 for a recognition or detection model. */
+/**
+ * The most tokens of text a synthesis request may have, in the model's own tokens; 0 for a recognition, detection or
+ * diarization model.
+ */
 SPEECH_API size_t speech_model_info_max_text_tokens(const speech_model_info * info);
 
 /**
  * The number of the model's tokens that `text` takes, counted as a synthesis request counts it against
- * speech_model_info_max_text_tokens(), so that a caller can split a long text before it sends it. A recognition or
- * detection model is SPEECH_ERROR_UNSUPPORTED.
+ * speech_model_info_max_text_tokens(), so that a caller can split a long text before it sends it. A model of another
+ * task is SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_model_info_text_tokens(const speech_model_info * info, const char * text,
                                                        size_t * n_tokens);
+
+/**
+ * The most speakers a diarization model tells apart, which number the speakers of its segments from 0 (8 for Nemotron 3
+ * Diarization); 0 for a model of another task. Added in 3.4.
+ */
+SPEECH_API int speech_model_info_speakers(const speech_model_info * info);
 
 /** The number of options the model takes. */
 SPEECH_API size_t speech_model_info_option_count(const speech_model_info * info);
@@ -925,16 +997,14 @@ SPEECH_API speech_status speech_request_new(speech_model * model, speech_request
 /** Frees a request and its result. It must not be running. NULL is ignored. */
 SPEECH_API void speech_request_free(speech_request * request);
 
-/**
- * The text a synthesis request speaks, copied; it may not be empty. A recognition or detection model is
- * SPEECH_ERROR_UNSUPPORTED.
- */
+/** The text a synthesis request speaks, copied; it may not be empty. A model of another task is SPEECH_ERROR_UNSUPPORTED. */
 SPEECH_API speech_status speech_request_set_text(speech_request * request, const char * text);
 
 /**
- * The audio a recognition request recognizes, or a detection request finds speech in: `n_samples` mono samples,
- * nominally within [-1, 1], at `sample_rate` Hz, copied. Audio at a rate other than the model's is resampled to it when
- * the request runs. At least one sample is needed. A synthesis model is SPEECH_ERROR_UNSUPPORTED.
+ * The audio a recognition request recognizes, a detection request finds speech in, or a diarization request diarizes:
+ * `n_samples` mono samples, nominally within [-1, 1], at `sample_rate` Hz, copied. Audio at a rate other than the model's
+ * is resampled to it when the request runs. At least one sample is needed. A synthesis model is
+ * SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_request_set_audio(speech_request * request, const float * samples, size_t n_samples,
                                                   int sample_rate);
@@ -954,9 +1024,9 @@ SPEECH_API speech_status speech_request_set_bool(speech_request * request, speec
 /**
  * Receives how far a request has come while it does work that passes no audio: `done` rises from 0 to 1 as the
  * family's steps finish (the sampler's steps of a speech made whole before its audio, the stages and the decoding of
- * a recognition, the blocks of chunks of a detection). The time between two calls is that of one step, which for the
- * encoder of a long recording can be seconds. Returning nonzero stops the request. It runs on the thread that runs the
- * request.
+ * a recognition, the blocks of chunks of a detection, the chunks of a diarization). The time between two calls is that
+ * of one step, which for the encoder of a long recording can be seconds. Returning nonzero stops the request. It runs
+ * on the thread that runs the request.
  */
 typedef int (*speech_progress_callback)(double done, void * user_data);
 
@@ -987,8 +1057,8 @@ typedef int (*speech_audio_callback)(const float * samples, size_t n_samples, vo
  * predicts the speech's length, as Irodori-TTS does, refuses a length it cannot make once it has predicted it. Speech
  * that comes out not finite, as from a guidance scale that a float32 holds but whose products it does not, is never
  * passed on: the request fails with SPEECH_ERROR_OUT_OF_RANGE naming no option, since each value was within its range
- * and none is known to be at fault, and the caller makes a new request with smaller values. A recognition or detection
- * model is SPEECH_ERROR_UNSUPPORTED.
+ * and none is known to be at fault, and the caller makes a new request with smaller values. A model of another task is
+ * SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_synthesize(speech_request * request, speech_audio_callback on_audio, void * user_data);
 
@@ -996,7 +1066,7 @@ SPEECH_API speech_status speech_synthesize(speech_request * request, speech_audi
  * Recognizes the speech in a request's audio. It returns SPEECH_OK once the result holds the text, SPEECH_CANCELLED
  * once it was cancelled, or an error. The whole audio is recognized at once, or a model that takes a limited length
  * at once cuts it into parts it recognizes one after another and joins their texts, as Qwen3-ASR does past 1200 s;
- * how its time and memory grow with its length depends on the model. A synthesis or detection model is
+ * how its time and memory grow with its length depends on the model. A model of another task is
  * SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_transcribe(speech_request * request);
@@ -1007,10 +1077,23 @@ SPEECH_API speech_status speech_transcribe(speech_request * request);
  * the result holds them, none where no one speaks, SPEECH_CANCELLED once it was cancelled, or an error. The model takes
  * the audio in chunks, each after the one before, so that its time grows with the audio's length; the request's options
  * (threshold, min_speech_duration_ms, min_silence_duration_ms, speech_pad_ms, max_speech_duration_s) only turn the
- * chunks' speech probabilities into regions. A synthesis or recognition model is SPEECH_ERROR_UNSUPPORTED. Added in
- * 3.1.
+ * chunks' speech probabilities into regions. A model of another task is SPEECH_ERROR_UNSUPPORTED. Added in 3.1.
  */
 SPEECH_API speech_status speech_detect(speech_request * request);
+
+/**
+ * Finds who speaks where in a request's audio, which the result gives as its segments: each with its start and end in
+ * seconds from the start of the audio, rounded to 10 ms, the text "" and its speaker (speech_result_segment_speaker()),
+ * in order of their starts and, at the same start, of their speakers. Segments of different speakers overlap where they
+ * speak at once; those of one speaker are apart. It returns SPEECH_OK once the result holds them, none where no one
+ * speaks, SPEECH_CANCELLED once it was cancelled, or an error. A speaker is the model's own number for a voice, from 0,
+ * which Nemotron 3 Diarization gives in the order the voices first speak and keeps for the whole request; it does not
+ * name the person. The model takes the audio in chunks of its streaming_mode, "offline" unless the request sets one,
+ * each step hearing the speaker cache and FIFO queue the steps before it left, so that its time grows with the audio's
+ * length; onset, offset, pad_onset, pad_offset, min_duration_on and min_duration_off only turn each speaker's
+ * probabilities every 10 ms into segments. A model of another task is SPEECH_ERROR_UNSUPPORTED. Added in 3.4.
+ */
+SPEECH_API speech_status speech_diarize(speech_request * request);
 
 /*
  * Detections of audio that arrives a piece at a time, as from a microphone, for a detection model: the regions where
@@ -1024,8 +1107,8 @@ typedef struct speech_detection speech_detection;
  * Starts a detection of audio at `sample_rate` Hz, which speech_detection_push() gives, with the options of `request`,
  * checked as speech_detect() checks them and copied; the request is left as it was. A request that has audio is
  * SPEECH_ERROR_INVALID_ARGUMENT naming "audio", as its audio would go unused, and so is a rate that
- * speech_request_set_audio() refuses. A synthesis or recognition model is SPEECH_ERROR_UNSUPPORTED. On success
- * `*detection` is a detection that speech_detection_free() frees before the model. Added in 3.1.
+ * speech_request_set_audio() refuses. A model of another task is SPEECH_ERROR_UNSUPPORTED. On success `*detection` is
+ * a detection that speech_detection_free() frees before the model. Added in 3.1.
  */
 SPEECH_API speech_status speech_detection_start(const speech_request * request, int sample_rate, speech_detection ** detection);
 
@@ -1078,6 +1161,76 @@ SPEECH_API speech_status speech_detection_region(const speech_detection * detect
  */
 SPEECH_API int speech_detection_speaking(const speech_detection * detection, double * start, int * kept);
 
+/*
+ * Diarizations of audio that arrives a piece at a time, as from a microphone or a meeting's call, for a diarization model:
+ * the segments of each speaker, each given once nothing that follows can change it. A diarization keeps its speaker cache
+ * and FIFO queue from chunk to chunk, so that a speaker keeps its number for as long as it lasts, and two diarizations
+ * on one model number their speakers each its own way. Once the audio has ended, the segments are those
+ * speech_diarize() gives for all of it with the same options, however it was cut into pieces. A diarization is used by
+ * one thread at a time. Added in 3.4.
+ */
+typedef struct speech_diarization speech_diarization;
+
+/**
+ * Starts a diarization of audio at `sample_rate` Hz, which speech_diarization_push() gives, with the options of
+ * `request`, checked as speech_diarize() checks them and copied, the model's streaming_mode for streams,
+ * "low_latency", unless the request sets one; the request is left as it was. A request that has audio is
+ * SPEECH_ERROR_INVALID_ARGUMENT naming "audio", as its audio would go unused, and so is a rate that
+ * speech_request_set_audio() refuses. A model of another task is SPEECH_ERROR_UNSUPPORTED. On success `*diarization`
+ * is a diarization that speech_diarization_free() frees before the model. Added in 3.4.
+ */
+SPEECH_API speech_status speech_diarization_start(const speech_request * request, int sample_rate, speech_diarization ** diarization);
+
+/** Frees a diarization. NULL is ignored. Added in 3.4. */
+SPEECH_API void speech_diarization_free(speech_diarization * diarization);
+
+/**
+ * Gives the diarization the next `n_samples` mono samples, nominally within [-1, 1], at its rate, copied; none at all is
+ * allowed, and `samples` may then be NULL. The samples are resampled to the model's rate, which holds back a few
+ * milliseconds as a detection's push does; the model computes each chunk once its audio and its right context's have
+ * arrived, on the model's device while the model does nothing else, so that the pushes of diarizations on one model and
+ * the model's requests wait for each other, and gives the segments that become final. A diarization that has ended, or
+ * whose push or end failed, takes no more audio: SPEECH_ERROR_INVALID_ARGUMENT. Added in 3.4.
+ */
+SPEECH_API speech_status speech_diarization_push(speech_diarization * diarization, const float * samples, size_t n_samples);
+
+/**
+ * Ends the audio: the samples held back are resampled, the model computes the chunks left, the last right contexts cut
+ * short as the audio's end cuts them, and every segment left is given, after which the segments are those
+ * speech_diarize() gives for all of the audio pushed. A diarization that has ended, or whose push failed, is
+ * SPEECH_ERROR_INVALID_ARGUMENT. Added in 3.4.
+ */
+SPEECH_API speech_status speech_diarization_end(speech_diarization * diarization);
+
+/** The number of segments given so far. Added in 3.4. */
+SPEECH_API size_t speech_diarization_segment_count(const speech_diarization * diarization);
+
+/**
+ * The segment at `index` in the order given: its start and end in seconds from the start of the audio pushed and its
+ * speaker, as speech_diarize() gives a segment, each unless NULL. A segment is given once it is final, about as late as
+ * its end and the streaming mode's chunk and right context, so that the segments of different speakers come in the order
+ * they end rather than begin. A segment once given never changes. Added in 3.4.
+ */
+SPEECH_API speech_status speech_diarization_segment(const speech_diarization * diarization, size_t index, double * start, double * end,
+                                                    int * speaker);
+
+/**
+ * The time in seconds from the start of the audio pushed before which the diarization is final: every segment that ends
+ * before it has been given, and a segment that began before it and goes on past it keeps the start
+ * speech_diarization_speaking() gives. It trails the audio pushed by the streaming mode's latency, the chunk under way
+ * and its right context, and by pad_onset, min_duration_on, min_duration_off and 10 ms more, the reach of what later
+ * audio can still join, fill or keep. INFINITY once the audio has ended. Added in 3.4.
+ */
+SPEECH_API double speech_diarization_settled(const speech_diarization * diarization);
+
+/**
+ * Whether `speaker`, from 0 to below speech_model_info_speakers(), has a segment that began before
+ * speech_diarization_settled() and goes on past it (1), with its start in `*start` unless NULL, which the segment keeps
+ * once it is given; 0 when it has none, after speech_diarization_end() and for a speaker the model does not have. Added
+ * in 3.4.
+ */
+SPEECH_API int speech_diarization_speaking(const speech_diarization * diarization, int speaker, double * start);
+
 /** Why a request ended. */
 typedef enum speech_stop {
     /** It did all it was asked: the speech came to its end, or the audio was recognized or searched whole. */
@@ -1111,33 +1264,39 @@ SPEECH_API const speech_result * speech_request_result(const speech_request * re
 /** Why the request ended. */
 SPEECH_API speech_stop speech_result_stop(const speech_result * result);
 
-/** The seed a synthesis used, the request's or the one the library drew; -1 for a recognition and a detection. */
+/** The seed a synthesis used, the request's or the one the library drew; -1 for a model of another task. */
 SPEECH_API int64_t speech_result_seed(const speech_result * result);
 
 /**
  * The number of samples a synthesis passed to its callback, whose length in seconds is this over the sample rate; 0 for
- * a recognition and a detection.
+ * a model of another task.
  */
 SPEECH_API uint64_t speech_result_samples(const speech_result * result);
 
-/** The text a recognition found, "" when it heard none or was cancelled; NULL for a synthesis and a detection. */
+/** The text a recognition found, "" when it heard none or was cancelled; NULL for a model of another task. */
 SPEECH_API const char * speech_result_text(const speech_result * result);
 
 /**
  * The number of segments of a recognition that set timestamps: runs of tokens that end where the model's file says a
  * sentence ends (a separator at the end of a word, as NeMo cuts, or a break after any token, for a language written
  * without spaces), or with the last token. 0 without timestamps and for a synthesis. For a detection, the regions where
- * someone speaks, 0 where no one does and for a cancelled request.
+ * someone speaks, and for a diarization, the segments of its speakers, 0 where no one speaks and for a cancelled request.
  */
 SPEECH_API size_t speech_result_segment_count(const speech_result * result);
 
 /**
  * The segment at `index`: the start of its first token and the end of its last in seconds from the start of the
- * audio, and its text. The texts of the segments, joined in order, are the result's text. A region of a detection has
- * its start and end and the text "".
+ * audio, and its text. The texts of the segments, joined in order, are the result's text. A region of a detection and a
+ * segment of a diarization have their start and end and the text "".
  */
 SPEECH_API speech_status speech_result_segment(const speech_result * result, size_t index, double * start, double * end,
                                                const char ** text);
+
+/**
+ * The speaker of the segment at `index` of a diarization, from 0, as speech_diarize() says; -1 for a segment of another
+ * task and past the last. Added in 3.4.
+ */
+SPEECH_API int speech_result_segment_speaker(const speech_result * result, size_t index);
 
 /** The number of tokens of a recognition that set timestamps; 0 without timestamps and for a synthesis. */
 SPEECH_API size_t speech_result_token_count(const speech_result * result);
@@ -1153,13 +1312,13 @@ SPEECH_API speech_status speech_result_token(const speech_result * result, size_
 
 /**
  * The number of languages a recognition heard: those the model wrote before its text, or the language a request forced
- * on a model that the language steers, which the model's prompt writes for it. 0 for a synthesis, a cancelled request,
- * a model that writes no language (FastConformer, whose parakeet model of many languages tells them apart without
- * writing any), audio in which the model heard no speech (Qwen3-ASR's language None, or nothing written after a forced
- * language), and a name the model wrote that is none of its languages, which a warning in the log reports. A
- * recognition of audio that the model takes in parts (Qwen3-ASR past 1200 s) has the languages of its parts in the order
- * of the audio, one for each run of parts of the same language, as qwen-asr's merge_languages() merges them; one of a
- * single part has one at most. Added in 3.1.
+ * on a model that the language steers, which the model's prompt writes for it. 0 for a model of another task, a
+ * cancelled request, a model that writes no language (FastConformer, whose parakeet model of many languages tells them
+ * apart without writing any), audio in which the model heard no speech (Qwen3-ASR's language None, or nothing written
+ * after a forced language), and a name the model wrote that is none of its languages, which a warning in the log
+ * reports. A recognition of audio that the model takes in parts (Qwen3-ASR past 1200 s) has the languages of its parts
+ * in the order of the audio, one for each run of parts of the same language, as qwen-asr's merge_languages() merges
+ * them; one of a single part has one at most. Added in 3.1.
  */
 SPEECH_API size_t speech_result_language_count(const speech_result * result);
 

@@ -110,6 +110,7 @@ private:
             case SPEECH_TASK_SYNTHESIS: return synthesis_;
             case SPEECH_TASK_RECOGNITION: return recognition_;
             case SPEECH_TASK_DETECTION: return detection_;
+            case SPEECH_TASK_DIARIZATION: break;
         }
         throw std::logic_error("a task speech.h does not have");
     }

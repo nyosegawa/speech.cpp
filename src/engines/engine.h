@@ -94,6 +94,8 @@ struct FamilyInfo {
     /** Whether add_voice() takes a recording in a WAVE file, which it encodes, besides a voice file. */
     bool voice_recordings = false;
     size_t max_text_tokens = 0;
+    /** The most speakers a diarization model tells apart; 0 for a model of another task. */
+    int speakers = 0;
     std::vector<OptionSpec> options;
     /** What the file lacks of what the family takes, which a request is refused with by its own message. */
     std::vector<Lack> lacks;
@@ -212,10 +214,44 @@ public:
     virtual std::optional<Begun> open() const = 0;
 };
 
+/** A segment of one speaker of a diarization: its start and end in seconds from the start of the audio, and the speaker. */
+struct SpeakerSegment {
+    double start, end;
+    int speaker;
+};
+
+/**
+ * A diarization of mono audio at the model's rate that arrives a piece at a time, with a request's options: the segments
+ * given so far, each once it is final, which never change once given and, once the audio has ended, are those
+ * diarize() gives for the whole audio.
+ */
+class DiarizationStream {
+public:
+    virtual ~DiarizationStream() = default;
+
+    /** Takes the next `n` samples. */
+    virtual void push(const float * samples, size_t n) = 0;
+
+    /** Ends the audio and gives the segments left. */
+    virtual void end() = 0;
+
+    virtual const std::vector<SpeakerSegment> & segments() const = 0;
+
+    /**
+     * The time in seconds before which the diarization is final: every segment that ends before it has been given, and a
+     * segment that began before it and goes on past it keeps the start speaking() gives; +inf once the audio has ended.
+     */
+    virtual double settled() const = 0;
+
+    /** The start of the segment of `speaker` that began before settled() and goes on past it, if there is one. */
+    virtual std::optional<double> speaking(int speaker) const = 0;
+};
+
 /**
  * One loaded model of a family behind the C API, which has checked each value of a request against the family's table
  * and the request as a whole for what the table shows. A synthesis family overrides speak(), a recognition family
- * transcribe() and a detection family detect(); a family that takes voice files overrides add_voice().
+ * transcribe(), a detection family detect() and a diarization family diarize(); a family that takes voice files
+ * overrides add_voice().
  */
 class Engine {
 public:
@@ -245,6 +281,19 @@ public:
      * rules ask of them. It computes on the engine, which runs one of its calls at a time, and lives no longer.
      */
     virtual std::unique_ptr<DetectionStream> start_detection(const RequestValues & values);
+
+    /**
+     * The segments of mono samples at the model's sample rate where each speaker speaks, in order of their starts and,
+     * at the same start, of their speakers, telling `run` how far it has come, after checking what the family's rules
+     * ask of the request as a whole.
+     */
+    virtual std::vector<SpeakerSegment> diarize(const std::vector<float> & samples, const RequestValues & values, Run & run);
+
+    /**
+     * A diarization of audio that arrives a piece at a time, with the request's options, after checking what the family's
+     * rules ask of them. It computes on the engine, which runs one of its calls at a time, and lives no longer.
+     */
+    virtual std::unique_ptr<DiarizationStream> start_diarization(const RequestValues & values);
 
     /**
      * Adds a voice from a voice file or a WAVE file under a name the C API has checked is new, and returns what the
@@ -278,3 +327,6 @@ std::unique_ptr<Engine> load_qwen3_asr(const std::string & path, ggml_backend_t 
 
 FamilyInfo describe_silero_vad(const std::shared_ptr<const ModelFile> & file);
 std::unique_ptr<Engine> load_silero_vad(const std::string & path, ggml_backend_t backend, int threads);
+
+FamilyInfo describe_sortformer(const std::shared_ptr<const ModelFile> & file);
+std::unique_ptr<Engine> load_sortformer(const std::string & path, ggml_backend_t backend, int threads);

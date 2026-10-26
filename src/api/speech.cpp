@@ -21,6 +21,7 @@
 #include "qwen3-asr/layout.h"
 #include "qwen3-tts/layout.h"
 #include "silero-vad/layout.h"
+#include "sortformer/layout.h"
 
 // The C API's versions, statuses and errors, log, devices, load parameters, the table of families, the quantizing of
 // model files, and the models with their voices. The model information is in info.cpp, the requests in request.cpp
@@ -40,6 +41,7 @@ const Family families[] = {
     {SPEECH_TASK_RECOGNITION, fastconformer::layout, describe_fastconformer, load_fastconformer, nullptr},
     {SPEECH_TASK_RECOGNITION, qwen3_asr::layout, describe_qwen3_asr, load_qwen3_asr, nullptr},
     {SPEECH_TASK_DETECTION, silero_vad::layout, describe_silero_vad, load_silero_vad, nullptr},
+    {SPEECH_TASK_DIARIZATION, sortformer::layout, describe_sortformer, load_sortformer, nullptr},
 };
 
 thread_local std::string last_error;
@@ -105,6 +107,18 @@ const OptionName vocabulary[] = {
     {"decode_on_cpu", SPEECH_TYPE_BOOL},
     {"draft", SPEECH_TYPE_STRING},
     {"experts_on_cpu", SPEECH_TYPE_BOOL},
+    {"streaming_mode", SPEECH_TYPE_STRING},
+    {"spkcache_len", SPEECH_TYPE_INT},
+    {"fifo_len", SPEECH_TYPE_INT},
+    {"chunk_len", SPEECH_TYPE_INT},
+    {"chunk_right_context", SPEECH_TYPE_INT},
+    {"spkcache_update_period", SPEECH_TYPE_INT},
+    {"onset", SPEECH_TYPE_FLOAT},
+    {"offset", SPEECH_TYPE_FLOAT},
+    {"pad_onset", SPEECH_TYPE_FLOAT},
+    {"pad_offset", SPEECH_TYPE_FLOAT},
+    {"min_duration_on", SPEECH_TYPE_FLOAT},
+    {"min_duration_off", SPEECH_TYPE_FLOAT},
 };
 constexpr size_t kOptions = sizeof vocabulary / sizeof vocabulary[0];
 
@@ -153,6 +167,14 @@ std::vector<TimedText> Engine::detect(const std::vector<float> &, const RequestV
 
 std::unique_ptr<DetectionStream> Engine::start_detection(const RequestValues &) {
     throw std::logic_error("the family's engine does not detect speech, though the table of families says it does");
+}
+
+std::vector<SpeakerSegment> Engine::diarize(const std::vector<float> &, const RequestValues &, Run &) {
+    throw std::logic_error("the family's engine does not diarize speakers, though the table of families says it does");
+}
+
+std::unique_ptr<DiarizationStream> Engine::start_diarization(const RequestValues &) {
+    throw std::logic_error("the family's engine does not diarize speakers, though the table of families says it does");
 }
 
 std::string Engine::add_voice(const std::string &, const std::string &) {

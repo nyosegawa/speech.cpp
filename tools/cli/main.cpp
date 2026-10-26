@@ -36,7 +36,7 @@ namespace {
 /** The subcommands in the groups the overview lists them in. */
 std::vector<std::pair<const char *, std::vector<Command>>> groups() {
     return {
-        {"Speak and transcribe", {tts_command(), asr_command(), vad_command()}},
+        {"Speak and transcribe", {tts_command(), asr_command(), vad_command(), diarize_command()}},
         {"Serve", {serve_command(), worker_command()}},
         {"Models", {models_command(), pull_command(), rm_command(), info_command(), voice_command(), quantize_command()}},
         {"This installation", {devices_command(), update_command()}},

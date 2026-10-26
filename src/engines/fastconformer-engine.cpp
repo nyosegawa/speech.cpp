@@ -15,7 +15,7 @@ public:
      * milliseconds, the encoder runs as one graph, and the decoding steps frame by frame.
      */
     Recognized transcribe(const std::vector<float> & samples, const RequestValues & values, Run & run) override {
-        const fastconformer::Frontend & frontend = recognizer_.frontend();
+        const NemoFrontend & frontend = recognizer_.frontend();
         const std::vector<float> features = frontend.features(samples);
         if (!run.progress(1.0 / 3)) return {};
         const std::vector<float> projected = recognizer_.encode(features, frontend.frames(samples.size()));
@@ -48,7 +48,7 @@ public:
         // default, a decoding there makes the CPU's copy of the decoding's tensors, which a model on a GPU makes when a
         // decoding first computes on the CPU.
         const std::vector<float> second((size_t) recognizer_.sample_rate(), 0.0f);
-        const fastconformer::Frontend & frontend = recognizer_.frontend();
+        const NemoFrontend & frontend = recognizer_.frontend();
         const std::vector<float> projected = recognizer_.encode(frontend.features(second), frontend.frames(second.size()));
         recognizer_.decoding(projected, recognizer_.decodings().front(), fastconformer::DecodeOn::Device);
         if (fastconformer::quantized_decoding(recognizer_.model())) {

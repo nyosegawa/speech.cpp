@@ -64,7 +64,7 @@ std::string drawn_listing(FILE * out, size_t width) {
     const size_t columns = (size_t) terminal::columns(out);
     std::string text = paint(Color::Bold, "Models of speech.cpp " + std::string(speech_version()), out) +
                        paint(Color::Gray, ", fetched into " + model_dir().u8string(), out) + "\n";
-    for (const char * task : {"synthesis", "recognition", "detection"}) {
+    for (const char * task : {"synthesis", "recognition", "detection", "diarization"}) {
         std::string title = task;
         title[0] = (char) std::toupper((unsigned char) title[0]);
         text += "\n" + paint(Color::Bold, title, out) + "\n";

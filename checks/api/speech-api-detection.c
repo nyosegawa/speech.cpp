@@ -166,6 +166,10 @@ static int check_refusals(speech_model * model, const char * model_path, const f
     ok &= expect(speech_request_set_text(r, "明日の東京は晴れです。"), SPEECH_ERROR_UNSUPPORTED, "text", "a text for a detection");
     ok &= expect(speech_synthesize(r, ignore_audio, NULL), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_synthesize() of a detection model");
     ok &= expect(speech_transcribe(r), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_transcribe() of a detection model");
+    ok &= expect(speech_diarize(r), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_diarize() of a detection model");
+    speech_diarization * diarization = NULL;
+    ok &= expect(speech_diarization_start(r, rate, &diarization), SPEECH_ERROR_UNSUPPORTED, NULL, "a diarization of a detection model") &&
+          diarization == NULL;
     ok &= expect(speech_detect(r), SPEECH_ERROR_INVALID_ARGUMENT, "audio", "a detection without audio");
     // A request refused before its work is fixed and run again; one that has done its work runs once.
     ok &= expect(speech_request_set_audio(r, samples, n, rate), SPEECH_OK, NULL, "the audio") &&

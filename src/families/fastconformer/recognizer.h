@@ -8,7 +8,7 @@
 #include "decoder.h"
 #include "detokenizer.h"
 #include "encoder.h"
-#include "frontend.h"
+#include "nemo-frontend.h"
 #include "ggml-cpu.h"
 #include "model-file.h"
 #include "times.h"
@@ -82,7 +82,7 @@ public:
 
     int sample_rate() const { return frontend_.sample_rate(); }
     const ModelFile & model() const { return model_; }
-    const Frontend & frontend() const { return frontend_; }
+    const NemoFrontend & frontend() const { return frontend_; }
     const Encoder & encoder() const { return encoder_; }
     /** The prediction network and the joint on the model's device. */
     const PredictionNetwork & prediction() const { return device_.prediction; }
@@ -137,7 +137,7 @@ private:
     bool on_cpu_;
     int threads_;
     ModelFile model_;
-    Frontend frontend_;
+    NemoFrontend frontend_;
     Encoder encoder_;
     std::vector<std::string> decoding_names_;
     Transducer device_;

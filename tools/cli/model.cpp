@@ -260,6 +260,7 @@ void print_info(const speech_model_info * m, bool meta, FILE * out) {
                     (synthesis ? speech_model_info_incremental(m) ? ", passing audio while it makes the rest" : ", making the whole speech before its audio" : ""));
     const size_t languages = speech_model_info_language_count(m);
     row("languages", languages ? list(languages, [&](size_t i) { return std::string(speech_model_info_language(m, i)); }) : "none");
+    if (speech_model_info_task(m) == SPEECH_TASK_DIARIZATION) row("speakers", "up to " + std::to_string(speech_model_info_speakers(m)) + ", numbered from 0");
     if (synthesis) {
         const size_t n = speech_model_info_voice_count(m);
         if (n == 0) row("voices", "none of its own; add them with --add-voice");

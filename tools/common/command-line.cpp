@@ -216,6 +216,7 @@ const char * task_prefix(speech_task task) {
         case SPEECH_TASK_SYNTHESIS: return "tts";
         case SPEECH_TASK_RECOGNITION: return "asr";
         case SPEECH_TASK_DETECTION: return "vad";
+        case SPEECH_TASK_DIARIZATION: return "diarize";
     }
     return "";
 }

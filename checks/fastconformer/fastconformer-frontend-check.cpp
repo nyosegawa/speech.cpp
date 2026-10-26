@@ -10,9 +10,9 @@
 #include "backend.h"
 #include "compare.h"
 #include "reference-dumps.h"
-#include "fastconformer/frontend.h"
 #include "fastconformer/layout.h"
 #include "ggml-cpu.h"
+#include "nemo-frontend.h"
 #include "npy.h"
 
 using namespace fastconformer;
@@ -30,7 +30,7 @@ int main(int argc, char ** argv) {
         bool ok = true;
         {
             const ModelFile model(args[1], backend, layout);
-            const Frontend frontend(model);
+            const NemoFrontend frontend(model, "fastconformer.", true);
             for (const auto & d : reference_dumps(args[2], model)) {
                 const Npy audio = read_npy((d / "audio.npy").u8string());
                 const Npy want = read_npy((d / "features.npy").u8string());

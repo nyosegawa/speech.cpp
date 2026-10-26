@@ -108,6 +108,12 @@ int check_detection(int argc, char ** argv);
 int check_detection_stream(speech_model * model, float * const * audio, const size_t * lengths, const char * const * names, int n_dumps);
 int check_recognition(int argc, char ** argv);
 
+/**
+ * The checks of a diarization model: `argv` is <model.gguf> <input folder of reference/sortformer/dump.py>... [--device
+ * NAME]. Returns the exit status.
+ */
+int check_diarization(int argc, char ** argv);
+
 /** The sentence a synthesis model speaks in most checks. */
 #define SENTENCE "明日の東京は晴れで、最高気温は二十四度の予報です。"
 

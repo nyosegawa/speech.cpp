@@ -46,7 +46,7 @@ struct CatalogChoice {
 };
 
 /** Which models fit the first argument of a subcommand. */
-enum class ModelKind { Any, Synthesis, Recognition, Detection, VoiceFiles };
+enum class ModelKind { Any, Synthesis, Recognition, Detection, Diarization, VoiceFiles };
 
 /** The catalog of this release, in the order of catalog.json. */
 const std::vector<CatalogModel> & catalog();
