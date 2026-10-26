@@ -66,7 +66,7 @@ void send_file(const PageFile & file, httplib::Response & res) {
 }
 
 speech_task task_of(const CatalogModel & model) {
-    for (speech_task task : {SPEECH_TASK_SYNTHESIS, SPEECH_TASK_RECOGNITION, SPEECH_TASK_DETECTION}) {
+    for (speech_task task : {SPEECH_TASK_SYNTHESIS, SPEECH_TASK_RECOGNITION, SPEECH_TASK_DETECTION, SPEECH_TASK_DIARIZATION}) {
         if (model.task == task_name(task)) return task;
     }
     throw std::logic_error("the catalog gives " + model.name + " the task " + model.task + ", which speech.h does not have");

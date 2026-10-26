@@ -49,7 +49,7 @@ const char * use_of(speech_task task) {
         case SPEECH_TASK_SYNTHESIS: return "/v1/audio/speech";
         case SPEECH_TASK_RECOGNITION: return "/v1/audio/transcriptions";
         case SPEECH_TASK_DETECTION: return "chunking_strategy of /v1/audio/transcriptions and server_vad of /v1/realtime";
-        case SPEECH_TASK_DIARIZATION: break;
+        case SPEECH_TASK_DIARIZATION: return "diarized_json of /v1/audio/transcriptions and diarization of /v1/realtime";
     }
     throw std::logic_error("a task speech.h does not have");
 }
@@ -187,8 +187,9 @@ private:
 
     /**
      * Recognizes the form's WAV file, or with chunking_strategy each region of it where the detection model finds that
-     * someone speaks, and answers with its text once it is done, as json, text or verbose_json, which also carries the
-     * language the model heard, and with why the recognition ended in X-Speech-Stop.
+     * someone speaks, and answers with its text once it is done, as json, text, verbose_json, which also carries the
+     * language the model heard, or diarized_json, whose regions carry the speakers the diarization model finds in the
+     * whole file, and with why the recognition ended in X-Speech-Stop.
      */
     void transcription(std::shared_ptr<Served> served, const httplib::Request & req, httplib::Response & res) {
         const auto info = served->info();
@@ -212,8 +213,14 @@ private:
         job->method = req.method;
         job->path = req.path;
         job->client = req.remote_addr;
+        const std::string recognizer = speech_model_info_name(info.get());
         if (asked.regions) {
-            job->detector = detector(speech_model_info_name(info.get()), res);
+            job->detector = needed(SPEECH_TASK_DETECTION, "chunking_strategy",
+                                   {400, "chunking_strategy recognizes the regions where a speech detection model finds that someone speaks, and this "
+                                         "server holds none. Give speech serve one beside the recognition model, as in speech serve " + recognizer +
+                                         " silero-vad, or leave chunking_strategy out.",
+                                    "chunking_strategy", "unsupported_parameter"},
+                                   res);
             if (!job->detector) return;
             try {
                 job->detection = detection_request(job->detector->get(), asked.samples, asked.sample_rate,
@@ -223,6 +230,21 @@ private:
                 const std::string member = server_vad_member(e.option());
                 if (!member.empty()) error.param = "chunking_strategy[" + member + "]";
                 send_error(res, error);
+                return;
+            }
+        }
+        if (asked.format == "diarized_json") {
+            job->diarizer = needed(SPEECH_TASK_DIARIZATION, "diarized_json",
+                                   {400, "\"response_format\": \"diarized_json\" gives each region the speakers that a speech diarization model "
+                                         "finds, and this server holds none. Give speech serve one beside the other models, as in speech serve " +
+                                         recognizer + " silero-vad Nemotron-3-Diarization-99M-F16.gguf, or ask for another response_format.",
+                                    "response_format", "unsupported_value"},
+                                   res);
+            if (!job->diarizer) return;
+            try {
+                job->diarization = diarization_request(job->diarizer->get(), asked.samples, asked.sample_rate, job->diarizer->defaults());
+            } catch (const Failure & e) {
+                send_error(res, openai::library_error(e));
                 return;
             }
         }
@@ -255,27 +277,27 @@ private:
             res.set_content(job->transcript.text, "text/plain; charset=utf-8");
         } else if (asked.format == "verbose_json") {
             res.set_content(openai::transcription_verbose_json(job->transcript, job->duration, asked.timestamps), "application/json");
+        } else if (asked.format == "diarized_json") {
+            res.set_content(openai::transcription_diarized_json(job->transcript, job->duration, job->regions, job->parts, job->speakers),
+                            "application/json");
         } else {
             res.set_content(openai::transcription_json(job->transcript.text), "application/json");
         }
     }
 
     /**
-     * The detection model that chunking_strategy needs; otherwise answers a 400 that says to give speech serve one, or a
-     * 503 while the page loads one.
+     * The model of `task` that a request's `need` needs; otherwise answers `none`, a 400 that says to give speech serve
+     * one, or a 503 while the page loads one.
      */
-    std::shared_ptr<Served> detector(const std::string & recognizer, httplib::Response & res) const {
-        if (auto served = models_.of(SPEECH_TASK_DETECTION)) return served;
-        if (const std::string coming = models_.replacing(SPEECH_TASK_DETECTION); !coming.empty()) {
+    std::shared_ptr<Served> needed(speech_task task, const std::string & need, const ApiError & none, httplib::Response & res) const {
+        if (auto served = models_.of(task)) return served;
+        if (const std::string coming = models_.replacing(task); !coming.empty()) {
             res.set_header("Retry-After", "5");
-            send_error(res, {503, "The speech detection model, which chunking_strategy needs, is being loaded (" + coming +
+            send_error(res, {503, "The speech " + std::string(task_name(task)) + " model, which " + need + " needs, is being loaded (" + coming +
                                       "); send the request again once it is in place.", "", "model_loading"});
             return nullptr;
         }
-        send_error(res, {400, "chunking_strategy recognizes the regions where a speech detection model finds that someone speaks, and this server "
-                              "holds none. Give speech serve one beside the recognition model, as in speech serve " + recognizer + " silero-vad, or "
-                              "leave chunking_strategy out.",
-                         "chunking_strategy", "unsupported_parameter"});
+        send_error(res, none);
         return nullptr;
     }
 };
@@ -420,20 +442,21 @@ int run_serve(const CommandLine & line, FILE *) {
 Command serve_command() {
     Command c;
     c.name = "serve";
-    c.usage = "serve [MODEL [MODEL [MODEL]]] [options]";
+    c.usage = "serve [MODEL [MODEL [MODEL [MODEL]]]] [options]";
     c.summary = "serve models over HTTP with OpenAI's audio API, and a page to try them";
     c.description =
-        "Loads each MODEL, a synthesis model, a recognition model and a detection model at most, warmed up unless\n"
-        "--no-warmup, adds the voices of --add-voice to the synthesis model, and serves them over HTTP: POST\n"
-        "/v1/audio/speech, POST /v1/audio/transcriptions, which with chunking_strategy recognizes the regions where the\n"
-        "detection model finds speech, GET /v1/models, GET /health, and OpenAI's Realtime transcription over a WebSocket at\n"
-        "/v1/realtime, which transcribes each buffer the client commits, or with server_vad each region of the detection\n"
-        "model, and the text agreed so far while it is said. It has no authentication and no TLS, and refuses a\n"
-        "request that a web page at another origin than --cors-origin's sends. On 127.0.0.1, ::1 or localhost it also\n"
-        "serves a page on which to pick models of the catalog, fetch them and try them, at the address it prints;\n"
-        "--open opens it, and starts the server without a model if none is given. A request option given as a flag is\n"
-        "the default, in place of the model's own, of every request that does not set it on each MODEL that takes it; a\n"
-        "model the page loads keeps its own defaults.";
+        "Loads each MODEL, a synthesis model, a recognition model, a detection model and a diarization model at most,\n"
+        "warmed up unless --no-warmup, adds the voices of --add-voice to the synthesis model, and serves them over HTTP:\n"
+        "POST /v1/audio/speech, POST /v1/audio/transcriptions, which with chunking_strategy recognizes the regions where\n"
+        "the detection model finds speech and with response_format diarized_json gives each its speakers, GET /v1/models,\n"
+        "GET /health, and OpenAI's Realtime transcription over a WebSocket at /v1/realtime, which transcribes each buffer\n"
+        "the client commits, or with server_vad each region of the detection model, and the text agreed so far while it\n"
+        "is said, and with session.audio.input.diarization gives each utterance its speakers. It has no authentication\n"
+        "and no TLS, and refuses a request that a web page at another origin than --cors-origin's sends. On 127.0.0.1,\n"
+        "::1 or localhost it also serves a page on which to pick models of the catalog, fetch them and try them, at the\n"
+        "address it prints; --open opens it, and starts the server without a model if none is given. A request option\n"
+        "given as a flag is the default, in place of the model's own, of every request that does not set it on each\n"
+        "MODEL that takes it; a model the page loads keeps its own defaults.";
     c.flags = {
         {"--host", "ADDRESS", false, "the address to listen on, 127.0.0.1 unless given"},
         {"--port", "N", false, "the port, 8080 unless given; 0 for any free one"},
@@ -448,7 +471,7 @@ Command serve_command() {
     c.request_options = true;
     c.task_options = true;
     c.model = ModelKind::Any;
-    c.max_args = 3;
+    c.max_args = 4;
     c.run = run_serve;
     c.release_notice = ReleaseNotice::AtStart;
     return c;

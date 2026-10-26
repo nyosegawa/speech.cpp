@@ -14,7 +14,7 @@
 // takes; one that runs requests also takes every option of the C API's vocabulary as a flag of its name in kebab-case,
 // read by the option's type, so that an option the library adds is a flag without the parser changing. A subcommand
 // that holds a model of each task also takes each option after the name of a task's subcommand and a dot, as
-// --asr.language, for the model of that task alone. A flag's value
+// --asr.language or --diarize.streaming-mode, for the model of that task alone. A flag's value
 // follows it or an "=" ("--seed 7", "--seed=7"), but for a boolean option, which is true alone and takes "=true" or
 // "=false" ("--do-sample=false"); "--" ends the flags, so that an argument may begin with "-".
 
@@ -53,7 +53,7 @@ struct Command {
     std::vector<Flag> flags;
     /** Whether every request option of the vocabulary is a flag of the subcommand. */
     bool request_options = false;
-    /** Whether a request option's flag also takes a task's prefix, --tts., --asr. or --vad., for that task's model. */
+    /** Whether a request option's flag also takes a task's prefix, --tts., --asr., --vad. or --diarize., for that task's model. */
     bool task_options = false;
     /**
      * For a subcommand whose first argument is MODEL, the models that fit it: a command line without one is told what

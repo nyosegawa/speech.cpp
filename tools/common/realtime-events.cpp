@@ -10,6 +10,25 @@ namespace realtime {
 
 using openai::ApiError;
 
+namespace {
+
+/** Seconds of the session's audio as the events write them, in whole milliseconds. */
+std::string ms(double seconds) {
+    return std::to_string(std::llround(seconds * 1000));
+}
+
+/** A completion's speakers as the events write them: [{"speaker", "start_ms", "end_ms"}]. */
+std::string speakers_of(const std::vector<SpeakerSegment> & segments) {
+    std::string out = "[";
+    for (size_t i = 0; i < segments.size(); i++) {
+        out += std::string(i ? "," : "") + "{\"speaker\":" + json_string(speaker_label(segments[i].speaker)) + ",\"start_ms\":" + ms(segments[i].start) +
+               ",\"end_ms\":" + ms(segments[i].end) + "}";
+    }
+    return out + "]";
+}
+
+}  // namespace
+
 ApiError error_of(std::exception_ptr failure) {
     try {
         std::rethrow_exception(failure);
@@ -63,7 +82,6 @@ void Events::utterance(const utterances::Event & e) {
     const std::string id = item(e.utterance);
     const std::string item_id = ",\"item_id\":" + json_string(id);
     const std::string content = item_id + ",\"content_index\":0";
-    const auto ms = [](double seconds) { return std::to_string(std::llround(seconds * 1000)); };
     switch (e.kind) {
         case Kind::SpeechStarted:
             emit("input_audio_buffer.speech_started", ",\"audio_start_ms\":" + ms(e.at) + item_id);
@@ -91,7 +109,8 @@ void Events::utterance(const utterances::Event & e) {
             for (const std::string & tag : t.languages) languages += (languages.empty() ? "" : ",") + std::string("{\"code\":") + json_string(tag) + "}";
             emit("conversation.item.input_audio_transcription.completed",
                  content + ",\"transcript\":" + json_string(t.text) + ",\"usage\":{\"type\":\"duration\",\"seconds\":" + json_number(e.duration) + "}" +
-                     (languages.empty() ? "" : ",\"languages\":[" + languages + "]") + ",\"stop\":\"" + speech_stop_name(t.stop) + "\"");
+                     (languages.empty() ? "" : ",\"languages\":[" + languages + "]") + ",\"stop\":\"" + speech_stop_name(t.stop) + "\"" +
+                     (e.speakers ? ",\"speakers\":" + speakers_of(*e.speakers) : ""));
             break;
         }
         case Kind::Failed:

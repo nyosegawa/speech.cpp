@@ -29,7 +29,9 @@ The files are made from the official checkpoint with `reference/sortformer/conve
 - Audio that arrives a piece at a time gives the segments of the whole audio through the C API's diarizations
   ([c-api.md](../c-api.md#diarizations)), each once nothing that follows can change it. Each diarization numbers its
   own speakers.
-- `speech diarize` and the C API's `speech_diarize()` and diarizations take it; `speech worker` does not.
+- `speech diarize`, `speech asr --diarize` ([cli.md](../cli.md#speakers)), `speech serve`, in `diarized_json` and in
+  Realtime sessions ([server.md](../server.md#speakers)), and the C API's `speech_diarize()` and diarizations take it;
+  `speech worker` does not.
 
 ## Streaming modes
 

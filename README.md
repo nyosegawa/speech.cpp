@@ -153,8 +153,9 @@ every subcommand and option.
 
 ## Server and page
 
-`speech serve` holds a synthesis model, a recognition model and a detection model, and answers
-`POST /v1/audio/speech` and `POST /v1/audio/transcriptions` as OpenAI's audio API does, for a web app, a script or curl:
+`speech serve` holds a synthesis model, a recognition model, a detection model and a diarization model, and answers
+`POST /v1/audio/speech` and `POST /v1/audio/transcriptions` as OpenAI's audio API does, with the speakers of
+`diarized_json`, for a web app, a script or curl:
 
 ```sh
 speech serve qwen3-tts-0.6b qwen3-asr-0.6b

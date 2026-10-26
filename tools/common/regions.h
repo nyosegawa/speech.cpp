@@ -67,8 +67,9 @@ void check_recognition(speech_model * recognizer, const std::vector<RequestOptio
 /**
  * Recognizes each region of `samples` alone on `recognizer` with `options`, and joins the results with append_part(),
  * the times of the segments and tokens (with `timestamps`) moved to those of the whole audio, after check_recognition(),
- * so audio without regions gives "". It returns nothing once cancelled.
+ * so audio without regions gives "". `parts`, when given, receives each region's recognition as it is, in order. It
+ * returns nothing once cancelled.
  */
 std::optional<Transcript> transcribe_regions(speech_model * recognizer, const std::vector<float> & samples, int rate,
                                              const std::vector<Region> & regions, const std::vector<RequestOption> & options,
-                                             bool timestamps, Cancellation & cancellation);
+                                             bool timestamps, Cancellation & cancellation, std::vector<Transcript> * parts = nullptr);

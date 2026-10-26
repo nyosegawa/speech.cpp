@@ -107,6 +107,20 @@ public:
         return models_.of(SPEECH_TASK_DETECTION).get() == detection.model();
     }
 
+    std::unique_ptr<Diarization> diarize(const std::vector<RequestOption> & options) override {
+        const auto on = models_.of(SPEECH_TASK_DIARIZATION);
+        if (!on) {
+            throw ApiError{400, "diarization gives each utterance the speakers a speech diarization model finds, and this server holds none. Give "
+                                "speech serve one beside the recognition model, or give diarization null.", "", "unsupported_value"};
+        }
+        return std::make_unique<Diarization>(on->get(), on, options, realtime::kRate);
+    }
+
+    std::vector<RequestOption> diarization_defaults() override {
+        const auto on = models_.of(SPEECH_TASK_DIARIZATION);
+        return on ? on->defaults() : std::vector<RequestOption>();
+    }
+
 private:
     static void log(const std::string & item, size_t samples, Clock::time_point arrived, Clock::time_point started, const std::string & outcome) {
         char line[128];

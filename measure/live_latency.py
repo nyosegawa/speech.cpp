@@ -31,6 +31,11 @@ records:
 - whether the completed transcript is the text of the same samples, the region the server's detection cut found by
   `speech vad` with server_vad's options, sent afterwards to /v1/audio/transcriptions of the same server.
 
+With --diarize, each server also holds the diarization model MODEL and each session asks for diarization with its
+defaults (session.audio.input.diarization {}), so that the server holds each completed transcript until the diarization
+has settled its utterance's speakers: the finalization latency of a build run with it and without it gives the time that
+wait adds, and the report gives each a line of its own.
+
 For each server, it records its peak memory: the peak physical footprint on macOS (as `/usr/bin/time -l` reports it),
 the peak working set on Windows and VmHWM on Linux, none of which counts the GPU's own memory. Builds are run in turn
 within each round (A B A B ...), every model in each. Each run appends its rows to <work dir>/results.jsonl, which keep
@@ -40,8 +45,9 @@ server's processing time per chunk (latency per chunk) is not measured: the serv
 client can time.
 
 usage: uv run --script measure/live_latency.py <work dir> --build NAME=SPEECH... --set LANG=FOLDER...
-                                               [--models qwen3-asr-0.6b ...] [--vad silero-vad] [--rounds 3]
-                                               [--sessions 3] [--turns 6] [--chunk-ms 100] [-- serve options...]
+                                               [--models qwen3-asr-0.6b ...] [--vad silero-vad] [--diarize MODEL]
+                                               [--rounds 3] [--sessions 3] [--turns 6] [--chunk-ms 100]
+                                               [-- serve options...]
        uv run --script measure/live_latency.py <work dir> --report
 
   NAME is the label of a build in the report and SPEECH its executable; LANG is the language tag of the clips in FOLDER,
@@ -89,7 +95,7 @@ EDGE = 0.3
 
 def options(argv):
     """The work folder, and the options by name: lists for those that repeat or take several values."""
-    named = {"--build": [], "--set": [], "--models": list(MODELS), "--vad": ["silero-vad"], "--rounds": ["3"],
+    named = {"--build": [], "--set": [], "--models": list(MODELS), "--vad": ["silero-vad"], "--diarize": [], "--rounds": ["3"],
              "--sessions": ["3"], "--turns": ["6"], "--chunk-ms": ["100"]}
     serve = argv[argv.index("--") + 1:] if "--" in argv else []
     argv = argv[:argv.index("--")] if "--" in argv else argv
@@ -246,12 +252,13 @@ class Socket(WebSocket):
 class Session:
     """A Realtime transcription session whose server events are kept with the time each arrived."""
 
-    def __init__(self, port, model, language):
+    def __init__(self, port, model, language, diarize):
         self.ws = Socket.open("127.0.0.1", port, "/v1/realtime", {})
         assert self.ws.event()["type"] == "session.created"
         transcription = {"model": model, **({"language": language} if language else {})}
         self.ws.send({"type": "session.update", "session": {"type": "transcription", "audio": {"input": {
-            "format": {"type": "audio/pcm", "rate": RATE}, "transcription": transcription, "turn_detection": {"type": "server_vad"}}}}})
+            "format": {"type": "audio/pcm", "rate": RATE}, "transcription": transcription, "turn_detection": {"type": "server_vad"},
+            **({"diarization": {}} if diarize else {})}}}})
         updated = self.ws.event()
         if updated["type"] != "session.updated":
             raise SystemExit(f"the session was not configured: {updated}")
@@ -408,13 +415,14 @@ def check_serve(speech, vad, serve):
                          "server_vad's defaults; leave the detection options out")
 
 
-def run(work, label, speech, model, vad, serve, names, chunk_ms, round_number):
-    """Runs a model's sessions on one server of a build, and appends the rows to results.jsonl."""
-    server = Server(speech, [model, vad, *serve])
+def run(work, label, speech, model, vad, diarizer, serve, names, chunk_ms, round_number):
+    """Runs a model's sessions on one server of a build, with the diarization model `diarizer` unless it is None, and appends
+    the rows to results.jsonl."""
+    server = Server(speech, [model, vad, *([diarizer] if diarizer else []), *serve])
     held = json.loads(server.call("GET", "/v1/models")[2])["data"]
     info = next(m["speech"] for m in held if m["speech"]["task"] == "recognition")
     takes_language = any(o["name"] == "language" for o in info["options"])
-    common = {"build": label, "model": model, "round": round_number, "chunk_ms": chunk_ms, "platform": f"{platform.system()} {platform.machine()}",
+    common = {"build": label, "model": model, "diarizer": diarizer, "round": round_number, "chunk_ms": chunk_ms, "platform": f"{platform.system()} {platform.machine()}",
               "host": platform.node(), "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
     rows = []
     for name in names:
@@ -432,7 +440,7 @@ def run(work, label, speech, model, vad, serve, names, chunk_ms, round_number):
         with open(path, "rb") as f:
             pcm = f.read()[44:]
         language = meta["language"] if takes_language else None
-        session = Session(server.port, info["name"], language)
+        session = Session(server.port, info["name"], language, diarizer is not None)
         started = session.stream(pcm, RATE * chunk_ms // 1000)
         session.close()
         found = utterances(session.events, started, meta["speech"], cut)
@@ -479,26 +487,27 @@ def report(work):
     groups = {}
     for r in rows:
         if r["kind"] == "utterance":
-            groups.setdefault((r["model"], r["language"], r["build"]), []).append(r)
+            groups.setdefault((r["model"], r["language"], r["build"], r.get("diarizer") or "-"), []).append(r)
     print("\nTimes in seconds, p50/p90/p99 (count); time to first partial and speech started from the start of speech, "
           "finalization latency and committed from its end. Cut: the utterances the detection cut out of speech longer than "
           "its longest region, which wait for the cut; each model, language and build has a line for every utterance and "
           "one for those not cut.")
     names = ("time to first partial", "finalization latency", "speech started", "committed")
-    head = ["model", "lang", "build", "chunk ms", "utterances", *names, "matches offline", "peak memory MiB"]
+    head = ["model", "lang", "build", "diarizer", "chunk ms", "utterances", *names, "matches offline", "peak memory MiB"]
     table = [head]
-    for (model, language, build), mine in sorted(groups.items()):
+    for (model, language, build, diarizer), mine in sorted(groups.items()):
         timed = [latencies(u) for u in mine if u["heard"]]
         whole = [t for t in timed if not t["cut"]]
-        peaks = [r["peak_memory"] for r in rows if r["kind"] == "server" and r["model"] == model and r["build"] == build and r["peak_memory"]]
+        peaks = [r["peak_memory"] for r in rows if r["kind"] == "server" and r["model"] == model and r["build"] == build and
+                 (r.get("diarizer") or "-") == diarizer and r["peak_memory"]]
         compared = [u for u in mine if "matches" in u]
-        table.append([model, language, build, ",".join(sorted({str(u["chunk_ms"]) for u in mine})),
+        table.append([model, language, build, diarizer, ",".join(sorted({str(u["chunk_ms"]) for u in mine})),
                       f"{len(mine)} ({len(timed) - len(whole)} cut, {len(mine) - len(timed)} without speech, "
                       f"{sum(u['failed'] for u in mine)} failed)",
                       *(spread([t[name] for t in timed]) for name in names),
                       f"{sum(u['matches'] for u in compared)}/{len(compared)}",
                       f"{numpy.median(peaks) / 2 ** 20:.0f} (max {max(peaks) / 2 ** 20:.0f})" if peaks else "-"])
-        table.append(["", "", "", "", "not cut", *(spread([t[name] for t in whole]) for name in names), "", ""])
+        table.append(["", "", "", "", "", "not cut", *(spread([t[name] for t in whole]) for name in names), "", ""])
     widths = [max(len(str(r[k])) for r in table) for k in range(len(head))]
     for r in table:
         print("  ".join(str(c).ljust(w) for c, w in zip(r, widths)).rstrip())
@@ -519,6 +528,7 @@ def main():
         if not os.path.exists(speech):
             raise SystemExit(f"--build {label}: {speech} does not exist")
     vad = named["--vad"][0]
+    diarizer = named["--diarize"][0] if named["--diarize"] else None
     first_build = next(iter(builds.values()))
     check_serve(first_build, vad, serve)
     folder = os.path.join(work, "sessions")
@@ -539,7 +549,7 @@ def main():
                 continue
             for label, speech in builds.items():
                 print(f"round {round_number + 1}: {model} on {label}", flush=True)
-                run(work, label, speech, model, vad, serve, mine, chunk_ms, round_number + 1)
+                run(work, label, speech, model, vad, diarizer, serve, mine, chunk_ms, round_number + 1)
     if rounds:
         report(work)
 

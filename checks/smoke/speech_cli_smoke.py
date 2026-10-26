@@ -35,7 +35,12 @@ name and of a file named as another's region in the folder, left as it was; and 
 and run on the CPU (-- --device cpu) where the official's segments are compared exactly: `speech diarize` on 32-bit float
 WAVE files of their audio against the official segments of the offline and low_latency configurations, as text, as JSON
 and as RTTM, and the refusals of a streaming mode it does not have, of an option of another model, of an RTTM id with a
-space and of a file that is not there, and `speech asr` of the diarization model.
+space and of a file that is not there, and `speech asr` of the diarization model; with --asr a recognition model and
+--vad a detection model, `speech asr --diarize` on each file, whose regions and text are those without it, each region
+with the speakers of `speech diarize` within it, as JSON and as the main speaker of each line of text, and on the first
+file's audio as 16-bit PCM through -, each completed with the speakers of `speech diarize` in low_latency of the same
+samples and each line of text beginning with its main speaker, and the refusals of --diarize without --vad and of a
+model of another task.
 
 usage: python3 checks/smoke/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav [--transcript TEXT]]
                                                 [--embedding E.speaker.safetensors] [--vad DETECTION.gguf] [--asr RECOGNITION.gguf]
@@ -55,7 +60,8 @@ import sys
 import threading
 import time
 
-from worker_client import MOST_CER, PARAGRAPH, Worker, cer, dump_requests, heard, joined_transcript, read_npy, short, speaks_by_sentence
+from worker_client import (MOST_CER, PARAGRAPH, Worker, cer, dump_requests, heard, joined_transcript, main_speaker, pcm16, read_npy, realtime_speakers, short,
+                           speakers_json, speaks_by_sentence)
 
 args = sys.argv[1:]
 options = args[args.index("--") + 1:] if "--" in args else []
@@ -478,6 +484,46 @@ elif info["task"] == "diarization":
     failure(run("asr", model, *options, files[0], code=1), "unsupported", None)
     print("a streaming mode the model does not have, Silero VAD's threshold, an RTTM id with a space (exit 2), a file that is not there "
           "and asr of a diarization model: exit 1 with the library's form")
+    if recognizer and vad:
+        # asr --diarize: each region of a file with the speakers of speech diarize within it, the same regions and text as
+        # without it; and a stream whose completed carry those of speech diarize in low_latency of the same samples.
+        regions = 0
+        for path in files:
+            whole = [(x["start"], x["end"], x["speaker"]) for x in json.loads(run("diarize", model, "--format", "json", *options, path).stdout)["segments"]]
+            asked = ["asr", recognizer, "--vad", vad, "--diarize", model]
+            got = json.loads(run(*asked, "--format", "json", *options, path).stdout)
+            plain = json.loads(run("asr", recognizer, "--vad", vad, "--format", "json", *options, path).stdout)
+            assert got["text"] == plain["text"] and got["regions"], (got, plain)
+            lines = [line.split("\t") for line in run(*asked, *options, path).stdout.decode().splitlines()]
+            assert len(lines) == len(got["regions"]), (lines, got["regions"])
+            regions += len(lines)
+            for region, line in zip(got["regions"], lines):
+                assert region["speakers"] == speakers_json(whole, region["start"], region["end"]), (region, whole)
+                main = main_speaker(region["speakers"])
+                assert line == [path, f"{region['start']:.3f}", f"{region['end']:.3f}", "-" if main is None else str(main), region["text"]], line
+        pcm = pcm16(read_npy(os.path.join(dumps[0], "audio.npy")).tolist()) + bytes(2 * 2 * rate)
+        heard_file = os.path.join(work, "heard.wav")
+        with open(heard_file, "wb") as f:
+            f.write(b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, 2 * rate, 2, 16) + b"data"
+                    + struct.pack("<I", len(pcm)) + pcm)
+        streamed = [(x["start"], x["end"], x["speaker"]) for x in
+                    json.loads(run("diarize", model, "--streaming-mode", "low_latency", "--format", "json", *options, heard_file).stdout)["segments"]]
+        os.remove(heard_file)
+        events = [json.loads(line) for line in run(*asked, "--format", "json", "--rate", str(rate), *options, "-", input=pcm).stdout.decode().splitlines()]
+        started = {e["item_id"]: e["audio_start_ms"] for e in events if e["type"] == "input_audio_buffer.speech_started"}
+        stopped = {e["item_id"]: e["audio_end_ms"] for e in events if e["type"] == "input_audio_buffer.speech_stopped"}
+        completed = [e for e in events if e["type"] == "conversation.item.input_audio_transcription.completed"]
+        assert completed, events[:3]
+        for e in completed:
+            assert e["speakers"] == realtime_speakers(streamed, started[e["item_id"]], stopped[e["item_id"]]), (e, streamed)
+        lines = [line.split("\t", 1) for line in run(*asked, "--rate", str(rate), *options, "-", input=pcm).stdout.decode().splitlines()]
+        mains = [main_speaker(speakers_json(streamed, started[e["item_id"]] / 1000, stopped[e["item_id"]] / 1000)) for e in completed]
+        assert lines == [["-" if n is None else str(n), e["transcript"]] for n, e in zip(mains, completed)], (lines, mains)
+        print(f"asr --diarize: {regions} regions of {len(files)} files with the speakers of speech diarize, and {len(completed)} utterances "
+              "of - with those of its low_latency, in JSON and as the main speaker of each line of text")
+        run("asr", recognizer, "--diarize", model, *options, files[0], code=2)
+        run("asr", recognizer, "--vad", vad, "--diarize", vad, *options, files[0], code=2)
+        print("asr --diarize without --vad, and of a detection model: exit 2")
     for path in files:
         os.remove(path)
 elif info["task"] == "recognition":

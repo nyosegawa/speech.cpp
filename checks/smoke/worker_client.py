@@ -3,7 +3,8 @@ it speaks, and on every line it reads it checks that the line is one JSON object
 progress or terminal message belongs to a request in flight, and that a request gets exactly one terminal message (end, error or cancelled) and
 nothing for its id after it. It also compares the model information of ready with `speech info --json`, reads the
 requests a recognition model's reference dumped, with the texts they must give, and holds the paragraph and the character error rate with which the
-smoke scripts check a long text spoken a sentence at a time.
+smoke scripts check a long text spoken a sentence at a time, and the speakers of a diarization's segments within a span
+as the tools cut and write them.
 """
 
 import array
@@ -388,6 +389,46 @@ def heard(speech, recognizer, wav_path, load_options):
     if r.returncode != 0:
         raise SystemExit(f"speech asr {recognizer} exited with {r.returncode}: {r.stderr.decode()[-600:]}")
     return r.stdout.decode().strip()
+
+
+def speaker_label(speaker):
+    """The label OpenAI's shapes give a speaker: A, B and on, and after Z, AA, AB."""
+    out = ""
+    n = speaker + 1
+    while n > 0:
+        out = chr(ord("A") + (n - 1) % 26) + out
+        n = (n - 1) // 26
+    return out
+
+
+def speakers_cut(segments, start, end, offset=0.0):
+    """Segments (start, end, speaker), each moved by `offset` seconds, cut to [start, end), in order of their starts and
+    speakers, each with whether it begins and ends at the bounds."""
+    out = [(max(s + offset, start), min(e + offset, end), who, s + offset <= start, e + offset >= end)
+           for s, e, who in segments if e + offset > start and s + offset < end]
+    return sorted(out, key=lambda c: (c[0], c[2]))
+
+
+def speakers_json(segments, start, end):
+    """The speakers within [start, end) as speech.cpp's own JSON writes them, numbers and seconds to the millisecond."""
+    return [{"speaker": who, "start": round(s, 3), "end": round(e, 3)} for s, e, who, _, _ in speakers_cut(segments, start, end)]
+
+
+def realtime_speakers(segments, start_ms, end_ms, offset=0.0, first=0):
+    """A Realtime completed's speakers within its utterance, whose bounds are speech_started's and speech_stopped's: a
+    time in whole milliseconds, a bound as the bound's event gives it, and each label after the session's `first`."""
+    ms = lambda t: int(t * 1000 + 0.5)
+    return [{"speaker": speaker_label(who + first), "start_ms": start_ms if at_start else ms(s), "end_ms": end_ms if at_end else ms(e)}
+            for s, e, who, at_start, at_end in speakers_cut(segments, start_ms / 1000, end_ms / 1000, offset)]
+
+
+def main_speaker(within):
+    """The speaker of `within`, as speakers_json() or the labeled form give them, who speaks the longest, the lower of two
+    who speak as long, or None for none."""
+    spoken = {}
+    for w in within:
+        spoken[w["speaker"]] = spoken.get(w["speaker"], 0) + w["end"] - w["start"]
+    return min(spoken, key=lambda who: (-spoken[who], who)) if spoken else None
 
 
 def short(m):

@@ -40,7 +40,8 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   `tools/worker/` and `serve` in `tools/server/`, and what they share in `tools/common/`: the one parser of every
   command line, which makes a flag of each option of the C API's vocabulary, the JSON reader, and the request options
   read from text or JSON and set through the library's setters, transcription by regions, which `asr --vad` and
-  `serve` share, the synthesis of a text a sentence at a time for a model whose request speaks a short time, which
+  `serve` share, the speakers within a region or an utterance (`speakers.cpp`), which `asr --diarize` and `serve`
+  share, the synthesis of a text a sentence at a time for a model whose request speaks a short time, which
   `tts` and `serve` share (`sentences.cpp`), the assembly of utterances from audio that arrives while someone speaks
   (`utterances.cpp`), which `asr -`, `asr --live` and the server's Realtime sessions run, and OpenAI's Realtime server
   events (`realtime-events.cpp`), which they all write. Every subcommand reaches the models only through the
@@ -74,14 +75,14 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   request (speed, latency, memory and accuracy) across speech.cpp's builds and other runtimes, and tries a model in its
   official implementation and the runtimes that already run it before speech.cpp takes it up, so any other comparison
   of builds or of runtimes goes there and not into `measure/`.
-- `tools/server/` holds `speech serve`, which serves a synthesis, a recognition and a detection model over HTTP with
-  OpenAI's audio API (`POST /v1/audio/speech`, `POST /v1/audio/transcriptions`, `GET /v1/models`, `GET /health`)
-  and OpenAI's Realtime transcription over a WebSocket at `/v1/realtime`, for programs that speak HTTP. Like the worker
+- `tools/server/` holds `speech serve`, which serves a synthesis, a recognition, a detection and a diarization model
+  over HTTP with OpenAI's audio API (`POST /v1/audio/speech`, `POST /v1/audio/transcriptions`, `GET /v1/models`,
+  `GET /health`) and OpenAI's Realtime transcription over a WebSocket at `/v1/realtime`, for programs that speak HTTP. Like the worker
   it reaches the models only through the C API; `openai-api.cpp` reads OpenAI's requests and writes its stream events,
   `audio-speech.cpp` serves `/v1/audio/speech` as it streams,
   `tools/common/openai-error.cpp` OpenAI's error object, mapped from the library's categories alone,
   `tools/common/realtime-session.cpp` a Realtime session, with commits or `server_vad`, whose messages `realtime.cpp`
-  carries over the WebSocket, giving it the recognition and detection models held,
+  carries over the WebSocket, giving it the recognition, detection and diarization models held,
   `jobs.h` runs one request at a time in arrival order and cancels the request of a client that goes away, and
   `served-models.cpp` holds one model of each task and replaces it once its requests have ended. `page/` is the page
   of `speech serve --open`, plain HTML, CSS and JavaScript modules compiled into `speech`, which `page.cpp` serves
@@ -89,8 +90,9 @@ README.md and `docs/` are the documentation for users; what a developer needs is
 - The smoke scripts in `checks/smoke/` drive each entry point as its caller does and fail on a defect:
   `worker_smoke.py` and `worker_recognition_smoke.py` the worker protocol through `worker_client.py`, which checks
   every line and one terminal message per request, `server_smoke.py` every HTTP endpoint and the mapping of errors,
-  `server_realtime_smoke.py` the Realtime sessions of `/v1/realtime` and `server_page_smoke.py` the page's endpoints and
-  every guard, all through `server_client.py`, which stops the
+  `server_realtime_smoke.py` the Realtime sessions of `/v1/realtime`, `server_diarization_smoke.py` the speakers of
+  `/v1/realtime` and of `diarized_json` and `server_page_smoke.py` the page's endpoints and every guard, all through
+  `server_client.py`, which stops the
   server however the script ends, `server_page_browser_smoke.mjs` the page itself in a headless Chrome, as a person uses
   it, `server_openai_smoke.py` the server through the official openai-python client,
   `speech_cli_smoke.py` the command line against the worker, and `models_smoke.py` the naming, fetching and removing of
@@ -216,8 +218,8 @@ comment.
   API or the worker also runs `speech-api-check` and
   `checks/smoke/worker_smoke.py` for each synthesis family, and `speech-api-check transcribe` and
   `checks/smoke/worker_recognition_smoke.py` for both recognition families, and `speech-api-check detect` with Silero
-  VAD; a change to the server runs `checks/smoke/server_smoke.py`, `checks/smoke/server_realtime_smoke.py` and
-  `checks/smoke/server_page_smoke.py`, one to the page `checks/smoke/server_page_browser_smoke.mjs`, one to the command
+  VAD; a change to the server runs `checks/smoke/server_smoke.py`, `checks/smoke/server_realtime_smoke.py`,
+  `checks/smoke/server_diarization_smoke.py` and `checks/smoke/server_page_smoke.py`, one to the page `checks/smoke/server_page_browser_smoke.mjs`, one to the command
   line or the parser `checks/smoke/speech_cli_smoke.py`, with a model of each family, and one to `tools/catalog/`
   `checks/smoke/models_smoke.py`.
 - Never commit on main. Every change reaches main through a pull request, one coherent unit each: a

@@ -54,6 +54,28 @@ const JsonValue * given(const JsonValue & object, const char * name) {
 }
 
 const char * const kTurns = "session.audio.input.turn_detection";
+const char * const kDiarization = "session.audio.input.diarization";
+
+/** The diarization options of a diarization that is not null: its members, each named as a request option. */
+std::vector<RequestOption> diarization_options(const JsonValue & diarization) {
+    object_at(diarization, kDiarization);
+    const std::string at = kDiarization;
+    std::vector<RequestOption> out;
+    for (const auto & [name, value] : diarization.members) {
+        speech_option option;
+        if (!option_named(name, option)) {
+            throw refusal("unknown_parameter", at + "." + name,
+                          "Unknown parameter: '" + at + "." + name + "'. It takes the request options of the diarization model, such as streaming_mode, "
+                          "and `speech info` lists them.");
+        }
+        try {
+            out.push_back({option, option_from_json(option, value)});
+        } catch (const std::invalid_argument & e) {
+            throw refusal("invalid_type", at + "." + name, at + "." + name + " is " + json_excerpt(value) + "; " + e.what() + ".");
+        }
+    }
+    return out;
+}
 
 /** Whether two lists of options set the same values in the same order. */
 bool same(const std::vector<RequestOption> & a, const std::vector<RequestOption> & b) {
@@ -177,9 +199,10 @@ std::string Session::session_json() {
         }
         turns += "}";
     }
+    const std::string diarization = config_.diarization ? options_json(*config_.diarization) : "null";
     return "{\"type\":\"transcription\",\"id\":\"" + events_.session_id() + "\",\"object\":\"realtime.transcription_session\",\"audio\":{\"input\":{\"format\":"
            "{\"type\":\"audio/pcm\",\"rate\":" + std::to_string(kRate) + "},\"transcription\":" + transcription +
-           ",\"noise_reduction\":null,\"turn_detection\":" + turns + "}},\"include\":null}";
+           ",\"noise_reduction\":null,\"turn_detection\":" + turns + ",\"diarization\":" + diarization + "}},\"include\":null}";
 }
 
 void Session::tick() {
@@ -273,7 +296,7 @@ void Session::update(const JsonValue & event) {
     if (audio) only(*audio, "session.audio", {"input"});
     if (input) {
         object_at(*input, "session.audio.input");
-        only(*input, "session.audio.input", {"format", "transcription", "noise_reduction", "turn_detection"});
+        only(*input, "session.audio.input", {"format", "transcription", "noise_reduction", "turn_detection", "diarization"});
         if (const JsonValue * format = given(*input, "format")) {
             object_at(*format, "session.audio.input.format");
             only(*format, "session.audio.input.format", {"type", "rate"});
@@ -333,6 +356,10 @@ void Session::update(const JsonValue & event) {
         if (const JsonValue * turns = input->member("turn_detection")) {
             next.turns = turns->kind == JsonValue::Kind::Null ? std::nullopt : std::optional<std::vector<RequestOption>>(server_vad(*turns));
         }
+        if (const JsonValue * diarization = input->member("diarization")) {
+            next.diarization = diarization->kind == JsonValue::Kind::Null ? std::nullopt
+                                                                           : std::optional<std::vector<RequestOption>>(diarization_options(*diarization));
+        }
     }
     if (next.transcribe) {
         try {
@@ -358,6 +385,22 @@ void Session::update(const JsonValue & event) {
             throw e;
         }
     }
+    // A diarization starts likewise; the same options keep the one under way, whose speakers keep their numbers.
+    std::unique_ptr<Diarization> diarization;
+    const bool rediarize = next.diarization && (!config_.diarization || !same(*next.diarization, *config_.diarization) || !assembly_.diarization());
+    if (rediarize) {
+        try {
+            diarization = models_.diarize(with_defaults(models_.diarization_defaults(), *next.diarization));
+        } catch (ApiError & e) {
+            e.param = kDiarization;
+            throw;
+        } catch (const Failure & failure) {
+            ApiError e = openai::library_error(failure);
+            e.param = std::string(kDiarization) + (failure.option().empty() ? "" : "." + failure.option());
+            throw e;
+        }
+    }
+    const bool undiarize = config_.diarization && !next.diarization;
     const bool asked_otherwise = next.transcribe != config_.transcribe || next.model != config_.model || next.language != config_.language ||
                                  next.prompt != config_.prompt;
     const bool manual = config_.turns && !next.turns;
@@ -368,6 +411,8 @@ void Session::update(const JsonValue & event) {
         told_no_detection_ = false;
     }
     if (manual) assembly_.manual();
+    if (rediarize) assembly_.diarize(std::move(diarization));
+    if (undiarize) assembly_.diarize(nullptr);
     events_.emit("session.updated", ",\"session\":" + session_json());
 }
 

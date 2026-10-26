@@ -115,7 +115,7 @@ assert created["type"] == "session.created" and created["event_id"].startswith("
 configured = created["session"]
 assert configured["type"] == "transcription" and configured["object"] == "realtime.transcription_session" and configured["id"], configured
 assert configured["audio"]["input"] == {"format": {"type": "audio/pcm", "rate": 24000}, "transcription": {"model": name, "language": None},
-                                        "noise_reduction": None, "turn_detection": None}, configured
+                                        "noise_reduction": None, "turn_detection": None, "diarization": None}, configured
 ws.send(session({"model": name}))
 updated = ws.event()
 assert updated["type"] == "session.updated" and updated["session"] == configured, updated

@@ -15,6 +15,7 @@
 #include "library.h"
 #include "log.h"
 #include "regions.h"
+#include "speakers.h"
 
 // How the server runs requests on a model it holds: each set up by its HTTP handler as it arrives, so that the library
 // refuses a value at once, then run in the order the requests arrived, each on a thread of its own that hands what it
@@ -133,7 +134,8 @@ struct Job {
 
 /**
  * One request's recognition, whose result the HTTP handler reads from the request once it is done; or with
- * chunking_strategy, a recognition of each region the detection request finds, joined.
+ * chunking_strategy, a recognition of each region the detection request finds, joined, and with diarized_json the
+ * diarization of the whole audio after it.
  */
 struct TranscriptionJob : Job {
     /** The length of the audio in seconds and its rate, for the log and verbose_json. */
@@ -147,9 +149,15 @@ struct TranscriptionJob : Job {
     std::vector<float> samples;
     std::vector<RequestOption> options;
     bool timestamps = false;
-    size_t regions = 0;
-    /** The recognition once it is done. */
+    /** With diarized_json: the diarization model, kept as `served` is, and its request set up with the audio. */
+    std::shared_ptr<Served> diarizer;
+    Request diarization{nullptr, speech_request_free};
+    /** The recognition once it is done; with chunking_strategy its regions, and with diarized_json each one's recognition. */
     Transcript transcript;
+    std::vector<Region> regions;
+    std::vector<Transcript> parts;
+    /** With diarized_json: the speakers' segments of the whole audio. */
+    std::vector<SpeakerSegment> speakers;
 };
 
 /** The interval at which a waiting handler looks whether its client is still there. */
@@ -264,16 +272,21 @@ inline void transcribe(const std::shared_ptr<TranscriptionJob> & job, Turns & tu
             if (s == SPEECH_OK) job->transcript = transcript_of(speech_request_result(r), job->timestamps);
             return s;
         }
-        const std::optional<std::vector<Region>> regions = detect_regions(job->detection.get(), job->cancellation);
+        std::optional<std::vector<Region>> regions = detect_regions(job->detection.get(), job->cancellation);
         if (!regions) return SPEECH_CANCELLED;
-        job->regions = regions->size();
-        std::optional<Transcript> t =
-            transcribe_regions(job->recognizer, job->samples, job->sample_rate, *regions, job->options, job->timestamps, job->cancellation);
+        job->regions = std::move(*regions);
+        std::optional<Transcript> t = transcribe_regions(job->recognizer, job->samples, job->sample_rate, job->regions, job->options, job->timestamps,
+                                                         job->cancellation, job->diarization ? &job->parts : nullptr);
         if (!t) return SPEECH_CANCELLED;
         job->transcript = std::move(*t);
+        if (!job->diarization) return SPEECH_OK;
+        std::optional<std::vector<SpeakerSegment>> speakers = diarize_segments(job->diarization.get(), job->cancellation);
+        if (!speakers) return SPEECH_CANCELLED;
+        job->speakers = std::move(*speakers);
         return SPEECH_OK;
     }, [&](Clock::time_point) {
-        std::string out = job->detection ? ", " + std::to_string(job->regions) + " regions" : "";
+        std::string out = job->detection ? ", " + std::to_string(job->regions.size()) + " regions" : "";
+        if (job->diarization && job->status == SPEECH_OK) out += ", " + std::to_string(job->speakers.size()) + " speaker segments";
         return job->status == SPEECH_OK ? out + ", " + std::to_string(job->transcript.text.size()) + " bytes of text" : out;
     });
 }

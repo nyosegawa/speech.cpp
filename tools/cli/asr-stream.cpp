@@ -205,7 +205,8 @@ private:
 }  // namespace
 
 int transcribe_stream(const CommandLine & line, FILE * out, speech_model * recognizer, const std::vector<RequestOption> & options,
-                      speech_model * detector, const std::vector<RequestOption> & detection, bool json) {
+                      speech_model * detector, const std::vector<RequestOption> & detection, speech_model * diarizer,
+                      const std::vector<RequestOption> & diarization, bool json) {
     // The recognition's options are refused before any audio, as a file's are, where they would otherwise wait for the
     // first utterance, which silence never brings.
     check_recognition(recognizer, options);
@@ -234,6 +235,7 @@ int transcribe_stream(const CommandLine & line, FILE * out, speech_model * recog
         using Kind = utterances::Event::Kind;
         if (json) events.utterance(e);
         else if (e.kind == Kind::Delta) text.delta(e.delta);
+        else if (e.kind == Kind::Completed && e.speakers) text.line(speaker_column(main_speaker(*e.speakers)) + "\t" + e.transcript.text);
         else if (e.kind == Kind::Completed) text.line(e.transcript.text);
         std::lock_guard<std::mutex> lock(mutex);
         if (e.kind == Kind::SpeechStarted) times[e.utterance].first = e.at;
@@ -250,6 +252,7 @@ int transcribe_stream(const CommandLine & line, FILE * out, speech_model * recog
     });
     assembly.ask(utterances::Asked{"", options});
     assembly.detect(std::make_unique<utterances::Detection>(detector, nullptr, detection, rate));
+    if (diarizer) assembly.diarize(std::make_unique<Diarization>(diarizer, nullptr, diarization, rate));
 
     if (live) {
         std::fprintf(stderr, "listening to %s at %d Hz; Ctrl-C ends\n", microphone->name().c_str(), rate);

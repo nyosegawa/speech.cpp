@@ -70,7 +70,7 @@ void check_recognition(speech_model * recognizer, const std::vector<RequestOptio
 
 std::optional<Transcript> transcribe_regions(speech_model * recognizer, const std::vector<float> & samples, int rate,
                                              const std::vector<Region> & regions, const std::vector<RequestOption> & options,
-                                             bool timestamps, Cancellation & cancellation) {
+                                             bool timestamps, Cancellation & cancellation, std::vector<Transcript> * parts) {
     check_recognition(recognizer, options);
     Transcript whole;
     for (const Region & region : regions) {
@@ -79,7 +79,9 @@ std::optional<Transcript> transcribe_regions(speech_model * recognizer, const st
         check(speech_request_set_audio(request.get(), samples.data() + first, last - first, rate));
         apply_options(request.get(), options);
         if (check(cancellation.run(request.get(), [&] { return speech_transcribe(request.get()); })) == SPEECH_CANCELLED) return std::nullopt;
-        append_part(whole, transcript_of(speech_request_result(request.get()), timestamps), (double) first / rate);
+        const Transcript part = transcript_of(speech_request_result(request.get()), timestamps);
+        append_part(whole, part, (double) first / rate);
+        if (parts) parts->push_back(part);
     }
     return whole;
 }

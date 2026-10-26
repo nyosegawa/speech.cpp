@@ -1,6 +1,7 @@
 #include "openai-api.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <functional>
 #include <iterator>
@@ -171,9 +172,9 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
     if (!file->file) throw ApiError{400, "\"file\" is a field; send it as a file, with a filename.", "file", "invalid_type"};
     TranscriptionRequest r;
     if (format) r.format = format->content;
-    if (r.format != "json" && r.format != "text" && r.format != "verbose_json") {
-        throw ApiError{400, "The response_format " + json_string(r.format) + " is not supported; speech.cpp answers with \"json\", \"text\" or "
-                       "\"verbose_json\", since it gives neither subtitles nor speakers.",
+    if (r.format != "json" && r.format != "text" && r.format != "verbose_json" && r.format != "diarized_json") {
+        throw ApiError{400, "The response_format " + json_string(r.format) + " is not supported; speech.cpp answers with \"json\", \"text\", "
+                       "\"verbose_json\" or \"diarized_json\", since it gives no subtitles.",
                        "response_format", "unsupported_value"};
     }
     for (const std::string & g : granularities) {
@@ -187,6 +188,11 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
         }
     }
     r.regions = chunking_strategy(field);
+    if (r.format == "diarized_json" && !r.regions) {
+        throw ApiError{400, "\"response_format\": \"diarized_json\" gives a segment for each region that chunking_strategy finds; give "
+                       "chunking_strategy \"auto\" with it.",
+                       "chunking_strategy", "missing_required_parameter"};
+    }
     if (language) r.options.push_back({SPEECH_OPT_LANGUAGE, language->content});
     if (prompt) r.options.push_back({SPEECH_OPT_PROMPT, prompt->content});
     if (decoding) r.options.push_back({SPEECH_OPT_DECODING, decoding->content});
@@ -241,6 +247,25 @@ std::string transcription_verbose_json(const Transcript & transcript, double dur
                ",\"text\":" + json_string(s.text) + "}";
     }
     return out + "]}";
+}
+
+std::string transcription_diarized_json(const Transcript & transcript, double duration, const std::vector<Region> & regions,
+                                        const std::vector<Transcript> & parts, const std::vector<SpeakerSegment> & speakers) {
+    const auto time = [](double t) { return json_number(std::round(t * 1000) / 1000); };
+    std::string out = "{\"task\":\"transcribe\",\"duration\":" + json_number(duration) + ",\"text\":" + json_string(transcript.text) + ",\"segments\":[";
+    for (size_t k = 0; k < regions.size(); k++) {
+        const std::vector<SpeakerSegment> within = speakers_within(speakers, regions[k].start, regions[k].end);
+        const int main = main_speaker(within);
+        std::string listed;
+        for (size_t i = 0; i < within.size(); i++) {
+            listed += std::string(i ? "," : "") + "{\"speaker\":" + json_string(speaker_label(within[i].speaker)) + ",\"start\":" + time(within[i].start) +
+                      ",\"end\":" + time(within[i].end) + "}";
+        }
+        out += std::string(k ? "," : "") + "{\"type\":\"transcript.text.segment\",\"id\":\"seg_" + std::to_string(k) + "\",\"start\":" +
+               time(regions[k].start) + ",\"end\":" + time(regions[k].end) + ",\"text\":" + json_string(parts[k].text) +
+               ",\"speaker\":" + json_string(main < 0 ? "" : speaker_label(main)) + ",\"speakers\":[" + listed + "]}";
+    }
+    return out + "],\"usage\":{\"type\":\"duration\",\"seconds\":" + json_number(duration) + "}}";
 }
 
 }  // namespace openai

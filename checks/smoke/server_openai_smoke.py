@@ -13,9 +13,12 @@ by input_audio_buffer.committed, deltas and the completed of the text that the s
 file; a session.update to turn_detection server_vad, after which the same PCM followed by silence, appended in pieces of
 20 ms, gives input_audio_buffer.speech_started, .speech_stopped and .committed and the completed of each region where
 speech vad finds speech, joined into the text of chunking_strategy "auto"; an error event for semantic_vad; and
-input_audio_buffer.cleared.
+input_audio_buffer.cleared. With a diarization model, it also transcribes with response_format "diarized_json", which
+the client parses into its TranscriptionDiarized, against the same request sent by hand, and turns on the session's
+diarization, after which each completed of the same PCM that the client parses keeps speech.cpp's own speakers, as
+the server sent them.
 
-usage: uv run --script checks/smoke/server_openai_smoke.py <speech> <recognition.gguf> <detection.gguf> <dump folder>
+usage: uv run --script checks/smoke/server_openai_smoke.py <speech> <recognition.gguf> <detection.gguf> <dump folder> [diarization.gguf]
 """
 
 import array
@@ -37,10 +40,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from server_client import Server  # noqa: E402
 from worker_client import joined_transcript, read_npy  # noqa: E402
 
-if len(sys.argv) != 5:
+if len(sys.argv) not in (5, 6):
     raise SystemExit("usage:" + __doc__.split("usage:")[1].rstrip())
-speech, model, vad, dump = sys.argv[1:]
-server = Server(speech, [model, vad])
+speech, model, vad, dump = sys.argv[1:5]
+diarizer = sys.argv[5] if len(sys.argv) == 6 else None
+server = Server(speech, [model, vad, *([diarizer] if diarizer else [])])
 client = OpenAI(base_url=f"http://127.0.0.1:{server.port}/v1", api_key="unused")
 
 listed = [m.id for m in client.models.list()]
@@ -53,14 +57,14 @@ def wav(pcm, rate):
             + b"data" + struct.pack("<I", len(pcm)) + pcm)
 
 
-def by_hand(fields, content):
+def by_hand(fields, content, member="text"):
     boundary = uuid.uuid4().hex
     body = b"".join(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode() for k, v in fields)
     body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"x.wav\"\r\n\r\n").encode() + content
     body += f"\r\n--{boundary}--\r\n".encode()
     status, _, answer = server.call("POST", "/v1/audio/transcriptions", body, {"Content-Type": f"multipart/form-data; boundary={boundary}"})
     assert status == 200, answer
-    return json.loads(answer)["text"]
+    return json.loads(answer)[member]
 
 
 samples = read_npy(os.path.join(dump, "audio.npy"))
@@ -74,6 +78,14 @@ for strategy, fields in (("auto", [("chunking_strategy", "auto")]),
     assert got.text == by_hand(fields, wav(pcm, rate)) and got.text, (got.text, strategy)
 print(f"audio.transcriptions.create() with chunking_strategy auto and a server_vad object: the text of the same forms sent by hand, "
       f"{got.text[:30]!r}")
+if diarizer:
+    got = client.audio.transcriptions.create(model=name, file=("x.wav", io.BytesIO(wav(pcm, rate)), "audio/wav"), response_format="diarized_json",
+                                             chunking_strategy="auto")
+    sent = by_hand([("response_format", "diarized_json"), ("chunking_strategy", "auto")], wav(pcm, rate), "segments")
+    assert type(got).__name__ == "TranscriptionDiarized" and got.segments, got
+    assert [s.model_dump() for s in got.segments] == sent, (got.segments, sent)
+    print(f"audio.transcriptions.create() with diarized_json: TranscriptionDiarized with {len(got.segments)} segments, speakers "
+          f"{sorted({s.speaker for s in got.segments})}, those of the same form sent by hand")
 
 # The dump's samples at 24000 Hz, the one rate of audio/pcm, by linear interpolation.
 n = len(samples) * 24000 // rate
@@ -131,6 +143,19 @@ with client.realtime.connect(model=name) as connection:
     done = [e for e in detected if e.type.endswith(".completed")]
     parts = [(0, {"text": e.transcript, "stop": "complete"}) for e in done]
     assert joined_transcript(parts, False)["text"] == by_hand([("chunking_strategy", "auto")], wav(spoken, 24000)), (done, regions)
+    if diarizer:
+        connection.session.update(session={"type": "transcription", "audio": {"input": {"diarization": {}}}})
+        updated = connection.recv()
+        assert type(updated).__name__ == "SessionUpdatedEvent", updated
+        for start in range(0, len(spoken), 960):
+            connection.input_audio_buffer.append(audio=base64.b64encode(spoken[start:start + 960]).decode())
+        diarized = []
+        while sum(e.type.endswith(".completed") for e in diarized) < len(regions):
+            diarized.append(connection.recv())
+        done = [e for e in diarized if e.type.endswith(".completed")]
+        assert all(type(e).__name__ == "ConversationItemInputAudioTranscriptionCompletedEvent" and e.speakers and
+                   all(set(w) == {"speaker", "start_ms", "end_ms"} for w in e.speakers) for e in done), done
+        print(f"realtime.connect() with diarization: {len(done)} completed events that keep speakers, such as {done[0].speakers[:2]}")
     connection.session.update(session={"type": "transcription", "audio": {"input": {"turn_detection": {"type": "semantic_vad"}}}})
     refused = connection.recv()
     assert type(refused).__name__ == "RealtimeErrorEvent" and refused.error.param == "session.audio.input.turn_detection.type", refused

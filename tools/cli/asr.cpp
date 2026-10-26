@@ -12,6 +12,7 @@
 #include "fetch.h"
 #include "json.h"
 #include "regions.h"
+#include "speakers.h"
 #include "terminal.h"
 #include "wave-input.h"
 
@@ -47,6 +48,25 @@ struct Detection {
     std::vector<RequestOption> options;
 };
 
+/** The diarization model of --diarize, and the request options that are its own. */
+struct Diarizer {
+    Model model{nullptr, speech_model_free};
+    std::vector<RequestOption> options;
+};
+
+/** The file of the diarization model --diarize names, fetched if it is not there yet; none without --diarize. */
+std::optional<std::string> diarization_file(const CommandLine & line) {
+    const std::optional<std::string> argument = line.value("--diarize");
+    if (!argument) return std::nullopt;
+    if (!line.has("--vad")) throw UsageError("--diarize gives each region its speakers; give --vad too, as in --vad silero-vad");
+    const std::string path = model_file(*argument);
+    const speech_task task = speech_model_info_task(file_info(path).get());
+    if (task != SPEECH_TASK_DIARIZATION) {
+        throw UsageError("--diarize takes a model of speech diarization, and " + *argument + " is a speech " + task_name(task) + " model");
+    }
+    return path;
+}
+
 /** The file of the detection model --vad names, fetched if it is not there yet; none without --vad. */
 std::optional<std::string> detection_file(const CommandLine & line) {
     const std::optional<std::string> argument = line.value("--vad");
@@ -74,6 +94,49 @@ std::optional<Detection> detection_of(const CommandLine & line, const std::optio
     d.options = region_options(d.options);
     options = recognition;
     return d;
+}
+
+/**
+ * The diarization model of `path`, on the recognizer's device, and the options that are its own: those it takes and
+ * neither the recognizer nor the detection model takes, which leave `options`.
+ */
+std::optional<Diarizer> diarizer_of(const CommandLine & line, const std::optional<std::string> & path, const speech_model_info * recognizer,
+                                    const speech_model_info * detector, std::vector<RequestOption> & options) {
+    if (!path) return std::nullopt;
+    Diarizer d;
+    d.model = load_model(*path, line.loading(false));
+    const ModelInfo info = model_info(d.model.get());
+    std::vector<RequestOption> rest;
+    for (const RequestOption & o : options) {
+        const bool own = speech_model_info_takes(info.get(), o.option) && !speech_model_info_takes(recognizer, o.option) &&
+                         !speech_model_info_takes(detector, o.option);
+        (own ? d.options : rest).push_back(o);
+    }
+    options = rest;
+    return d;
+}
+
+/**
+ * Writes a file transcribed by `regions` with --diarize, each region with the speakers within it: in text a line each,
+ * whose speaker is the one who speaks the most in it, and in JSON the file's recognition followed by "regions".
+ */
+void write_diarized(FILE * out, bool json, const std::string & path, const Transcript & transcript, bool timestamps, const std::vector<Region> & regions,
+                    const std::vector<Transcript> & parts, const std::vector<SpeakerSegment> & speakers) {
+    std::string listed;
+    for (size_t k = 0; k < regions.size(); k++) {
+        const std::vector<SpeakerSegment> within = speakers_within(speakers, regions[k].start, regions[k].end);
+        if (!json) {
+            std::fprintf(out, "%s\t%.3f\t%.3f\t%s\t%s\n", path.c_str(), regions[k].start, regions[k].end, speaker_column(main_speaker(within)).c_str(),
+                         parts[k].text.c_str());
+            continue;
+        }
+        listed += std::string(k ? "," : "") + "{\"start\":" + json_number(regions[k].start) + ",\"end\":" + json_number(regions[k].end) +
+                  ",\"text\":" + json_string(parts[k].text) + ",\"speakers\":" + speakers_json(within) + "}";
+    }
+    if (json) {
+        std::fprintf(out, "{\"file\":%s%s,\"regions\":[%s]}\n", json_string(path).c_str(), recognition_members(transcript, timestamps).c_str(),
+                     listed.c_str());
+    }
 }
 
 int run_asr(const CommandLine & line, FILE * out) {
@@ -105,23 +168,35 @@ int run_asr(const CommandLine & line, FILE * out) {
     const std::string path = model_file(line.args[0]);
     require_options(path, line);
     const std::optional<std::string> detector = detection_file(line);
+    const std::optional<std::string> diarizer_path = diarization_file(line);
     const auto t0 = Clock::now();
-    terminal::Status loading("Loading " + argument_label(line.args[0]) + (detector ? " and " + argument_label(*line.value("--vad")) : ""));
+    terminal::Status loading("Loading " + argument_label(line.args[0]) + (detector ? " and " + argument_label(*line.value("--vad")) : "") +
+                             (diarizer_path ? " and " + argument_label(*line.value("--diarize")) : ""));
     const Model model = load_model(path, line.loading(false));
     const ModelInfo info = model_info(model.get());
     const speech_model_info * m = info.get();
     std::vector<RequestOption> options = line.options;
+    // Each option goes to the one model that takes it alone: the diarization model's, which neither of the others takes,
+    // are taken from the rest before the detection model's.
+    const ModelInfo diarizing_file = diarizer_path ? file_info(*diarizer_path) : ModelInfo(nullptr, speech_model_info_free);
+    const ModelInfo detecting_file = detector ? file_info(*detector) : ModelInfo(nullptr, speech_model_info_free);
+    const std::optional<Diarizer> diarizer = diarizer_of(line, diarizer_path, m, detecting_file.get(), options);
     const std::optional<Detection> detection = detection_of(line, detector, m, options);
     const ModelInfo detecting = detection ? model_info(detection->model.get()) : ModelInfo(nullptr, speech_model_info_free);
+    const ModelInfo diarizing = diarizer ? model_info(diarizer->model.get()) : ModelInfo(nullptr, speech_model_info_free);
     std::vector<const speech_model_info *> loaded{m};
     if (detecting) loaded.push_back(detecting.get());
+    if (diarizing) loaded.push_back(diarizing.get());
     loading.done(loaded_line(loaded, seconds_since(t0)));
     if (line.has("-v")) {
         std::string languages;
         for (size_t i = 0; i < speech_model_info_language_count(m); i++) languages += (i ? ", " : "") + std::string(speech_model_info_language(m, i));
         std::fprintf(stderr, "speech.cpp %s, %d Hz, languages: %s\n", speech_version(), speech_model_info_sample_rate(m), languages.c_str());
     }
-    if (live || piped) return transcribe_stream(line, out, model.get(), options, detection->model.get(), detection->options, format == "json");
+    if (live || piped) {
+        return transcribe_stream(line, out, model.get(), options, detection->model.get(), detection->options, diarizer ? diarizer->model.get() : nullptr,
+                                 diarizer ? diarizer->options : std::vector<RequestOption>(), format == "json");
+    }
     const bool timestamps = timestamps_in_effect(m, options);
 
     double audio_total = 0, busy = 0;
@@ -130,6 +205,9 @@ int run_asr(const CommandLine & line, FILE * out) {
         const std::string & path = line.args[i];
         Transcript transcript;
         size_t regions = 0;
+        std::vector<Region> found;
+        std::vector<Transcript> parts;
+        std::vector<SpeakerSegment> speakers;
         double audio = 0;
         const auto start = Clock::now();
         {
@@ -142,9 +220,13 @@ int run_asr(const CommandLine & line, FILE * out) {
                 Cancellation never;
                 if (detection) {
                     const Request request = detection_request(detection->model.get(), samples, wav.sample_rate, detection->options);
-                    const std::vector<Region> found = *detect_regions(request.get(), never);
+                    found = *detect_regions(request.get(), never);
                     regions = found.size();
-                    transcript = *transcribe_regions(model.get(), samples, wav.sample_rate, found, options, timestamps, never);
+                    transcript = *transcribe_regions(model.get(), samples, wav.sample_rate, found, options, timestamps, never, &parts);
+                    if (diarizer) {
+                        const Request diarization = diarization_request(diarizer->model.get(), samples, wav.sample_rate, diarizer->options);
+                        speakers = *diarize_segments(diarization.get(), never);
+                    }
                 } else {
                     const Request request = new_request(model.get());
                     check(speech_request_set_audio(request.get(), samples.data(), samples.size(), wav.sample_rate));
@@ -157,7 +239,9 @@ int run_asr(const CommandLine & line, FILE * out) {
             }
         }
         const double took = seconds_since(start);
-        if (format == "json") {
+        if (diarizer) {
+            write_diarized(out, format == "json", path, transcript, timestamps, found, parts, speakers);
+        } else if (format == "json") {
             std::fprintf(out, "{\"file\":%s%s}\n", json_string(path).c_str(), recognition_members(transcript, timestamps).c_str());
         } else if (!timestamps) {
             std::fprintf(out, "%s\n", transcript.text.c_str());
@@ -204,15 +288,22 @@ Command asr_command() {
         "alone and the texts are joined, the times of the whole file. The detection options are those of speech vad,\n"
         "with OpenAI's server_vad defaults and a longest region:\n" + region_defaults() + ".\n"
         "A file in which no one speaks gives an empty text.\n"
+        "With --diarize, a diarization model finds who speaks where, each file whole in its offline mode, and each region\n"
+        "has its speakers: with --format text a line FILE<TAB>START<TAB>END<TAB>SPEAKER<TAB>TEXT, SPEAKER the number of\n"
+        "the one who speaks the most in it, or - for none, and with --format json \"regions\", each {\"start\", \"end\",\n"
+        "\"text\", \"speakers\": [{\"speaker\", \"start\", \"end\"}]}. It runs on the device of MODEL.\n"
         "With --vad, - reads 16-bit little-endian mono PCM at --rate from stdin until it ends, and --live the default\n"
         "microphone until Ctrl-C, and each region is written as it ends: with --format text its text as a line, which\n"
         "on a terminal shows the text agreed so far while it is said; with --format json OpenAI's Realtime server\n"
         "events, one per line: input_audio_buffer.speech_started, .speech_stopped and .committed, and\n"
-        "conversation.item.input_audio_transcription.delta, .completed and .failed.";
+        "conversation.item.input_audio_transcription.delta, .completed and .failed. With --diarize, in its low_latency\n"
+        "mode unless --streaming-mode says otherwise, each line of text begins with its main speaker and a tab, and each\n"
+        ".completed carries \"speakers\" once the diarization has settled its utterance.";
     c.flags = {
         {"--format", "text|json", false, "text (the default) or one JSON object per file, or per event, and line"},
         {"--vad", "MODEL", false, "transcribe by the regions where this detection model finds speech"},
         {"--live", "", false, "transcribe the default microphone until Ctrl-C, with --vad"},
+        {"--diarize", "MODEL", false, "give each region the speakers this diarization model finds, with --vad"},
         {"--rate", "HZ", false, "the rate of the PCM that - reads from stdin, 16000 unless given"},
         device_flag("auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists; for MODEL"),
         threads_flag(),

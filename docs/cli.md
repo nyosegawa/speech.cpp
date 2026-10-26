@@ -45,6 +45,9 @@ speech asr reazonspeech-v2 --vad silero-vad meeting.wav
 # The microphone, each utterance's text as it is said, until Ctrl-C
 speech asr reazonspeech-v2 --vad silero-vad --live
 
+# Each region of a meeting with the speakers who speak in it
+speech asr qwen3-asr-1.7b --vad silero-vad --diarize Nemotron-3-Diarization-99M-F16.gguf meeting.wav
+
 # Where someone speaks in a recording, in regions of 10 s at most, and each region as a WAVE file of its own
 speech vad silero-vad --max-speech-duration-s 10 meeting.wav
 speech vad silero-vad --split regions/ meeting.wav       # regions/meeting-01.wav, regions/meeting-02.wav, ...
@@ -127,6 +130,7 @@ speech asr MODEL [options] AUDIO.wav...|-|--live
   --format text|json       text (the default) or one JSON object per file, or per event, and line
   --vad MODEL              transcribe by the regions where this detection model finds speech
   --live                   transcribe the default microphone until Ctrl-C, with --vad
+  --diarize MODEL          give each region the speakers this diarization model finds, with --vad
   --rate HZ                the rate of the PCM that - reads from stdin, 16000 unless given
   --device NAME --threads N
   -v                       also report the release, the sample rate and the model's languages, and each utterance
@@ -169,6 +173,20 @@ region:
 
 `speech vad --split` with the same flags writes the regions that `speech asr --vad` recognizes.
 
+### Speakers
+
+With `--vad`, `--diarize MODEL` names a diarization model ([models/sortformer.md](models/sortformer.md)), which runs on
+the device of the recognition model. It finds who speaks when in each file whole, in its `offline` mode, as
+`speech diarize` does, and each region carries the speakers within it:
+
+- `text` writes a line per region, `FILE<TAB>START<TAB>END<TAB>SPEAKER<TAB>TEXT`, with the times of the region in
+  seconds, and as `SPEAKER` the number of the one who speaks the most in it, or `-` where no one does.
+- `json` adds `"regions"` to each file's object, each `{"start", "end", "text", "speakers": [{"speaker", "start", "end"}]}`,
+  every speaker's parts of the region in seconds of the file.
+
+Speakers are numbered from 0 in the order they first speak in the file. The diarization takes the flags of
+`speech diarize`, such as `--streaming-mode` and `--onset`, which neither of the other models takes.
+
 ### Transcribing as someone speaks
 
 With `--vad`, `--live` transcribes the default microphone until Ctrl-C, and `-` reads 16-bit little-endian mono PCM from
@@ -192,6 +210,10 @@ speech asr qwen3-asr-0.6b --vad silero-vad --live --format json > events.jsonl
   final text 0.7 to 1.3 s after the speech ends.
 - stderr reports the microphone and its rate, and at the end the utterances and the time the detection took; `-v` also
   reports each utterance as it ends. A recognition that fails ends the run with exit 1, after the `failed` event in JSON.
+- With `--diarize`, the diarization hears the audio as it arrives, in its `low_latency` mode unless `--streaming-mode`
+  says otherwise, and each utterance waits until it has settled the utterance's audio: in `text` its line begins with
+  the number of its main speaker and a tab, and in `json` its `completed` carries `"speakers"`, labeled and in
+  milliseconds as on `/v1/realtime` ([server.md](server.md#speakers-of-a-session)).
 - `--timestamps` is refused: the times of an utterance are in its events.
 - Utterances wait for their recognition while the recognizer is behind, up to 13.1 million samples (13.6 min at 16 kHz).
   Past that, `-` reads stdin no faster than the recognition goes, and `--live` ends with `out_of_memory`. Options that

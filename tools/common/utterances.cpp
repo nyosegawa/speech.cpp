@@ -142,6 +142,21 @@ void Assembly::manual() {
     changed_.notify_all();
 }
 
+void Assembly::diarize(std::unique_ptr<Diarization> diarization) {
+    Diarized ending;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ending = diarized_;
+    }
+    // The utterances that wait for the diarization under way complete with what it gives at its end, which settles
+    // all of its audio, and then gives every number it will.
+    if (ending.diarization) ending.diarization->end();
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (ending.diarization) next_speaker_ = ending.first_speaker + ending.diarization->numbers_used();
+    diarized_ = diarization ? Diarized{std::move(diarization), heard_, next_speaker_} : Diarized{};
+    changed_.notify_all();
+}
+
 void Assembly::push(const float * samples, size_t n) {
     if (n == 0) return;
     if (detection_) {
@@ -149,16 +164,25 @@ void Assembly::push(const float * samples, size_t n) {
         detection_->push(samples, n);
         detecting_ += seconds_since(t0);
     }
-    std::lock_guard<std::mutex> lock(mutex_);
-    audio_.insert(audio_.end(), samples, samples + n);
-    heard_ += n;
-    if (detection_) {
-        pushed_ += n;
-        take_regions();
-    } else if (manual_) {
-        begin_manual_utterance();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        audio_.insert(audio_.end(), samples, samples + n);
+        heard_ += n;
+        if (detection_) {
+            pushed_ += n;
+            take_regions();
+        } else if (manual_) {
+            begin_manual_utterance();
+        }
+        changed_.notify_all();
     }
-    changed_.notify_all();
+    // The diarization computes on its model outside the assembly's lock, under which the worker waits for it, and after
+    // the audio is taken, so that a diarization that fails loses no audio of the transcription.
+    if (diarized_.diarization) {
+        diarized_.diarization->push(samples, n);
+        std::lock_guard<std::mutex> lock(mutex_);
+        changed_.notify_all();
+    }
 }
 
 bool Assembly::commit() {
@@ -189,6 +213,12 @@ void Assembly::clear() {
 void Assembly::end() {
     std::unique_lock<std::mutex> lock(mutex_);
     end_detection();
+    // The diarization's end settles every utterance it has not, which the worker may wait on.
+    if (const std::shared_ptr<Diarization> diarization = diarized_.diarization) {
+        lock.unlock();
+        diarization->end();
+        lock.lock();
+    }
     changed_.notify_all();
     changed_.wait(lock, [&] { return finals_.empty() && !busy_; });
 }
@@ -269,6 +299,9 @@ void Assembly::commit_samples(uint64_t number, uint64_t first, uint64_t last) {
     if (asked_) {
         Final f;
         f.number = number;
+        f.first = first;
+        f.last = last;
+        f.diarized = diarized_;
         if (current_ && current_->number == number) {
             f.sent = current_->sent;
             f.draft = current_->last_reading;
@@ -332,6 +365,23 @@ void Assembly::send(const Event & e) {
     if (!closing_) emit_(e);
 }
 
+std::optional<std::vector<SpeakerSegment>> Assembly::speakers_of(const Final & f, std::unique_lock<std::mutex> & lock) {
+    const Diarization * diarization = f.diarized.diarization.get();
+    if (!diarization) return std::nullopt;
+    const double from = (double) f.diarized.from / rate_;
+    const double start = (double) f.first / rate_ - from, end = (double) f.last / rate_ - from;
+    // Each push or end of the diarization wakes the wait; another diarization takes its place only once it has ended.
+    changed_.wait(lock, [&] { return closing_ || diarization->covers(end); });
+    if (closing_) return std::nullopt;
+    std::vector<SpeakerSegment> within = diarization->within(std::max(start, 0.0), end);
+    for (SpeakerSegment & s : within) {
+        s.start += from;
+        s.end += from;
+        s.speaker += f.diarized.first_speaker;
+    }
+    return within;
+}
+
 void Assembly::work() {
     std::unique_lock<std::mutex> lock(mutex_);
     for (;;) {
@@ -363,6 +413,7 @@ void Assembly::work() {
             lock.lock();
             final_.reset();
             committed_ -= f.length;
+            if (e.kind == Event::Kind::Completed) e.speakers = speakers_of(f, lock);
             busy_ = false;
             // The deltas join into the final text wherever it goes on from what they gave, so that a client that builds
             // the text from them, as OpenAI's guide does, gets it whole; one that differs keeps them as they were.

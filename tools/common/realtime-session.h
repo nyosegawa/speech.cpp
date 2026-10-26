@@ -26,6 +26,8 @@
 // commits without it, and recognizes each utterance, and its beginning while it goes on for the deltas; it writes the
 // server's events as JSON text, and whoever carries the messages (the server's WebSocket) hands it the client's and
 // sends its own. A member or a value speech.cpp does not take is answered with an error event rather than ignored.
+// speech.cpp's own member session.audio.input.diarization, null by default or an object of the diarization model's
+// request options, diarizes the session's audio, and each completion then carries the speakers within its utterance.
 
 namespace realtime {
 
@@ -65,6 +67,13 @@ public:
     virtual std::vector<RequestOption> detection_defaults() = 0;
     /** Whether `detection` runs on the detection model held now, which it no longer does once the host lets that go. */
     virtual bool holds(const utterances::Detection & detection) = 0;
+    /**
+     * A diarization of audio at kRate with `options` on the diarization model held, which it keeps: none held throws an
+     * ApiError, and an option the model refuses the library's Failure.
+     */
+    virtual std::unique_ptr<Diarization> diarize(const std::vector<RequestOption> & options) = 0;
+    /** The defaults the diarization model held was given on the command line, which a session's options come after. */
+    virtual std::vector<RequestOption> diarization_defaults() = 0;
 };
 
 class Session {
@@ -96,6 +105,8 @@ private:
         std::optional<std::string> prompt;
         /** With turn_detection server_vad, the detection options of the members given; nothing for null. */
         std::optional<std::vector<RequestOption>> turns;
+        /** With diarization, the diarization options of the members given; nothing for null, the default. */
+        std::optional<std::vector<RequestOption>> diarization;
 
         std::vector<RequestOption> options() const;
         std::optional<utterances::Asked> asked() const;

@@ -12,10 +12,11 @@
 #include "library.h"
 #include "request-options.h"
 
-// The models the server holds: at most one for speech synthesis, one for speech recognition and one for the detection of
-// speech, which cuts the audio of a transcription into the regions where someone speaks, so that a page can speak and
-// transcribe with one server while no more than one model of a task takes memory. A model given on the command line is
-// loaded before the server listens; the page replaces the one of a task by a model of the catalog.
+// The models the server holds: at most one for speech synthesis, one for speech recognition, one for the detection of
+// speech, which cuts the audio of a transcription into the regions where someone speaks, and one for the diarization of
+// speakers, which gives each region or utterance its speakers, so that a page can speak and transcribe with one server
+// while no more than one model of a task takes memory. A model given on the command line is loaded before the server
+// listens; the page replaces the one of a task by a model of the catalog.
 
 namespace server {
 
@@ -82,7 +83,7 @@ public:
 
     /** The model of a task, or nullptr while there is none or one is being loaded in its place. */
     std::shared_ptr<Served> of(speech_task task) const;
-    /** Every model held: synthesis, recognition, then detection. */
+    /** Every model held: synthesis, recognition, detection, then diarization. */
     std::vector<std::shared_ptr<Served>> all() const;
     /** The NAME[:TYPE] of the model the page is replacing a task's with, or "". */
     std::string replacing(speech_task task) const;
@@ -110,7 +111,7 @@ private:
             case SPEECH_TASK_SYNTHESIS: return synthesis_;
             case SPEECH_TASK_RECOGNITION: return recognition_;
             case SPEECH_TASK_DETECTION: return detection_;
-            case SPEECH_TASK_DIARIZATION: break;
+            case SPEECH_TASK_DIARIZATION: return diarization_;
         }
         throw std::logic_error("a task speech.h does not have");
     }
@@ -118,7 +119,7 @@ private:
 
     Loading loading_;
     mutable std::mutex mutex_;
-    Place synthesis_, recognition_, detection_;
+    Place synthesis_, recognition_, detection_, diarization_;
 };
 
 }  // namespace server

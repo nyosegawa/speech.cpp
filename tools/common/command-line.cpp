@@ -40,7 +40,7 @@ std::string meant(const Command & command, const std::string & name) {
     const size_t dot = name.find('.');
     if (command.task_options && dot != std::string::npos) {
         flags.clear();
-        for (speech_task t : {SPEECH_TASK_SYNTHESIS, SPEECH_TASK_RECOGNITION, SPEECH_TASK_DETECTION}) {
+        for (speech_task t : {SPEECH_TASK_SYNTHESIS, SPEECH_TASK_RECOGNITION, SPEECH_TASK_DETECTION, SPEECH_TASK_DIARIZATION}) {
             for (speech_option o : vocabulary()) flags.push_back(std::string("--") + task_prefix(t) + "." + option_flag(o).substr(2));
         }
     }
@@ -124,7 +124,7 @@ CommandLine parse_command_line(const Command & command, const std::vector<std::s
         bool request_option = !flag && command.request_options && option_of_flag(name, option);
         if (!flag && !request_option && command.task_options) {
             const size_t dot = name.find('.');
-            for (speech_task t : {SPEECH_TASK_SYNTHESIS, SPEECH_TASK_RECOGNITION, SPEECH_TASK_DETECTION}) {
+            for (speech_task t : {SPEECH_TASK_SYNTHESIS, SPEECH_TASK_RECOGNITION, SPEECH_TASK_DETECTION, SPEECH_TASK_DIARIZATION}) {
                 if (dot != std::string::npos && name.compare(0, dot, std::string("--") + task_prefix(t)) == 0 &&
                     option_of_flag("--" + name.substr(dot + 1), option)) {
                     task = t;
@@ -205,7 +205,8 @@ std::string command_help(const Command & command, FILE * stream) {
                                 stream) + "\n";
         }
         if (command.task_options) {
-            out += "Each also after tts., asr. or vad. (--asr.language), for the synthesis, recognition or detection model alone.\n";
+            out += "Each also after tts., asr., vad. or diarize. (--asr.language), for the synthesis, recognition, detection or diarization\n"
+                   "model alone.\n";
         }
     }
     return out;

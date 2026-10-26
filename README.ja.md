@@ -136,7 +136,7 @@ speech vad silero-vad --max-speech-duration-s 10 meeting.wav
 
 ## サーバーとページ
 
-`speech serve` は合成モデル、認識モデル、検出モデルを1つずつ保持し、OpenAI の音声 API と同じように`POST /v1/audio/speech` と `POST /v1/audio/transcriptions` に応答します。Web アプリ、スクリプト、curl から使えます。
+`speech serve` は合成モデル、認識モデル、検出モデル、話者分離モデルを1つずつ保持し、OpenAI の音声 API と同じように`POST /v1/audio/speech` と `POST /v1/audio/transcriptions` に応答します。`diarized_json` では話者も返します。Web アプリ、スクリプト、curl から使えます。
 
 ```sh
 speech serve qwen3-tts-0.6b qwen3-asr-0.6b

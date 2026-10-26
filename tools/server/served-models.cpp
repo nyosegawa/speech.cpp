@@ -44,10 +44,6 @@ Loading ServedModels::loading_of(speech_task task) const {
 
 std::shared_ptr<Served> ServedModels::load_given(const std::string & path, const std::string & catalog_name) {
     const speech_task task = speech_model_info_task(file_info(path).get());
-    if (task == SPEECH_TASK_DIARIZATION) {
-        throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "",
-                      path + " is a model of speech diarization, which speech serve does not serve; use `speech diarize` or the C API's speech_diarize()");
-    }
     const auto t0 = std::chrono::steady_clock::now();
     Model model = load_model(path, loading_of(task));
     auto served = std::make_shared<Served>(std::move(model), path, catalog_name,
@@ -70,7 +66,7 @@ std::shared_ptr<Served> ServedModels::of(speech_task task) const {
 std::vector<std::shared_ptr<Served>> ServedModels::all() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::shared_ptr<Served>> out;
-    for (const Place * p : {&synthesis_, &recognition_, &detection_}) {
+    for (const Place * p : {&synthesis_, &recognition_, &detection_, &diarization_}) {
         if (p->model) out.push_back(p->model);
     }
     return out;

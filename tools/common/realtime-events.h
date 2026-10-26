@@ -16,6 +16,9 @@
 // own: the events of an utterance (input_audio_buffer.speech_started, .speech_stopped and .committed, and
 // conversation.item.input_audio_transcription.delta, .completed and .failed) under the item id of the utterance, and
 // those a session writes itself. The session over the WebSocket and `speech asr --format json` write the same events.
+// A completion of a session that diarizes carries "speakers", speech.cpp's own: each speaker's segments within the
+// utterance, [{"speaker", "start_ms", "end_ms"}], the speaker labeled as diarized_json labels it (speaker_label()) and the
+// times in milliseconds of the session's audio, as audio_start_ms counts them.
 
 namespace realtime {
 

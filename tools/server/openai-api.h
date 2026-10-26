@@ -7,7 +7,9 @@
 
 #include "failure.h"
 #include "openai-error.h"
+#include "regions.h"
 #include "request-options.h"
+#include "speakers.h"
 #include "transcript.h"
 
 namespace httplib {
@@ -20,7 +22,8 @@ struct Response;
 // CreateTranscriptionResponseVerboseJson, TranscriptionSegment, Error, SpeechAudioDeltaEvent and SpeechAudioDoneEvent
 // and the path /audio/transcriptions of github.com/openai/openai-openapi at commit 31af4fc (2026-10-05), and its
 // chunking_strategy as TranscriptionChunkingStrategy and VadConfig give it at commit 234829e (2026-10-07), whose object
-// openai-python 3.26.0 sends in a form as one field per member, chunking_strategy[type] and so on.
+// openai-python 3.26.0 sends in a form as one field per member, chunking_strategy[type] and so on, with
+// CreateTranscriptionResponseDiarizedJson and TranscriptionDiarizedSegment at the same commit.
 
 namespace openai {
 
@@ -54,7 +57,7 @@ struct FormPart {
 struct TranscriptionRequest {
     std::vector<float> samples;
     int sample_rate = 0;
-    /** "json", "text" or "verbose_json". */
+    /** "json", "text", "verbose_json" or "diarized_json". */
     std::string format = "json";
     /** The language, the prompt, the decoding, and timestamps for verbose_json. */
     std::vector<RequestOption> options;
@@ -70,10 +73,11 @@ struct TranscriptionRequest {
 /**
  * Reads a create transcription request from the parts of its form: "file", a WAV file, its channels averaged;
  * "model"; "language"; "prompt", the option prompt; "response_format"; "decoding", the option decoding, speech.cpp's
- * own; "chunking_strategy", "auto" or the members of server_vad; and "timestamp_granularities[]", "segment" alone, with
- * verbose_json. verbose_json sets the option timestamps for a model that `gives_times`, and for any model when the
- * request names a granularity, which a model without times then refuses. A member it does not have is refused, and so
- * is one given twice but timestamp_granularities[]. Anything it cannot read throws an ApiError.
+ * own; "chunking_strategy", "auto" or the members of server_vad, which diarized_json needs; and
+ * "timestamp_granularities[]", "segment" alone, with verbose_json. verbose_json sets the option timestamps for a model
+ * that `gives_times`, and for any model when the request names a granularity, which a model without times then refuses.
+ * A member it does not have is refused, known_speaker_names[] and known_speaker_references[] among them, and so is one
+ * given twice but timestamp_granularities[]. Anything it cannot read throws an ApiError.
  */
 TranscriptionRequest read_transcription_request(bool multipart, const std::vector<FormPart> & parts, const std::string & model_name,
                                                 bool gives_times);
@@ -102,5 +106,14 @@ std::string transcription_json(const std::string & text);
  * recognizers have no value for (seek, tokens, temperature, avg_logprob, compression_ratio, no_speech_prob).
  */
 std::string transcription_verbose_json(const Transcript & transcript, double duration, bool timestamps);
+
+/**
+ * A transcription in OpenAI's diarized_json form: the task, the audio's duration, the text, a segment for each of the
+ * `regions`, recognized as `parts`, and the usage as the duration. A segment's speaker is the one who speaks the most
+ * in it as `speakers` give them, labeled A, B and on in the order the diarization numbers them, or "" where no one does;
+ * each segment also carries "speakers", every speaker's parts of it, which OpenAI's segment does not define.
+ */
+std::string transcription_diarized_json(const Transcript & transcript, double duration, const std::vector<Region> & regions,
+                                        const std::vector<Transcript> & parts, const std::vector<SpeakerSegment> & speakers);
 
 }  // namespace openai

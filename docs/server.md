@@ -1,10 +1,11 @@
 # Server and page
 
-This page describes `speech serve`, which serves a synthesis model, a recognition model and a detection model over HTTP
-with a subset of OpenAI's audio API and its Realtime transcription, and a page on which to try models.
+This page describes `speech serve`, which serves a synthesis model, a recognition model, a detection model and a
+diarization model over HTTP with a subset of OpenAI's audio API and its Realtime transcription, and a page on which to
+try models.
 
 ```
-speech serve [MODEL [MODEL [MODEL]]] [--open] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
+speech serve [MODEL [MODEL [MODEL [MODEL]]]] [--open] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
              [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup] [request options]
 ```
 
@@ -12,13 +13,16 @@ speech serve [MODEL [MODEL [MODEL]]] [--open] [--host 127.0.0.1] [--port 8080] [
 speech serve --open                                   # the page, without a model until one is picked there
 speech serve qwen3-tts-0.6b qwen3-asr-0.6b            # speech and transcriptions
 speech serve reazonspeech-v2 silero-vad               # transcriptions, also by the regions where someone speaks
+speech serve qwen3-asr-1.7b silero-vad Nemotron-3-Diarization-99M-F16.gguf   # and who speaks in each
 speech serve irodori-tts-mf --add-voice me=me.voice.gguf --cors-origin http://localhost:5173
 speech serve irodori-tts-mf --steps 8 --add-voice me=me.voice.gguf  # 8 steps unless a request sets steps
 speech serve qwen3-tts-0.6b qwen3-asr-0.6b --language ja --asr.language auto
 ```
 
-The server holds at most one model of each task: synthesis, recognition and detection (Silero VAD), whose model
-transcriptions with `chunking_strategy` and Realtime sessions with `server_vad` use. It loads the models given, listens once they are ready, and logs to stderr.
+The server holds at most one model of each task: synthesis, recognition, detection (Silero VAD), whose model
+transcriptions with `chunking_strategy` and Realtime sessions with `server_vad` use, and diarization (Nemotron 3
+Diarization), whose speakers `diarized_json` and Realtime sessions with `diarization` give. It loads the models given,
+listens once they are ready, and logs to stderr.
 
 ```
 ▁▃▅▇▅▃▁ speech.cpp 0.8.11 · serve
@@ -44,16 +48,16 @@ machines the client's address.
 | `--open` | open the page in the browser once the server listens; without a MODEL the server starts with none |
 | `--cors-origin ORIGIN` | an origin a web page may call the server from, such as `http://localhost:5173`, or `*` for any; repeatable. A web page of any other origin is refused (403 `origin_not_allowed`); curl and scripts send no origin and are not |
 | `--add-voice NAME=FILE` | add a voice to the synthesis model from a voice file or a WAVE file; repeatable |
-| `--device`, `--threads`, `--no-warmup` | as for the worker, for the synthesis and recognition models the server loads, the page's included. A detection model runs on the CPU with one thread |
+| `--device`, `--threads`, `--no-warmup` | as for the worker, for the synthesis, recognition and diarization models the server loads, the page's included. A detection model runs on the CPU with one thread |
 | a request option, such as `--steps 8` or `--language ja` | the default of every request that does not set it, for each model given that takes the option. A request's own value wins; an option that no model given takes, or a value out of its range, stops the server before it listens. The detection model's options, such as `--threshold`, come before OpenAI's server_vad defaults in `chunking_strategy` and Realtime turn detection |
-| `--tts.`, `--asr.` or `--vad.` and a request option, such as `--asr.language en` | the same for the synthesis, recognition or detection model alone, winning over the option without the prefix. A model the page loads later keeps its own defaults |
+| `--tts.`, `--asr.`, `--vad.` or `--diarize.` and a request option, such as `--asr.language en` | the same for the synthesis, recognition, detection or diarization model alone, winning over the option without the prefix. A model the page loads later keeps its own defaults |
 
 ## Endpoints
 
 | Endpoint | What it does |
 |---|---|
 | `GET /health` | answers `{"status":"ok"}` |
-| `GET /v1/models` | lists the models held, synthesis, recognition and detection in that order, as OpenAI's model objects whose `id` is the model's name, with `defaults`, the request options the command line gave the model (`{}` without any), and `speech`, the model information ([c-api.md](c-api.md#model-information-as-json)), which keeps the model's own defaults |
+| `GET /v1/models` | lists the models held, synthesis, recognition, detection and diarization in that order, as OpenAI's model objects whose `id` is the model's name, with `defaults`, the request options the command line gave the model (`{}` without any), and `speech`, the model information ([c-api.md](c-api.md#model-information-as-json)), which keeps the model's own defaults |
 | `GET /v1/models/{id}` | one model; another id is a 404 (`model_not_found`) |
 | `POST /v1/audio/speech` | speaks a text, as [OpenAI's create speech](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create) does |
 | `POST /v1/audio/transcriptions` | recognizes the speech in a WAV file, as [OpenAI's create transcription](https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create) does |
@@ -139,7 +143,7 @@ OpenAI's limit.
 | `model` | the recognition model's `id`, or left out; any other model is a 404 (`model_not_found`) |
 | `language` | a tag of one of the model's languages, or `auto` (the default) |
 | `prompt` | what the model is told of the audio before it hears it, for a model that takes it (Qwen3-ASR) |
-| `response_format` | `json` (the default), which answers `{"text":"..."}`; `text`, the text alone as `text/plain`; or `verbose_json` (below). `srt`, `vtt` and `diarized_json` are refused: speech.cpp gives neither subtitles nor speakers |
+| `response_format` | `json` (the default), which answers `{"text":"..."}`; `text`, the text alone as `text/plain`; `verbose_json` (below); or `diarized_json`, with `chunking_strategy`, each region with its speakers ([below](#speakers)). `srt` and `vtt` are refused: speech.cpp gives no subtitles |
 | `timestamp_granularities[]` | `segment`, with `verbose_json`; a model that gives no times refuses it. `word` is refused |
 | `decoding` | speech.cpp's own: `beam` (the default) or `greedy`, for a model that takes it (reazonspeech-nemo-v2) |
 | `chunking_strategy` | `auto`, or OpenAI's `server_vad` object: recognize each region where the detection model finds that someone speaks (below) |
@@ -151,7 +155,7 @@ times (FastConformer). Members the recognizers have no value for are left out.
 
 Every answer carries `X-Speech-Stop`: `complete`, or `model_limit` when the model reached the most tokens it writes, with
 the text written up to there. OpenAI's other members (`temperature`, `stream`, `include[]` and the rest) are refused with
-a 400 rather than ignored.
+a 400 rather than ignored, `known_speaker_names[]` and `known_speaker_references[]` among them.
 
 ```sh
 curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@utterance.wav -F response_format=text
@@ -192,6 +196,31 @@ with open("meeting.wav", "rb") as f:
     print(client.audio.transcriptions.create(model="reazonspeech-nemo-v2", file=f, chunking_strategy="auto").text)
 ```
 
+### Speakers
+
+With `response_format` `diarized_json` and `chunking_strategy`, the diarization model also finds who speaks when in the
+whole file, in its `offline` mode ([sortformer.md](models/sortformer.md)), and each region of `chunking_strategy` is a
+segment with the speakers within it:
+
+```sh
+curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav -F response_format=diarized_json -F chunking_strategy=auto
+```
+
+```json
+{"task":"transcribe","duration":98.012,"text":"...","segments":[
+  {"type":"transcript.text.segment","id":"seg_0","start":1.396,"end":7.82,"text":"...","speaker":"A",
+   "speakers":[{"speaker":"A","start":1.66,"end":4.07},{"speaker":"A","start":4.41,"end":7.49}]},
+  {"type":"transcript.text.segment","id":"seg_1","start":8.276,"end":15.008,"text":"...","speaker":"B",
+   "speakers":[{"speaker":"B","start":8.53,"end":14},{"speaker":"A","start":14.5,"end":14.65}]}],
+ "usage":{"type":"duration","seconds":98.012}}
+```
+
+Speakers are labeled `A`, `B` and on in the order they first speak in the file, as OpenAI labels speakers it does not
+know; a label does not name a person. A segment's `speaker` is the one who speaks the most in its region, or `""` where
+the diarization finds no one, and speech.cpp's own `speakers` gives each speaker's parts of the region, in seconds of
+the file, two at once where they overlap. Without `chunking_strategy` the request is a 400 (`param`
+`chunking_strategy`), and a server without a diarization model answers a 400 that says to give it one.
+
 ## Realtime transcription
 
 `/v1/realtime` speaks OpenAI's Realtime API over a WebSocket, for a transcription session: the client appends audio as
@@ -221,7 +250,7 @@ utterance.
 
 | Client event | What it does |
 |---|---|
-| `session.update` | sets `session.audio.input.transcription`: `model` (the recognition model's `id`), `language`, or `languages` with one tag, and `prompt`, each left as it was when left out and taken away by `null`; or `null`, after which commits are not transcribed. Sets `turn_detection`: `null`, or `{"type": "server_vad"}` with `threshold`, `prefix_padding_ms` and `silence_duration_ms` (below). `session.type` is `"transcription"`, the format `{"type": "audio/pcm", "rate": 24000}`, and `noise_reduction` `null` |
+| `session.update` | sets `session.audio.input.transcription`: `model` (the recognition model's `id`), `language`, or `languages` with one tag, and `prompt`, each left as it was when left out and taken away by `null`; or `null`, after which commits are not transcribed. Sets `turn_detection`: `null`, or `{"type": "server_vad"}` with `threshold`, `prefix_padding_ms` and `silence_duration_ms` (below). Sets speech.cpp's own `diarization`: `null`, or the diarization model's request options, `{}` for its defaults ([below](#speakers-of-a-session)). `session.type` is `"transcription"`, the format `{"type": "audio/pcm", "rate": 24000}`, and `noise_reduction` `null` |
 | `input_audio_buffer.append` | adds `audio`, base64 of 16-bit little-endian mono PCM at 24000 Hz |
 | `input_audio_buffer.commit` | transcribes the buffer: what was appended since the last commit or clear |
 | `input_audio_buffer.clear` | drops the buffer |
@@ -234,7 +263,7 @@ utterance.
 | `input_audio_buffer.committed` | at once for a commit, or with `server_vad` after `speech_stopped`, with its `item_id` and the `previous_item_id` |
 | `input_audio_buffer.cleared` | for a clear |
 | `conversation.item.input_audio_transcription.delta` | while the utterance goes on: text that adds to the end of what came before (below) |
-| `conversation.item.input_audio_transcription.completed` | once the utterance is recognized whole, with the `transcript`, the whole text, which replaces the deltas; `usage` `{"type": "duration", "seconds": …}`, `languages` where the model names them (Qwen3-ASR), and speech.cpp's own `stop`, `complete` or `model_limit` |
+| `conversation.item.input_audio_transcription.completed` | once the utterance is recognized whole, with the `transcript`, the whole text, which replaces the deltas; `usage` `{"type": "duration", "seconds": …}`, `languages` where the model names them (Qwen3-ASR), speech.cpp's own `stop`, `complete` or `model_limit`, and with `diarization` speech.cpp's own `speakers` |
 | `conversation.item.input_audio_transcription.failed` | an utterance the model could not transcribe, with OpenAI's error object |
 | `error` | an event the server does not take, with OpenAI's error object and the client's `event_id` |
 
@@ -279,6 +308,28 @@ and, while the server listens on 127.0.0.1, `::1` or `localhost`, a Host other t
 loaded, a session that named no model goes on with it, and one that named the previous model, in the address or in
 `session.update`, fails with `model_not_found`. A session with `server_vad` lets the detection model go when the page
 replaces it, committing the utterance under way, and goes on with the new one.
+
+### Speakers of a session
+
+With `diarization` in `session.update`, the diarization model hears the session's audio as it arrives, in its
+`low_latency` mode unless the options say otherwise, and each `completed` waits until the diarization has settled the
+utterance's audio and carries who spoke when within it:
+
+```json
+{"type":"conversation.item.input_audio_transcription.completed","item_id":"item_…","transcript":"…",…,
+ "speakers":[{"speaker":"C","start_ms":24290,"end_ms":28560},{"speaker":"B","start_ms":26970,"end_ms":28150}]}
+```
+
+`start_ms` and `end_ms` count the session's audio as `audio_start_ms` does, cut to the utterance, from its
+`speech_started` to its `speech_stopped`, and two speakers overlap where they speak at once. Speakers are labeled `A`,
+`B` and on in the order they first speak in the session, as `diarized_json` labels them, and each session labels its
+own. The options are those of the diarization model, such as `{"streaming_mode": "very_low_latency"}`, after the
+server's `--diarize.` defaults; one it does not take, or a value out of its range, is an `error` event with the member
+at fault in `param`. A `session.update` with the same options keeps the diarization under way and its labels; other
+options, or `diarization` given again after `null`, start a diarization of the audio that follows, whose speakers take
+the labels after those of the diarizations before, since it cannot tell whether someone it hears is one they heard.
+`null` ends it: an utterance committed before then still carries the speakers it found. A server without a diarization
+model answers `diarization` with an `error` event that says to give it one.
 
 ## Errors
 
