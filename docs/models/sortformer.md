@@ -3,17 +3,18 @@
 This page describes speech.cpp's port of NVIDIA's Streaming Sortformer, which finds who speaks when in a recording or in
 audio as it arrives.
 
-| Model | Upstream | Languages | File |
+| Name | Upstream | Languages | File |
 |---|---|---|---|
-| Nemotron 3 Diarization | [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization), OpenMDW 1.1 | any; it takes none | `Nemotron-3-Diarization-99M-F32.gguf`, 397 MB, and F16 (199 MB), Q8_0 (106 MB) |
+| `nemotron-3-diarization` | [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization), OpenMDW 1.1 | any; it takes none | `Nemotron-3-Diarization-99M-Q8_0.gguf`, 106 MB, and `:f16` (199 MB), `:f32` (397 MB) |
 
 ```sh
-speech diarize Nemotron-3-Diarization-99M-F16.gguf meeting.wav          # FILE, START, END and SPEAKER of each segment
-speech diarize Nemotron-3-Diarization-99M-F16.gguf --format rttm a.wav b.wav > hyp.rttm
-speech diarize Nemotron-3-Diarization-99M-F16.gguf --streaming-mode low_latency meeting.wav
+speech diarize nemotron-3-diarization meeting.wav                 # FILE, START, END and SPEAKER of each segment
+speech diarize nemotron-3-diarization --format rttm a.wav b.wav > hyp.rttm
+speech diarize nemotron-3-diarization --streaming-mode low_latency meeting.wav
 ```
 
-The file is made from the official checkpoint with `reference/sortformer/convert.py` and `speech quantize`.
+The files are made from the official checkpoint with `reference/sortformer/convert.py` and `speech quantize`, on
+[sakasegawa/Nemotron-3-Diarization-GGUF](https://huggingface.co/sakasegawa/Nemotron-3-Diarization-GGUF).
 
 ## What it does
 
@@ -80,6 +81,22 @@ On an Apple M5:
 On Metal the speaker cache once kept another frame, which then changed what the steps after it heard. The Vulkan
 figures are of an NVIDIA GeForce RTX 2080, 2026-10-27. Audio given in
 pieces of 10 ms or of 150 ms gives the probabilities of the whole audio bit for bit on both devices.
+
+The diarization error rate on the test set of AMI (16 meetings, 9.1 h, the headset mix), against NTT's forced-alignment
+references with a collar of 0 s and overlapped speech included, as NVIDIA's model card scores it, with pyannote.metrics
+3.2.1, on an Apple M5's GPU, 2026-10-27:
+
+| | `offline` | `low_latency` |
+|---|---|---|
+| NVIDIA's model card | 9.25% | 9.48% |
+| NeMo d32dd55 on the same files, CPU | 9.21% | not run |
+| F32 | 9.22% | 9.46% |
+| F16 | 9.22% | 9.48% |
+| Q8_0 | 9.23% | 9.52% |
+| Q4_K | 9.47% | not run |
+
+Each meeting's rate in `offline` is within 0.15 points of NeMo's. The model card lists no Japanese among the data it was
+trained or evaluated on, and no Japanese recording of a meeting with its speakers' times is free to measure with.
 
 ## Speed
 

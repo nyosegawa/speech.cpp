@@ -60,6 +60,7 @@ speech.cpp は、1つのコマンド `speech` と1つの共有ライブラリ `l
 | 認識 | [`parakeet-tdt_ctc-0.6b-ja`](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | ja | 短い日本語の発話を速く認識し、時刻も出します |
 | 認識 | [`parakeet-tdt-0.6b-v3`](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) | ヨーロッパの 25 言語 | 言語を自分で判定し、句読点、大文字、時刻つきで認識します |
 | 検出 | [`silero-vad`](https://huggingface.co/sakasegawa/silero-vad-GGUF) | どの言語でも | 人が話している区間を見つけ、認識モデルに発話を1つずつ渡します。1.2 MB です |
+| 話者分離 | [`nemotron-3-diarization`](https://huggingface.co/sakasegawa/Nemotron-3-Diarization-GGUF) | どの言語でも | 録音の中で、または音声が届くそばから、誰がいつ話したかを見つけます。話者は8人までです。106 MB です |
 
 コマンドはモデルを名前で受け取り、初めて使うときに、名前のリンク先の Hugging Face のリポジトリから変換済みのファイルを取得します。[docs/models.md](docs/models.md) には各モデルのサイズ、声、言語が載っています。ファミリーごとのページもあります。[Qwen3-TTS](docs/models/qwen3-tts.md)、[Irodori-TTS](docs/models/irodori-tts.md)、[Drama 3](docs/models/drama3.md)、[FastConformer](docs/models/fastconformer.md)、[Qwen3-ASR](docs/models/qwen3-asr.md)、[Silero VAD](docs/models/silero-vad.md)、[Sortformer](docs/models/sortformer.md)。
 

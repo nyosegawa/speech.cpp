@@ -104,7 +104,7 @@ speech_detection_free(detection);
 Who speaks where in a recording, each speaker's segments in order of their starts:
 
 ```c
-if (check(speech_model_load("Nemotron-3-Diarization-99M-F16.gguf", NULL, &model)) &&
+if (check(speech_model_load("Nemotron-3-Diarization-99M-Q8_0.gguf", NULL, &model)) &&
     check(speech_request_new(model, &request)) &&
     check(speech_request_set_audio(request, samples, n_samples, 48000)) &&
     check(speech_diarize(request))) {

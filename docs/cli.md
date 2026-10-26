@@ -50,7 +50,7 @@ speech vad silero-vad --max-speech-duration-s 10 meeting.wav
 speech vad silero-vad --split regions/ meeting.wav       # regions/meeting-01.wav, regions/meeting-02.wav, ...
 
 # Who speaks where in a recording, as RTTM
-speech diarize Nemotron-3-Diarization-99M-F16.gguf --format rttm meeting.wav > meeting.rttm
+speech diarize nemotron-3-diarization --format rttm meeting.wav > meeting.rttm
 
 # What a model file holds, without loading it
 speech info irodori-tts-mf

@@ -195,6 +195,21 @@
       "files": [
         {"type": "f32", "file": "silero-vad-309K-v6.2-F32.gguf", "size": 1238624, "sha256": "2fc312514e5fc4fa4ffd02b25c76a4853fa4130e8fb9777d01502183b01238cb"}
       ]
+    },
+    {
+      "name": "nemotron-3-diarization",
+      "repository": "sakasegawa/Nemotron-3-Diarization-GGUF",
+      "type": "q8_0",
+      "start": [],
+      "revision": "9096d41cb78bba7ac882b96d453e25239eac692b",
+      "task": "diarization",
+      "languages": [],
+      "voice_files": false,
+      "files": [
+        {"type": "q8_0", "file": "Nemotron-3-Diarization-99M-Q8_0.gguf", "size": 106179488, "sha256": "336df6350dce2ea5ff06aa6e2b249d331a859ced13305fbb45c44bdb3c0abe20"},
+        {"type": "f32", "file": "Nemotron-3-Diarization-99M-F32.gguf", "size": 397065056, "sha256": "189427ebbe4668c71be376e97ba699fce90b13f312ff169c7a60e6a50fd9154e"},
+        {"type": "f16", "file": "Nemotron-3-Diarization-99M-F16.gguf", "size": 199015264, "sha256": "ce6dc36d68d97c9ef80c93195b8712bb24f66045318e5ed452ef95cf152d8020"}
+      ]
     }
   ]
 }

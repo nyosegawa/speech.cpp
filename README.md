@@ -68,6 +68,7 @@ implementation, from the same inputs.
 | Recognition | [`parakeet-tdt_ctc-0.6b-ja`](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | ja | short Japanese utterances, fast, with times |
 | Recognition | [`parakeet-tdt-0.6b-v3`](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) | 25 European languages | finds the language itself, with punctuation, capitals and times |
 | Detection | [`silero-vad`](https://huggingface.co/sakasegawa/silero-vad-GGUF) | any | where someone speaks, to give a recognizer one utterance at a time; 1.2 MB |
+| Diarization | [`nemotron-3-diarization`](https://huggingface.co/sakasegawa/Nemotron-3-Diarization-GGUF) | any | who speaks when, up to eight speakers, in a recording or as it arrives; 106 MB |
 
 A command takes a model by its name and fetches its converted file from Hugging Face, from the repository the name links
 to, the first time. [docs/models.md](docs/models.md) lists the models with their sizes, voices and languages, and each
