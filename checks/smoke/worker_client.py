@@ -206,7 +206,10 @@ def dump_requests(speech, model, dump, options=()):
     reference/qwen3-asr/dump.py, which keeps each request in a folder of its own, auto, forced, auto-prompt and
     forced-prompt, the forced language given by the tag of general.languages whose name qwen3-asr.language_names gives
     (read with speech info --json --meta), the prompt by its text, and the language qwen-asr parsed by its tag, or
-    none.
+    none; for one of reference/nemotron-transcribe/dump.py, whose meta.json holds its prompt and text, the request whose
+    prompt that is, auto without a prompt for the model card's verbatim instruction and with the context terms as its
+    prompt for the contextual one, which nemotron-transcribe.prompt names (read with speech info --json --meta), its
+    text and no language, since the model writes none. A dump of another prompt is no request's, and is refused.
 
     The text and languages are the reference's for weights in F32 or F16. A quantized file's rounding may change a word
     of a long recording, which points to no defect of the entry point a smoke script drives, so for one the text and
@@ -216,6 +219,20 @@ def dump_requests(speech, model, dump, options=()):
         with open(os.path.join(folder, "text.txt"), encoding="utf-8") as f:
             return f.read()
 
+    if os.path.isfile(os.path.join(dump, "llm", "tokens.npy")):
+        r = subprocess.run([speech, "info", model, "--json", "--meta"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        meta = json.loads(r.stdout)["meta"]
+        with open(os.path.join(dump, "meta.json"), encoding="utf-8") as f:
+            dumped = json.load(f)
+        asked = dumped["prompt"]["text"]
+        before, after = meta["nemotron-transcribe.prompt.context_before"], meta["nemotron-transcribe.prompt.context_after"]
+        if asked == meta["nemotron-transcribe.prompt.instruction"]:
+            members = {}
+        elif asked.startswith(before) and asked.endswith(after) and len(asked) > len(before) + len(after):
+            members = {"prompt": asked[len(before):len(asked) - len(after)]}
+        else:
+            raise SystemExit(f"{dump} asks {asked!r}, which no request's prompt is")
+        return library_texts(speech, model, dump, options, [("auto", members, dumped["text"], [])])
     if not os.path.isfile(os.path.join(dump, "auto", "meta.json")):
         r = subprocess.run([speech, "info", model, "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
         decoding = [o for o in json.loads(r.stdout)["options"] if o["name"] == "decoding"]

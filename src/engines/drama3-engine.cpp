@@ -5,16 +5,14 @@
 #include <memory>
 #include <string>
 
-#include "backend.h"
 #include "drama3/layout.h"
 #include "drama3/placement.h"
 #include "drama3/synthesizer.h"
 #include "drama3/voice-file.h"
 #include "engine.h"
+#include "expert-placement.h"
 #include "error.h"
-#include "ggml-cpu.h"
 #include "json.h"
-#include "log.h"
 #include "wav.h"
 
 namespace {
@@ -42,60 +40,19 @@ double seconds_of(const ModelFile & m, int64_t frames) {
     return (double) frames * m.u32("drama3.codec.hop_length") / m.u32("speech.sample_rate");
 }
 
-/** The text model's layers, and those of them, from the first, whose routed experts the model's device holds. */
-struct Placement {
-    int layers = 0, held = 0;
-};
-
-/** Every layer's experts on the CPU, and on a GPU those of as many layers as its free memory holds beside the rest. */
-Placement place_experts(const std::string & path, ggml_backend_t backend) {
-    const ModelFile file(path, drama3::model_layout);
-    const int layers = file.count("drama3.text.num_hidden_layers");
-    ggml_backend_dev_t device = ggml_backend_get_device(backend);
-    if (ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_CPU) return {layers, layers};
-    size_t free = 0, total = 0;
-    ggml_backend_dev_memory(device, &free, &total);
-    const int held = drama3::expert_layers_on_device(file, free, ggml_backend_name(backend));
-    if (held < layers) {
-        log_message(LogLevel::Warn, "Drama 3 computes the experts of " + std::to_string(layers - held) + " of its " + std::to_string(layers) +
-                                        " layers on the CPU, since " + ggml_backend_name(backend) + " holds those of " + std::to_string(held) +
-                                        " beside the rest of the model; a GPU with more memory free speaks faster\n");
-    }
-    return {layers, held};
-}
-
 class Drama3Engine : public Engine {
 public:
     Drama3Engine(const std::string & path, ggml_backend_t backend, int threads)
-        : placement_(place_experts(path, backend)),
-          cpu_(placement_.held < placement_.layers ? start_device(find_device("cpu"), threads) : nullptr, ggml_backend_free),
-          pool_(nullptr, ggml_threadpool_free),
-          model_(path, drama3::model_layout,
-                 [&](const std::string & name) {
-                     return cpu_ && drama3::is_routed_experts(name) && drama3::layer_of(name) >= placement_.held ? cpu_.get() : backend;
-                 }),
-          synth_(model_, backend, cpu_.get()) {
-        if (cpu_) {
-            // A pool that waits between graphs, since the CPU computes a graph of each layer for every row: ggml's
-            // threads started for each graph made a row take 95 ms where the pool takes 58, on an RTX 2080 with an
-            // i9-9900K and 8 threads (2026-10-15).
-            ggml_threadpool_params params = ggml_threadpool_params_default(threads);
-            pool_.reset(ggml_threadpool_new(&params));
-            if (!pool_) throw Error(Fault::OutOfMemory, "cannot start the CPU's threads for the experts");
-            ggml_backend_cpu_set_threadpool(cpu_.get(), pool_.get());
-        }
+        : placement_(place_experts(path, backend, threads)),
+          model_(path, drama3::model_layout, [&](const std::string & name) { return placement_.place(name, backend); }),
+          synth_(model_, backend, placement_.cpu()) {
         voices_.emplace(kNoReference, drama3::Voice{});
     }
 
-    bool computes_on_cpu() const override { return cpu_ != nullptr; }
+    bool computes_on_cpu() const override { return placement_.cpu() != nullptr; }
 
     speech_stop speak(const std::string & text, const RequestValues & values, Run & run) override {
-        if (cpu_ && !values.boolean(SPEECH_OPT_EXPERTS_ON_CPU)) {
-            throw Error(Fault::OutOfRange,
-                        "the GPU holds the experts of " + std::to_string(placement_.held) + " of the model's " + std::to_string(placement_.layers) +
-                            " layers and the CPU computes the rest, which experts_on_cpu false refuses; free the GPU's memory or load the model on a GPU with more",
-                        "experts_on_cpu");
-        }
+        placement_.allow(values.boolean(SPEECH_OPT_EXPERTS_ON_CPU));
         drama3::Request r;
         r.text = text;
         r.seed = (uint64_t) values.integer(SPEECH_OPT_SEED);
@@ -145,11 +102,14 @@ public:
     }
 
 private:
-    /** Where the routed experts are: the model's device holds those of the first layers, and the CPU the rest. */
-    Placement placement_;
-    /** The CPU's backend and its threads, where the CPU holds the experts of some layers. */
-    std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> cpu_;
-    std::unique_ptr<ggml_threadpool, decltype(&ggml_threadpool_free)> pool_;
+    /** Every layer's experts on the CPU, and on a GPU those of as many layers as its free memory holds beside the rest. */
+    static ExpertPlacement place_experts(const std::string & path, ggml_backend_t backend, int threads) {
+        const ModelFile file(path, drama3::model_layout);
+        return ExpertPlacement(file, file.count("drama3.text.num_hidden_layers"), drama3::working_bytes(file), backend, threads, "Drama 3",
+                               [](const std::string &) { return true; });
+    }
+
+    ExpertPlacement placement_;
     ModelFile model_;
     drama3::Synthesizer synth_;
     std::map<std::string, drama3::Voice> voices_;

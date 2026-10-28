@@ -87,7 +87,7 @@ for d in dumps:
         if request == "auto":
             want_text[name], want_langs[name] = want, want_languages
             if not options["language"]["steers"]:
-                members = {"language": info["languages"][0]}
+                members = {**members, "language": info["languages"][0]}
         id = f"{name}/{request}"
         t1 = time.perf_counter()
         send_audio(id, audio[name], **members, **timed)

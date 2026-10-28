@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "expert-placement.h"
 #include "language-model.h"
 #include "model-file.h"
 #include "perception.h"
@@ -27,12 +28,14 @@ struct Recognition {
 
 /**
  * What a recognition did, for the checks and measurements: where its time went in seconds, the rows of its prompt with
- * the audio's, and the ids it wrote, the end of the turn included where it wrote one.
+ * the audio's, and the ids it wrote, the end of the turn included where it wrote one. `logits`, when set, hears each
+ * step's logits before the step chooses its token.
  */
 struct RecognitionReport {
     double perception = 0, prefill = 0, decode = 0;
     int64_t prompt_rows = 0;
     std::vector<int32_t> ids;
+    std::function<void(const std::vector<float> & logits)> logits;
 };
 
 /**
@@ -41,11 +44,29 @@ struct RecognitionReport {
  * a context, its contextual one with the terms, one space and the audio locator, with no system turn, the locator's row
  * replaced by the audio's rows; the language model's prefill and greedy decoding until the end of the turn or the end of
  * the context; and the text decoded with its special tokens, cleaned by the model card's guardrail. It reads one GGUF
- * file and computes on one backend.
+ * file and computes on one backend, but for the experts that a placement leaves to the CPU.
  */
 class Recognizer {
 public:
-    Recognizer(const std::string & path, ggml_backend_t backend);
+    /**
+     * The model of the file `path` on `backend`, with the experts of the layers that `experts`, where it is given, does
+     * not give the model's device in the CPU's memory; `experts` outlives the recognizer. The tensors a recognition
+     * does not read (reads()) are not loaded.
+     */
+    Recognizer(const std::string & path, ggml_backend_t backend, const ExpertPlacement * experts = nullptr);
+
+    /**
+     * Whether a recognition reads the tensor `name`: every one but those of the multi-token prediction layers, which
+     * greedy decoding does not run, and of the CTC head, which only timestamps read.
+     */
+    static bool reads(const std::string & name);
+
+    /**
+     * The memory a device needs beside the weights it holds to serve every request the model file `m` takes: the keys
+     * and values of the attention layers for the whole context in float32, the Mamba layers' states, and what the
+     * graphs and the backend allocate while they compute.
+     */
+    static uint64_t working_bytes(const ModelFile & m);
 
     /**
      * Recognizes mono samples at sample_rate(). `progress` hears how far the work has come, from 0 to 1: the perception

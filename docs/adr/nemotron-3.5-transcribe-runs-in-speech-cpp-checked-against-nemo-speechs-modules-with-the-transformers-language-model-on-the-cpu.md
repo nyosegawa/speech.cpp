@@ -27,6 +27,12 @@ one.
   tensors renamed by Automodel's own state dict adapter, and greedy decoding in the dump's own loop, since Transformers
   refuses generate() from embeddings for NemotronH. Every tensor of the checkpoint is loaded, but for the MTP layers',
   which generation does not use, and the CTC head's, which only timestamps read.
+- **The Mamba layers' step size is limited as the checkpoint says, (0, inf), not as Transformers limits it.**
+  Transformers 5.18's NemotronHMamba2Mixer clamps the step size from below at the configuration's time_step_min, 0.001,
+  where vLLM 0.32's Mamba-2 layer and Automodel's take the checkpoint's time_step_limit, (0.0, inf), and clamp nothing.
+  The clamp moves each Mamba layer's output 30 dB away from the unclamped computation, and on a quiet input changes the
+  transcript: from an empty one with the clamp to a sentence nobody spoke without it. The reference sets each mixer's
+  limit to the checkpoint's and refuses a checkpoint whose limit is another.
 - **The prompt is the vLLM plugin's**: the user's text, one space and the audio locator, which the nemotron3p5 format
   and the tokenizer's chat template render alike, both checked by the converter.
 - **The file keeps every part of the checkpoint an inference reads, the MTP layers and the CTC head among them**, so

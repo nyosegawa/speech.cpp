@@ -162,6 +162,22 @@ def reading(paths, runs):
     return [Run(r.check, [], None, r.what, f"no {absent[0]}") for r in runs] if absent else runs
 
 
+def physical_memory():
+    """The machine's memory in bytes."""
+    if os.name != "nt":
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    import ctypes
+
+    class MemoryStatus(ctypes.Structure):
+        _fields_ = [("length", ctypes.c_uint32), ("load", ctypes.c_uint32)] + [(n, ctypes.c_uint64) for n in
+                    ("total_physical", "free_physical", "total_paged", "free_paged", "total_virtual", "free_virtual", "free_extended")]
+
+    status = MemoryStatus(length=ctypes.sizeof(MemoryStatus))
+    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+        raise OSError("GlobalMemoryStatusEx failed")
+    return status.total_physical
+
+
 def named_dumps(check, model, out):
     """The skip of a check whose model has no dumps under <out>/<general.name>/, or None."""
     d = os.path.join(out, model.name)
@@ -337,8 +353,15 @@ def nemotron_transcribe(model, devices, ctx):
         runs.append(missing("tokenizer-check", model.label(), cases))
     guardrail = os.path.join(out, "guardrail-cases.tsv")
     runs += reading([guardrail], [Run("nemotron-transcribe-guardrail-check", [model.path, guardrail], None, model.label())])
+    # The recognition loads the whole file, where the decoder check loads a layer at a time: the F32 file takes about
+    # 136 GB, more than most machines' memory.
+    memory = physical_memory()
     for device in devices:
         runs += [runs_on(device, f"nemotron-transcribe-{stage}-check", model, [out]) for stage in ("encoder", "speakers", "perception", "decoder")]
+        recognizer = runs_on(device, "nemotron-transcribe-recognizer-check", model, [out])
+        if os.path.getsize(model.path) > memory:
+            recognizer.skip = f"the file takes more than the machine's {memory / 2**30:.0f} GiB of memory"
+        runs.append(recognizer)
     return runs
 
 

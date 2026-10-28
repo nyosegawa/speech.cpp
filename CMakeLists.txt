@@ -51,6 +51,7 @@ add_library(speechcommon STATIC
     src/common/sortformer-network.cpp
     src/common/sortformer-cache.cpp
     src/common/keys-values.cpp
+    src/common/expert-placement.cpp
     src/common/sampling.cpp
     src/common/log.cpp
     src/common/qwen3-decoder.cpp
@@ -444,12 +445,14 @@ add_executable(silero-vad-check checks/silero-vad/silero-vad-check.cpp tools/com
 target_include_directories(silero-vad-check PRIVATE checks tools/common)
 target_link_libraries(silero-vad-check PRIVATE silerovad)
 
-# Sortformer's stages against the dumps of reference/sortformer/dump.py, read with the JSON reader of `speech`.
-foreach(stage encoder speakers perception decoder guardrail)
+# Nemotron 3.5 Transcribe's stages against the dumps of reference/nemotron-transcribe/dump.py.
+foreach(stage encoder speakers perception decoder recognizer guardrail)
     add_executable(nemotron-transcribe-${stage}-check checks/nemotron-transcribe/nemotron-transcribe-${stage}-check.cpp tools/common/json-reader.cpp)
     target_include_directories(nemotron-transcribe-${stage}-check PRIVATE checks tools/common)
     target_link_libraries(nemotron-transcribe-${stage}-check PRIVATE nemotrontranscribe)
 endforeach()
+
+# Sortformer's stages against the dumps of reference/sortformer/dump.py, read with the JSON reader of `speech`.
 foreach(stage frontend network cache segments stream)
     add_executable(sortformer-${stage}-check checks/sortformer/sortformer-${stage}-check.cpp tools/common/json-reader.cpp)
     target_include_directories(sortformer-${stage}-check PRIVATE checks tools/common)

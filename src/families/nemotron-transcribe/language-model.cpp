@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <string>
 
 #include "error.h"
 
@@ -9,11 +10,20 @@ namespace nemotron_transcribe {
 
 namespace {
 
-/**
- * The rows one graph of a run takes at most: a block's attention scores take rows × positions × heads × 4 bytes, 4.2 GB
- * for a block of the longest prompt, 512 rows of 32 heads over 65,536 positions.
- */
+/** The rows one graph of a run takes at most. */
 constexpr int64_t kBlockRows = 512;
+
+/**
+ * The rows times the positions of a block's attention scores at most, which take that times the heads times 4 bytes:
+ * 512 rows over 8,192 positions, 512 MiB with 32 heads, where a block of 512 rows at the end of the longest prompt would
+ * take 4.3 GB. A block after more rows takes fewer rows.
+ */
+constexpr int64_t kScoreArea = kBlockRows * 8192;
+
+/** The rows of the block that starts after `past` rows, of `left` rows to run. */
+int64_t block_rows(int64_t past, int64_t left) {
+    return std::max<int64_t>(1, std::min({kBlockRows, left, kScoreArea / (past + kBlockRows)}));
+}
 
 std::string layer_name(int l) {
     return "blk." + std::to_string(l) + ".";
@@ -104,6 +114,19 @@ void LanguageModel::start(int64_t rows) {
     if (states_->buffer) ggml_backend_buffer_clear(states_->buffer, 0);
     capacity_ = rows;
     n_past_ = 0;
+}
+
+void LanguageModel::reserve(int64_t rows) {
+    start(rows);
+    // The largest graph of such a sequence: the block whose scores take the most, kBlockRows rows over kScoreArea's
+    // positions, or the last block of the sequence where it is shorter.
+    const int64_t block = std::min(kBlockRows, rows);
+    n_past_ = std::min(kScoreArea / kBlockRows, rows) - block;
+    Graph g;
+    build_rows(g, g.zeros(h_, block), nullptr);
+    const bool reserved = sched_ ? ggml_backend_sched_reserve(sched_, g.cgraph()) : ggml_gallocr_reserve(allocr_, g.cgraph());
+    if (!reserved) throw Error(Fault::OutOfMemory, "cannot reserve the memory of the language model's graphs on " + std::string(ggml_backend_name(backend_)));
+    start(rows);
 }
 
 ggml_tensor * LanguageModel::mamba(Graph & g, int l, ggml_tensor * x) {
@@ -209,8 +232,8 @@ std::vector<float> LanguageModel::run(const std::vector<float> & input, int64_t 
     }
     std::vector<float> out;
     out.reserve(input.size());
-    for (int64_t from = 0; from < n; from += kBlockRows) {
-        const int64_t rows = std::min(kBlockRows, n - from);
+    for (int64_t from = 0, rows = 0; from < n; from += rows) {
+        rows = block_rows(n_past_, n - from);
         Graph g;
         std::vector<std::vector<ggml_tensor *>> kept((size_t) count);
         ggml_tensor * x = build_rows(g, g.input(std::vector<float>(input.begin() + from * h_, input.begin() + (from + rows) * h_), h_, rows),

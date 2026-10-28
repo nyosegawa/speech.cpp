@@ -12,6 +12,13 @@ namespace {
 
 const std::string kKeys = "nemotron-transcribe.";
 
+/**
+ * What the graphs and the backend allocate while a recognition computes, beyond the weights, the caches and the states:
+ * the buffers of the perception module's graphs and of the language model's at their largest, a block of 512 rows
+ * attending to the whole context.
+ */
+constexpr uint64_t kComputeBytes = (uint64_t) 1536 << 20;
+
 /** Adds the seconds from its construction to its destruction to `total`, when `total` is set. */
 struct Timer {
     double * total;
@@ -23,15 +30,41 @@ struct Timer {
 
 }  // namespace
 
-Recognizer::Recognizer(const std::string & path, ggml_backend_t backend)
-    : model_(path, backend, layout),
+Recognizer::Recognizer(const std::string & path, ggml_backend_t backend, const ExpertPlacement * experts)
+    : model_(path, layout,
+             [&](const std::string & name) -> ggml_backend_t {
+                 if (!reads(name)) return nullptr;
+                 return experts ? experts->place(name, backend) : backend;
+             }),
       tokenizer_(model_),
       perception_(model_, backend),
-      language_model_(model_, backend),
+      language_model_(model_, backend, 0, -1, experts ? experts->cpu() : nullptr),
       guardrail_(model_),
       eos_(model_.i32_array(kKeys + "generation.eos_ids")),
       context_length_(model_.size(kKeys + "llm.context_length")),
-      max_samples_(model_.size(kKeys + "audio.max_samples")) {}
+      max_samples_(model_.size(kKeys + "audio.max_samples")) {
+    // The keys and values of the whole context and the language model's largest graph are held from the load on, so
+    // that a model loaded after this one cannot take the memory a long recording needs.
+    language_model_.reserve(context_length_);
+}
+
+bool Recognizer::reads(const std::string & name) {
+    return name.rfind("mtp.", 0) != 0 && name.rfind("ctc.", 0) != 0;
+}
+
+uint64_t Recognizer::working_bytes(const ModelFile & m) {
+    const std::string x = kKeys + "llm.";
+    const std::vector<std::string> types = m.str_array(x + "layer_types");
+    const uint64_t attention_layers = (uint64_t) std::count(types.begin(), types.end(), "attention");
+    const uint64_t mamba_layers = (uint64_t) std::count(types.begin(), types.end(), "mamba");
+    // A key and a value of float32 for each kv head of each position.
+    const uint64_t keys_values = 2 * sizeof(float) * (uint64_t) m.size(x + "head_dim") * (uint64_t) m.size(x + "num_key_value_heads") *
+                                 (uint64_t) m.size(x + "context_length") * attention_layers;
+    const uint64_t channels = (uint64_t) m.size(x + "mamba_num_heads") * (uint64_t) m.size(x + "mamba_head_dim");
+    const uint64_t conv = channels + 2 * (uint64_t) m.size(x + "n_groups") * (uint64_t) m.size(x + "ssm_state_size");
+    const uint64_t states = sizeof(float) * mamba_layers * (channels * (uint64_t) m.size(x + "ssm_state_size") + conv * ((uint64_t) m.size(x + "conv_kernel") - 1));
+    return keys_values + states + kComputeBytes;
+}
 
 std::pair<std::vector<int32_t>, std::vector<int32_t>> Recognizer::prompt(const std::string & context) const {
     const std::string q = kKeys + "prompt.";
@@ -85,6 +118,7 @@ std::optional<Recognition> Recognizer::recognize(const std::vector<float> & samp
         Timer t{&r.decode};
         while (true) {
             const std::vector<float> logits = language_model_.logits(last);
+            if (r.logits) r.logits(logits);
             // The most likely token, the first of equal logits, as torch.argmax() takes it.
             const int32_t token = (int32_t) (std::max_element(logits.begin(), logits.end()) - logits.begin());
             r.ids.push_back(token);

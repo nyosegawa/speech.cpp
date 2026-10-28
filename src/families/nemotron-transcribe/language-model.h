@@ -50,6 +50,11 @@ public:
 
     /** Starts a sequence of at most `rows` rows: the attention layers get room for them, and every state starts at 0. */
     void start(int64_t rows);
+    /**
+     * Starts a sequence of at most `rows` rows and allocates the memory of the largest graph a run of it builds, so
+     * that a run takes no memory beyond what the model holds from then on.
+     */
+    void reserve(int64_t rows);
 
     /** The embeddings of the tokens `ids`, [hidden, n]. */
     std::vector<float> embed(const std::vector<int32_t> & ids);
