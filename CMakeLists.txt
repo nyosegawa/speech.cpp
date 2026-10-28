@@ -47,6 +47,10 @@ add_library(speechcommon STATIC
     src/common/resample.cpp
     src/common/fft.cpp
     src/common/nemo-frontend.cpp
+    src/common/nemo-transformer.cpp
+    src/common/sortformer-network.cpp
+    src/common/sortformer-cache.cpp
+    src/common/keys-values.cpp
     src/common/sampling.cpp
     src/common/log.cpp
     src/common/qwen3-decoder.cpp
@@ -139,8 +143,6 @@ target_link_libraries(silerovad PUBLIC speechcommon)
 
 add_library(sortformer STATIC
     src/families/sortformer/layout.cpp
-    src/families/sortformer/network.cpp
-    src/families/sortformer/cache.cpp
     src/families/sortformer/segments.cpp
     src/families/sortformer/diarizer.cpp
 )
@@ -152,14 +154,28 @@ target_link_libraries(sortformer PUBLIC speechcommon)
 # /fp:precise does not fuse.
 if (NOT MSVC)
     target_compile_options(sortformer PRIVATE -ffp-contract=off)
+    set_source_files_properties(src/common/sortformer-cache.cpp PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
 endif()
+
+# NVIDIA Nemotron 3.5 Transcribe speech recognition (NVIDIA): the family.
+add_library(nemotrontranscribe STATIC
+    src/families/nemotron-transcribe/layout.cpp
+    src/families/nemotron-transcribe/tokenizer.cpp
+    src/families/nemotron-transcribe/encoder.cpp
+    src/families/nemotron-transcribe/speakers.cpp
+    src/families/nemotron-transcribe/perception.cpp
+    src/families/nemotron-transcribe/language-model.cpp
+    src/families/nemotron-transcribe/transcript.cpp
+    src/families/nemotron-transcribe/recognizer.cpp
+)
+target_include_directories(nemotrontranscribe PUBLIC src/families)
+target_link_libraries(nemotrontranscribe PUBLIC speechcommon)
 
 # Fish Audio Drama 3 speech synthesis (Fish Audio): the family.
 add_library(drama3 STATIC
     src/families/drama3/layout.cpp
     src/families/drama3/codec.cpp
     src/families/drama3/sampler.cpp
-    src/families/drama3/attention.cpp
     src/families/drama3/audio-decoder.cpp
     src/families/drama3/text-model.cpp
     src/families/drama3/prompt.cpp
@@ -176,16 +192,16 @@ target_link_libraries(drama3 PUBLIC speechcommon)
 # the library and the shared one as its import library, hence speech-static.
 set(SPEECH_SOURCES src/api/speech.cpp src/api/info.cpp src/api/request.cpp src/api/detection.cpp src/api/diarization.cpp src/api/voice.cpp
     src/engines/qwen3-tts-engine.cpp src/engines/irodori-tts-engine.cpp src/engines/drama3-engine.cpp src/engines/fastconformer-engine.cpp
-    src/engines/qwen3-asr-engine.cpp src/engines/silero-vad-engine.cpp src/engines/sortformer-engine.cpp)
+    src/engines/qwen3-asr-engine.cpp src/engines/nemotron-transcribe-engine.cpp src/engines/silero-vad-engine.cpp src/engines/sortformer-engine.cpp)
 
 add_library(speech-static STATIC ${SPEECH_SOURCES})
 target_include_directories(speech-static PUBLIC include PRIVATE src/engines)
-target_link_libraries(speech-static PUBLIC qwen3tts irodoritts drama3 fastconformer qwen3asr silerovad sortformer)
+target_link_libraries(speech-static PUBLIC qwen3tts irodoritts drama3 fastconformer qwen3asr nemotrontranscribe silerovad sortformer)
 target_compile_definitions(speech-static PRIVATE SPEECH_VERSION="${PROJECT_VERSION}")
 
 add_library(speech SHARED ${SPEECH_SOURCES})
 target_include_directories(speech PUBLIC include PRIVATE src/engines)
-target_link_libraries(speech PRIVATE qwen3tts irodoritts drama3 fastconformer qwen3asr silerovad sortformer)
+target_link_libraries(speech PRIVATE qwen3tts irodoritts drama3 fastconformer qwen3asr nemotrontranscribe silerovad sortformer)
 target_compile_definitions(speech PRIVATE SPEECH_BUILD_SHARED SPEECH_VERSION="${PROJECT_VERSION}" INTERFACE SPEECH_SHARED)
 set_target_properties(speech PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 # The shared library's SOVERSION is the C API's major version, which speech.h defines and nothing else repeats.
@@ -335,7 +351,7 @@ target_link_libraries(qwen3-tts-graph-sampler-check PRIVATE qwen3tts)
 
 # The tokenizer of a Qwen3-TTS or a Qwen3-ASR file, each its family's.
 add_executable(tokenizer-check checks/common/tokenizer-check.cpp)
-target_link_libraries(tokenizer-check PRIVATE qwen3tts qwen3asr)
+target_link_libraries(tokenizer-check PRIVATE qwen3tts qwen3asr nemotrontranscribe)
 
 # The decoder's runs in blocks, on the talker of a Qwen3-TTS file.
 add_executable(qwen3-decoder-check checks/common/qwen3-decoder-check.cpp)
@@ -429,6 +445,11 @@ target_include_directories(silero-vad-check PRIVATE checks tools/common)
 target_link_libraries(silero-vad-check PRIVATE silerovad)
 
 # Sortformer's stages against the dumps of reference/sortformer/dump.py, read with the JSON reader of `speech`.
+foreach(stage encoder speakers perception decoder guardrail)
+    add_executable(nemotron-transcribe-${stage}-check checks/nemotron-transcribe/nemotron-transcribe-${stage}-check.cpp tools/common/json-reader.cpp)
+    target_include_directories(nemotron-transcribe-${stage}-check PRIVATE checks tools/common)
+    target_link_libraries(nemotron-transcribe-${stage}-check PRIVATE nemotrontranscribe)
+endforeach()
 foreach(stage frontend network cache segments stream)
     add_executable(sortformer-${stage}-check checks/sortformer/sortformer-${stage}-check.cpp tools/common/json-reader.cpp)
     target_include_directories(sortformer-${stage}-check PRIVATE checks tools/common)

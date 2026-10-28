@@ -79,6 +79,14 @@ void NemoFrontend::log_mel(const float * x, int64_t begin, int64_t total, int64_
 }
 
 std::vector<float> NemoFrontend::features(const std::vector<float> & samples) const {
+    const std::vector<double> mel = log_mels(samples);
+    if (per_feature_) return normalized(mel);
+    std::vector<float> out(mel.size());
+    for (size_t i = 0; i < mel.size(); i++) out[i] = (float) mel[i];
+    return out;
+}
+
+std::vector<double> NemoFrontend::log_mels(const std::vector<float> & samples) const {
     const int64_t frames = this->frames(samples.size());
     // normalize_batch() divides by frames - 1.
     if (frames < (per_feature_ ? 2 : 1)) {
@@ -90,12 +98,12 @@ std::vector<float> NemoFrontend::features(const std::vector<float> & samples) co
     preemphasize(samples.data(), samples.size(), true, 0.0f, x.data());
     std::vector<double> mel((size_t) (frames * mels_));
     log_mel(x.data(), 0, (int64_t) x.size(), 0, frames, mel.data());
-    std::vector<float> out(mel.size());
-    if (!per_feature_) {
-        for (size_t i = 0; i < mel.size(); i++) out[i] = (float) mel[i];
-        return out;
-    }
+    return mel;
+}
 
+std::vector<float> NemoFrontend::normalized(const std::vector<double> & mel) const {
+    const int64_t frames = (int64_t) mel.size() / mels_;
+    std::vector<float> out(mel.size());
     // normalize_batch(normalize_type="per_feature"): the unbiased standard deviation, plus a guard.
     for (int m = 0; m < mels_; m++) {
         double mean = 0;

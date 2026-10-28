@@ -1,5 +1,5 @@
 """Writes tokenizer cases for checks/common/tokenizer-check from the model's own tokenizer.json, which transformers
-builds from a Qwen3-TTS or Qwen3-ASR checkpoint.
+builds from a Qwen3-TTS, Qwen3-ASR or Nemotron 3.5 Transcribe checkpoint.
 
 The encoding cases are one line per text: the text's UTF-8 in hex, a tab, and the ids the tokenizer gives the text as
 it is, which its normalizer brings to NFC first. The decoding cases are one line per sequence of ids: the ids, a tab,
@@ -8,10 +8,14 @@ that characters split between tokens are cut at either end, the ids of special t
 token, and random sequences, most of which are not UTF-8. For Qwen3-TTS, whose text speech.cpp tokenizes without its
 added tokens, decoding keeps the special tokens. For Qwen3-ASR, whose tokenizer splits a text at its added tokens
 first, the texts also hold added tokens, and decoding drops the special tokens, as the family's tokenizer does.
+Nemotron 3.5 Transcribe's splits a text at its added tokens first too, has no normalizer, and keeps the special tokens
+when it decodes, as the model card's request asks (skip_special_tokens=False); its texts add words in mixed case and
+paths, which its pre-tokenizer splits by case and at '/'.
 
 usage: uv run python tokenizer_cases.py <Qwen3-TTS checkpoint dir> <cases.tsv> <decode-cases.tsv>
-  or, in reference/qwen3-asr, whose environment has the transformers and tokenizers of Qwen3-ASR's reference:
-       uv run python ../qwen3-tts/tokenizer_cases.py <Qwen3-ASR checkpoint dir> <cases.tsv> <decode-cases.tsv>
+  or, in reference/qwen3-asr or reference/nemotron-transcribe, whose environments have the transformers and tokenizers
+  of their references:
+       uv run python ../qwen3-tts/tokenizer_cases.py <checkpoint dir> <cases.tsv> <decode-cases.tsv>
 """
 
 import json
@@ -24,8 +28,9 @@ from transformers import AutoTokenizer
 
 model_dir, out_path, decode_path = sys.argv[1:4]
 family = json.load(open(os.path.join(model_dir, "config.json"), encoding="utf-8"))["model_type"]
-assert family in ("qwen3_tts", "qwen3_asr"), family
+assert family in ("qwen3_tts", "qwen3_asr", "nemo_speechlm"), family
 recognition = family == "qwen3_asr"
+nemotron = family == "nemo_speechlm"
 # Loaded without fix_mistral_regex, so the pre-tokenizer is the one in tokenizer.json.
 tok = AutoTokenizer.from_pretrained(model_dir)
 
@@ -65,6 +70,17 @@ texts += [
     "a>" + chr(0x338) + "b =" + chr(0x338) + " c",
     "a" + chr(0x1DF8) + chr(0x301) + " " + chr(0x11935) + chr(0x11930),
 ]
+if nemotron:
+    # Words in mixed case, capitals and digits, paths and URLs, and the prompt the vLLM plugin writes, whose specials
+    # split it.
+    texts += [
+        "camelCaseWords HTTPServer iPhone McDonald's XMLHttpRequest ABCdef DéJàVu ÉCOLE",
+        "src/common/qwen2-tokenizer.cpp and /usr/local/bin/ and C:/Users/a//b",
+        "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B v0.9.1 RTFx 12.5x",
+        "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nAudio transcription. Language: as spoken. <|audio|><|im_end|>\n"
+        "<|im_start|>assistant\n<think></think>",
+        "<spk:0> こんにちは <spk:1> Hello <|im_end|>x</think>",
+    ]
 if recognition:
     # Texts with added tokens, which the tokenizers library finds in the text as it is given, before its normalizer:
     # the prompt qwen-asr writes, with a context not in NFC, and the '>' of an added token followed by U+0338.
@@ -98,6 +114,8 @@ for t in texts + decode_texts:
 # Special tokens, but for the fourth, which is not.
 special = tok.convert_tokens_to_ids(["<|im_start|>", "<|im_end|>", "<|endoftext|>", "<asr_text>", "<|audio_pad|>"]
                                     if recognition else
+                                    ["<|im_start|>", "<|im_end|>", "</s>", "<think>", "<SPECIAL_18>"]
+                                    if nemotron else
                                     ["<|im_start|>", "<|im_end|>", "<|endoftext|>", "<tool_call>", "<tts_pad>"])
 body = tok("お天気です", add_special_tokens=False)["input_ids"]
 sequences += [

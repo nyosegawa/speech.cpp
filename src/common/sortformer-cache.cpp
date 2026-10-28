@@ -1,4 +1,4 @@
-#include "cache.h"
+#include "sortformer-cache.h"
 
 #include <algorithm>
 #include <cmath>
@@ -47,15 +47,15 @@ void boost(std::vector<float> & scores, int64_t n, int speakers, int64_t k, doub
 
 }  // namespace
 
-Compression compression_of(const ModelFile & m) {
+Compression compression_of(const ModelFile & m, const std::string & prefix) {
     Compression c;
-    c.speakers = (int) m.u32("sortformer.speakers");
-    c.silence_frames = (int) m.u32("sortformer.cache.silence_frames");
-    c.score_threshold = m.f32("sortformer.cache.score_threshold");
-    c.boost_latest = m.f32("sortformer.cache.boost_latest");
-    c.strong_boost_rate = m.f32("sortformer.cache.strong_boost_rate");
-    c.weak_boost_rate = m.f32("sortformer.cache.weak_boost_rate");
-    c.min_pos_scores_rate = m.f32("sortformer.cache.min_pos_scores_rate");
+    c.speakers = (int) m.u32(prefix + "speakers");
+    c.silence_frames = (int) m.u32(prefix + "cache.silence_frames");
+    c.score_threshold = m.f32(prefix + "cache.score_threshold");
+    c.boost_latest = m.f32(prefix + "cache.boost_latest");
+    c.strong_boost_rate = m.f32(prefix + "cache.strong_boost_rate");
+    c.weak_boost_rate = m.f32(prefix + "cache.weak_boost_rate");
+    c.min_pos_scores_rate = m.f32(prefix + "cache.min_pos_scores_rate");
     return c;
 }
 
@@ -120,11 +120,12 @@ std::vector<int64_t> compress(const std::vector<float> & probs, int64_t n, const
 }
 
 void update(State & state, const Streaming & streaming, const Compression & compression, const std::vector<float> & silence, const float * chunk,
-            int64_t frames, int64_t first, const float * probs, int * ties) {
+            int64_t frames, int64_t first, const float * probs, int64_t left, int * ties) {
     const int speakers = compression.speakers;
     const int64_t d = (int64_t) silence.size(), cache_n = state.cache_rows(), fifo_n = state.fifo_rows();
-    // The queue's rows take the probabilities this step gave them, and the chunk's rows follow.
-    state.fifo_probs.assign(probs + cache_n * speakers, probs + (cache_n + fifo_n + frames) * speakers);
+    // The queue's rows take the probabilities this step gave them, and the chunk's rows follow, after the left context's.
+    state.fifo_probs.assign(probs + cache_n * speakers, probs + (cache_n + fifo_n) * speakers);
+    state.fifo_probs.insert(state.fifo_probs.end(), probs + (cache_n + fifo_n + left) * speakers, probs + (cache_n + fifo_n + left + frames) * speakers);
     state.fifo.insert(state.fifo.end(), chunk, chunk + frames * d);
     for (int64_t i = 0; i < frames; i++) state.fifo_frames.push_back(first + i);
     if (fifo_n + frames <= streaming.fifo_len) return;

@@ -6,12 +6,12 @@
 #include <string>
 #include <vector>
 
-#include "cache.h"
 #include "ggml-backend.h"
 #include "model-file.h"
 #include "nemo-frontend.h"
-#include "network.h"
 #include "segments.h"
+#include "sortformer-cache.h"
+#include "sortformer-network.h"
 
 namespace sortformer {
 

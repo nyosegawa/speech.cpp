@@ -7,11 +7,28 @@
 
 namespace sortformer {
 
+namespace {
+
+NetworkShape network_shape(const ModelFile & m) {
+    NetworkShape s;
+    s.d_model = (int) m.u32("sortformer.encoder.d_model");
+    s.heads = (int) m.u32("sortformer.encoder.num_heads");
+    s.layers = m.count("sortformer.encoder.num_layers");
+    s.factor = (int) m.u32("sortformer.encoder.subsampling_factor");
+    s.speakers = (int) m.u32("sortformer.speakers");
+    s.mels = (int) m.u32("sortformer.frontend.n_mels");
+    s.norm_eps = m.f32("sortformer.encoder.norm_eps");
+    s.rope_base = m.f32("sortformer.encoder.rope_base");
+    return s;
+}
+
+}  // namespace
+
 Diarizer::Diarizer(const std::string & path, ggml_backend_t backend)
     : model_(path, backend, layout),
       frontend_(model_, "sortformer.", false),
-      network_(model_, backend),
-      compression_(compression_of(model_)),
+      network_(model_, backend, network_shape(model_), ""),
+      compression_(compression_of(model_, "sortformer.")),
       modes_(model_.str_array("sortformer.streaming.modes")) {
     ggml_tensor * t = model_.tensor("silence.embedding");
     silence_.resize((size_t) ggml_nelements(t));

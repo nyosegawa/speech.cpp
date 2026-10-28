@@ -18,6 +18,7 @@
 #include "irodori-tts/layout.h"
 #include "log.h"
 #include "quantize.h"
+#include "nemotron-transcribe/layout.h"
 #include "qwen3-asr/layout.h"
 #include "qwen3-tts/layout.h"
 #include "silero-vad/layout.h"
@@ -40,6 +41,7 @@ const Family families[] = {
     {SPEECH_TASK_SYNTHESIS, drama3::model_layout, describe_drama3, load_drama3, make_drama3_voice},
     {SPEECH_TASK_RECOGNITION, fastconformer::layout, describe_fastconformer, load_fastconformer, nullptr},
     {SPEECH_TASK_RECOGNITION, qwen3_asr::layout, describe_qwen3_asr, load_qwen3_asr, nullptr},
+    {SPEECH_TASK_RECOGNITION, nemotron_transcribe::layout, describe_nemotron_transcribe, load_nemotron_transcribe, nullptr},
     {SPEECH_TASK_DETECTION, silero_vad::layout, describe_silero_vad, load_silero_vad, nullptr},
     {SPEECH_TASK_DIARIZATION, sortformer::layout, describe_sortformer, load_sortformer, nullptr},
 };

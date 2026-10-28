@@ -324,6 +324,8 @@ std::unique_ptr<Engine> load_fastconformer(const std::string & path, ggml_backen
 
 FamilyInfo describe_qwen3_asr(const std::shared_ptr<const ModelFile> & file);
 std::unique_ptr<Engine> load_qwen3_asr(const std::string & path, ggml_backend_t backend, int threads);
+FamilyInfo describe_nemotron_transcribe(const std::shared_ptr<const ModelFile> & file);
+std::unique_ptr<Engine> load_nemotron_transcribe(const std::string & path, ggml_backend_t backend, int threads);
 
 FamilyInfo describe_silero_vad(const std::shared_ptr<const ModelFile> & file);
 std::unique_ptr<Engine> load_silero_vad(const std::string & path, ggml_backend_t backend, int threads);

@@ -58,7 +58,7 @@ int main(int argc, char ** argv) {
                         const State want = states.after(c, (int64_t) k, diarizer.silence(), speakers);
                         int ties = 0;
                         update(state, c.streaming, diarizer.compression(), diarizer.silence(), &states.table.f32[(size_t) (st.first_frame * d)],
-                               st.chunk_frames, st.first_frame, &states.step_probs.f32[(size_t) (states.step_offset[k] * speakers)], &ties);
+                               st.chunk_frames, st.first_frame, &states.step_probs.f32[(size_t) (states.step_offset[k] * speakers)], 0, &ties);
                         // The cache was compressed where the rows the queue gave it took it past spkcache_len.
                         if (st.cache_before + st.fifo_before + st.chunk_frames - st.fifo_after > c.streaming.spkcache_len) compressions++;
                         const bool same = canonical(state.cache_frames, states) == want.cache_frames && canonical(state.fifo_frames, states) == want.fifo_frames &&

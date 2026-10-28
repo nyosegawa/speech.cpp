@@ -6,10 +6,8 @@
 #include "ggml-backend.h"
 #include "graph.h"
 
-namespace drama3 {
-
 /**
- * The keys and values of the attention layers of a stack, for one sequence: the keys of each layer, [head_dim, rows,
+ * The keys and values of the attention layers of a stack, for one sequence, in float32: the keys of each layer, [head_dim, rows,
  * kv heads], and its values transposed, [rows, head_dim, kv heads], so that each is a matrix product's first operand.
  */
 class KeysValues {
@@ -43,5 +41,3 @@ ggml_tensor * causal_mask(Graph & g, int64_t first, int64_t n);
 
 /** The positions of `n` rows after `first`, I32 [n], as RoPE takes them. */
 ggml_tensor * positions(Graph & g, int64_t first, int64_t n);
-
-}  // namespace drama3

@@ -1,12 +1,10 @@
-#include "attention.h"
+#include "keys-values.h"
 
 #include <cmath>
 #include <numeric>
 #include <string>
 
 #include "error.h"
-
-namespace drama3 {
 
 KeysValues::KeysValues(ggml_backend_t backend, int layers, int head_dim, int kv_heads, int64_t rows) : capacity_(rows) {
     ggml_init_params params = {ggml_tensor_overhead() * (size_t) (2 * layers), nullptr, true};
@@ -57,5 +55,3 @@ ggml_tensor * positions(Graph & g, int64_t first, int64_t n) {
     std::iota(p.begin(), p.end(), (int32_t) first);
     return g.input(p, n);
 }
-
-}  // namespace drama3

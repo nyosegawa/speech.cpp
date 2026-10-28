@@ -35,11 +35,18 @@ bool is_number(uint32_t cp) { return in_ranges(kNumbers, cp); }
 bool is_mark(uint32_t cp) { return in_ranges(kMarks, cp); }
 bool is_space(uint32_t cp) { return in_ranges(kSpaces, cp); }
 bool is_crlf(uint32_t cp) { return cp == '\r' || cp == '\n'; }
+bool is_upper(uint32_t cp) { return in_ranges(kUppers, cp); }
+bool is_lower(uint32_t cp) { return in_ranges(kLowers, cp); }
+bool is_other_letter(uint32_t cp) { return in_ranges(kOtherLetters, cp); }
 
 const char * const kQwen2Regex =
     "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
 const char * const kQwen35Regex =
     "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?[\\p{L}\\p{M}]+|\\p{N}| ?[^\\s\\p{L}\\p{M}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
+const char * const kNemotronRegex =
+    "[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+|[^\\r\\n\\p{L}\\p{N}]?"
+    "[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|"
+    "\\s+(?!\\S)|\\s+";
 
 std::vector<uint32_t> code_points(const std::string & text) {
     std::optional<std::vector<uint32_t>> cps = decode_utf8(text);
@@ -47,8 +54,72 @@ std::vector<uint32_t> code_points(const std::string & text) {
     return std::move(*cps);
 }
 
+/** The rest of the pre-token at `i` after its non-whitespace alternatives: a run of whitespace, cut as \s*[\r\n]+,
+ * \s+(?!\S) or \s+ cut it. */
+size_t match_space(const std::vector<uint32_t> & cps, size_t i) {
+    const size_t n = cps.size();
+    size_t run = i;
+    while (run < n && is_space(cps[run])) run++;
+    // \s*[\r\n]+ : ends after the last \r or \n of the run.
+    for (size_t j = run; j > i; j--) {
+        if (is_crlf(cps[j - 1])) return j - i;
+    }
+    // \s+(?!\S) : the run, less its last character when something other than whitespace follows.
+    if (run == n) return run - i;
+    if (run - i >= 2) return run - i - 1;
+    // \s+
+    return run - i;
+}
+
+/**
+ * Length of the pre-token at `i` under Nemotron's pattern, its alternatives in order, each as a backtracking regex
+ * engine matches it: the optional prefix taken first and then left out, and a greedy run given back a character at a
+ * time until what follows it matches.
+ */
+size_t match_nemotron(const std::vector<uint32_t> & cps, size_t i) {
+    const size_t n = cps.size();
+    // [\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}] and [\p{Ll}\p{Lm}\p{Lo}\p{M}]
+    const auto is_a = [](uint32_t c) { return is_upper(c) || is_other_letter(c) || is_mark(c); };
+    const auto is_b = [](uint32_t c) { return is_lower(c) || is_other_letter(c) || is_mark(c); };
+    const auto run_of = [&](size_t j, auto is) {
+        while (j < n && is(cps[j])) j++;
+        return j;
+    };
+    // [^\r\n\p{L}\p{N}]?, taken where it can be and then not.
+    std::vector<size_t> starts;
+    if (!is_crlf(cps[i]) && !is_letter(cps[i]) && !is_number(cps[i]) && i + 1 < n) starts.push_back(i + 1);
+    starts.push_back(i);
+    // ...A*B+ : the longest A run that a B run follows, the B run taken whole.
+    for (size_t j : starts) {
+        const size_t a_end = run_of(j, is_a);
+        for (size_t k = a_end + 1; k-- > j;) {
+            if (k < n && is_b(cps[k])) return run_of(k, is_b) - i;
+        }
+    }
+    // ...A+B*
+    for (size_t j : starts) {
+        const size_t a_end = run_of(j, is_a);
+        if (a_end > j) return run_of(a_end, is_b) - i;
+    }
+    // \p{N}
+    if (is_number(cps[i])) return 1;
+    // ' ?[^\s\p{L}\p{N}]+[\r\n/]*'
+    const auto is_other = [](uint32_t c) { return !is_space(c) && !is_letter(c) && !is_number(c); };
+    {
+        size_t j = i;
+        if (cps[j] == ' ' && j + 1 < n && is_other(cps[j + 1])) j++;
+        if (is_other(cps[j])) {
+            j = run_of(j, is_other);
+            while (j < n && (is_crlf(cps[j]) || cps[j] == '/')) j++;
+            return j - i;
+        }
+    }
+    return match_space(cps, i);
+}
+
 /** Length of the pre-token at `i`, following the alternatives of the pattern in order. */
 size_t match_at(const std::vector<uint32_t> & cps, size_t i, Qwen2Pattern pattern) {
+    if (pattern == Qwen2Pattern::Nemotron) return match_nemotron(cps, i);
     const size_t n = cps.size();
     // A run of letters, of letters and marks in Qwen3.5's pattern, and what is neither whitespace, a number nor that.
     const bool marks = pattern == Qwen2Pattern::Qwen35;
@@ -83,18 +154,7 @@ size_t match_at(const std::vector<uint32_t> & cps, size_t i, Qwen2Pattern patter
             return j - i;
         }
     }
-    // The remaining alternatives all start with whitespace; take the whole run first.
-    size_t run = i;
-    while (run < n && is_space(cps[run])) run++;
-    // \s*[\r\n]+ : ends after the last \r or \n of the run.
-    for (size_t j = run; j > i; j--) {
-        if (is_crlf(cps[j - 1])) return j - i;
-    }
-    // \s+(?!\S) : the run, less its last character when something other than whitespace follows.
-    if (run == n) return run - i;
-    if (run - i >= 2) return run - i - 1;
-    // \s+
-    return run - i;
+    return match_space(cps, i);
 }
 
 }  // namespace
@@ -102,12 +162,13 @@ size_t match_at(const std::vector<uint32_t> & cps, size_t i, Qwen2Pattern patter
 bool qwen2_pattern(const std::string & regex, Qwen2Pattern * pattern) {
     if (regex == kQwen2Regex) *pattern = Qwen2Pattern::Qwen2;
     else if (regex == kQwen35Regex) *pattern = Qwen2Pattern::Qwen35;
+    else if (regex == kNemotronRegex) *pattern = Qwen2Pattern::Nemotron;
     else return false;
     return true;
 }
 
-Qwen2Tokenizer::Qwen2Tokenizer(const ModelFile & m, const std::string & prefix, Qwen2Pattern pattern)
-    : pattern_(pattern), tokens_(m.str_array(prefix + ".tokens")) {
+Qwen2Tokenizer::Qwen2Tokenizer(const ModelFile & m, const std::string & prefix, Qwen2Pattern pattern, bool ignore_merges)
+    : pattern_(pattern), ignore_merges_(ignore_merges), tokens_(m.str_array(prefix + ".tokens")) {
     for (size_t i = 0; i < tokens_.size(); i++) {
         if (!tokens_[i].empty()) vocab_[tokens_[i]] = (int32_t) i;
     }
@@ -127,7 +188,7 @@ Qwen2Tokenizer::Qwen2Tokenizer(const ModelFile & m, const std::string & prefix, 
 }
 
 std::vector<std::string> Qwen2Tokenizer::pre_tokenize(const std::string & text) const {
-    const std::vector<uint32_t> cps = nfc(code_points(text), UnicodeVersion::V9);
+    const std::vector<uint32_t> cps = pattern_ == Qwen2Pattern::Nemotron ? code_points(text) : nfc(code_points(text), UnicodeVersion::V9);
     std::vector<std::string> pieces;
     for (size_t i = 0; i < cps.size();) {
         const size_t len = match_at(cps, i, pattern_);
@@ -140,6 +201,12 @@ std::vector<std::string> Qwen2Tokenizer::pre_tokenize(const std::string & text) 
 std::vector<int32_t> Qwen2Tokenizer::bpe(const std::string & piece) const {
     std::vector<std::string> symbols;
     for (unsigned char c : piece) symbols.push_back(byte_to_unicode_[c]);
+    if (ignore_merges_) {
+        std::string whole;
+        for (const std::string & symbol : symbols) whole += symbol;
+        const auto it = vocab_.find(whole);
+        if (it != vocab_.end()) return {it->second};
+    }
     while (symbols.size() > 1) {
         int best = INT_MAX;
         size_t at = 0;

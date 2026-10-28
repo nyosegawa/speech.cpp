@@ -12,7 +12,7 @@
 #include "json-reader.h"
 #include "npy.h"
 #include "reference-dumps.h"
-#include "sortformer/cache.h"
+#include "sortformer-cache.h"
 
 // The dumps of reference/sortformer/dump.py: each input's folder, with its audio and features, holds a folder for each
 // streaming configuration, with the steps of its diarization and the state after each, as frame indices.

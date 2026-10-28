@@ -11,7 +11,9 @@
 
 /**
  * The Qwen2 byte-level BPE (transformers' Qwen2Tokenizer) with the pre-tokenizer of the tokenizer.json that ships with
- * the model, Qwen2's or Qwen3.5's, whose tokens and merges a model file holds under one prefix.
+ * the model, Qwen2's or Qwen3.5's, whose tokens and merges a model file holds under one prefix; and Nemotron's byte-level
+ * BPE, the same with a pre-tokenizer that splits words by case, no normalizer, and its tokenizer.json's ignore_merges,
+ * which takes a piece that is a token of the vocabulary whole without merging its bytes.
  *
  * transformers 4.57.3, which the official Qwen3-TTS package pins, replaces that pre-tokenizer with Mistral's when
  * the model is loaded with fix_mistral_regex=True, as the package does; the two split text of Latin
@@ -28,6 +30,13 @@ enum class Qwen2Pattern {
      * ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+
      */
     Qwen35,
+    /**
+     * Nemotron 3.5's, which splits a word before its capitals and keeps its own text as it is, without NFC:
+     * [^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|
+     * [^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|
+     * \s*[\r\n]+|\s+(?!\S)|\s+
+     */
+    Nemotron,
 };
 
 /** Whether `regex`, the pattern of a tokenizer.json's Split pre-tokenizer, is one of Qwen2Pattern's, and which. */
@@ -37,9 +46,10 @@ class Qwen2Tokenizer {
 public:
     /**
      * The tokenizer of the keys `<prefix>.tokens`, every token in the order of its id, and `<prefix>.merges`, with the
-     * pre-tokenizer `pattern`.
+     * pre-tokenizer `pattern`, which also decides the normalizer: NFC for Qwen's, none for Nemotron's. With
+     * `ignore_merges`, a piece whose bytes are one token of the vocabulary is that token.
      */
-    Qwen2Tokenizer(const ModelFile & m, const std::string & prefix, Qwen2Pattern pattern = Qwen2Pattern::Qwen2);
+    Qwen2Tokenizer(const ModelFile & m, const std::string & prefix, Qwen2Pattern pattern = Qwen2Pattern::Qwen2, bool ignore_merges = false);
 
     /**
      * The ids of `text`, with special tokens written in the text taken literally. A text that is not UTF-8 throws an
@@ -56,13 +66,14 @@ public:
      */
     std::string decode(const std::vector<int32_t> & ids) const;
 
-    /** The pieces the pre-tokenizer splits the NFC of `text` into, as UTF-8. */
+    /** The pieces the pre-tokenizer splits `text`, after the normalizer, into, as UTF-8. */
     std::vector<std::string> pre_tokenize(const std::string & text) const;
 
 private:
     std::vector<int32_t> bpe(const std::string & piece) const;
 
     Qwen2Pattern pattern_;
+    bool ignore_merges_;
     std::vector<std::string> tokens_;
     std::unordered_map<std::string, int32_t> vocab_;
     std::map<std::pair<std::string, std::string>, int> ranks_;

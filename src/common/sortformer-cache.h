@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "model-file.h"
@@ -22,7 +23,8 @@ struct Compression {
     float score_threshold = 0, boost_latest = 0, strong_boost_rate = 0, weak_boost_rate = 0, min_pos_scores_rate = 0;
 };
 
-Compression compression_of(const ModelFile & m);
+/** The compression of the keys <prefix>speakers and <prefix>cache.* of the model file `m`. */
+Compression compression_of(const ModelFile & m, const std::string & prefix);
 
 /**
  * The speaker cache and the FIFO queue of a stream: their rows, pre-encoded 80 ms frames or the silence embedding,
@@ -40,15 +42,16 @@ struct State {
 };
 
 /**
- * SortformerModules.streaming_update() of one step, synchronous and without a left context: the queue takes the probabilities
- * the step gave its rows and the chunk's `frames` rows, [frames, d_model] row-major, the first of which is the 80 ms frame
- * `first`; once it holds more than fifo_len rows, it gives its oldest rows to the cache, spkcache_update_period of them or
- * as many more as it must, and a cache that then holds more than spkcache_len rows is compressed. `probs` are the 80 ms
- * probabilities of the step's whole input, the cache's rows, the queue's, the chunk's and its right context's, [rows,
- * speakers] row-major. `ties` counts the compression's choices among equal scores, as compress() says.
+ * SortformerModules.streaming_update() of one step, synchronous: the queue takes the probabilities the step gave its rows
+ * and the chunk's `frames` rows, [frames, d_model] row-major, the first of which is the 80 ms frame `first`; once it holds
+ * more than fifo_len rows, it gives its oldest rows to the cache, spkcache_update_period of them or as many more as it
+ * must, and a cache that then holds more than spkcache_len rows is compressed. `probs` are the 80 ms probabilities of the
+ * step's whole input, the cache's rows, the queue's, the `left` frames of the chunk's left context, the chunk's and its
+ * right context's, [rows, speakers] row-major. `ties` counts the compression's choices among equal scores, as compress()
+ * says.
  */
 void update(State & state, const Streaming & streaming, const Compression & compression, const std::vector<float> & silence, const float * chunk,
-            int64_t frames, int64_t first, const float * probs, int * ties = nullptr);
+            int64_t frames, int64_t first, const float * probs, int64_t left = 0, int * ties = nullptr);
 
 /**
  * SortformerModules._compress_spkcache() without its training's permutation of speakers: the spkcache_len rows of the n

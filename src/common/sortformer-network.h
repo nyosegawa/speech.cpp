@@ -7,6 +7,7 @@
 #include "ggml-backend.h"
 #include "graph.h"
 #include "model-file.h"
+#include "nemo-transformer.h"
 
 namespace sortformer {
 
@@ -29,6 +30,12 @@ struct StepResult {
     std::vector<float> probs;
 };
 
+/** The network's shape, which each family reads from its keys. */
+struct NetworkShape {
+    int d_model = 0, heads = 0, layers = 0, factor = 0, speakers = 0, mels = 0;
+    float norm_eps = 0, rope_base = 0;
+};
+
 /**
  * Nemotron 3 Diarization's network for one streaming step, as NeMo runs it (SortformerEncLabelModel.forward_streaming_step()
  * in nemo/collections/asr/models/sortformer_diar_models.py, at the commit reference/sortformer pins).
@@ -43,8 +50,12 @@ struct StepResult {
  */
 class Network {
 public:
-    /** The network of the model file `m`, which outlives it, computing on `backend`. */
-    Network(const ModelFile & m, ggml_backend_t backend);
+    /**
+     * The network of `shape` whose tensors are those under `prefix` of the model file `m`, which outlives it, computing
+     * on `backend`: <prefix>pre_encode, the encoder's (NemoTransformer), <prefix>encoder_proj, <prefix>upsample and
+     * <prefix>head.hidden and head.out.
+     */
+    Network(const ModelFile & m, ggml_backend_t backend, const NetworkShape & shape, std::string prefix);
     ~Network();
     Network(const Network &) = delete;
     Network & operator=(const Network &) = delete;
@@ -60,19 +71,20 @@ public:
     /** Computes a step as build() makes it. */
     StepResult step(const std::vector<float> & state, int64_t rows, const std::vector<float> & stacked, int64_t frames);
 
-    int d_model() const { return d_; }
-    int factor() const { return factor_; }
-    int speakers() const { return speakers_; }
-    int mels() const { return mels_; }
+    int d_model() const { return shape_.d_model; }
+    int factor() const { return shape_.factor; }
+    int speakers() const { return shape_.speakers; }
+    int mels() const { return shape_.mels; }
 
 private:
-    ggml_tensor * layer_norm(ggml_context * ctx, ggml_tensor * x, const std::string & name) const;
     ggml_tensor * linear(ggml_context * ctx, ggml_tensor * x, const std::string & name) const;
 
     const ModelFile & m_;
     ggml_backend_t backend_;
-    int d_, heads_, layers_, factor_, speakers_, mels_, hidden_;
-    float eps_, base_;
+    NetworkShape shape_;
+    std::string prefix_;
+    int hidden_;
+    NemoTransformer encoder_;
     ggml_gallocr_t allocr_;
 };
 

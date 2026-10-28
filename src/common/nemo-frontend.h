@@ -31,6 +31,15 @@ public:
     /** The features of mono samples at sample_rate(), [frames, mels] row-major (ggml [mels, frames]). */
     std::vector<float> features(const std::vector<float> & samples) const;
 
+    /** The log-mel power of mono samples at sample_rate() in double precision, [frames, mels] row-major, unnormalized. */
+    std::vector<double> log_mels(const std::vector<float> & samples) const;
+
+    /**
+     * `mel`, [frames, mels] row-major from log_mels(), normalized per feature as normalize_batch() does: each mel bin less
+     * its mean over the frames, over its unbiased standard deviation plus the guard. Takes a frontend that normalizes.
+     */
+    std::vector<float> normalized(const std::vector<double> & mel) const;
+
     /** The frames features() gives for that many samples. */
     int64_t frames(size_t samples) const;
 
