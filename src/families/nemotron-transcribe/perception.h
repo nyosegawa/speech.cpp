@@ -58,6 +58,14 @@ public:
     int hidden() const { return hidden_; }
 
 private:
+    /**
+     * The fusion of a window's `frames` kept frames, the ASR encoder's `asr` and the speaker branch's `probs`, row-major:
+     * LayerNorm(asr) + scale · LayerNorm(the speakers over the threshold) · kernel, then the projection, each frame on its
+     * own, so that a window at a time holds the memory of one window's frames whatever the recording's length. It adds
+     * the fusion's output to `stages` when given.
+     */
+    std::vector<float> fuse(const std::vector<float> & asr, const std::vector<float> & probs, int64_t frames, PerceptionStages * stages);
+
     const ModelFile & m_;
     ggml_backend_t backend_;
     NemoFrontend frontend_;

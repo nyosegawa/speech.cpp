@@ -14,10 +14,12 @@ const std::string kKeys = "nemotron-transcribe.";
 
 /**
  * What the graphs and the backend allocate while a recognition computes, beyond the weights, the caches and the states:
- * the buffers of the perception module's graphs and of the language model's at their largest, a block of 512 rows
- * attending to the whole context.
+ * the buffers of the perception module's graphs, a window at a time, and of the language model's at their largest, a
+ * block of 512 rows attending to the most positions. For an hour of noise, the longest audio a request takes, with the
+ * IQ4_NL file on an Apple M5 they took 627 MiB of Metal's memory, of which 72 MiB grew during the request (2026-10-29);
+ * Vulkan's backend takes about 0.3 GB more of its own.
  */
-constexpr uint64_t kComputeBytes = (uint64_t) 1536 << 20;
+constexpr uint64_t kComputeBytes = (uint64_t) 1024 << 20;
 
 /** Adds the seconds from its construction to its destruction to `total`, when `total` is set. */
 struct Timer {

@@ -52,9 +52,8 @@ std::vector<float> Perception::encode(const std::vector<float> & samples, const 
     // only that extra frame gives no frame of the audio and is left out.
     const int64_t chunk = (int64_t) window_ * factor, left = (int64_t) left_ * factor, right = (int64_t) right_ * factor, total = valid + 1;
     const int64_t windows = std::max<int64_t>(1, (total + chunk - 1) / chunk);
-    std::vector<float> asr, probs;
-    asr.reserve((size_t) (frames * d));
-    probs.reserve((size_t) (frames * speakers));
+    std::vector<float> rows;
+    rows.reserve((size_t) (frames * hidden_));
     speakers_.start();
     for (int64_t k = 0; k < windows; k++) {
         const int64_t start = k * chunk, end = std::min(start + chunk, total);
@@ -65,22 +64,30 @@ std::vector<float> Perception::encode(const std::vector<float> & samples, const 
         const int64_t drop = (start - cs) / factor, core = (std::min(end, valid) + factor - 1) / factor - start / factor;
         const std::vector<float> out = asr_.encode(&normalized[(size_t) (cs * mels)], ce - cs);
         const int64_t kept = std::min<int64_t>(core, (int64_t) out.size() / d - drop);
-        asr.insert(asr.end(), out.begin() + drop * d, out.begin() + (drop + kept) * d);
+        const std::vector<float> asr(out.begin() + drop * d, out.begin() + (drop + kept) * d);
         std::vector<float> p = speakers_.step(&raw[(size_t) (cs * mels)], ce - cs, start - cs, ce - std::min(end, valid), start / factor,
                                               k + 1 == windows || (k + 1) * chunk >= valid);
         // _align_diar_frames(): the window's probabilities cut to its kept frames, or the last repeated up to them.
         p.resize((size_t) (std::min<int64_t>((int64_t) p.size() / speakers, kept) * speakers));
         while ((int64_t) p.size() < kept * speakers) p.insert(p.end(), p.end() - speakers, p.end());
-        probs.insert(probs.end(), p.begin(), p.end());
+        const std::vector<float> fused = fuse(asr, p, kept, stages);
+        rows.insert(rows.end(), fused.begin(), fused.end());
+        if (stages) {
+            stages->asr.insert(stages->asr.end(), asr.begin(), asr.end());
+            stages->speakers.insert(stages->speakers.end(), p.begin(), p.end());
+        }
         if (progress && !progress((double) (k + 1) / (double) windows)) return {};
     }
+    return rows;
+}
 
-    // The fusion: LayerNorm(asr) + scale · LayerNorm(speakers over the threshold) · kernel, then the projection.
+std::vector<float> Perception::fuse(const std::vector<float> & asr, const std::vector<float> & probs, int64_t frames, PerceptionStages * stages) {
+    const int speakers = speakers_.speakers();
     std::vector<float> active(probs.size());
     for (size_t i = 0; i < probs.size(); i++) active[i] = probs[i] > threshold_ ? 1.0f : 0.0f;
     Graph g;
     ggml_context * ctx = g.ctx();
-    ggml_tensor * states = layer_norm(ctx, m_, g.input(asr, d, frames), "fuse.asr_norm", eps_);
+    ggml_tensor * states = layer_norm(ctx, m_, g.input(asr, asr_.d_model(), frames), "fuse.asr_norm", eps_);
     ggml_tensor * targets = layer_norm(ctx, m_, g.input(active, speakers, frames), "fuse.speaker_norm", eps_);
     ggml_tensor * kernel = ggml_cont(ctx, ggml_transpose(ctx, m_.tensor("fuse.speaker_kernel")));
     ggml_tensor * fused = ggml_add(ctx, states, ggml_scale(ctx, mul_mat(ctx, kernel, targets), scale_));
@@ -89,9 +96,8 @@ std::vector<float> Perception::encode(const std::vector<float> & samples, const 
     if (stages) g.output(fused);
     g.compute(backend_, allocr_);
     if (stages) {
-        stages->asr = asr;
-        stages->speakers = probs;
-        stages->fused = Graph::read(fused);
+        const std::vector<float> f = Graph::read(fused);
+        stages->fused.insert(stages->fused.end(), f.begin(), f.end());
     }
     return Graph::read(out);
 }
