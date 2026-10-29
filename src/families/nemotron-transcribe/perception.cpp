@@ -1,6 +1,8 @@
 #include "perception.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 
 #include "graph.h"
 
@@ -40,7 +42,8 @@ int64_t Perception::frames(size_t samples) const {
     return (frontend_.frames(samples) + factor - 1) / factor;
 }
 
-std::vector<float> Perception::encode(const std::vector<float> & samples, const std::function<bool(double)> & progress, PerceptionStages * stages) {
+std::vector<float> Perception::encode(const std::vector<float> & samples, const std::function<bool(double)> & progress, PerceptionStages * stages,
+                                     AlignmentFrames * alignment) {
     const std::vector<double> mel = frontend_.log_mels(samples);
     const std::vector<float> normalized = frontend_.normalized(mel);
     const std::vector<float> raw(mel.begin(), mel.end());
@@ -54,6 +57,8 @@ std::vector<float> Perception::encode(const std::vector<float> & samples, const 
     const int64_t windows = std::max<int64_t>(1, (total + chunk - 1) / chunk);
     std::vector<float> rows;
     rows.reserve((size_t) (frames * hidden_));
+    if (alignment) *alignment = AlignmentFrames();
+    std::vector<float> fine;
     speakers_.start();
     for (int64_t k = 0; k < windows; k++) {
         const int64_t start = k * chunk, end = std::min(start + chunk, total);
@@ -66,7 +71,7 @@ std::vector<float> Perception::encode(const std::vector<float> & samples, const 
         const int64_t kept = std::min<int64_t>(core, (int64_t) out.size() / d - drop);
         const std::vector<float> asr(out.begin() + drop * d, out.begin() + (drop + kept) * d);
         std::vector<float> p = speakers_.step(&raw[(size_t) (cs * mels)], ce - cs, start - cs, ce - std::min(end, valid), start / factor,
-                                              k + 1 == windows || (k + 1) * chunk >= valid);
+                                              k + 1 == windows || (k + 1) * chunk >= valid, alignment ? &fine : nullptr);
         // _align_diar_frames(): the window's probabilities cut to its kept frames, or the last repeated up to them.
         p.resize((size_t) (std::min<int64_t>((int64_t) p.size() / speakers, kept) * speakers));
         while ((int64_t) p.size() < kept * speakers) p.insert(p.end(), p.end() - speakers, p.end());
@@ -76,7 +81,23 @@ std::vector<float> Perception::encode(const std::vector<float> & samples, const 
             stages->asr.insert(stages->asr.end(), asr.begin(), asr.end());
             stages->speakers.insert(stages->speakers.end(), p.begin(), p.end());
         }
+        if (alignment) {
+            // torch's conversion to bfloat16, rounding to the nearest even.
+            for (float v : asr) {
+                uint32_t bits;
+                std::memcpy(&bits, &v, sizeof bits);
+                alignment->asr.push_back(std::isnan(v) ? (uint16_t) 0x7FC0 : (uint16_t) ((bits + 0x7FFF + ((bits >> 16) & 1)) >> 16));
+            }
+            alignment->speakers.insert(alignment->speakers.end(), p.begin(), p.end());
+            alignment->fine.insert(alignment->fine.end(), fine.begin(), fine.end());
+        }
         if (progress && !progress((double) (k + 1) / (double) windows)) return {};
+    }
+    if (alignment) {
+        // The 10 ms probabilities of the audio's feature frames, which the windows' cores, whole 80 ms frames, pass.
+        alignment->frames = frames;
+        alignment->fine_frames = std::min<int64_t>(valid, (int64_t) alignment->fine.size() / speakers);
+        alignment->fine.resize((size_t) (alignment->fine_frames * speakers));
     }
     return rows;
 }

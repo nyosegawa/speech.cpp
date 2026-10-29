@@ -24,7 +24,9 @@ and pointers.
 
 --text writes <out dir>/<name>/ctc-text.json: for each text of TEXTS, the words parse_sot_words() gives, the units
 _timestamp_units() makes of them, their CTC token ids, each speaker stream's target and the transcript's columns, or the
-error the aligner raises at the first stage that refuses the text.
+error the aligner raises at the first stage that refuses the text; and <out dir>/<name>/ctc-tokenizer.json: the ids the
+CTC tokenizer's SentencePiece processor encodes texts of mixed scripts, spaces, tags, digits and marks from a fixed seed
+into, and the id piece_to_id() gives each of their characters.
 
 ctc/input.npy              the CTC head's input, the ASR encoder's kept frames rounded to bfloat16, [F, 1280], of which
                            the first meta.json's valid_frames are the audio's and the rest the frame the preprocessor's
@@ -50,6 +52,7 @@ import argparse
 import importlib.util
 import json
 import os
+import random
 import time
 
 import numpy as np
@@ -172,6 +175,25 @@ def write_json(path, value):
         json.dump(plain(value), f, ensure_ascii=False, indent=1)
 
 
+def tokenizer_texts(pieces):
+    """Texts of mixed scripts, spaces, tags, digits and marks from a fixed seed, for the CTC tokenizer's cases."""
+    rng = random.Random(0)
+    chars = sorted({c for p in pieces for c in p if c != "\u2581"})
+    pools = [
+        chars,
+        [chr(c) for c in range(0x20, 0x7F)],
+        list(" \t\n\r\u3000\u200b\u00a0\u2028\u2581"),
+        [chr(c) for c in range(0xFF01, 0xFF5F)] + [chr(c) for c in range(0xFF61, 0xFFA0)],
+        [chr(c) for c in range(0x300, 0x370)] + ["\u3099", "\u309a"],
+        [chr(c) for c in range(0x3040, 0x3100)] + [chr(c) for c in range(0x4E00, 0x4E00 + 400)] + ["鬱", "叱", "凿"],
+        [chr(c) for c in range(0xAC00, 0xAC00 + 200)] + [chr(c) for c in range(0x1100, 0x1180)],
+        [chr(c) for c in range(0x600, 0x700)] + [chr(c) for c in range(0xE00, 0xE80)] + [chr(c) for c in range(0x900, 0x980)],
+        ["\U0001F600", "\U0001F642", "\u2460", "\u00bd", "\ufb01", "\u212b", "\u00c5", "\u1e9b\u0323", "\x00", "\x85", "\ufeff"],
+        ["<spk:0>", "<spk:1>", "<spk:15>", "<ev:laughter>", "<sty:stt:flat>", "<sty:end:flat>", "<SPK:0>", "<spk:", "<ev:>", "<unk>"],
+    ]
+    return ["".join(rng.choice(rng.choice(pools)) for _ in range(rng.randint(1, 30))) for _ in range(4000)]
+
+
 def text_stages(aligner, text):
     """What the aligner's text stages give for a cleaned transcript, up to the first that raises."""
     out = {"text": text}
@@ -199,6 +221,12 @@ if args.text:
     for case in cases:
         print(repr(case["text"][:40]), case.get("error", {}).get("type", "ok"), flush=True)
     print(len(cases), "texts ->", path, flush=True)
+    processor = artifact.tokenizer.tokenizer
+    texts = tokenizer_texts([processor.id_to_piece(i) for i in range(processor.get_piece_size())])
+    path = os.path.join(args.out_dir, MODEL, "ctc-tokenizer.json")
+    write_json(path, {"cases": [{"text": t, "ids": processor.encode(t)} for t in texts],
+                      "pieces": [{"text": c, "id": processor.piece_to_id(c)} for c in sorted({c for t in texts for c in t})]})
+    print(len(texts), "tokenizer texts ->", path, flush=True)
 
 if not args.cases:
     raise SystemExit(0)

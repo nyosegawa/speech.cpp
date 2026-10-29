@@ -30,8 +30,10 @@ public:
      * features, [frames, mels] row-major, of which the first `left` and the last `right` are the window's context, and
      * whether the window is the recording's last, whose step updates nothing. Returns the core's probabilities,
      * [ceil((frames - left - right) / factor) at most, speakers] row-major, of the core's frames that the features reach.
+     * `fine`, when given, receives the core's 10 ms probabilities that the 80 ms ones average, `factor` rows for each.
      */
-    std::vector<float> step(const float * features, int64_t frames, int64_t left, int64_t right, int64_t first, bool last);
+    std::vector<float> step(const float * features, int64_t frames, int64_t left, int64_t right, int64_t first, bool last,
+                            std::vector<float> * fine = nullptr);
 
     int speakers() const { return network_.speakers(); }
     int factor() const { return network_.factor(); }

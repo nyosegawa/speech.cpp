@@ -1,14 +1,16 @@
 // Checks Nemotron 3.5 Transcribe's perception module against NeMo on each dump of reference/nemotron-transcribe/dump.py,
 // from the dump's audio to the audio's rows of the language model's input: the ASR encoder's kept frames of every window,
 // the speaker branch's probabilities of them, the fusion's output and the projection's, each over the 80 ms frames the
-// language model takes. It runs every stage from the stage before, so an error includes those of the stages before; the
-// encoder and speakers checks run each from the dump's own inputs. The dumps are those in <reference out dir>/<the
-// file's general.name>/.
+// language model takes; and where reference/nemotron-transcribe/align.py dumped them, the speaker branch's 10 ms
+// probabilities, which the CTC alignment reads, and how many of their labels over 0.5 differ. It runs every stage from
+// the stage before, so an error includes those of the stages before; the encoder and speakers checks run each from the
+// dump's own inputs. The dumps are those in <reference out dir>/<the file's general.name>/.
 //
 // usage: nemotron-transcribe-perception-check <model.gguf> <reference out dir> [gpu|cpu|device name]
 
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
 #include <string>
 
 #include "args.h"
@@ -60,7 +62,8 @@ int main(int argc, char ** argv) {
                 const Npy audio = read_npy((dump / "audio.npy").u8string());
                 const int64_t frames = std::stoll(meta.member("audio_frames")->text);
                 PerceptionStages stages;
-                const std::vector<float> rows = perception.encode(audio.f32, {}, &stages);
+                AlignmentFrames alignment;
+                const std::vector<float> rows = perception.encode(audio.f32, {}, &stages, &alignment);
                 if ((int64_t) rows.size() != frames * perception.hidden()) {
                     std::printf("FAIL: %s gives %lld rows, not the official %lld\n", dump.filename().u8string().c_str(),
                                 (long long) (rows.size() / (size_t) perception.hidden()), (long long) frames);
@@ -74,6 +77,27 @@ int main(int argc, char ** argv) {
                 const Diff out = compare(rows, first_rows(read_npy((dump / "audio_embeds.npy").u8string()), frames, perception.hidden()));
                 print_diff("  audio rows", out);
                 keep_worst(worst, out);
+                // The 10 ms probabilities and their labels, which align.py dumps beside the CTC head's input.
+                if (std::filesystem::is_regular_file(dump / "ctc" / "diarization_probs.npy")) {
+                    const Npy fine = read_npy((dump / "ctc" / "diarization_probs.npy").u8string());
+                    if (fine.shape[0] != alignment.fine_frames) {
+                        std::printf("FAIL: %s gives %lld 10 ms frames, not the official %lld\n", dump.filename().u8string().c_str(),
+                                    (long long) alignment.fine_frames, (long long) fine.shape[0]);
+                        ok = false;
+                        continue;
+                    }
+                    const Diff d10 = compare(alignment.fine, fine.f32);
+                    print_diff("  10 ms speakers", d10);
+                    keep_worst(worst, d10);
+                    const Npy labels = read_npy((dump / "ctc" / "diarization_labels.npy").u8string());
+                    int64_t differ = 0;
+                    for (int64_t t = 0; t < alignment.fine_frames; t++) {
+                        for (int64_t k = 0; k < speakers; k++) {
+                            differ += (alignment.fine[(size_t) (t * speakers + k)] > 0.5f) != (labels.u8[(size_t) (k * labels.shape[1] + t)] != 0);
+                        }
+                    }
+                    std::printf("  10 ms labels differ on %lld of %lld\n", (long long) differ, (long long) (alignment.fine_frames * speakers));
+                }
             }
             // The bounds of float32 on the CPU, and of a GPU whose matrix kernels round their inputs to half precision.
             const double bound = cpu ? 60.0 : 25.0;

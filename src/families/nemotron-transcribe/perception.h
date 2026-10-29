@@ -24,6 +24,18 @@ struct PerceptionStages {
 };
 
 /**
+ * What the CTC alignment of a recognition reads of the perception module, as the official encoder keeps it
+ * (CTCTimestampInputs): the ASR encoder's kept frames rounded to bfloat16, [frames, d_model] row-major; the speaker
+ * branch's probabilities of the same frames, [frames, speakers]; and its 10 ms probabilities of the audio's feature
+ * frames, [feature frames, speakers].
+ */
+struct AlignmentFrames {
+    std::vector<uint16_t> asr;
+    std::vector<float> speakers, fine;
+    int64_t frames = 0, fine_frames = 0;
+};
+
+/**
  * The perception module of Nemotron 3.5 Transcribe as SALMAutomodel.generate() runs it, with the parallel expert encoder
  * in its windowed inference (ParallelExpertEncoder._forward_online_impl()): NeMo's log-mel features; windows of
  * window_frames 80 ms frames with window_left and window_right frames of context on either side, each through the ASR
@@ -46,10 +58,11 @@ public:
     /**
      * The audio's rows of the language model's input of mono samples at sample_rate(), [frames(), hidden] row-major.
      * `progress` hears each window's end, from 0 to 1; false stops the work, and what it returns is then not the audio's
-     * rows. `stages`, when given, receives what the module computed on the way.
+     * rows. `stages`, when given, receives what the module computed on the way, and `alignment` what the CTC alignment
+     * reads of it.
      */
     std::vector<float> encode(const std::vector<float> & samples, const std::function<bool(double)> & progress = {},
-                              PerceptionStages * stages = nullptr);
+                              PerceptionStages * stages = nullptr, AlignmentFrames * alignment = nullptr);
 
     /** The rows encode() gives that many samples. */
     int64_t frames(size_t samples) const;

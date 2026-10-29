@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "ctc-tokenizer.h"
@@ -31,6 +32,8 @@ struct Unit {
     /** The index of that tag among the transcript's tags, -1 where none comes before. */
     int turn = -1;
     bool character = false;
+    /** The index of its word among the transcript's words. */
+    size_t word = 0;
     std::vector<int32_t> ids;
     /** The bytes of the transcript that the unit's text stands on. */
     size_t begin = 0, end = 0;
@@ -81,11 +84,19 @@ public:
     /** The units and streams of `transcript`; one that cannot be aligned throws AlignmentFailure. */
     AlignmentText prepare(const std::string & transcript) const;
 
+    /**
+     * The bytes of each <spk:N> tag of `transcript` that prepare() takes for one, [begin, end); a transcript that is not
+     * UTF-8 throws AlignmentFailure.
+     */
+    std::vector<std::pair<size_t, size_t>> speaker_tags(const std::string & transcript) const;
+
     /** The classes of the head, the blank last. */
     int32_t blank() const { return blank_; }
     const CtcTokenizer & tokenizer() const { return tokenizer_; }
 
 private:
+    struct Parsed;
+    Parsed parse(const std::string & transcript) const;
     std::vector<int32_t> character_ids(const std::string & character) const;
     std::vector<std::vector<int32_t>> word_ids(const std::vector<const Unit *> & words, int speaker) const;
 

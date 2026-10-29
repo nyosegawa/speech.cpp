@@ -41,7 +41,8 @@ void SpeakerBranch::start() {
     state_ = sortformer::State();
 }
 
-std::vector<float> SpeakerBranch::step(const float * features, int64_t frames, int64_t left, int64_t right, int64_t first, bool last) {
+std::vector<float> SpeakerBranch::step(const float * features, int64_t frames, int64_t left, int64_t right, int64_t first, bool last,
+                                       std::vector<float> * fine) {
     const int factor = network_.factor(), mels = network_.mels(), speakers = network_.speakers();
     // forward_streaming_step(): the left context's 80 ms frames rounded, the right context's rounded up.
     const int64_t lc = (int64_t) std::lround((double) left / factor), rc = (right + factor - 1) / factor;
@@ -64,6 +65,9 @@ std::vector<float> SpeakerBranch::step(const float * features, int64_t frames, i
         }
     }
     std::vector<float> out(&coarse[(size_t) ((cached + lc) * speakers)], &coarse[(size_t) ((cached + lc + chunk) * speakers)]);
+    if (fine) {
+        fine->assign(&result.probs[(size_t) ((cached + lc) * factor * speakers)], &result.probs[(size_t) ((cached + lc + chunk) * factor * speakers)]);
+    }
     if (!last) {
         sortformer::update(state_, streaming_, compression_, silence_, &result.pre_encoded[(size_t) (lc * network_.d_model())], chunk, first,
                            coarse.data(), lc);

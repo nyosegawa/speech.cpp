@@ -34,12 +34,9 @@ struct Segment {
 
 /**
  * The segments of tokens with the texts `texts`, as they stand in the text, the word starts `word_starts`
- * (Detokenizer::word_starts()) and the spans `spans`. A segment ends with a word whose text ends in one of
- * `separators`, as get_segment_offsets() ends it: the word's last character is a separator of one character, or the
- * word is a separator; so "1.000", "z.B." and "?!" are not cut within. It also ends with any token whose text ends in
- * one of `breaks`, wherever it stands, for a text written without spaces, in which NeMo's words run to the end. The
- * last token ends the last segment. A segment spans from the start of its first token to the end of its last, and its
- * text is theirs, so that the texts of the segments joined are the text.
+ * (Detokenizer::word_starts()) and the spans `spans`, ended where segment_ends() ends them. A segment spans from the start
+ * of its first token to the end of its last, and its text is theirs, so that the texts of the segments joined are the
+ * text.
  */
 std::vector<Segment> segments(const std::vector<std::string> & texts, const std::vector<bool> & word_starts,
                               const std::vector<Span> & spans, const std::vector<std::string> & separators,

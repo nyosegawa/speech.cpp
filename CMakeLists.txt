@@ -53,6 +53,7 @@ add_library(speechcommon STATIC
     src/common/keys-values.cpp
     src/common/expert-placement.cpp
     src/common/sampling.cpp
+    src/common/sentence-segments.cpp
     src/common/log.cpp
     src/common/qwen3-decoder.cpp
     src/common/qwen2-tokenizer.cpp
@@ -172,6 +173,7 @@ add_library(nemotrontranscribe STATIC
     src/families/nemotron-transcribe/ctc-tokenizer.cpp
     src/families/nemotron-transcribe/ctc-text.cpp
     src/families/nemotron-transcribe/alignment.cpp
+    src/families/nemotron-transcribe/timing.cpp
 )
 target_include_directories(nemotrontranscribe PUBLIC src/families)
 # The alignment computes as NumPy and PyTorch do, every product and sum rounded on its own.
@@ -454,7 +456,7 @@ target_include_directories(silero-vad-check PRIVATE checks tools/common)
 target_link_libraries(silero-vad-check PRIVATE silerovad)
 
 # Nemotron 3.5 Transcribe's stages against the dumps of reference/nemotron-transcribe/dump.py.
-foreach(stage encoder speakers perception decoder recognizer guardrail ctc-head alignment)
+foreach(stage encoder speakers perception decoder recognizer guardrail ctc-head alignment timestamps)
     add_executable(nemotron-transcribe-${stage}-check checks/nemotron-transcribe/nemotron-transcribe-${stage}-check.cpp tools/common/json-reader.cpp)
     target_include_directories(nemotron-transcribe-${stage}-check PRIVATE checks tools/common)
     target_link_libraries(nemotron-transcribe-${stage}-check PRIVATE nemotrontranscribe)

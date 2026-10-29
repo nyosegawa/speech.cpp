@@ -105,18 +105,39 @@ std::vector<std::vector<int32_t>> CtcText::word_ids(const std::vector<const Unit
     return out;
 }
 
-AlignmentText CtcText::prepare(const std::string & transcript) const {
+/**
+ * A transcript's code points, their byte offsets, and what each is to parse_sot_words() after clean_sot_transcript():
+ * text, a separator (a removed special token, whitespace or an em dash) or part of a <spk:N> tag, whose first code points
+ * and numbers `tags` gives.
+ */
+struct CtcText::Parsed {
+    std::vector<uint32_t> cps;
+    std::vector<size_t> offset;
+    std::vector<uint8_t> kind;
+    struct Tag {
+        size_t first, last;
+        int speaker;
+    };
+    std::vector<Tag> tags;
+};
+
+namespace {
+
+enum : uint8_t { kText, kSeparator, kTag };
+
+}  // namespace
+
+CtcText::Parsed CtcText::parse(const std::string & transcript) const {
     const std::optional<std::vector<uint32_t>> decoded = decode_utf8(transcript);
     if (!decoded) throw AlignmentFailure("the transcript is not UTF-8");
-    const std::vector<uint32_t> & cps = *decoded;
+    Parsed p;
+    p.cps = *decoded;
+    const std::vector<uint32_t> & cps = p.cps;
     const size_t n = cps.size();
-    std::vector<size_t> offset(n + 1, 0);
-    for (size_t i = 0; i < n; i++) offset[i + 1] = offset[i] + utf8_length(cps[i]);
-
-    // What each code point is to parse_sot_words() after clean_sot_transcript(): text, a separator (a removed special
-    // token, whitespace or an em dash) or part of a <spk:N> tag.
-    enum : uint8_t { kText, kSeparator, kTag };
-    std::vector<uint8_t> kind(n, kText);
+    p.offset.assign(n + 1, 0);
+    for (size_t i = 0; i < n; i++) p.offset[i + 1] = p.offset[i] + utf8_length(cps[i]);
+    std::vector<uint8_t> & kind = p.kind;
+    kind.assign(n, kText);
     for (const std::string & token : removed_) {
         const std::optional<std::vector<uint32_t>> t = decode_utf8(token);
         if (!t || t->empty()) continue;
@@ -134,11 +155,6 @@ AlignmentText CtcText::prepare(const std::string & transcript) const {
     for (size_t i = 0; i < n; i++) {
         if (kind[i] == kText && (python_space(cps[i]) || cps[i] == 0x2014)) kind[i] = kSeparator;
     }
-    struct Tag {
-        size_t first;
-        int speaker;
-    };
-    std::vector<Tag> tags;
     auto is = [&](size_t i, char lower) { return i < n && kind[i] == kText && (cps[i] == (uint32_t) lower || cps[i] == (uint32_t) (lower - 32)); };
     for (size_t i = 0; i < n; i++) {
         if (kind[i] != kText || cps[i] != '<' || !is(i + 1, 's') || !is(i + 2, 'p') || !is(i + 3, 'k') || i + 4 >= n || cps[i + 4] != ':' || kind[i + 4] != kText) continue;
@@ -151,9 +167,26 @@ AlignmentText CtcText::prepare(const std::string & transcript) const {
         if (j == i + 5 || j >= n || kind[j] != kText || cps[j] != '>') continue;
         if (number > INT_MAX) throw AlignmentFailure("a speaker tag of the transcript has a number past " + std::to_string(INT_MAX));
         std::fill(kind.begin() + (std::ptrdiff_t) i, kind.begin() + (std::ptrdiff_t) (j + 1), kTag);
-        tags.push_back({i, (int) number});
+        p.tags.push_back({i, j + 1, (int) number});
         i = j;
     }
+    return p;
+}
+
+std::vector<std::pair<size_t, size_t>> CtcText::speaker_tags(const std::string & transcript) const {
+    const Parsed p = parse(transcript);
+    std::vector<std::pair<size_t, size_t>> out;
+    for (const Parsed::Tag & t : p.tags) out.push_back({p.offset[t.first], p.offset[t.last]});
+    return out;
+}
+
+AlignmentText CtcText::prepare(const std::string & transcript) const {
+    const Parsed parsed = parse(transcript);
+    const std::vector<uint32_t> & cps = parsed.cps;
+    const std::vector<size_t> & offset = parsed.offset;
+    const std::vector<uint8_t> & kind = parsed.kind;
+    const size_t n = cps.size();
+    const std::vector<Parsed::Tag> & tags = parsed.tags;
 
     // The words between separators and tags, each with the speaker of the tag before it.
     std::vector<Word> words;
@@ -198,13 +231,11 @@ AlignmentText CtcText::prepare(const std::string & transcript) const {
     const bool characters = !korean && (japanese || chinese);
 
     AlignmentText out;
-    std::vector<size_t> word_of;
     auto text_of = [&](size_t first, size_t last) { return transcript.substr(offset[first], offset[last] - offset[first]); };
     for (size_t k = 0; k < words.size(); k++) {
         const Word & w = words[k];
         if (!characters || tag_like(w)) {
-            out.units.push_back({text_of(w.first, w.last), w.speaker, w.turn, false, {}, offset[w.first], offset[w.last]});
-            word_of.push_back(k);
+            out.units.push_back({text_of(w.first, w.last), w.speaker, w.turn, false, k, {}, offset[w.first], offset[w.last]});
             continue;
         }
         // The word's units are the letters, marks and numbers of its NFC. Each stands on the cluster it comes from, a
@@ -224,8 +255,7 @@ AlignmentText CtcText::prepare(const std::string & transcript) const {
             if (!spans.empty()) spans[0] = {offset[w.first], offset[w.last]};
         }
         for (size_t c = 0; c < units.size(); c++) {
-            out.units.push_back({units[c], w.speaker, w.turn, true, {}, spans[c].first, spans[c].second});
-            word_of.push_back(k);
+            out.units.push_back({units[c], w.speaker, w.turn, true, k, {}, spans[c].first, spans[c].second});
         }
     }
     // Each token takes the bytes from the token before it to the next unit of its word or the end of its word; the
@@ -233,8 +263,8 @@ AlignmentText CtcText::prepare(const std::string & transcript) const {
     for (size_t i = 0; i < out.units.size(); i++) {
         Unit & u = out.units[i];
         u.token_begin = i == 0 ? 0 : out.units[i - 1].token_end;
-        const bool same_word = i + 1 < out.units.size() && word_of[i + 1] == word_of[i];
-        u.token_end = i + 1 == out.units.size() ? transcript.size() : same_word ? out.units[i + 1].begin : offset[words[word_of[i]].last];
+        const bool same_word = i + 1 < out.units.size() && out.units[i + 1].word == u.word;
+        u.token_end = i + 1 == out.units.size() ? transcript.size() : same_word ? out.units[i + 1].begin : offset[words[u.word].last];
         u.token_end = std::max(u.token_end, u.token_begin);
     }
 
