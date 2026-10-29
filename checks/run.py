@@ -353,11 +353,15 @@ def nemotron_transcribe(model, devices, ctx):
         runs.append(missing("tokenizer-check", model.label(), cases))
     guardrail = os.path.join(out, "guardrail-cases.tsv")
     runs += reading([guardrail], [Run("nemotron-transcribe-guardrail-check", [model.path, guardrail], None, model.label())])
+    # The CTC alignment, from align.py's dumps of each stage, also runs on the host.
+    texts = os.path.join(out, model.name, "ctc-text.json")
+    runs += reading([texts], [Run("nemotron-transcribe-alignment-check", [model.path, out], None, model.label())])
     # The recognition loads the whole file, where the decoder check loads a layer at a time: the F32 file takes about
     # 136 GB, more than most machines' memory.
     memory = physical_memory()
     for device in devices:
         runs += [runs_on(device, f"nemotron-transcribe-{stage}-check", model, [out]) for stage in ("encoder", "speakers", "perception", "decoder")]
+        runs += reading([texts], [runs_on(device, f"nemotron-transcribe-{stage}-check", model, [out]) for stage in ("ctc-head", "timestamps")])
         # On a GPU, the language model again with its experts on the CPU, as a GPU that does not hold them runs it.
         if device != "cpu":
             runs.append(Run("nemotron-transcribe-decoder-check", [model.path, out, device, "experts-on-cpu"], device, f"{model.label()} {device} experts-on-cpu"))

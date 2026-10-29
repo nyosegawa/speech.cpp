@@ -61,8 +61,10 @@ struct TranscriptionRequest {
     std::string format = "json";
     /** The language, the prompt, the decoding, and timestamps for verbose_json. */
     std::vector<RequestOption> options;
-    /** Whether the options set timestamps, so that the answer carries the segments. */
-    bool timestamps = false;
+    /** Whether the options set timestamps, so that the answer carries the segments, and which granularities it gives. */
+    bool timestamps = false, segments = true, words = false;
+    /** Whether the options set speakers, for diarized_json of a model that tells who speaks. */
+    bool speakers = false;
     /**
      * With chunking_strategy, the members of server_vad it gives as detection options, which region_options() completes
      * with the detection model's defaults; without it, nothing.
@@ -73,14 +75,16 @@ struct TranscriptionRequest {
 /**
  * Reads a create transcription request from the parts of its form: "file", a WAV file, its channels averaged;
  * "model"; "language"; "prompt", the option prompt; "response_format"; "decoding", the option decoding, speech.cpp's
- * own; "chunking_strategy", "auto" or the members of server_vad, which diarized_json needs; and
- * "timestamp_granularities[]", "segment" alone, with verbose_json. verbose_json sets the option timestamps for a model
- * that `gives_times`, and for any model when the request names a granularity, which a model without times then refuses.
- * A member it does not have is refused, known_speaker_names[] and known_speaker_references[] among them, and so is one
- * given twice but timestamp_granularities[]. Anything it cannot read throws an ApiError.
+ * own; "chunking_strategy", "auto" or the members of server_vad, which diarized_json needs unless the model
+ * `tells_speakers` itself, as one that takes the option speakers does, and which such a model's diarized_json refuses;
+ * and "timestamp_granularities[]", "segment" or "word", with verbose_json. verbose_json sets the option timestamps for a
+ * model that `gives_times`, and for any model when the request names a granularity, which a model without times then
+ * refuses; diarized_json of a model that tells speakers sets the option speakers. A member it does not have is refused,
+ * known_speaker_names[] and known_speaker_references[] among them, and so is one given twice but
+ * timestamp_granularities[]. Anything it cannot read throws an ApiError.
  */
 TranscriptionRequest read_transcription_request(bool multipart, const std::vector<FormPart> & parts, const std::string & model_name,
-                                                bool gives_times);
+                                                bool gives_times, bool tells_speakers);
 
 /** A speech.audio.delta event with a chunk of 16-bit PCM. */
 std::string sse_delta(const std::string & pcm);
@@ -101,11 +105,13 @@ std::string transcription_json(const std::string & text);
  * A transcription in OpenAI's verbose_json form: the task; the language, the tag of the language the model heard, or
  * the tags joined with commas where it heard several in the parts of long audio or in its regions, as qwen-asr joins
  * their names; the
- * audio's duration in seconds; the text; and with `timestamps` the segments. A value the recognizer does not give is
- * left out rather than made up: the language where the result has none, and the members of OpenAI's segment the
- * recognizers have no value for (seek, tokens, temperature, avg_logprob, compression_ratio, no_speech_prob).
+ * audio's duration in seconds; the text; and with `timestamps` the segments where `segments` asks for them and the words
+ * (words_of() the tokens) where `words` does, or "untimed", speech.cpp's own, why the model gives neither. A value the
+ * recognizer does not give is left out rather than made up: the language where the result has none, and the members of
+ * OpenAI's segment the recognizers have no value for (seek, tokens, temperature, avg_logprob, compression_ratio,
+ * no_speech_prob).
  */
-std::string transcription_verbose_json(const Transcript & transcript, double duration, bool timestamps);
+std::string transcription_verbose_json(const Transcript & transcript, double duration, bool timestamps, bool segments = true, bool words = false);
 
 /**
  * A transcription in OpenAI's diarized_json form: the task, the audio's duration, the text, a segment for each of the
@@ -115,5 +121,12 @@ std::string transcription_verbose_json(const Transcript & transcript, double dur
  */
 std::string transcription_diarized_json(const Transcript & transcript, double duration, const std::vector<Region> & regions,
                                         const std::vector<Transcript> & parts, const std::vector<SpeakerSegment> & speakers);
+
+/**
+ * A transcription in OpenAI's diarized_json form from a model that tells who speaks: a segment for each of the
+ * recognition's segments, its speaker labeled A, B and on in the order they first speak, or "" for words before the
+ * model named one, and "speakers" with the segment's one speaker; or no segments and "untimed", why the model gives none.
+ */
+std::string transcription_diarized_json(const Transcript & transcript, double duration);
 
 }  // namespace openai

@@ -44,7 +44,8 @@ bool neutral(speech_option option, const OptionValue & value) {
         case SPEECH_OPT_SPEED:
         case SPEECH_OPT_DURATION_SCALE: return std::get<double>(value) == 1;
         case SPEECH_OPT_LANGUAGE: return language_is_auto(std::get<std::string>(value));
-        case SPEECH_OPT_TIMESTAMPS: return !std::get<bool>(value);
+        case SPEECH_OPT_TIMESTAMPS:
+        case SPEECH_OPT_SPEAKERS: return !std::get<bool>(value);
         case SPEECH_OPT_PROMPT:
         case SPEECH_OPT_INSTRUCTIONS: return std::get<std::string>(value).empty();
         default: return false;
@@ -401,6 +402,8 @@ speech_status speech_transcribe(speech_request * request) {
             result.tokens = std::move(found.tokens);
             result.stop = found.stop;
             result.languages = std::move(found.languages);
+            result.speakers = std::move(found.speakers);
+            result.untimed = std::move(found.untimed);
         });
     });
 }
@@ -465,6 +468,10 @@ size_t speech_result_token_count(const speech_result * result) {
 
 speech_status speech_result_token(const speech_result * result, size_t index, double * start, double * end, const char ** text) {
     return timed_text(result, result ? &result->tokens : nullptr, index, start, end, text, "token");
+}
+
+const char * speech_result_untimed(const speech_result * result) {
+    return result && result->task == SPEECH_TASK_RECOGNITION && result->untimed ? result->untimed->c_str() : nullptr;
 }
 
 size_t speech_result_language_count(const speech_result * result) {

@@ -42,6 +42,7 @@ Recognizer::Recognizer(const std::string & path, ggml_backend_t backend, const E
       perception_(model_, backend),
       language_model_(model_, backend, 0, -1, experts ? experts->cpu() : nullptr),
       guardrail_(model_),
+      timing_(model_, backend),
       eos_(model_.i32_array(kKeys + "generation.eos_ids")),
       context_length_(model_.size(kKeys + "llm.context_length")),
       max_samples_(model_.size(kKeys + "audio.max_samples")) {
@@ -51,7 +52,7 @@ Recognizer::Recognizer(const std::string & path, ggml_backend_t backend, const E
 }
 
 bool Recognizer::reads(const std::string & name) {
-    return name.rfind("mtp.", 0) != 0 && name.rfind("ctc.", 0) != 0;
+    return name.rfind("mtp.", 0) != 0;
 }
 
 uint64_t Recognizer::working_bytes(const ModelFile & m) {
@@ -68,9 +69,15 @@ uint64_t Recognizer::working_bytes(const ModelFile & m) {
     return keys_values + states + kComputeBytes;
 }
 
-std::pair<std::vector<int32_t>, std::vector<int32_t>> Recognizer::prompt(const std::string & context) const {
+std::pair<std::vector<int32_t>, std::vector<int32_t>> Recognizer::prompt(const RecognitionRequest & request) const {
     const std::string q = kKeys + "prompt.";
-    const std::string text = context.empty() ? model_.str(q + "instruction") : model_.str(q + "context_before") + context + model_.str(q + "context_after");
+    if (request.speakers && !request.context.empty()) {
+        throw Error(Fault::OutOfRange, "a request that asks for speakers takes no prompt: the model card's prompt for speaker tags has no context terms; leave prompt empty",
+                    "prompt");
+    }
+    const std::string text = request.speakers ? model_.str(q + "speakers")
+                             : request.context.empty() ? model_.str(q + "instruction")
+                                                       : model_.str(q + "context_before") + request.context + model_.str(q + "context_after");
     std::vector<int32_t> before = naming("prompt", [&] { return tokenizer_.encode(model_.str(q + "before_text") + text + model_.str(q + "before_audio")); });
     return {std::move(before), tokenizer_.encode(model_.str(q + "after_audio"))};
 }
@@ -85,7 +92,7 @@ std::optional<Recognition> Recognizer::recognize(const std::vector<float> & samp
                         std::to_string(max_samples_ / sample_rate()) + " s, so split it",
                     "audio");
     }
-    const auto [before, after] = prompt(request.context);
+    const auto [before, after] = prompt(request);
     const int64_t frames = perception_.frames(samples.size()), rows = (int64_t) (before.size() + after.size()) + frames;
     if (rows >= context_length_) {
         throw Error(Fault::OutOfRange,
@@ -95,10 +102,13 @@ std::optional<Recognition> Recognizer::recognize(const std::vector<float> & samp
     }
     r.prompt_rows = rows;
 
+    const bool timed = request.speakers || request.timestamps;
+    AlignmentFrames aligned;
     std::vector<float> input;
     {
         Timer t{&r.perception};
-        const std::vector<float> audio = perception_.encode(samples, [&](double done) { return !progress || progress(done / 3); });
+        const std::vector<float> audio =
+            perception_.encode(samples, [&](double done) { return !progress || progress(done / 3); }, nullptr, timed ? &aligned : nullptr);
         if (audio.empty()) return std::nullopt;
         input = language_model_.embed(before);
         input.insert(input.end(), audio.begin(), audio.end());
@@ -137,6 +147,14 @@ std::optional<Recognition> Recognizer::recognize(const std::vector<float> & samp
     std::vector<int32_t> written = r.ids;
     if (!result.limited) written.pop_back();
     result.text = guardrail_.apply(tokenizer_.decode(written));
+    if (timed) {
+        Timer t{&r.alignment};
+        TimedTranscript found = timing_.time(result.text, aligned, samples.size(), request.speakers);
+        result.text = std::move(found.text);
+        if (request.timestamps) result.tokens = std::move(found.tokens);
+        result.segments = std::move(found.segments);
+        result.untimed = std::move(found.failure);
+    }
     return result;
 }
 

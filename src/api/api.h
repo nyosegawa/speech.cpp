@@ -118,9 +118,11 @@ struct speech_result {
     uint64_t samples = 0;
     std::string text;
     std::vector<TimedText> segments, tokens;
-    /** The speaker of each segment of a diarization. */
+    /** The speaker of each segment of a diarization, and of a recognition that set speakers. */
     std::vector<int> speakers;
     std::vector<std::string> languages;
+    /** Why a recognition that set timestamps or speakers has no times. */
+    std::optional<std::string> untimed;
 };
 
 struct speech_request {

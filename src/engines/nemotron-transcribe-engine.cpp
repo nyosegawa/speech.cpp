@@ -20,12 +20,20 @@ public:
         placement_.allow(values.boolean(SPEECH_OPT_EXPERTS_ON_CPU));
         nemotron_transcribe::RecognitionRequest request;
         request.context = values.string(SPEECH_OPT_PROMPT);
+        request.speakers = values.boolean(SPEECH_OPT_SPEAKERS);
+        request.timestamps = values.boolean(SPEECH_OPT_TIMESTAMPS);
         const std::optional<nemotron_transcribe::Recognition> found =
             recognizer_.recognize(samples, request, [&](double done) { return run.progress(done); });
         if (!found || run.stopped()) return {};
         run.progress(1);
         Recognized out;
         out.text = found->text;
+        for (const nemotron_transcribe::TimedText & t : found->tokens) out.tokens.push_back({t.start, t.end, t.text});
+        for (const nemotron_transcribe::TimedText & s : found->segments) {
+            out.segments.push_back({s.start, s.end, s.text});
+            if (request.speakers) out.speakers.push_back(s.speaker);
+        }
+        if (!found->untimed.empty()) out.untimed = found->untimed;
         out.stop = found->limited ? SPEECH_STOP_MODEL_LIMIT : SPEECH_STOP_COMPLETE;
         return out;
     }
@@ -53,15 +61,18 @@ private:
 /**
  * The table of the options Nemotron 3.5 Transcribe takes. The language is checked against the model's and steers
  * nothing: the model card asks for the language as spoken. The prompt is the context terms of the card's contextual
- * transcription. The port computes no times, so a request takes timestamps only as false, the neutral value. A GPU that
- * cannot hold every expert leaves the experts of its later layers to the CPU, which experts_on_cpu false refuses.
+ * transcription. Timestamps and speakers align the text with the audio by the CTC head; speakers asks with the card's
+ * prompt for speaker tags, which takes no context terms. A GPU that cannot hold every expert leaves the experts of its
+ * later layers to the CPU, which experts_on_cpu false refuses.
  */
 FamilyInfo describe_nemotron_transcribe(const std::shared_ptr<const ModelFile> &) {
     FamilyInfo info;
     info.options = {
         {SPEECH_OPT_LANGUAGE, false, false, std::string("auto")},
+        {SPEECH_OPT_TIMESTAMPS, false, true, false},
         {SPEECH_OPT_PROMPT, false, true, std::string()},
         {SPEECH_OPT_EXPERTS_ON_CPU, false, true, true},
+        {SPEECH_OPT_SPEAKERS, false, true, false},
     };
     return info;
 }

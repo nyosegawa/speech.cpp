@@ -1,18 +1,19 @@
 // Checks Nemotron 3.5 Transcribe's recognition against the official generation on each dump of
-// reference/nemotron-transcribe/dump.py whose prompt a request makes, the model card's verbatim instruction or its
-// contextual one with the request's terms: the prompt's ids; then the dump's audio with every stage ours, each step's
-// logits at the dump's 16 largest against the dump's, and the ids and the text it writes. Where a greedy choice of ours
-// differs from the dump's, the check takes it for the arithmetic's when the dump's margin between the two tokens is
-// within twice the largest of our errors on the step's 14 other logits, which bounds what rounding moves either of the
-// two by, and for a defect otherwise, and compares no later step. A prompt of more than one block of rows reports its
-// progress after each block, and a recognition that stops at the first such report ends before it decodes. The logits
-// are compared but bound nothing: where two experts of a MoE layer score within float32's rounding of each other, the
-// port may take the other, as the decoder check counts such rows, and the row's output then departs by the difference
-// of the two experts, which every later layer and step carries. On the quiet input of reference/nemotron-transcribe,
-// such a row of layer 13 departs by 3.0e-2 and the logits of its steps by up to 21, at an SNR of 2.8 dB, with every
-// choice the dump's (2026-10-29). The dumps of other prompts, the plain instruction's and the speaker tags', are the
-// decoder check's alone. The F32 file takes about 131 GB of memory, which Modal's CPU containers hold. The dumps are
-// those in <reference out dir>/<the file's general.name>/.
+// reference/nemotron-transcribe/dump.py whose prompt a request makes, the model card's verbatim instruction, its
+// contextual one with the request's terms, or its prompt for speaker tags: the prompt's ids; then the dump's audio with
+// every stage ours, each step's logits at the dump's 16 largest against the dump's, and the ids and the text it writes,
+// without its speaker tags where it asks for speakers, with its tokens' and its segments' texts joining into it. Where
+// a greedy choice of ours differs from the dump's, the check takes it for the arithmetic's when the dump's margin
+// between the two tokens is within twice the largest of our errors on the step's 14 other logits, which bounds what
+// rounding moves either of the two by, and for a defect otherwise, and compares no later step. A prompt of more than
+// one block of rows reports its progress after each block, and a recognition that stops at the first such report ends
+// before it decodes. The logits are compared but bound nothing: where two experts of a MoE layer score within float32's
+// rounding of each other, the port may take the other, as the decoder check counts such rows, and the row's output then
+// departs by the difference of the two experts, which every later layer and step carries. On the quiet input of
+// reference/nemotron-transcribe, such a row of layer 13 departs by 3.0e-2 and the logits of its steps by up to 21, at
+// an SNR of 2.8 dB, with every choice the dump's (2026-10-29). The dumps of the plain instruction are the decoder
+// check's alone. The F32 file takes about 131 GB of memory, which Modal's CPU containers hold. The dumps are those in
+// <reference out dir>/<the file's general.name>/.
 //
 // usage: nemotron-transcribe-recognizer-check <model.gguf> <reference out dir> [gpu|cpu|device name]
 
@@ -29,6 +30,7 @@
 #include "json-reader.h"
 #include "nemotron-transcribe/layout.h"
 #include "nemotron-transcribe/recognizer.h"
+#include "nemotron-transcribe/timing.h"
 #include "npy.h"
 #include "reference-dumps.h"
 #include "weight-types.h"
@@ -37,14 +39,15 @@ using namespace nemotron_transcribe;
 
 namespace {
 
-/** The context of the request whose prompt is `text`, or none where no request's prompt is it. */
-std::optional<std::string> context_of(const std::string & text, const ModelFile & m) {
+/** The request whose prompt is `text`, with timestamps, or none where no request's prompt is it. */
+std::optional<RecognitionRequest> request_of(const std::string & text, const ModelFile & m) {
     const std::string q = "nemotron-transcribe.prompt.";
-    if (text == m.str(q + "instruction")) return "";
+    if (text == m.str(q + "instruction")) return RecognitionRequest{"", false, true};
+    if (text == m.str(q + "speakers")) return RecognitionRequest{"", true, true};
     const std::string before = m.str(q + "context_before"), after = m.str(q + "context_after");
     if (text.size() > before.size() + after.size() && text.compare(0, before.size(), before) == 0 &&
         text.compare(text.size() - after.size(), after.size(), after) == 0) {
-        return text.substr(before.size(), text.size() - before.size() - after.size());
+        return RecognitionRequest{text.substr(before.size(), text.size() - before.size() - after.size()), false, true};
     }
     return std::nullopt;
 }
@@ -110,19 +113,20 @@ int main(int argc, char ** argv) {
             Recognizer recognizer(args[1], backend);
             const ModelFile & m = recognizer.model();
             const Guardrail guardrail(m);
+            Timing timing(m, backend);
             const int32_t audio_id = (int32_t) m.size("nemotron-transcribe.prompt.audio_id");
             for (const auto & dump : reference_dumps(args[2], m)) {
                 const JsonValue meta = parse_json(dump_text(dump / "meta.json"));
-                const std::optional<std::string> context = context_of(meta.member("prompt")->member("text")->text, m);
+                const std::optional<RecognitionRequest> request = request_of(meta.member("prompt")->member("text")->text, m);
                 std::printf("%s\n", dump.filename().u8string().c_str());
-                if (!context) {
+                if (!request) {
                     std::printf("  no request's prompt; the decoder check's alone\n");
                     continue;
                 }
                 checked++;
 
                 const Npy prompt_ids = read_npy((dump / "prompt_ids.npy").u8string());
-                const auto [before, after] = recognizer.prompt(*context);
+                const auto [before, after] = recognizer.prompt(*request);
                 std::vector<int32_t> ids = before;
                 ids.push_back(audio_id);
                 ids.insert(ids.end(), after.begin(), after.end());
@@ -141,25 +145,32 @@ int main(int argc, char ** argv) {
                     if (i < tokens.i32.size()) steps.add(i, logits, top_ids, top, tokens.i32[i]);
                 };
                 std::vector<double> reports;
-                const Recognition got = *recognizer.recognize(audio.f32, RecognitionRequest{*context}, [&](double done) {
+                const Recognition got = *recognizer.recognize(audio.f32, *request, [&](double done) {
                     reports.push_back(done);
                     return true;
                 }, &report);
                 const bool same_ids = report.ids == tokens.i32;
-                const std::string want = guardrail.apply(meta.member("text")->text);
+                const std::string decoded = guardrail.apply(meta.member("text")->text);
+                const std::string want = request->speakers ? timing.untagged(decoded) : decoded;
+                std::string tokens_text, segments_text;
+                for (const TimedText & t : got.tokens) tokens_text += t.text;
+                for (const TimedText & t : got.segments) segments_text += t.text;
+                const bool joined = got.untimed.empty() ? tokens_text == got.text && segments_text == got.text : got.tokens.empty() && got.segments.empty();
                 std::printf("  %-32s %zu of %zu steps ours, top logits' worst SNR %.1f dB, max |diff| %.2e\n", "greedy decoding",
                             steps.steps - steps.differ, tokens.i32.size(), steps.worst_snr, steps.worst_abs);
                 std::printf("  %-32s %s\n", "ids", same_ids ? "the dump's" : "differ");
                 std::printf("  %-32s %s\n", "text", got.text == want ? "the dump's" : "differs");
                 if (got.text != want) std::printf("    ours:  %s\n    dump's: %s\n", got.text.c_str(), want.c_str());
-                std::printf("  %-32s perception %.1f s, prefill %.1f s of %lld rows, decoding %.1f s\n", "time", report.perception, report.prefill,
-                            (long long) report.prompt_rows, report.decode);
+                std::printf("  %-32s %zu tokens, %zu segments%s%s\n", "times", got.tokens.size(), got.segments.size(), joined ? ", joining into the text" : ", NOT JOINING INTO THE TEXT",
+                            got.untimed.empty() ? "" : (", none: " + got.untimed).c_str());
+                std::printf("  %-32s perception %.1f s, prefill %.1f s of %lld rows, decoding %.1f s, alignment %.1f s\n", "time", report.perception, report.prefill,
+                            (long long) report.prompt_rows, report.decode, report.alignment);
                 worst_snr = std::min(worst_snr, steps.worst_snr);
                 const auto within_prefill = [](double done) { return done > 1.0 / 3 + 1e-9 && done < 2.0 / 3 - 1e-9; };
                 const size_t between = (size_t) std::count_if(reports.begin(), reports.end(), within_prefill);
                 if (between > 0) {
                     RecognitionReport stopped;
-                    const bool none = !recognizer.recognize(audio.f32, RecognitionRequest{*context}, [&](double done) { return !within_prefill(done); }, &stopped);
+                    const bool none = !recognizer.recognize(audio.f32, *request, [&](double done) { return !within_prefill(done); }, &stopped);
                     const bool before_decoding = none && stopped.ids.empty();
                     std::printf("  %-32s %zu reports between the prefill's blocks; stopped at the first %s\n", "prefill", between,
                                 before_decoding ? "before decoding" : "AFTER IT DECODED");
@@ -167,7 +178,7 @@ int main(int argc, char ** argv) {
                     ok = ok && before_decoding;
                 }
                 // A choice the arithmetic explains leaves the rest of the decoding to differ; the text is then not compared.
-                ok = ok && steps.unexplained == 0 && (steps.differ > 0 || (same_ids && got.text == want));
+                ok = ok && joined && steps.unexplained == 0 && (steps.differ > 0 || (same_ids && got.text == want));
             }
         }
         // The meeting's prompt runs to more than one block of rows.

@@ -129,8 +129,8 @@ void recognize(Inbox & inbox, Protocol & protocol, speech_model * model, const s
         if (check(cancellation.run(r, [&] { return speech_transcribe(r); })) == SPEECH_CANCELLED) {
             terminal = cancelled_line(job.id);
         } else {
-            terminal = "{\"type\":\"end\",\"id\":" + json_string(job.id) +
-                       recognition_members(speech_request_result(r), timestamps_in_effect(info, job.options)) + "}";
+            const bool timestamps = timestamps_in_effect(info, job.options), speakers = in_effect(info, job.options, SPEECH_OPT_SPEAKERS);
+            terminal = "{\"type\":\"end\",\"id\":" + json_string(job.id) + recognition_members(speech_request_result(r), timestamps, speakers) + "}";
         }
     } catch (const std::exception & e) {
         terminal = error_line(job.id, e);

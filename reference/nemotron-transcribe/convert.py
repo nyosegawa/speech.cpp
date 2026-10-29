@@ -2,7 +2,7 @@
 
 usage: uv run python convert.py <out dir>
 
-Writes NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-F32.gguf, named under GGUF's naming convention, in layout 1, about 136 GB,
+Writes NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-F32.gguf, named under GGUF's naming convention, in layout 2, about 136 GB,
 a tensor at a time, so that the conversion holds one tensor of the language model in memory at most:
 
 - the perception module: the frontend's window and mel filterbank, the ASR encoder (the feature stacking's projection
@@ -12,9 +12,10 @@ a tensor at a time, so that the conversion holds one tensor of the language mode
   kernel, and the projection to the language model's width;
 - the language model, Nemotron 3.5 Lightning: its embeddings, its Mamba-2, attention and MoE layers, the final norm, the
   head, and the multi-token prediction layers;
-- the tokenizer, the prompt the official vLLM plugin renders, and the generation's settings;
-- the CTC timestamp head: its decoder, the vocabulary and the SentencePiece model it aligns words with, and the settings
-  of its alignment, as the checkpoint holds them.
+- the tokenizer, the prompt the official vLLM plugin renders, the model card's prompts, and the generation's settings;
+- the CTC timestamp head: its decoder, the vocabulary and the SentencePiece model it aligns words with, the settings of
+  its alignment as the checkpoint holds them, and those that NeMo's aligner runs with, the language model tokenizer's
+  special tokens it removes from a transcript, and the marks that end a segment of the timed text.
 
 The constants come from the checkpoint's config.json, llm_backbone/config.json, generation_config.json, tokenizer files
 and the safetensors' metadata, read through the official modules official.py builds; where the checkpoint has none,
@@ -35,6 +36,7 @@ other weight types of the file, each tensor in the type src/families/nemotron-tr
 """
 
 import argparse
+import inspect
 import json
 import math
 import os
@@ -46,13 +48,15 @@ from gguf import GGUFValueType, GGUFWriter, LlamaFileType, naming_convention
 from safetensors import safe_open
 from transformers import AutoConfig, AutoTokenizer
 
+from nemo.collections.speechlm2.parts.ctc_timestamp_utils import MultiSpeakerSOTWordTimestampAligner
+
 import official
 from pins import MODELS, snapshot
 
 ARCH = "nemotron-transcribe"
 # Each layout this converter has written, with the first release of speech.cpp whose reader takes it; it writes the
 # last.
-RELEASES = {1: "0.9.1"}
+RELEASES = {1: "0.9.1", 2: "0.9.2"}
 LAYOUT = max(RELEASES)
 MODEL = "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B"
 BASENAME = "NVIDIA-Nemotron-3.5-Transcribe"
@@ -70,6 +74,16 @@ INSTRUCTION = ("Audio transcription. Language: as spoken. Wording: verbatim, inc
                "Formatting: punctuation and capitalization. Output: transcript only.")
 CONTEXT_BEFORE = "Transcribe with punctuation and capitalization. Context terms: "
 CONTEXT_AFTER = "."
+# The model card's prompt for "Who said what, and when", which asks for speaker tags, <spk:N> in the order speakers
+# first speak.
+SPEAKERS = ("Transcribe this audio with punctuation and capitalization. Include all spoken words and verbal fillers. "
+            "Write numbers in their standard written form. Put speaker tags <spk:0> <spk:1> <spk:2> <spk:3> on the "
+            "transcription.")
+# speech.cpp's segments of a timed transcript, as reference/fastconformer's files cut them: NeMo's default segment
+# separators, which end a segment at the end of a word, and the marks that end one wherever they stand in the languages
+# the model writes without spaces.
+SEGMENT_SEPARATORS = [".", "?", "!"]
+SEGMENT_BREAKS = ["\u3002", "\uff1f", "\uff01"]
 # The model card's context length, the --max-model-len of its vLLM server, and the longest recording its server takes,
 # VLLM_MAX_AUDIO_DECODE_DURATION_S of the same command.
 CONTEXT_LENGTH = 65536
@@ -80,9 +94,9 @@ MAX_AUDIO_SECONDS = 3600
 CHAR_RUN = 21
 BLOCK_RUN = 20
 BLOCK_MAX_CHARS = 4096
-# Instructions the prompt's tokens are checked with: both of the card's, and texts that end in spaces and newlines,
+# Instructions the prompt's tokens are checked with: the card's three, and texts that end in spaces and newlines,
 # carry a special token, or hold Japanese, whose tokens might join the text around them.
-CHECKED_TEXTS = [INSTRUCTION, CONTEXT_BEFORE + "FLEURS, Nemotron" + CONTEXT_AFTER, "", "  x\n\n", "<|im_end|> x",
+CHECKED_TEXTS = [INSTRUCTION, CONTEXT_BEFORE + "FLEURS, Nemotron" + CONTEXT_AFTER, SPEAKERS, "", "  x\n\n", "<|im_end|> x",
                  "日本語で書き起こしてください。", "Context terms: 群島、湖、ヨット."]
 
 parser = argparse.ArgumentParser()
@@ -354,6 +368,7 @@ w.add_uint32(q + "audio_id", locator_id)
 w.add_string(q + "instruction", INSTRUCTION)
 w.add_string(q + "context_before", CONTEXT_BEFORE)
 w.add_string(q + "context_after", CONTEXT_AFTER)
+w.add_string(q + "speakers", SPEAKERS)
 g = p + "generation."
 add_array(g + "eos_ids", eos_ids, GGUFValueType.INT32)
 w.add_uint32(g + "char_run", CHAR_RUN)
@@ -399,6 +414,26 @@ def add_setting(key, value):
 
 for key, value in ctc_alignment["parameters"].items():
     add_setting(c + "alignment." + key, value)
+
+# The head's norms, all nn.LayerNorm of one eps.
+eps = {m.eps for m in head.modules() if type(m).__name__ == "LayerNorm"}
+assert len(eps) == 1, eps
+w.add_float32(c + "norm_eps", float(eps.pop()))
+# The special tokens of the language model's tokenizer, which clean_sot_transcript() removes from a transcript before
+# the alignment, as NVIDIA's vLLM plugin gives them (tokenizer_special_tokens(), the tokenizer's all_special_tokens).
+add_array(c + "removed_tokens", list(AutoTokenizer.from_pretrained(folder).all_special_tokens), GGUFValueType.STRING)
+add_array(p + "segment.separators", SEGMENT_SEPARATORS, GGUFValueType.STRING)
+add_array(p + "segment.breaks", SEGMENT_BREAKS, GGUFValueType.STRING)
+# The settings MultiSpeakerSOTWordTimestampAligner runs with: NeMo's defaults, since the encoder's
+# ctc_timestamp_alignment, which get_ctc_timestamp_aligner() passes, is empty, and the vLLM plugin reads a top-level
+# ctc_timestamps.speaker_logprob_weight that config.json does not have; neither reads alignment_config's parameters.
+assert not dict(getattr(pee, "ctc_timestamp_alignment", {}) or {})
+assert "speaker_logprob_weight" not in config["ctc_timestamps"]
+defaults = inspect.signature(MultiSpeakerSOTWordTimestampAligner.__init__).parameters
+a = p + "align."
+for key in ("speaker_activity_threshold", "speaker_logprob_weight", "maximum_token_len", "epsilon"):
+    w.add_float32(a + key, float(defaults[key].default))
+w.add_uint32(a + "max_word_frames", int(defaults["max_word_frames"].default))
 
 # The perception module's tensors, from its state dict in float32.
 used = set()

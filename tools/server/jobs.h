@@ -149,6 +149,8 @@ struct TranscriptionJob : Job {
     std::vector<float> samples;
     std::vector<RequestOption> options;
     bool timestamps = false;
+    /** Whether the recognition sets speakers, for diarized_json of a model that tells who speaks. */
+    bool own_speakers = false;
     /** With diarized_json: the diarization model, kept as `served` is, and its request set up with the audio. */
     std::shared_ptr<Served> diarizer;
     Request diarization{nullptr, speech_request_free};
@@ -269,7 +271,7 @@ inline void transcribe(const std::shared_ptr<TranscriptionJob> & job, Turns & tu
         if (!job->detection) {
             speech_request * r = job->request.get();
             const speech_status s = check(job->cancellation.run(r, [&] { return speech_transcribe(r); }));
-            if (s == SPEECH_OK) job->transcript = transcript_of(speech_request_result(r), job->timestamps);
+            if (s == SPEECH_OK) job->transcript = transcript_of(speech_request_result(r), job->timestamps, job->own_speakers);
             return s;
         }
         std::optional<std::vector<Region>> regions = detect_regions(job->detection.get(), job->cancellation);

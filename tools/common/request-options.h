@@ -79,15 +79,16 @@ std::vector<RequestOption> defaults_for(speech_model * model, const std::vector<
 std::vector<RequestOption> with_defaults(const std::vector<RequestOption> & defaults, const std::vector<RequestOption> & options);
 
 /**
- * Whether a recognition with `options` carries its segments and tokens: the timestamps option's value where the
+ * Whether a recognition with `options` sets the boolean `option`, timestamps or speakers: the option's value where the
  * options set it, else the model's default, and false for a model that does not take it.
  */
+bool in_effect(const speech_model_info * info, const std::vector<RequestOption> & options, speech_option option);
+
+/** Whether a recognition with `options` carries its segments and tokens (in_effect() of timestamps). */
 bool timestamps_in_effect(const speech_model_info * info, const std::vector<RequestOption> & options);
 
 /**
- * The members of a recognition's result in the form of the worker's messages, each after a comma: "text", "stop" (why
- * the recognition ended, "complete" or "model_limit"), "languages", the tags of the languages the model heard, where the
- * result has any, and with `timestamps` "segments" and "tokens", each a list of {"start", "end", "text"} with the times
- * in seconds.
+ * The members of a recognition's result in the form of the worker's messages (recognition_members() of transcript.h),
+ * with segments and tokens with `timestamps` and segments with their speakers with `speakers`.
  */
-std::string recognition_members(const speech_result * result, bool timestamps);
+std::string recognition_members(const speech_result * result, bool timestamps, bool speakers = false);

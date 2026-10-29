@@ -163,6 +163,12 @@ int run_asr(const CommandLine & line, FILE * out) {
         throw UsageError("--timestamps gives the segments of files; the utterances of " + std::string(live ? "--live" : "-") +
                          " carry their times in the events of --format json");
     }
+    if (line.has("--vad") && std::any_of(line.options.begin(), line.options.end(), [](const RequestOption & o) {
+            return o.option == SPEECH_OPT_SPEAKERS && std::get<bool>(o.value);
+        })) {
+        throw UsageError("--speakers numbers the speakers of one recognition, and --vad recognizes each region alone; leave out --vad, "
+                         "or give --diarize for the speakers of a whole file or a stream");
+    }
 
     // The models named for the first time are fetched here, before the load is timed.
     const std::string path = model_file(line.args[0]);
@@ -197,7 +203,7 @@ int run_asr(const CommandLine & line, FILE * out) {
         return transcribe_stream(line, out, model.get(), options, detection->model.get(), detection->options, diarizer ? diarizer->model.get() : nullptr,
                                  diarizer ? diarizer->options : std::vector<RequestOption>(), format == "json");
     }
-    const bool timestamps = timestamps_in_effect(m, options);
+    const bool timestamps = timestamps_in_effect(m, options), with_speakers = in_effect(m, options, SPEECH_OPT_SPEAKERS);
 
     double audio_total = 0, busy = 0;
     bool model_limit = false;
@@ -232,7 +238,7 @@ int run_asr(const CommandLine & line, FILE * out) {
                     check(speech_request_set_audio(request.get(), samples.data(), samples.size(), wav.sample_rate));
                     apply_options(request.get(), options);
                     check(speech_transcribe(request.get()));
-                    transcript = transcript_of(speech_request_result(request.get()), timestamps);
+                    transcript = transcript_of(speech_request_result(request.get()), timestamps, with_speakers);
                 }
             } catch (const Failure & e) {
                 throw Failure(e.code(), e.option(), path + ": " + e.what());
@@ -242,11 +248,20 @@ int run_asr(const CommandLine & line, FILE * out) {
         if (diarizer) {
             write_diarized(out, format == "json", path, transcript, timestamps, found, parts, speakers);
         } else if (format == "json") {
-            std::fprintf(out, "{\"file\":%s%s}\n", json_string(path).c_str(), recognition_members(transcript, timestamps).c_str());
-        } else if (!timestamps) {
+            std::fprintf(out, "{\"file\":%s%s}\n", json_string(path).c_str(), recognition_members(transcript, timestamps, with_speakers).c_str());
+        } else if (!timestamps && !with_speakers) {
             std::fprintf(out, "%s\n", transcript.text.c_str());
+        } else if (transcript.untimed) {
+            // The text with no times in the columns of the times, so that every line keeps the same columns.
+            std::fprintf(out, "%s\t\t\t%s%s\n", path.c_str(), with_speakers ? "-\t" : "", transcript.text.c_str());
         } else {
-            for (const Timed & s : transcript.segments) std::fprintf(out, "%s\t%.3f\t%.3f\t%s\n", path.c_str(), s.start, s.end, s.text.c_str());
+            for (const Timed & s : transcript.segments) {
+                std::fprintf(out, "%s\t%.3f\t%.3f\t%s%s\n", path.c_str(), s.start, s.end, with_speakers ? (speaker_column(s.speaker) + "\t").c_str() : "",
+                             s.text.c_str());
+            }
+        }
+        if (transcript.untimed) {
+            std::fprintf(stderr, "%s\n", terminal::marked(terminal::Mark::Warning, path + ": the text has no times: " + *transcript.untimed).c_str());
         }
         std::fflush(out);
         char said[128];
@@ -280,10 +295,13 @@ Command asr_command() {
     c.description =
         "Recognizes each WAVE file (16-, 24- or 32-bit PCM or 32-bit float, any rate, channels averaged) and writes\n"
         "its text to stdout in the order given: with --format text one line per file, or with --timestamps one line\n"
-        "per segment, FILE<TAB>START<TAB>END<TAB>TEXT, times in seconds; with --format json one object per file,\n"
-        "{\"file\", \"text\", \"stop\"}, with \"languages\", the tags of the languages the model heard, where it names\n"
-        "any, and \"segments\" and \"tokens\" when --timestamps is given. It exits with 3 when a recognition stopped at\n"
-        "the most the model writes, after writing every file's text.\n"
+        "per segment, FILE<TAB>START<TAB>END<TAB>TEXT, times in seconds, and with --speakers, for a model that tells\n"
+        "who speaks, FILE<TAB>START<TAB>END<TAB>SPEAKER<TAB>TEXT, SPEAKER the model's number from 0 or - for none;\n"
+        "with --format json one object per file, {\"file\", \"text\", \"stop\"}, with \"languages\", the tags of the\n"
+        "languages the model heard, where it names any, \"segments\" with --timestamps or --speakers, each with its\n"
+        "\"speaker\" with --speakers, and \"tokens\" with --timestamps. Where the model cannot time its text, the text\n"
+        "comes with empty times, or \"untimed\" with the reason in JSON, and a warning says why. It exits with 3 when a\n"
+        "recognition stopped at the most the model writes, after writing every file's text.\n"
         "With --vad, a detection model, on the CPU, finds where someone speaks in each file, each region is recognized\n"
         "alone and the texts are joined, the times of the whole file. The detection options are those of speech vad,\n"
         "with OpenAI's server_vad defaults and a longest region:\n" + region_defaults() + ".\n"

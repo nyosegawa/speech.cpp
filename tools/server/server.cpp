@@ -199,7 +199,8 @@ private:
             for (const auto & [field_name, field] : req.form.fields) parts.push_back({field_name, field.content, "", false});
             for (const auto & [file_name, file] : req.form.files) parts.push_back({file_name, file.content, file.filename, true});
             asked = openai::read_transcription_request(req.is_multipart_form_data(), parts, speech_model_info_name(info.get()),
-                                                       speech_model_info_takes(info.get(), SPEECH_OPT_TIMESTAMPS));
+                                                       speech_model_info_takes(info.get(), SPEECH_OPT_TIMESTAMPS),
+                                                       speech_model_info_takes(info.get(), SPEECH_OPT_SPEAKERS));
         } catch (const ApiError & e) {
             send_error(res, e);
             return;
@@ -210,6 +211,7 @@ private:
         job->duration = (double) asked.samples.size() / asked.sample_rate;
         job->served = served;
         job->timestamps = asked.timestamps;
+        job->own_speakers = asked.speakers;
         job->method = req.method;
         job->path = req.path;
         job->client = req.remote_addr;
@@ -233,7 +235,7 @@ private:
                 return;
             }
         }
-        if (asked.format == "diarized_json") {
+        if (asked.format == "diarized_json" && !asked.speakers) {
             job->diarizer = needed(SPEECH_TASK_DIARIZATION, "diarized_json",
                                    {400, "\"response_format\": \"diarized_json\" gives each region the speakers that a speech diarization model "
                                          "finds, and this server holds none. Give speech serve one beside the other models, as in speech serve " +
@@ -276,7 +278,10 @@ private:
         if (asked.format == "text") {
             res.set_content(job->transcript.text, "text/plain; charset=utf-8");
         } else if (asked.format == "verbose_json") {
-            res.set_content(openai::transcription_verbose_json(job->transcript, job->duration, asked.timestamps), "application/json");
+            res.set_content(openai::transcription_verbose_json(job->transcript, job->duration, asked.timestamps, asked.segments, asked.words),
+                            "application/json");
+        } else if (asked.format == "diarized_json" && asked.speakers) {
+            res.set_content(openai::transcription_diarized_json(job->transcript, job->duration), "application/json");
         } else if (asked.format == "diarized_json") {
             res.set_content(openai::transcription_diarized_json(job->transcript, job->duration, job->regions, job->parts, job->speakers),
                             "application/json");

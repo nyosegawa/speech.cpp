@@ -2,20 +2,21 @@
  * The recognition half of speech-api-check: the C API with a recognition model, through the shared libspeech. Loads the
  * model without a warm-up, compares the information read without loading with the loaded model's, refuses each option's
  * values with the category and the option's name, recognizes the audio of each dump of reference/fastconformer/dump.py,
- * reference/qwen3-asr/dump.py or reference/nemotron-transcribe/dump.py, the last with the prompt its request gives, and
- * compares the text with the dump's text byte for byte, the stop with the dump's, at
- * the model's limit where qwen-asr's decoding of a part reached max_new_tokens, and the languages with the one qwen-asr
- * parsed, or those it merged from the parts of an input it split, by their tags, or with none for a dump of
- * FastConformer or Nemotron 3.5 Transcribe, which write no language, gives each its tokens and segments with their times where the model takes
- * timestamps, recognizes the audio of each dump with the dump's text as its draft where the model takes one and
- * compares the text, recognizes each other request of a Qwen3-ASR dump of an input qwen-asr did not split, with its
- * language forced and with its prompt, recognizes the audio with each decoding other than the model's default and
- * compares the text and the languages with those in the dump's folder of the decoding's name, which
+ * reference/qwen3-asr/dump.py or reference/nemotron-transcribe/dump.py, the last with the prompt its request gives or
+ * with speakers for the model card's prompt for speaker tags, its text then without the tags, and compares the text
+ * with the dump's text byte for byte, the stop with the dump's, at the model's limit where qwen-asr's decoding of a
+ * part reached max_new_tokens, and the languages with the one qwen-asr parsed, or those it merged from the parts of an
+ * input it split, by their tags, or with none for a dump of FastConformer or Nemotron 3.5 Transcribe, which write no
+ * language, gives each its tokens and segments with their times where the model takes timestamps, or the reason it has
+ * none where the model cannot time its text, recognizes the audio of each dump with the dump's text as its draft where
+ * the model takes one and compares the text, recognizes each other request of a Qwen3-ASR dump of an input qwen-asr did
+ * not split, with its language forced and with its prompt, recognizes the audio with each decoding other than the
+ * model's default and compares the text and the languages with those in the dump's folder of the decoding's name, which
  * reference/fastconformer/dump.py --greedy writes for an RNN-T's greedy decoding, recognizes the audio with each
  * decoding and decode_on_cpu the other way than the model's default where it takes it and compares the text with the
- * dump's of the decoding, recognizes audio at three times the model's rate, refuses what a recognition cannot take and
- * runs a request it refused before its work again, reports and stops on progress, and cancels a request from another
- * thread while it runs, its result then without text or language.
+ * dump's of the decoding, recognizes audio at three times the model's rate, refuses what a recognition cannot take,
+ * speakers with a prompt among it, and runs a request it refused before its work again, reports and stops on progress,
+ * and cancels a request from another thread while it runs, its result then without text or language.
  */
 
 #include <stdlib.h>
@@ -28,7 +29,7 @@
 
 /**
  * What a recognition asks besides its audio: timestamps, and a language, a prompt and a decoding where they are not
- * NULL, decode_on_cpu where it is 0 or 1 rather than -1, and a draft where it is not NULL.
+ * NULL, decode_on_cpu where it is 0 or 1 rather than -1, a draft where it is not NULL, and speakers where it is 1.
  */
 typedef struct {
     int timestamps;
@@ -37,6 +38,7 @@ typedef struct {
     const char * decoding;
     int decode_on_cpu;
     const char * draft;
+    int speakers;
 } Asked;
 
 /**
@@ -76,6 +78,7 @@ static speech_status recognize(speech_model * model, const float * samples, size
         (asked.decoding && speech_request_set_string(r, SPEECH_OPT_DECODING, asked.decoding) != SPEECH_OK) ||
         (asked.decode_on_cpu >= 0 && speech_request_set_bool(r, SPEECH_OPT_DECODE_ON_CPU, asked.decode_on_cpu) != SPEECH_OK) ||
         (asked.draft && speech_request_set_string(r, SPEECH_OPT_DRAFT, asked.draft) != SPEECH_OK) ||
+        (asked.speakers && speech_request_set_bool(r, SPEECH_OPT_SPEAKERS, 1) != SPEECH_OK) ||
         (progress && speech_request_set_progress(r, record_progress, progress) != SPEECH_OK)) {
         fail("a request's audio or option");
         speech_request_free(r);
@@ -95,7 +98,17 @@ static speech_status recognize(speech_model * model, const float * samples, size
             return SPEECH_ERROR_INTERNAL;
         }
     }
-    if (status == SPEECH_OK && timestamps) {
+    const char * untimed = result ? speech_result_untimed(result) : NULL;
+    if (status == SPEECH_OK && (timestamps || asked.speakers) && untimed) {
+        // A text the model cannot time comes with neither tokens nor segments, and the reason.
+        const int none = speech_result_token_count(result) == 0 && speech_result_segment_count(result) == 0 && (*text)[0];
+        printf("  no times: %s\n", untimed);
+        if (!none) {
+            fprintf(stderr, "FAIL: a result without times has tokens or segments, or no text\n");
+            speech_request_free(r);
+            return SPEECH_ERROR_INTERNAL;
+        }
+    } else if (status == SPEECH_OK && (timestamps || asked.speakers)) {
         const size_t length = strlen(*text);
         char * joined_tokens = (char *) calloc(length + 1, 1), * joined_segments = (char *) calloc(length + 1, 1);
         const double seconds = (double) n / rate;
@@ -104,7 +117,8 @@ static speech_status recognize(speech_model * model, const float * samples, size
         for (size_t i = 0; i < speech_result_token_count(result); i++) {
             double start = 0, end = 0;
             const char * piece = NULL;
-            ok = ok && speech_result_token(result, i, &start, &end, &piece) == SPEECH_OK && start >= last - 1e-9 && end >= start &&
+            // The words of two speakers may interleave in time, where their tokens keep the order of the text.
+            ok = ok && speech_result_token(result, i, &start, &end, &piece) == SPEECH_OK && (asked.speakers || start >= last - 1e-9) && end >= start &&
                  end <= seconds + 0.5 && strlen(joined_tokens) + strlen(piece) <= length;
             if (!ok) break;
             strcat(joined_tokens, piece);
@@ -114,15 +128,20 @@ static speech_status recognize(speech_model * model, const float * samples, size
         for (size_t i = 0; ok && i < speech_result_segment_count(result); i++) {
             double start = 0, end = 0;
             const char * piece = NULL;
-            ok = speech_result_segment(result, i, &start, &end, &piece) == SPEECH_OK && end >= start && strlen(joined_segments) + strlen(piece) <= length;
+            const int speaker = speech_result_segment_speaker(result, i);
+            ok = speech_result_segment(result, i, &start, &end, &piece) == SPEECH_OK && end >= start && strlen(joined_segments) + strlen(piece) <= length &&
+                 (asked.speakers ? speaker >= -1 : speaker == -1);
             if (ok) {
                 strcat(joined_segments, piece);
-                printf("  %8.2f %8.2f %s\n", start, end, piece);
+                if (asked.speakers) printf("  %8.2f %8.2f %2d %s\n", start, end, speaker, piece);
+                else printf("  %8.2f %8.2f %s\n", start, end, piece);
             }
         }
-        ok = ok && !strcmp(joined_tokens, *text) && !strcmp(joined_segments, *text) && (length == 0 || speech_result_segment_count(result) > 0) &&
-             speech_result_segment(result, speech_result_segment_count(result), NULL, NULL, NULL) == SPEECH_ERROR_INVALID_ARGUMENT;
-        if (!ok) fprintf(stderr, "FAIL: the tokens and segments do not make the text, or their times do not rise within the audio\n");
+        ok = ok && (!timestamps || !strcmp(joined_tokens, *text)) && (timestamps || speech_result_token_count(result) == 0) &&
+             !strcmp(joined_segments, *text) && (length == 0 || speech_result_segment_count(result) > 0) &&
+             speech_result_segment(result, speech_result_segment_count(result), NULL, NULL, NULL) == SPEECH_ERROR_INVALID_ARGUMENT &&
+             (!asked.speakers || !strstr(*text, "<spk:"));
+        if (!ok) fprintf(stderr, "FAIL: the tokens and segments do not make the text, their times do not rise within the audio, or a speaker is amiss\n");
         free(joined_tokens);
         free(joined_segments);
         if (!ok) {
@@ -247,13 +266,31 @@ static char * meta_string(const speech_model_info * info, const char * key) {
     return out;
 }
 
+/** `text` without its <spk:N> tags and the spaces after each, as a recognition that sets speakers writes it. */
+static void untag(char * text) {
+    char * out = text;
+    for (const char * p = text; *p;) {
+        size_t n = 0;
+        if (p[0] == '<' && (p[1] | 32) == 's' && (p[2] | 32) == 'p' && (p[3] | 32) == 'k' && p[4] == ':') {
+            n = 5;
+            while (p[n] >= '0' && p[n] <= '9') n++;
+            n = n > 5 && p[n] == '>' ? n + 1 : 0;
+            while (n && (p[n] == ' ' || p[n] == '\t' || p[n] == '\n')) n++;
+        }
+        if (n) p += n;
+        else *out++ = *p++;
+    }
+    *out = 0;
+}
+
 /**
- * The text of a dump of reference/nemotron-transcribe/dump.py and the prompt of the request that asks what it asked, which
- * the caller frees: no prompt, NULL, for the model card's verbatim instruction, and the terms for its contextual one, as
- * nemotron-transcribe.prompt names them. The dump's meta.json holds the text the model decoded, which the card's guardrail
- * leaves as it is in every dump. A dump of another prompt, which no request asks, fails.
+ * The text of a dump of reference/nemotron-transcribe/dump.py and the request that asks what it asked, whose prompt the
+ * caller frees: no prompt, NULL, for the model card's verbatim instruction, the terms for its contextual one, and speakers
+ * for its prompt for speaker tags, as nemotron-transcribe.prompt names them, whose text leaves out the tags. The dump's
+ * meta.json holds the text the model decoded, which the card's guardrail leaves as it is in every dump. A dump of another
+ * prompt, which no request asks, fails.
  */
-static int nemotron_request(const speech_model_info * info, const char * dump, char ** text, char ** prompt) {
+static int nemotron_request(const speech_model_info * info, const char * dump, char ** text, char ** prompt, int * speakers) {
     char path[4096 + 16];
     size_t size = 0;
     snprintf(path, sizeof path, "%s/meta.json", dump);
@@ -263,10 +300,15 @@ static int nemotron_request(const speech_model_info * info, const char * dump, c
     char * instruction = meta_string(info, "nemotron-transcribe.prompt.instruction");
     char * before = meta_string(info, "nemotron-transcribe.prompt.context_before");
     char * after = meta_string(info, "nemotron-transcribe.prompt.context_after");
+    char * tags = meta_string(info, "nemotron-transcribe.prompt.speakers");
     *text = meta ? top_level_member(meta, "text") : NULL;
     *prompt = NULL;
-    int ok = *text && asked && instruction && before && after;
-    if (ok && strcmp(asked, instruction) != 0) {
+    *speakers = 0;
+    int ok = *text && asked && instruction && before && after && tags;
+    if (ok && !strcmp(asked, tags)) {
+        *speakers = 1;
+        untag(*text);
+    } else if (ok && strcmp(asked, instruction) != 0) {
         const size_t n = strlen(asked), b = strlen(before), a = strlen(after);
         ok = n > b + a && !strncmp(asked, before, b) && !strcmp(asked + n - a, after);
         if (ok) {
@@ -274,12 +316,13 @@ static int nemotron_request(const speech_model_info * info, const char * dump, c
             memcpy(*prompt, asked + b, n - b - a);
         }
     }
-    if (!ok) fprintf(stderr, "FAIL: %s asks what no request asks, or its meta.json has no text; give the dumps of the verbatim and context prompts\n", dump);
+    if (!ok) fprintf(stderr, "FAIL: %s asks what no request asks, or its meta.json has no text; give the dumps of the verbatim, context and speakers prompts\n", dump);
     free(meta);
     free(asked);
     free(instruction);
     free(before);
     free(after);
+    free(tags);
     return ok ? 0 : 1;
 }
 
@@ -423,6 +466,15 @@ static int check_refusals(speech_model * model, const char * model_path, const f
           expect(speech_transcribe(r), SPEECH_ERROR_INVALID_ARGUMENT, NULL, "the same request run again after its work");
     speech_request_free(r);
     free(long_prompt);
+    // A model that asks for speakers with a prompt of its own takes no prompt beside them, and says so before any work.
+    if (takes_prompt && speech_model_info_takes(info, SPEECH_OPT_SPEAKERS)) {
+        if (speech_request_new(model, &r) != SPEECH_OK || speech_request_set_audio(r, samples, n, rate) != SPEECH_OK ||
+            speech_request_set_string(r, SPEECH_OPT_PROMPT, "Nemotron") != SPEECH_OK || speech_request_set_bool(r, SPEECH_OPT_SPEAKERS, 1) != SPEECH_OK) {
+            return fail("a request with speakers and a prompt");
+        }
+        ok &= expect(speech_transcribe(r), SPEECH_ERROR_OUT_OF_RANGE, "prompt", "speakers with a prompt");
+        speech_request_free(r);
+    }
     // A refused value leaves the one set before it.
     const speech_option kept = takes_timestamps ? SPEECH_OPT_TIMESTAMPS : SPEECH_OPT_PROMPT;
     if (speech_request_new(model, &r) != SPEECH_OK || speech_request_set_audio(r, samples, n, rate) != SPEECH_OK ||
@@ -491,7 +543,7 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
         Asked asked = plain;
         char * prompt = NULL;
         if (nemotron_dump(dumps[d])) {
-            if (nemotron_request(info, dumps[d], &texts[d], &prompt) != 0) return 1;
+            if (nemotron_request(info, dumps[d], &texts[d], &prompt, &asked.speakers) != 0) return 1;
             asked.prompt = prompt;
         } else {
             texts[d] = read_whole(path, &text_size);

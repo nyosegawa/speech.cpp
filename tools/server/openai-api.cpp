@@ -141,7 +141,7 @@ SpeechRequest read_speech_request(const std::string & body, const std::string & 
 }
 
 TranscriptionRequest read_transcription_request(bool multipart, const std::vector<FormPart> & parts, const std::string & model_name,
-                                                bool gives_times) {
+                                                bool gives_times, bool tells_speakers) {
     if (!multipart) {
         throw ApiError{400, "The body is not multipart/form-data. Send the audio as the form's \"file\", as OpenAI's create transcription takes it.",
                        "", ""};
@@ -178,17 +178,27 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
                        "response_format", "unsupported_value"};
     }
     for (const std::string & g : granularities) {
-        if (g != "segment") {
-            throw ApiError{400, "The timestamp granularity " + json_string(g) + " is not supported; speech.cpp gives \"segment\".",
+        if (g != "segment" && g != "word") {
+            throw ApiError{400, "The timestamp granularity " + json_string(g) + " is not supported; speech.cpp gives \"segment\" and \"word\".",
                            "timestamp_granularities[]", "unsupported_value"};
         }
         if (r.format != "verbose_json") {
-            throw ApiError{400, "timestamp_granularities[] needs \"response_format\": \"verbose_json\", which carries the segments.",
+            throw ApiError{400, "timestamp_granularities[] needs \"response_format\": \"verbose_json\", which carries the segments and the words.",
                            "timestamp_granularities[]", "invalid_value"};
         }
     }
+    r.segments = granularities.empty() || std::find(granularities.begin(), granularities.end(), "segment") != granularities.end();
+    r.words = std::find(granularities.begin(), granularities.end(), "word") != granularities.end();
     r.regions = chunking_strategy(field);
-    if (r.format == "diarized_json" && !r.regions) {
+    if (r.format == "diarized_json" && tells_speakers) {
+        if (r.regions) {
+            throw ApiError{400, "This model tells who speaks in the whole file by itself, which a recognition of each region alone would number "
+                           "apart; leave chunking_strategy out.",
+                           "chunking_strategy", "invalid_value"};
+        }
+        r.speakers = true;
+        r.options.push_back({SPEECH_OPT_SPEAKERS, true});
+    } else if (r.format == "diarized_json" && !r.regions) {
         throw ApiError{400, "\"response_format\": \"diarized_json\" gives a segment for each region that chunking_strategy finds; give "
                        "chunking_strategy \"auto\" with it.",
                        "chunking_strategy", "missing_required_parameter"};
@@ -234,19 +244,32 @@ std::string transcription_json(const std::string & text) {
     return "{\"text\":" + json_string(text) + "}";
 }
 
-std::string transcription_verbose_json(const Transcript & transcript, double duration, bool timestamps) {
+std::string transcription_verbose_json(const Transcript & transcript, double duration, bool timestamps, bool segments, bool words) {
     std::string language;
     for (size_t i = 0; i < transcript.languages.size(); i++) language += (i ? "," : "") + transcript.languages[i];
     std::string out = "{\"task\":\"transcribe\"" + (language.empty() ? "" : ",\"language\":" + json_string(language)) +
                       ",\"duration\":" + json_number(duration) + ",\"text\":" + json_string(transcript.text);
     if (!timestamps) return out + "}";
-    out += ",\"segments\":[";
-    for (size_t i = 0; i < transcript.segments.size(); i++) {
-        const Timed & s = transcript.segments[i];
-        out += std::string(i ? "," : "") + "{\"id\":" + std::to_string(i) + ",\"start\":" + json_number(s.start) + ",\"end\":" + json_number(s.end) +
-               ",\"text\":" + json_string(s.text) + "}";
+    if (segments) {
+        out += ",\"segments\":[";
+        for (size_t i = 0; i < transcript.segments.size(); i++) {
+            const Timed & s = transcript.segments[i];
+            out += std::string(i ? "," : "") + "{\"id\":" + std::to_string(i) + ",\"start\":" + json_number(s.start) + ",\"end\":" + json_number(s.end) +
+                   ",\"text\":" + json_string(s.text) + "}";
+        }
+        out += "]";
     }
-    return out + "]}";
+    if (words) {
+        const std::vector<Timed> listed = words_of(transcript.tokens);
+        out += ",\"words\":[";
+        for (size_t i = 0; i < listed.size(); i++) {
+            out += std::string(i ? "," : "") + "{\"word\":" + json_string(listed[i].text) + ",\"start\":" + json_number(listed[i].start) +
+                   ",\"end\":" + json_number(listed[i].end) + "}";
+        }
+        out += "]";
+    }
+    if (transcript.untimed) out += ",\"untimed\":" + json_string(*transcript.untimed);
+    return out + "}";
 }
 
 std::string transcription_diarized_json(const Transcript & transcript, double duration, const std::vector<Region> & regions,
@@ -266,6 +289,26 @@ std::string transcription_diarized_json(const Transcript & transcript, double du
                ",\"speaker\":" + json_string(main < 0 ? "" : speaker_label(main)) + ",\"speakers\":[" + listed + "]}";
     }
     return out + "],\"usage\":{\"type\":\"duration\",\"seconds\":" + json_number(duration) + "}}";
+}
+
+std::string transcription_diarized_json(const Transcript & transcript, double duration) {
+    const auto time = [](double t) { return json_number(std::round(t * 1000) / 1000); };
+    // The model's numbers, labeled in the order they first speak.
+    std::map<int, int> label_of;
+    for (const Timed & s : transcript.segments) {
+        if (s.speaker >= 0) label_of.emplace(s.speaker, (int) label_of.size());
+    }
+    std::string out = "{\"task\":\"transcribe\",\"duration\":" + json_number(duration) + ",\"text\":" + json_string(transcript.text) + ",\"segments\":[";
+    for (size_t k = 0; k < transcript.segments.size(); k++) {
+        const Timed & s = transcript.segments[k];
+        const std::string label = s.speaker < 0 ? "" : speaker_label(label_of.at(s.speaker));
+        const std::string listed = s.speaker < 0 ? "" : "{\"speaker\":" + json_string(label) + ",\"start\":" + time(s.start) + ",\"end\":" + time(s.end) + "}";
+        out += std::string(k ? "," : "") + "{\"type\":\"transcript.text.segment\",\"id\":\"seg_" + std::to_string(k) + "\",\"start\":" + time(s.start) +
+               ",\"end\":" + time(s.end) + ",\"text\":" + json_string(s.text) + ",\"speaker\":" + json_string(label) + ",\"speakers\":[" + listed + "]}";
+    }
+    out += "]";
+    if (transcript.untimed) out += ",\"untimed\":" + json_string(*transcript.untimed);
+    return out + ",\"usage\":{\"type\":\"duration\",\"seconds\":" + json_number(duration) + "}}";
 }
 
 }  // namespace openai

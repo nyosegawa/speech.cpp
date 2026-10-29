@@ -202,16 +202,20 @@ std::vector<RequestOption> with_defaults(const std::vector<RequestOption> & defa
     return out;
 }
 
-bool timestamps_in_effect(const speech_model_info * info, const std::vector<RequestOption> & options) {
+bool in_effect(const speech_model_info * info, const std::vector<RequestOption> & options, speech_option option) {
     for (const RequestOption & o : options) {
-        if (o.option == SPEECH_OPT_TIMESTAMPS) return std::get<bool>(o.value);
+        if (o.option == option) return std::get<bool>(o.value);
     }
-    if (!speech_model_info_takes(info, SPEECH_OPT_TIMESTAMPS) || !speech_model_info_option_has_default(info, SPEECH_OPT_TIMESTAMPS)) return false;
+    if (!speech_model_info_takes(info, option) || !speech_model_info_option_has_default(info, option)) return false;
     int value = 0;
-    check(speech_model_info_option_default_bool(info, SPEECH_OPT_TIMESTAMPS, &value));
+    check(speech_model_info_option_default_bool(info, option, &value));
     return value != 0;
 }
 
-std::string recognition_members(const speech_result * result, bool timestamps) {
-    return recognition_members(transcript_of(result, timestamps), timestamps);
+bool timestamps_in_effect(const speech_model_info * info, const std::vector<RequestOption> & options) {
+    return in_effect(info, options, SPEECH_OPT_TIMESTAMPS);
+}
+
+std::string recognition_members(const speech_result * result, bool timestamps, bool speakers) {
+    return recognition_members(transcript_of(result, timestamps, speakers), timestamps, speakers);
 }

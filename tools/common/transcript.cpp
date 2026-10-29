@@ -56,7 +56,7 @@ std::string separator(const std::string & before, const std::string & after) {
     return " ";
 }
 
-std::vector<Timed> timed(const speech_result * result, bool segments) {
+std::vector<Timed> timed(const speech_result * result, bool segments, bool speakers) {
     const size_t n = segments ? speech_result_segment_count(result) : speech_result_token_count(result);
     std::vector<Timed> out(n);
     for (size_t i = 0; i < n; i++) {
@@ -64,31 +64,54 @@ std::vector<Timed> timed(const speech_result * result, bool segments) {
         check(segments ? speech_result_segment(result, i, &out[i].start, &out[i].end, &text)
                        : speech_result_token(result, i, &out[i].start, &out[i].end, &text));
         out[i].text = text;
+        if (segments && speakers) out[i].speaker = speech_result_segment_speaker(result, i);
     }
     return out;
 }
 
-std::string timed_json(const std::vector<Timed> & items) {
+std::string timed_json(const std::vector<Timed> & items, bool speakers) {
     std::string out = "[";
     for (size_t i = 0; i < items.size(); i++) {
         out += std::string(i ? "," : "") + "{\"start\":" + json_number(items[i].start) + ",\"end\":" + json_number(items[i].end) +
-               ",\"text\":" + json_string(items[i].text) + "}";
+               ",\"text\":" + json_string(items[i].text);
+        if (speakers) out += ",\"speaker\":" + (items[i].speaker < 0 ? std::string("null") : std::to_string(items[i].speaker));
+        out += "}";
     }
     return out + "]";
 }
 
 }  // namespace
 
-Transcript transcript_of(const speech_result * result, bool timestamps) {
+Transcript transcript_of(const speech_result * result, bool timestamps, bool speakers) {
     Transcript t;
     t.text = speech_result_text(result);
     t.stop = speech_result_stop(result);
     for (size_t i = 0; i < speech_result_language_count(result); i++) t.languages.push_back(speech_result_language(result, i));
-    if (timestamps) {
-        t.segments = timed(result, true);
-        t.tokens = timed(result, false);
-    }
+    if (timestamps || speakers) t.segments = timed(result, true, speakers);
+    if (timestamps) t.tokens = timed(result, false, false);
+    if (const char * untimed = speech_result_untimed(result)) t.untimed = untimed;
     return t;
+}
+
+std::vector<Timed> words_of(const std::vector<Timed> & tokens) {
+    std::vector<Timed> out;
+    for (size_t i = 0; i < tokens.size(); i++) {
+        const Timed & t = tokens[i];
+        const std::optional<uint32_t> first = code_point(t.text, false);
+        const std::optional<uint32_t> before = i ? code_point(tokens[i - 1].text, true) : std::nullopt;
+        const bool starts = out.empty() || (first && (python_space(*first) || unspaced(*first))) || (before && unspaced(*before));
+        if (starts) out.push_back({t.start, t.end, "", -1});
+        out.back().end = t.end;
+        out.back().text += t.text;
+    }
+    for (Timed & w : out) {
+        const std::optional<std::vector<uint32_t>> cps = decode_utf8(w.text);
+        if (!cps) continue;
+        size_t k = 0;
+        while (k < cps->size() && python_space((*cps)[k])) k++;
+        w.text = encode_utf8(std::vector<uint32_t>(cps->begin() + (std::ptrdiff_t) k, cps->end()));
+    }
+    return out;
 }
 
 void append_part(Transcript & whole, const Transcript & part, double offset) {
@@ -96,13 +119,19 @@ void append_part(Transcript & whole, const Transcript & part, double offset) {
     for (const std::string & language : part.languages) {
         if (whole.languages.empty() || whole.languages.back() != language) whole.languages.push_back(language);
     }
+    if (part.untimed && !whole.untimed) {
+        whole.untimed = part.untimed;
+        whole.segments.clear();
+        whole.tokens.clear();
+    }
     if (part.text.empty()) return;
     const std::string space = separator(whole.text, part.text);
     whole.text += space + part.text;
+    if (whole.untimed) return;
     for (const auto & [items, into] : {std::make_pair(&part.segments, &whole.segments), std::make_pair(&part.tokens, &whole.tokens)}) {
         for (size_t i = 0; i < items->size(); i++) {
             const Timed & t = (*items)[i];
-            into->push_back({t.start + offset, t.end + offset, (i == 0 ? space : "") + t.text});
+            into->push_back({t.start + offset, t.end + offset, (i == 0 ? space : "") + t.text, t.speaker});
         }
     }
 }
@@ -138,10 +167,12 @@ std::string agreed_beginning(const std::string & earlier, const std::string & la
     return earlier.substr(0, n);
 }
 
-std::string recognition_members(const Transcript & t, bool timestamps) {
+std::string recognition_members(const Transcript & t, bool timestamps, bool speakers) {
     std::string out = ",\"text\":" + json_string(t.text) + ",\"stop\":\"" + speech_stop_name(t.stop) + "\"";
     for (size_t i = 0; i < t.languages.size(); i++) out += (i ? "," : ",\"languages\":[") + json_string(t.languages[i]);
     if (!t.languages.empty()) out += "]";
-    if (timestamps) out += ",\"segments\":" + timed_json(t.segments) + ",\"tokens\":" + timed_json(t.tokens);
+    if (timestamps || speakers) out += ",\"segments\":" + timed_json(t.segments, speakers);
+    if (timestamps) out += ",\"tokens\":" + timed_json(t.tokens, false);
+    if (t.untimed) out += ",\"untimed\":" + json_string(*t.untimed);
     return out;
 }

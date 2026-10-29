@@ -62,7 +62,7 @@ extern "C" {
  * version and a minor version of m or more. Version 3.0 is first released with speech.cpp 0.7.0, the option prompt
  * included, and a declaration added since says the version that added it.
  */
-#define SPEECH_API_VERSION_MINOR 5
+#define SPEECH_API_VERSION_MINOR 6
 
 /** The SPEECH_API_VERSION_MAJOR the library was built with, for a caller that loads it at run time. */
 SPEECH_API int speech_api_version_major(void);
@@ -189,8 +189,8 @@ SPEECH_API speech_status speech_device_memory(size_t index, uint64_t * total, ui
 /*
  * Options: the vocabulary of what a request may ask, the same for every family. A value is never reused, and a later
  * minor version only appends. Each option has one type. Some have a neutral value that every model accepts, whether
- * or not it takes the option: speed 1, duration_scale 1, language "auto", timestamps false, prompt "" and
- * instructions "". The others have none, and a model that does not take one refuses any value of it.
+ * or not it takes the option: speed 1, duration_scale 1, language "auto", timestamps false, prompt "", instructions ""
+ * and speakers false. The others have none, and a model that does not take one refuses any value of it.
  */
 typedef enum speech_option {
     /**
@@ -484,7 +484,14 @@ typedef enum speech_option {
      * "min_duration_off", a number of 0 or more: the seconds below which a pause between two segments of one speaker that
      * min_duration_on keeps is filled. Added in 3.4.
      */
-    SPEECH_OPT_MIN_DURATION_OFF = 58
+    SPEECH_OPT_MIN_DURATION_OFF = 58,
+    /**
+     * "speakers", a boolean: whether a recognition tells who speaks, false being neutral. Its segments then end where the
+     * speaker changes and carry the speaker (speech_result_segment_speaker()), and its text leaves out the marks the
+     * model writes for them. A model that tells speakers by what it writes takes it: Nemotron 3.5 Transcribe, which asks
+     * with its model card's prompt for speaker tags and so takes no prompt beside it. Added in 3.6.
+     */
+    SPEECH_OPT_SPEAKERS = 59
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */
@@ -1283,10 +1290,12 @@ SPEECH_API uint64_t speech_result_samples(const speech_result * result);
 SPEECH_API const char * speech_result_text(const speech_result * result);
 
 /**
- * The number of segments of a recognition that set timestamps: runs of tokens that end where the model's file says a
- * sentence ends (a separator at the end of a word, as NeMo cuts, or a break after any token, for a language written
- * without spaces), or with the last token. 0 without timestamps and for a synthesis. For a detection, the regions where
- * someone speaks, and for a diarization, the segments of its speakers, 0 where no one speaks and for a cancelled request.
+ * The number of segments of a recognition that set timestamps or speakers: runs of tokens that end where the model's
+ * file says a sentence ends (a separator at the end of a word, as NeMo cuts, or a break after any token, for a language
+ * written without spaces), where the speaker changes for one that set speakers, or with the last token. 0 without
+ * timestamps and speakers, where speech_result_untimed() says why there are none, and for a synthesis. For a
+ * detection, the regions where someone speaks, and for a diarization, the segments of its speakers, 0 where no one
+ * speaks and for a cancelled request.
  */
 SPEECH_API size_t speech_result_segment_count(const speech_result * result);
 
@@ -1299,22 +1308,38 @@ SPEECH_API speech_status speech_result_segment(const speech_result * result, siz
                                                const char ** text);
 
 /**
- * The speaker of the segment at `index` of a diarization, from 0, as speech_diarize() says; -1 for a segment of another
- * task and past the last. Added in 3.4.
+ * The speaker of the segment at `index` of a diarization, from 0, as speech_diarize() says, or of a recognition that set
+ * speakers, the number the model gives the speaker, from 0 in the order they first speak, -1 for words the model wrote
+ * before it named a speaker; -1 for a segment of another task and past the last. Added in 3.4.
  */
 SPEECH_API int speech_result_segment_speaker(const speech_result * result, size_t index);
 
-/** The number of tokens of a recognition that set timestamps; 0 without timestamps and for a synthesis. */
+/**
+ * The number of tokens of a recognition that set timestamps; 0 without timestamps, where speech_result_untimed() says
+ * why there are none, and for a synthesis.
+ */
 SPEECH_API size_t speech_result_token_count(const speech_result * result);
 
 /**
- * The token at `index`: its start in seconds, the encoder frame the decoder emitted it on; its end, the frame that
- * its predicted duration reaches for a model that predicts one, or the next frame; and its text as it stands in the
- * result's text. A punctuation mark of a model that predicts durations starts and ends where the token before it
- * ends, as NeMo times it. The texts of the tokens, joined in order, are the result's text.
+ * The token at `index`: its start and end in seconds and its text as it stands in the result's text. The texts of the
+ * tokens, joined in order, are the result's text. A token of a transducer starts on the encoder frame the decoder
+ * emitted it on and ends on the frame that its predicted duration reaches for a model that predicts one, or the next
+ * frame; a punctuation mark of a model that predicts durations starts and ends where the token before it ends, as NeMo
+ * times it. A model that aligns its text with the audio once written, as Nemotron 3.5 Transcribe does with its CTC
+ * head, makes a token of each word, or of each letter or number of a language written without spaces, with the spaces
+ * before it and the marks after it, timed as the official alignment times it, to the millisecond, and in the order of
+ * the text, where the times of two speakers' words interleave.
  */
 SPEECH_API speech_status speech_result_token(const speech_result * result, size_t index, double * start, double * end,
                                              const char ** text);
+
+/**
+ * Why a recognition that set timestamps or speakers has neither tokens nor segments though its text holds what the model
+ * wrote, such as a character the model's alignment cannot spell, or a speaker whose words it finds no place for in the
+ * audio: a message owned by the result. NULL for a recognition that has them, holds no text, or set neither option, and
+ * for a result of another task. The text is the recognition's all the same. Added in 3.6.
+ */
+SPEECH_API const char * speech_result_untimed(const speech_result * result);
 
 /**
  * The number of languages a recognition heard: those the model wrote before its text, or the language a request forced
