@@ -150,11 +150,15 @@ std::optional<Recognition> Recognizer::recognize(const std::vector<float> & samp
     result.text = guardrail_.apply(tokenizer_.decode(written));
     if (timed) {
         Timer t{&r.alignment};
-        TimedTranscript found = timing_.time(result.text, aligned, samples.size(), request.speakers);
-        result.text = std::move(found.text);
-        if (request.timestamps) result.tokens = std::move(found.tokens);
-        result.segments = std::move(found.segments);
-        result.untimed = std::move(found.failure);
+        // The alignment reports no progress of its own, and stops where the decoding's last report would now say stop.
+        const double done = (2 + (double) language_model_.n_past() / (double) context_length_) / 3;
+        std::optional<TimedTranscript> found =
+            timing_.time(result.text, aligned, samples.size(), request.speakers, nullptr, [&] { return !progress || progress(done); });
+        if (!found) return std::nullopt;
+        result.text = std::move(found->text);
+        if (request.timestamps) result.tokens = std::move(found->tokens);
+        result.segments = std::move(found->segments);
+        result.untimed = std::move(found->failure);
     }
     return result;
 }

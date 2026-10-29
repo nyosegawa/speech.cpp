@@ -1,11 +1,12 @@
-// Checks Nemotron 3.5 Transcribe's timestamps against NeMo's on the dumps of reference/nemotron-transcribe/align.py from
-// the audio on: the perception module's frames, the CTC head and the alignment, each computed here from the stage
+// Checks Nemotron 3.5 Transcribe's timestamps against NeMo's on the dumps of reference/nemotron-transcribe/align.py
+// from the audio on: the perception module's frames, the CTC head and the alignment, each computed here from the stage
 // before, of the transcript the official model wrote, or of the one align.py put in its place. It compares the public
-// words, every speaker's by start, rounded to the millisecond, and counts those whose start or end differs; and it checks
-// that the alignment fails where NeMo's fails, and that the tokens' texts and the segments' texts each join into the
-// text, which holds no speaker tag where speakers are asked, as they are of a transcript with tags. The stages' own
-// checks compare each from the dump's inputs; here the error of each reaches the next, and a word may move by a frame
-// where two paths score alike. The dumps are those under <reference out dir>/<the file's general.name>/.
+// words, every speaker's by start, rounded to the millisecond, and counts those whose start or end differs; and it
+// checks that the alignment fails where NeMo's fails, that the tokens' texts and the segments' texts each join into the
+// text, which holds no speaker tag where speakers are asked, as they are of a transcript with tags, and that the timing
+// stops where it is told to. The stages' own checks compare each from the dump's inputs; here the error of each reaches
+// the next, and a word may move by a frame where two paths score alike. The dumps are those under <reference out
+// dir>/<the file's general.name>/.
 //
 // usage: nemotron-transcribe-timestamps-check <model.gguf> <reference out dir> [gpu|cpu|device name]
 
@@ -63,7 +64,7 @@ int main(int argc, char ** argv) {
                     const std::string transcript = changed ? meta.member("transcript")->text : dumped.member("text")->text;
                     const bool speakers = transcript.find("<spk:") != std::string::npos;
                     Alignment al;
-                    const TimedTranscript timed = timing.time(transcript, frames, audio.f32.size(), speakers, &al);
+                    const TimedTranscript timed = *timing.time(transcript, frames, audio.f32.size(), speakers, &al);
                     const std::string name = dump.filename().u8string() + "/" + e.path().filename().u8string();
                     const bool refused = meta.member("error") != nullptr;
                     const bool nemo_fails = refused || !meta.member("result")->member("alignment_diagnostics")->member("failed_streams")->items.empty();
@@ -110,6 +111,13 @@ int main(int argc, char ** argv) {
                                  words[i].end != std::stod(w.member("end")->text);
                     }
                     std::printf("%s: %zu words, %lld differ, %zu segments\n", name.c_str(), words.size(), (long long) moved, timed.segments.size());
+                    // The timing stops where it is told to, between the head's windows and the speakers' searches.
+                    int asked = 0;
+                    const bool stopped = !timing.time(transcript, frames, audio.f32.size(), speakers, nullptr, [&] { return ++asked < 2; });
+                    if (!stopped || asked != 2) {
+                        ok = false;
+                        std::printf("  FAIL: told to stop at its second question, the timing asked %d times and %s\n", asked, stopped ? "stopped" : "went on");
+                    }
                     words_all += (int64_t) words.size();
                     moved_all += moved;
                 }

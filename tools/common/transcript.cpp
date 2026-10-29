@@ -95,23 +95,26 @@ Transcript transcript_of(const speech_result * result, bool timestamps, bool spe
 
 std::vector<Timed> words_of(const std::vector<Timed> & tokens) {
     std::vector<Timed> out;
-    for (size_t i = 0; i < tokens.size(); i++) {
-        const Timed & t = tokens[i];
+    std::optional<uint32_t> before;
+    for (const Timed & t : tokens) {
+        // A token of no text, such as a transducer's lone word boundary, belongs to no word.
+        if (t.text.empty()) continue;
         const std::optional<uint32_t> first = code_point(t.text, false);
-        const std::optional<uint32_t> before = i ? code_point(tokens[i - 1].text, true) : std::nullopt;
         const bool starts = out.empty() || (first && (python_space(*first) || unspaced(*first))) || (before && unspaced(*before));
         if (starts) out.push_back({t.start, t.end, "", -1});
         out.back().end = t.end;
         out.back().text += t.text;
+        before = code_point(t.text, true);
     }
+    std::vector<Timed> words;
     for (Timed & w : out) {
         const std::optional<std::vector<uint32_t>> cps = decode_utf8(w.text);
-        if (!cps) continue;
         size_t k = 0;
-        while (k < cps->size() && python_space((*cps)[k])) k++;
-        w.text = encode_utf8(std::vector<uint32_t>(cps->begin() + (std::ptrdiff_t) k, cps->end()));
+        while (cps && k < cps->size() && python_space((*cps)[k])) k++;
+        if (cps) w.text = encode_utf8(std::vector<uint32_t>(cps->begin() + (std::ptrdiff_t) k, cps->end()));
+        if (!w.text.empty()) words.push_back(std::move(w));
     }
-    return out;
+    return words;
 }
 
 void append_part(Transcript & whole, const Transcript & part, double offset) {

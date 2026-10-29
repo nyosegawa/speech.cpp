@@ -482,8 +482,13 @@ static int check_refusals(speech_model * model, const char * model_path, const f
         return fail("a request");
     }
     ok &= expect(speech_request_set_float(r, kept, 0), SPEECH_ERROR_INVALID_ARGUMENT, speech_option_name(kept), "a value of another type");
-    ok &= expect(speech_transcribe(r), SPEECH_OK, NULL, "a recognition after a refused value") &&
-          (!takes_timestamps || speech_result_segment_count(speech_request_result(r)) > 0);
+    ok &= expect(speech_transcribe(r), SPEECH_OK, NULL, "a recognition after a refused value");
+    // Its timestamps kept: segments, or the reason the model cannot time its text.
+    const speech_result * after = speech_request_result(r);
+    if (takes_timestamps && (!after || (speech_result_segment_count(after) == 0 && !speech_result_untimed(after)))) {
+        fprintf(stderr, "FAIL: a recognition after a refused value has neither segments nor a reason for none\n");
+        ok = 0;
+    }
     speech_request_free(r);
     size_t tokens = 0;
     ok &= expect(speech_model_info_text_tokens(info, "明日", &tokens), SPEECH_ERROR_UNSUPPORTED, NULL, "the tokens of a text for a recognition");

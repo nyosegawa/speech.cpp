@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -48,9 +50,11 @@ public:
     /**
      * The times of `transcript`, the text of `samples` samples of audio whose frames are `frames`. `speakers` takes the
      * speaker tags out of the text and gives each segment its speaker. `alignment`, when given, receives the alignment.
+     * `proceed`, asked before each window of the CTC head and each speaker's search, stops the work where it says false,
+     * and the times are then none.
      */
-    TimedTranscript time(const std::string & transcript, const AlignmentFrames & frames, size_t samples, bool speakers,
-                         Alignment * alignment = nullptr);
+    std::optional<TimedTranscript> time(const std::string & transcript, const AlignmentFrames & frames, size_t samples, bool speakers,
+                                        Alignment * alignment = nullptr, const std::function<bool()> & proceed = {});
 
     /** `transcript` without its speaker tags and the whitespace after each, as time() gives it with speakers. */
     std::string untagged(const std::string & transcript) const;

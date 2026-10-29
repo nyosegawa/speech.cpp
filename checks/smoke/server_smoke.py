@@ -410,7 +410,7 @@ else:
         worded = json.loads(body)
         words = worded["words"]
         assert status == 200 and set(worded) == set(plain_verbose) - {"segments"} | {"words"}, body
-        assert all(set(w) == {"word", "start", "end"} and 0 <= w["start"] <= w["end"] for w in words), words
+        assert all(set(w) == {"word", "start", "end"} and w["word"].strip() and 0 <= w["start"] <= w["end"] for w in words), words
         assert "".join(w["word"] for w in words).replace(" ", "") == want.replace(" ", ""), (words, want)
         status, _, body = transcribe(verbose_form + [("timestamp_granularities[]", "word")], [("file", name + ".wav", wav)])
         both = json.loads(body)
@@ -418,6 +418,8 @@ else:
         others = f"; each of its {len(requests) - 1} other requests its text" if len(requests) > 1 else ""
         print(f"{name}: json, text and verbose_json give the expected text and stop, verbose_json no language and {len(segments)} segments joining "
               f"into it, with or without a segment granularity, and {len(words)} words with the word granularity{others}")
+    if not first:
+        raise SystemExit("give a dump of a request without options besides any of speaker tags: the checks after them need its text")
     wav, want, samples = first
     if first:
         # A request's log line gives the status sent, which a range of the answer makes 206.

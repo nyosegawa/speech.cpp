@@ -51,12 +51,13 @@ CtcHead::~CtcHead() {
 }
 
 std::vector<float> CtcHead::log_probs(const std::vector<uint16_t> & states, int64_t frames, const std::vector<int32_t> & classes,
-                                      std::vector<CtcHeadStages> * stages) {
+                                      std::vector<CtcHeadStages> * stages, const std::function<bool()> & proceed) {
     const int64_t kept = (int64_t) classes.size(), up = upsampling_;
     std::vector<float> out((size_t) (frames * up * kept));
     if (stages) stages->clear();
     // The windows of _iter_ctc_windows(), as the encoder's windowed inference cuts them.
     for (int64_t start = 0; start < frames; start += window_) {
+        if (proceed && !proceed()) return {};
         const int64_t end = std::min<int64_t>(start + window_, frames);
         const int64_t cs = std::max<int64_t>(start - left_, 0), ce = std::min<int64_t>(end + right_, frames), n = ce - cs;
         std::vector<float> x((size_t) (n * d_));

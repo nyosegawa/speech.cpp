@@ -273,7 +273,7 @@ Aligner::Aligner(const ModelFile & m)
       encoder_seconds_((double) (m.u32(kKeys + "frontend.hop_length") * m.u32(kKeys + "asr.subsampling_factor")) / (double) m.u32("speech.sample_rate")),
       max_word_frames_(m.size(kKeys + "align.max_word_frames") * m.size(kKeys + "ctc.upsampling_factor")) {}
 
-Alignment Aligner::align(const AlignmentText & text, const AlignmentInputs & in) const {
+std::optional<Alignment> Aligner::align(const AlignmentText & text, const AlignmentInputs & in, const std::function<bool()> & proceed) const {
     Alignment out;
     const int64_t frames = in.frames, columns = (int64_t) text.columns.size();
     const double step = in.duration / (double) frames;
@@ -369,6 +369,7 @@ Alignment Aligner::align(const AlignmentText & text, const AlignmentInputs & in)
     // Each stream's search over the frames where its column's probability reaches 0.01.
     out.rows.assign(text.units.size(), {0, 0});
     for (size_t s = 0; s < streams; s++) {
+        if (proceed && !proceed()) return std::nullopt;
         const int column = out.columns[s];
         std::vector<float> activity((size_t) frames, 0.0f);
         if (column >= 0) {

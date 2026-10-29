@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
+#include <optional>
 #include <vector>
 
 #include "ctc-text.h"
@@ -70,8 +72,11 @@ class Aligner {
 public:
     explicit Aligner(const ModelFile & m);
 
-    /** The alignment of `text` with `inputs`; one that cannot be found throws AlignmentFailure. */
-    Alignment align(const AlignmentText & text, const AlignmentInputs & inputs) const;
+    /**
+     * The alignment of `text` with `inputs`; one that cannot be found throws AlignmentFailure. `proceed`, asked before
+     * each stream's search, stops the work where it says false, and the alignment is then none.
+     */
+    std::optional<Alignment> align(const AlignmentText & text, const AlignmentInputs & inputs, const std::function<bool()> & proceed = {}) const;
 
 private:
     float speaker_threshold_, speaker_weight_, epsilon_;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include "ggml-alloc.h"
@@ -42,9 +43,10 @@ public:
      * The log probabilities of the classes `classes` at each CTC frame of `frames` frames of the ASR encoder,
      * `states`, [frames, d_model] row-major, which the official encoder stores in bfloat16 for the head:
      * [frames * upsampling(), classes.size()] row-major. `stages`, when given, receives what each window computed.
+     * `proceed`, asked before each window, stops the work where it says false, and what it returns is then empty.
      */
     std::vector<float> log_probs(const std::vector<uint16_t> & states, int64_t frames, const std::vector<int32_t> & classes,
-                                 std::vector<CtcHeadStages> * stages = nullptr);
+                                 std::vector<CtcHeadStages> * stages = nullptr, const std::function<bool()> & proceed = {});
 
     /** The classes of the head: a piece of the CTC vocabulary for each but the last, the blank. */
     int classes() const { return classes_; }

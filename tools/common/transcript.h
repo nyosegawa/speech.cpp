@@ -44,7 +44,7 @@ Transcript transcript_of(const speech_result * result, bool timestamps, bool spe
  * The words of `tokens`: a word begins with the first token, with a token that begins with whitespace, and at each
  * token of a script written without spaces and the token after it, so that each such token is a word of its own; it
  * spans from the start of its first token to the end of its last, and its text is theirs without the whitespace before
- * it.
+ * it. A token without text and a word of whitespace alone are left out.
  */
 std::vector<Timed> words_of(const std::vector<Timed> & tokens);
 

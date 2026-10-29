@@ -53,7 +53,8 @@ std::string Timing::untagged(const std::string & transcript) const {
     return out;
 }
 
-TimedTranscript Timing::time(const std::string & transcript, const AlignmentFrames & frames, size_t samples, bool speakers, Alignment * alignment) {
+std::optional<TimedTranscript> Timing::time(const std::string & transcript, const AlignmentFrames & frames, size_t samples, bool speakers,
+                                            Alignment * alignment, const std::function<bool()> & proceed) {
     TimedTranscript out;
     std::vector<bool> keep;
     try {
@@ -79,7 +80,10 @@ TimedTranscript Timing::time(const std::string & transcript, const AlignmentFram
         }
         AlignmentInputs in;
         in.frames = frames.frames * head_.upsampling();
-        in.log_probs = head_.log_probs(frames.asr, frames.frames, at.columns);
+        bool stop = false;
+        const auto ask = [&] { return !(stop = stop || (proceed && !proceed())); };
+        in.log_probs = head_.log_probs(frames.asr, frames.frames, at.columns, nullptr, ask);
+        if (stop) return std::nullopt;
         in.speaker_frames = frames.frames;
         in.speakers = frames.frames > 0 ? (int) (frames.speakers.size() / (size_t) frames.frames) : 0;
         in.speaker_probs = frames.speakers;
@@ -92,7 +96,9 @@ TimedTranscript Timing::time(const std::string & transcript, const AlignmentFram
             }
         }
         in.duration = (double) samples / (double) sample_rate_;
-        Alignment al = aligner_.align(at, in);
+        std::optional<Alignment> aligned = aligner_.align(at, in, ask);
+        if (!aligned) return std::nullopt;
+        Alignment & al = *aligned;
 
         std::vector<std::string> texts;
         std::vector<bool> word_starts, turns;

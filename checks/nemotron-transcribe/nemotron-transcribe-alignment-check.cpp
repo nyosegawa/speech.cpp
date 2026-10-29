@@ -166,7 +166,7 @@ int main(int argc, char ** argv) {
                 in.labels = labels.u8;
                 in.label_speakers = (int) labels.shape[0];
                 in.label_frames = labels.shape[1];
-                const Alignment al = aligner.align(got, in);
+                const Alignment al = *aligner.align(got, in);
                 outcome = std::to_string(got.units.size()) + " units";
                 if (nemo_fails) {
                     t.fail("aligned, where NeMo fails");
