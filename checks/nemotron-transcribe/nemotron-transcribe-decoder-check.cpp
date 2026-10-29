@@ -6,20 +6,24 @@
 // logits of each MoE layer, and the head's logits of the last layer's output of the prefill's last row, after the
 // final norm. A row of a MoE layer whose last chosen expert and the next score within twice the router's error of each
 // other may choose the other expert in either, so such rows are left out of the layer's comparison and counted. A layer is loaded
-// alone, so that the F32 file, about 136 GB, need not fit. The dumps are those in <reference out dir>/<the file's
-// general.name>/.
+// alone, so that the F32 file, about 136 GB, need not fit. With experts-on-cpu after a GPU, each MoE layer's routed
+// experts are loaded into the CPU's memory and computed there, the rest on the GPU, as a GPU that does not hold them
+// runs the model; a MoE layer whose experts the placement leaves on the GPU fails. The dumps are those in
+// <reference out dir>/<the file's general.name>/.
 //
-// usage: nemotron-transcribe-decoder-check <model.gguf> <reference out dir> [gpu|cpu|device name] [--layers N]
+// usage: nemotron-transcribe-decoder-check <model.gguf> <reference out dir> [gpu|cpu|device name] [experts-on-cpu] [--layers N]
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <stdexcept>
 #include <string>
 
 #include "args.h"
 #include "backend.h"
 #include "compare.h"
+#include "expert-placement.h"
 #include "json-reader.h"
 #include "nemotron-transcribe/language-model.h"
 #include "nemotron-transcribe/layout.h"
@@ -89,7 +93,7 @@ int main(int argc, char ** argv) {
         }
     }
     if (args.size() < 3) {
-        std::fprintf(stderr, "usage: %s <model.gguf> <reference out dir> [gpu|cpu|device name] [--layers N]\n", args[0].c_str());
+        std::fprintf(stderr, "usage: %s <model.gguf> <reference out dir> [gpu|cpu|device name] [experts-on-cpu] [--layers N]\n", args[0].c_str());
         return 2;
     }
     try {
@@ -97,7 +101,13 @@ int main(int argc, char ** argv) {
         start_ggml();
         ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "auto");
         const bool cpu = ggml_backend_dev_type(ggml_backend_get_device(backend)) == GGML_BACKEND_DEVICE_TYPE_CPU;
-        std::printf("device: %s\n", ggml_backend_name(backend));
+        const bool split = args.size() > 4 && args[4] == "experts-on-cpu";
+        if (args.size() > 4 && (!split || cpu)) {
+            std::fprintf(stderr, "%s: experts-on-cpu follows a GPU, and nothing else follows the device\n", args[0].c_str());
+            return 2;
+        }
+        ggml_backend_t experts_backend = split ? init_backend("cpu") : nullptr;
+        std::printf("device: %s%s\n", ggml_backend_name(backend), split ? ", the experts on the CPU" : "");
         const ModelFile meta_file(args[1], layout);
         const std::vector<std::string> types = meta_file.str_array("nemotron-transcribe.llm.layer_types");
         const int64_t h = meta_file.size("nemotron-transcribe.llm.hidden_size"), experts = meta_file.size("nemotron-transcribe.llm.n_routed_experts");
@@ -107,10 +117,17 @@ int main(int argc, char ** argv) {
         const std::vector<std::filesystem::path> dumps = reference_dumps(args[2], meta_file);
         Diff worst_prefill, worst_decode, worst_router;
         for (int l = 0; l < layers; l++) {
-            const ModelFile model(args[1], backend, layout, [&](const std::string & name) {
-                return in_layer(name, l) || (l == 0 && name == "token_embd.weight");
+            const ModelFile model(args[1], layout, [&](const std::string & name) -> ggml_backend_t {
+                if (!in_layer(name, l) && !(l == 0 && name == "token_embd.weight")) return nullptr;
+                return split && is_routed_experts(name) ? experts_backend : backend;
             });
-            LanguageModel lm(model, backend, l, l + 1);
+            if (split && types[(size_t) l] == "moe") {
+                const ggml_tensor * up = model.tensor("blk." + std::to_string(l) + ".ffn_up_exps.weight");
+                if (ggml_backend_buffer_get_type(up->buffer) != ggml_backend_get_default_buffer_type(experts_backend)) {
+                    throw std::runtime_error("the placement leaves the experts of layer " + std::to_string(l) + " on " + ggml_backend_name(backend));
+                }
+            }
+            LanguageModel lm(model, backend, l, l + 1, experts_backend);
             Diff layer_prefill, layer_decode, layer_router;
             for (const auto & dump : dumps) {
                 const std::filesystem::path d = dump / "llm";
@@ -194,6 +211,7 @@ int main(int argc, char ** argv) {
                         (layers < (int) types.size() || worst_logits.snr_db >= bound);
         std::printf("%s: layers' outputs SNR %.1f dB over the prefill and %.1f dB decoding, against a bound of %.0f dB\n", ok ? "OK" : "FAIL",
                     worst_prefill.snr_db, worst_decode.snr_db, bound);
+        if (experts_backend) ggml_backend_free(experts_backend);
         ggml_backend_free(backend);
         return ok ? 0 : 1;
     } catch (const std::exception & e) {

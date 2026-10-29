@@ -20,8 +20,10 @@ std::string gigabytes(uint64_t bytes) {
 }  // namespace
 
 bool is_routed_experts(const std::string & name) {
-    const size_t at = name.rfind("_exps");
-    return name.rfind("blk.", 0) == 0 && at != std::string::npos && at + 5 == name.size();
+    const std::string suffix = ".weight";
+    const bool weight = name.size() > suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
+    const size_t end = weight ? name.size() - suffix.size() : name.size();
+    return name.rfind("blk.", 0) == 0 && end >= 5 && name.compare(end - 5, 5, "_exps") == 0;
 }
 
 int layer_of(const std::string & name) {

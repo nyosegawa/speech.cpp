@@ -9,7 +9,11 @@
 #include "ggml-cpu.h"
 #include "model-file.h"
 
-/** Whether the tensor `name` holds a layer's routed experts, which a placement may leave in the CPU's memory. */
+/**
+ * Whether the tensor `name` holds a layer's routed experts, which a placement may leave in the CPU's memory: a layer's
+ * tensor whose name ends in "_exps", as Drama 3's layout names them, or in "_exps.weight", as Nemotron 3.5
+ * Transcribe's does.
+ */
 bool is_routed_experts(const std::string & name);
 
 /** The layer of a layer's tensor `name`, "blk.<layer>." followed by the rest; -1 for a tensor of no layer. */

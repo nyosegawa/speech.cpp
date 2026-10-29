@@ -358,6 +358,9 @@ def nemotron_transcribe(model, devices, ctx):
     memory = physical_memory()
     for device in devices:
         runs += [runs_on(device, f"nemotron-transcribe-{stage}-check", model, [out]) for stage in ("encoder", "speakers", "perception", "decoder")]
+        # On a GPU, the language model again with its experts on the CPU, as a GPU that does not hold them runs it.
+        if device != "cpu":
+            runs.append(Run("nemotron-transcribe-decoder-check", [model.path, out, device, "experts-on-cpu"], device, f"{model.label()} {device} experts-on-cpu"))
         recognizer = runs_on(device, "nemotron-transcribe-recognizer-check", model, [out])
         if os.path.getsize(model.path) > memory:
             recognizer.skip = f"the file takes more than the machine's {memory / 2**30:.0f} GiB of memory"
