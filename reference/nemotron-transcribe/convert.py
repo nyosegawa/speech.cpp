@@ -511,6 +511,8 @@ for l, kind in enumerate(types):
         llm_tensor(o + "ssm_conv1d.weight", x + "conv1d.weight", lambda t: t[:, 0, :])
         llm_tensor(o + "ssm_conv1d.bias", x + "conv1d.bias")
         # The official code computes A = -exp(A_log) in float32 on every call (Transformers' and Automodel's mixers).
+        # torch.exp() rounds the last bit by the machine's CPU, as the speaker kernel's sines do: the F32 files converted
+        # on an Apple M5 and on Modal's x86 CPU differ in these 24 tensors alone (2026-10-29).
         llm_tensor(o + "ssm_a", x + "_fp32_params.A_log", lambda t: -torch.exp(t)[:, None])
         llm_tensor(o + "ssm_d", x + "_fp32_params.D", lambda t: t[:, None])
         llm_tensor(o + "ssm_dt.bias", x + "_fp32_params.dt_bias")
