@@ -6,7 +6,9 @@ one second and checks that the text is the dump's, the languages the one qwen-as
 FastConformer, which writes none, a member left out), and the stop complete, for each request a Qwen3-ASR dump holds
 with its forced language and its prompt and each decoding other than the default that a FastConformer dump holds, that
 a language the model only checks changes nothing, and with timestamps, where the model takes them, that the segments
-and tokens join into the text in time order; that the chunks of two requests may interleave and the requests are
+and tokens join into the text in time order, with speakers, for a Nemotron 3.5 Transcribe dump of the model card's
+prompt for speaker tags, that each segment has its speaker, or where the model cannot time its text, that it says why
+and has neither; that the chunks of two requests may interleave and the requests are
 answered in the order of their transcribes; cancels while a request collects chunks (whose later lines are dropped and
 whose id a chunk 0 starts again), while it waits and while it runs; that audio at three times the model's rate is
 recognized; each error with its code and option (a chunk out of order, not base64 or of odd bytes, a sample rate
@@ -67,13 +69,21 @@ def send_audio(id, pcm, **members):
     w.send({"type": "transcribe", "id": id, "sample_rate": members.pop("sample_rate", rate), **members})
 
 
-def check_times(m):
-    """The segments and tokens of a message join into its text and run forward in time, where the model gives times."""
+def check_times(m, speakers=False):
+    """The segments and tokens of a message join into its text and run forward in time, where the model gives times, and
+    with speakers each segment has its speaker, the tokens of two speakers running forward within a segment alone; or,
+    where the model says why it cannot time its text, the message has neither."""
+    if "untimed" in m:
+        assert m["text"] and m.get("segments", []) == [] and m.get("tokens", []) == [], short(m)
+        return
     for key in ("segments", "tokens") if timed else ():
         items = m[key]
         assert "".join(s["text"] for s in items) == m["text"], (key, short(m))
         assert all(0 <= s["start"] <= s["end"] for s in items), (key, short(m))
-        assert all(a["start"] <= b["start"] for a, b in zip(items, items[1:])), (key, short(m))
+        if not speakers:
+            assert all(a["start"] <= b["start"] for a, b in zip(items, items[1:])), (key, short(m))
+    if speakers:
+        assert all(s["speaker"] is None or s["speaker"] >= 0 for s in m["segments"]) and "<spk:" not in m["text"], short(m)
 
 
 def expect_error(id, code, option, what):
@@ -103,7 +113,7 @@ for d in dumps:
         # A result without a language leaves the member out.
         if m.get("languages", []) != want_languages or m.get("languages") == []:
             raise SystemExit(f"{id}: the languages {m.get('languages')} differ from the ones qwen-asr parsed, {want_languages}")
-        check_times(m)
+        check_times(m, members.get("speakers", False))
         seconds = len(audio[name]) / 2 / rate
         progress = [p for p in messages if p["type"] == "progress"]
         gaps = [b["_at"] - a["_at"] for a, b in zip(progress, progress[1:])]
@@ -113,7 +123,8 @@ for d in dumps:
         if m["_at"] - sent > 2:
             assert progress, f"{id}: a recognition of {m['_at'] - sent:.1f} s sent no progress"
         print(f"{id} {members}: {seconds:.2f} s, the expected text and languages {want_languages} in {time.perf_counter() - t1:.3f} s"
-              + (f", {len(m['segments'])} segments and {len(m['tokens'])} tokens joining into it" if timed else "")
+              + (f", no times: {m['untimed']}" if "untimed" in m else
+                 f", {len(m['segments'])} segments and {len(m['tokens'])} tokens joining into it" if timed else "")
               + f", {len(progress)} progress messages")
 
 # The shortest audio the dump has a text of.

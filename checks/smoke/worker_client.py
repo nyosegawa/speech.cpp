@@ -11,6 +11,7 @@ import array
 import ast
 import json
 import os
+import re
 import struct
 import subprocess
 import tempfile
@@ -207,9 +208,11 @@ def dump_requests(speech, model, dump, options=()):
     forced-prompt, the forced language given by the tag of general.languages whose name qwen3-asr.language_names gives
     (read with speech info --json --meta), the prompt by its text, and the language qwen-asr parsed by its tag, or
     none; for one of reference/nemotron-transcribe/dump.py, whose meta.json holds its prompt and text, the request whose
-    prompt that is, auto without a prompt for the model card's verbatim instruction and with the context terms as its
-    prompt for the contextual one, which nemotron-transcribe.prompt names (read with speech info --json --meta), its
-    text and no language, since the model writes none. A dump of another prompt is no request's, and is refused.
+    prompt that is, auto without a prompt for the model card's verbatim instruction, with the context terms as its
+    prompt for the contextual one, and speakers with the option speakers for its prompt for speaker tags, which
+    nemotron-transcribe.prompt names (read with speech info --json --meta), its text, without the speaker tags and the
+    whitespace after each for speakers, and no language, since the model writes none. A dump of another prompt is no
+    request's, and is refused.
 
     The text and languages are the reference's for weights in F32 or F16. A quantized file's rounding may change a word
     of a long recording, which points to no defect of the entry point a smoke script drives, so for one the text and
@@ -226,13 +229,16 @@ def dump_requests(speech, model, dump, options=()):
             dumped = json.load(f)
         asked = dumped["prompt"]["text"]
         before, after = meta["nemotron-transcribe.prompt.context_before"], meta["nemotron-transcribe.prompt.context_after"]
+        name, text = "auto", dumped["text"]
         if asked == meta["nemotron-transcribe.prompt.instruction"]:
             members = {}
+        elif asked == meta["nemotron-transcribe.prompt.speakers"]:
+            name, members, text = "speakers", {"speakers": True}, untagged(text)
         elif asked.startswith(before) and asked.endswith(after) and len(asked) > len(before) + len(after):
             members = {"prompt": asked[len(before):len(asked) - len(after)]}
         else:
             raise SystemExit(f"{dump} asks {asked!r}, which no request's prompt is")
-        return library_texts(speech, model, dump, options, [("auto", members, dumped["text"], [])])
+        return library_texts(speech, model, dump, options, [(name, members, text, [])])
     if not os.path.isfile(os.path.join(dump, "auto", "meta.json")):
         r = subprocess.run([speech, "info", model, "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
         decoding = [o for o in json.loads(r.stdout)["options"] if o["name"] == "decoding"]
@@ -254,6 +260,12 @@ def dump_requests(speech, model, dump, options=()):
             members["prompt"] = asked["prompt"]
         requests.append((name, members, text(folder), [tags[asked["parsed_language"]]] if asked["parsed_language"] else []))
     return library_texts(speech, model, dump, options, requests)
+
+
+def untagged(text):
+    """`text` without its speaker tags, <spk:N> with ASCII digits in any case, and the whitespace after each, as a
+    recognition that sets speakers writes it."""
+    return re.sub(r"<[sS][pP][kK]:[0-9]+>\s*", "", text)
 
 
 def recognition_defaults(options, takes):

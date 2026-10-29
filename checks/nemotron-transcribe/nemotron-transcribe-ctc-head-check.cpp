@@ -89,7 +89,7 @@ int main(int argc, char ** argv) {
                 for (size_t k = 0; k < stages.size(); k++) {
                     const std::filesystem::path w = dump / "windows" / std::to_string(k);
                     const int64_t cs = std::stoll(windows->items[k].member("context_start")->text);
-                    const int64_t rows = (std::min(std::stoll(windows->items[k].member("context_end")->text), valid) - cs) * up;
+                    const int64_t rows = (std::min<int64_t>(std::stoll(windows->items[k].member("context_end")->text), valid) - cs) * up;
                     const CtcHeadStages & s = stages[k];
                     Diff window;
                     keep_worst(window, compare(s.upsampled, rows_of(read_npy((w / "upsampled.npy").u8string()), rows, d)));
