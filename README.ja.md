@@ -59,10 +59,11 @@ speech.cpp は、1つのコマンド `speech` と1つの共有ライブラリ `l
 | 認識 | [`reazonspeech-v2`](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) | ja | 何分もある録音の日本語を、句読点つきで認識します |
 | 認識 | [`parakeet-tdt_ctc-0.6b-ja`](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | ja | 短い日本語の発話を速く認識し、時刻も出します |
 | 認識 | [`parakeet-tdt-0.6b-v3`](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) | ヨーロッパの 25 言語 | 言語を自分で判定し、句読点、大文字、時刻つきで認識します |
+| 認識 | [`nemotron-3.5-transcribe`](https://huggingface.co/sakasegawa/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF) | 40 言語 | 話したとおりに、言いよどみも含めて書き起こし、1 時間までの音声を一度に認識し、人名や用語のプロンプトを受け付けます。ファイルは 19.0 GB です |
 | 検出 | [`silero-vad`](https://huggingface.co/sakasegawa/silero-vad-GGUF) | どの言語でも | 人が話している区間を見つけ、認識モデルに発話を1つずつ渡します。1.2 MB です |
 | 話者分離 | [`nemotron-3-diarization`](https://huggingface.co/sakasegawa/Nemotron-3-Diarization-GGUF) | どの言語でも | 録音の中で、または音声が届くそばから、誰がいつ話したかを見つけます。話者は8人までです。106 MB です |
 
-コマンドはモデルを名前で受け取り、初めて使うときに、名前のリンク先の Hugging Face のリポジトリから変換済みのファイルを取得します。[docs/models.md](docs/models.md) には各モデルのサイズ、声、言語が載っています。ファミリーごとのページもあります。[Qwen3-TTS](docs/models/qwen3-tts.md)、[Irodori-TTS](docs/models/irodori-tts.md)、[Drama 3](docs/models/drama3.md)、[FastConformer](docs/models/fastconformer.md)、[Qwen3-ASR](docs/models/qwen3-asr.md)、[Silero VAD](docs/models/silero-vad.md)、[Sortformer](docs/models/sortformer.md)。
+コマンドはモデルを名前で受け取り、初めて使うときに、名前のリンク先の Hugging Face のリポジトリから変換済みのファイルを取得します。[docs/models.md](docs/models.md) には各モデルのサイズ、声、言語が載っています。ファミリーごとのページもあります。[Qwen3-TTS](docs/models/qwen3-tts.md)、[Irodori-TTS](docs/models/irodori-tts.md)、[Drama 3](docs/models/drama3.md)、[FastConformer](docs/models/fastconformer.md)、[Qwen3-ASR](docs/models/qwen3-asr.md)、[Nemotron 3.5 Transcribe](docs/models/nemotron-transcribe.md)、[Silero VAD](docs/models/silero-vad.md)、[Sortformer](docs/models/sortformer.md)。
 
 ## インストール
 
@@ -201,7 +202,7 @@ speech_synthesize(request, on_audio, NULL);   /* on_audio receives the samples a
 | [Install](docs/install.md) | インストーラ、更新、アンインストール、必要なもの、リリースのアーカイブ、ソースからのビルド |
 | [Command line](docs/cli.md) | すべてのサブコマンドとオプション |
 | [Models](docs/models.md) | カタログ、モデルの名前、モデルを置く場所、声、言語 |
-| [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md), [Drama 3](docs/models/drama3.md), [FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md), [Silero VAD](docs/models/silero-vad.md), [Sortformer](docs/models/sortformer.md) | 各ファミリーができること、オプション、精度、速度 |
+| [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md), [Drama 3](docs/models/drama3.md), [FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md), [Nemotron 3.5 Transcribe](docs/models/nemotron-transcribe.md), [Silero VAD](docs/models/silero-vad.md), [Sortformer](docs/models/sortformer.md) | 各ファミリーができること、オプション、精度、速度 |
 | [Server and page](docs/server.md) | `speech serve` と OpenAI の音声 API |
 | [Worker protocol](docs/worker.md) | プログラムから使う `speech worker` |
 | [C API](docs/c-api.md) | `speech.h` |
@@ -217,4 +218,4 @@ MIT ライセンスです。[LICENSE](LICENSE) を見てください。モデル
 - Drama 3 とそのコーデックは Fish Audio のもので、Fish Audio Community License 1.0 で提供されています。研究と非商用の利用は無料で、商用の利用は年間の売上が 50 万米ドル未満なら認められ、他人に音声合成や声のクローンを提供するサービスには Fish Audio との別の契約が要ります。Built with Fish Audio.
 - parakeet のモデルは NVIDIA のもので CC-BY-4.0、reazonspeech-nemo-v2 は reazon-research のもので Apache License 2.0 で提供されています。
 - Silero VAD は Silero Team のもので、MIT License で提供されています。
-- Nemotron 3 Diarization は NVIDIA のもので、OpenMDW License Agreement 1.1 で提供されています。
+- Nemotron 3 Diarization と Nemotron 3.5 Transcribe は NVIDIA のもので、OpenMDW License Agreement 1.1 で提供されています。

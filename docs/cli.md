@@ -400,11 +400,12 @@ in the folder is refused with exit 1, before anything is removed.
 ## speech quantize
 
 ```
-speech quantize MODEL OUT --type f16|q8_0|q6_k|q5_k|q4_k
+speech quantize MODEL OUT --type f16|q8_0|q6_k|q5_k|q4_k|iq4_nl
 ```
 
 - Writes MODEL, a model file of F32 weights, in another weight type, on the CPU. Some tensors stay in a wider type, as
   each family needs. A file in another type is refused, and so is Silero VAD's, which is F32 alone.
+- Nemotron 3.5 Transcribe takes `f16`, `q8_0` and `iq4_nl`, and every other model every type but `iq4_nl`.
 - OUT is the file to write, or a folder, in which the file takes its usual name, such as `Qwen3-ASR-0.6B-Q4_K.gguf`.
 - The F32 file comes from the official checkpoint through the model's converter, in a clone of this repository with
   [uv](https://docs.astral.sh/uv/):
@@ -414,8 +415,8 @@ speech quantize MODEL OUT --type f16|q8_0|q6_k|q5_k|q4_k
   speech quantize ../../models/Qwen3-ASR-0.6B-F32.gguf ../../models --type q4_k
   ```
 
-  The other converters are `reference/qwen3-tts/convert.py 0.6b|1.7b`, `reference/irodori-tts/convert.py mf|rf` and
-  `reference/fastconformer/convert.py <model name>`.
+  The other converters are `reference/qwen3-tts/convert.py 0.6b|1.7b`, `reference/irodori-tts/convert.py mf|rf`,
+  `reference/fastconformer/convert.py <model name>` and `reference/nemotron-transcribe/convert.py`.
 
 `q6_k`, `q5_k` and `q4_k` make smaller files that compute less exactly. In the stage checks against the official
 implementation:

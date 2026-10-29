@@ -142,8 +142,9 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
   voices added. `speech_model_info_text_tokens()` counts a text's tokens as a synthesis counts them against the longest
   text, so that a caller can split a long text first. `speech_model_info_json()` writes the whole as one JSON object
   (below).
-- **Quantizing.** `speech_quantize()` writes a model file of F32 weights in F16, Q8_0, Q6_K, Q5_K or Q4_K, on the CPU,
-  as `speech quantize` does ([cli.md](cli.md#speech-quantize)). Silero VAD's file is F32 alone, and is refused.
+- **Quantizing.** `speech_quantize()` writes a model file of F32 weights in F16, Q8_0, Q6_K, Q5_K, Q4_K or IQ4_NL, on
+  the CPU, as `speech quantize` does ([cli.md](cli.md#speech-quantize)). Nemotron 3.5 Transcribe takes F16, Q8_0 and
+  IQ4_NL, and every other model every type but IQ4_NL. Silero VAD's file is F32 alone, and is refused.
 - **Voices.** `speech_voice_add()` adds a voice to a loaded model from a voice file, or from a reference WAVE file at any
   rate where `speech_model_info_voice_recordings()` says so. `speech_voice_make()` writes a voice file from a reference,
   reading only the codec from the model file. `speech_voice_make_from()` writes one from the parameters
@@ -326,11 +327,11 @@ Each model takes some of them, with ranges and defaults from its file, and `spee
 | `speed`, `seconds`, `duration_scale`, `steps` | float, float, float, int | 1, none, 1, none | Irodori-TTS |
 | `max_seconds` | float | none | Qwen3-TTS, Drama 3 (each chunk of a long text) |
 | `timestamps` | bool | false | [FastConformer](models/fastconformer.md#options) |
-| `prompt` | string | `""` | [Qwen3-ASR](models/qwen3-asr.md#options) |
+| `prompt` | string | `""` | [Qwen3-ASR](models/qwen3-asr.md#options), [Nemotron 3.5 Transcribe](models/nemotron-transcribe.md#options) |
 | `draft` | string | `""` | [Qwen3-ASR](models/qwen3-asr.md#options) |
 | `decoding` | string | none | reazonspeech-nemo-v2 |
 | `decode_on_cpu` | bool | none | FastConformer |
-| `experts_on_cpu` | bool | true | [Drama 3](models/drama3.md#devices-and-memory) |
+| `experts_on_cpu` | bool | true | [Drama 3](models/drama3.md#devices-and-memory), [Nemotron 3.5 Transcribe](models/nemotron-transcribe.md#devices-and-memory) |
 | `do_sample`, `top_k`, `top_p`, `temperature`, `repetition_penalty` | bool, int, float, float, float | none | Qwen3-TTS; `top_k`, `top_p` and `temperature` also Drama 3 |
 | `code_predictor_do_sample`, `code_predictor_top_k`, `code_predictor_top_p`, `code_predictor_temperature` | bool, int, float, float | none | Qwen3-TTS |
 | `instructions` | string | `""` | Qwen3-TTS 1.7B, Irodori-TTS |
@@ -394,9 +395,10 @@ loaded on Metal, with two of its nine voices and four of its options shown:
 
 - `organization` to `weight_type` are the model's identity, from the general keys of its file.
   `finetune` and `version` are left out for a model whose name has none. `source` is the repository the file was
-  converted from and the revision. `weight_type` is the type that holds most of the weights: `F32`, `F16`, `Q8_0`, `Q6_K`, `Q5_K` or `Q4_K`.
-- `architecture` is the family: `qwen3-tts`, `irodori-tts`, `drama3`, `fastconformer`, `qwen3-asr`, `silero-vad` or
-  `sortformer`. `layout` is the version of the family's file layout. `task` is `synthesis`, `recognition`, `detection` or
+  converted from and the revision. `weight_type` is the type that holds most of the weights: `F32`, `F16`, `Q8_0`,
+  `Q6_K`, `Q5_K`, `Q4_K` or `IQ4_NL`.
+- `architecture` is the family: `qwen3-tts`, `irodori-tts`, `drama3`, `fastconformer`, `qwen3-asr`,
+  `nemotron-transcribe`, `silero-vad` or `sortformer`. `layout` is the version of the family's file layout. `task` is `synthesis`, `recognition`, `detection` or
   `diarization`; a detection or diarization model's `languages` is empty, and a diarization model's `speakers` follows
   `max_text_tokens`'s place, the most speakers it tells apart.
 - `incremental` is true for a model that passes audio while it still makes the rest (Qwen3-TTS, Drama 3), so that its first
@@ -412,6 +414,6 @@ loaded on Metal, with two of its nine voices and four of its options shown:
   `minimum` or `exclusive_minimum`, `maximum`, and `choices`.
 - `device` and `threads` are there for a loaded model alone. `threads` is the number of CPU threads in effect for a model
   on the CPU or for a model on a GPU that can compute part of a request on the CPU (FastConformer's decoding with
-  `decode_on_cpu`, or Drama 3's experts that its GPU does not hold), and 0 for a model on a GPU that computes nothing
-  there. Setting threads is never an error, since
-  with the device `auto` a caller cannot know where the model will run.
+  `decode_on_cpu`, or Drama 3's and Nemotron 3.5 Transcribe's experts that its GPU does not hold), and 0 for a model on
+  a GPU that computes nothing there. Setting threads is never an error, since with the device `auto` a caller cannot
+  know where the model will run.

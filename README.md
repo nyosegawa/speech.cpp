@@ -67,6 +67,7 @@ implementation, from the same inputs.
 | Recognition | [`reazonspeech-v2`](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) | ja | Japanese with punctuation, in recordings of many minutes |
 | Recognition | [`parakeet-tdt_ctc-0.6b-ja`](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | ja | short Japanese utterances, fast, with times |
 | Recognition | [`parakeet-tdt-0.6b-v3`](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) | 25 European languages | finds the language itself, with punctuation, capitals and times |
+| Recognition | [`nemotron-3.5-transcribe`](https://huggingface.co/sakasegawa/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF) | 40 languages | word for word as spoken, fillers included, up to an hour at once, with a prompt of names and terms; a 19.0 GB file |
 | Detection | [`silero-vad`](https://huggingface.co/sakasegawa/silero-vad-GGUF) | any | where someone speaks, to give a recognizer one utterance at a time; 1.2 MB |
 | Diarization | [`nemotron-3-diarization`](https://huggingface.co/sakasegawa/Nemotron-3-Diarization-GGUF) | any | who speaks when, up to eight speakers, in a recording or as it arrives; 106 MB |
 
@@ -74,7 +75,8 @@ A command takes a model by its name and fetches its converted file from Hugging 
 to, the first time. [docs/models.md](docs/models.md) lists the models with their sizes, voices and languages, and each
 family has a page: [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md), [Drama 3](docs/models/drama3.md),
 [FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md),
-[Silero VAD](docs/models/silero-vad.md) and [Sortformer](docs/models/sortformer.md).
+[Nemotron 3.5 Transcribe](docs/models/nemotron-transcribe.md), [Silero VAD](docs/models/silero-vad.md) and
+[Sortformer](docs/models/sortformer.md).
 
 ## Install
 
@@ -229,7 +231,7 @@ Each model's page has more.
 | [Install](docs/install.md) | installers, updating, uninstalling, requirements, release archives and building from source |
 | [Command line](docs/cli.md) | every subcommand and option |
 | [Models](docs/models.md) | the catalog, names, where models are kept, voices and languages |
-| [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md), [Drama 3](docs/models/drama3.md), [FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md), [Silero VAD](docs/models/silero-vad.md), [Sortformer](docs/models/sortformer.md) | each family: what it does, its options, accuracy and speed |
+| [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md), [Drama 3](docs/models/drama3.md), [FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md), [Nemotron 3.5 Transcribe](docs/models/nemotron-transcribe.md), [Silero VAD](docs/models/silero-vad.md), [Sortformer](docs/models/sortformer.md) | each family: what it does, its options, accuracy and speed |
 | [Server and page](docs/server.md) | `speech serve` and OpenAI's audio API |
 | [Worker protocol](docs/worker.md) | `speech worker` for programs |
 | [C API](docs/c-api.md) | `speech.h` |
@@ -252,4 +254,4 @@ MIT, see [LICENSE](LICENSE). The model weights are their authors':
 - The parakeet models are NVIDIA's, under CC-BY-4.0, and reazonspeech-nemo-v2 is reazon-research's, under the Apache
   License 2.0.
 - Silero VAD is the Silero Team's, under the MIT License.
-- Nemotron 3 Diarization is NVIDIA's, under the OpenMDW License Agreement 1.1.
+- Nemotron 3 Diarization and Nemotron 3.5 Transcribe are NVIDIA's, under the OpenMDW License Agreement 1.1.

@@ -21,6 +21,7 @@ first time.
 | [`reazonspeech-v2`](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) | recognition | ja | `reazonspeech-nemo-619M-v2-Q8_0.gguf`, 0.66 GB | [FastConformer](models/fastconformer.md) |
 | [`parakeet-tdt_ctc-0.6b-ja`](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | recognition | ja | `parakeet-tdt_ctc-0.6B-ja-Q8_0.gguf`, 0.66 GB | [FastConformer](models/fastconformer.md) |
 | [`parakeet-tdt-0.6b-v3`](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) | recognition | 25 European languages | `parakeet-tdt-0.6B-v3-F16.gguf`, 1.26 GB | [FastConformer](models/fastconformer.md) |
+| [`nemotron-3.5-transcribe`](https://huggingface.co/sakasegawa/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF) | recognition | 40 languages | `NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-IQ4_NL.gguf`, 19.0 GB | [Nemotron 3.5 Transcribe](models/nemotron-transcribe.md) |
 | [`silero-vad`](https://huggingface.co/sakasegawa/silero-vad-GGUF) | detection | any | `silero-vad-309K-v6.2-F32.gguf`, 1.2 MB | [Silero VAD](models/silero-vad.md) |
 | [`nemotron-3-diarization`](https://huggingface.co/sakasegawa/Nemotron-3-Diarization-GGUF) | diarization | any | `Nemotron-3-Diarization-99M-Q8_0.gguf`, 106 MB | [Sortformer](models/sortformer.md) |
 
@@ -46,7 +47,7 @@ Every subcommand that takes a model (`tts`, `asr`, `vad`, `diarize`, `voice`, `i
 which ends in `.gguf`, or `NAME[:TYPE]`:
 
 - NAME is a name of the catalog, or the Hugging Face repository of its converted files.
-- TYPE is the file's weight type, `f16`, `q8_0`, `q6_k`, `q5_k` or `q4_k`, where the repository holds it. Without it,
+- TYPE is the file's weight type, `f16`, `q8_0`, `q6_k`, `q5_k`, `q4_k` or `iq4_nl`, where the repository holds it. Without it,
   the name means the file in the table above.
 
 ```sh
@@ -57,8 +58,9 @@ speech asr qwen3-asr-0.6b:q4_k meeting.wav                  # Qwen3-ASR-0.6B-Q4_
 speech serve reazonspeech-v2                                # fetched before the server starts
 ```
 
-Every model but Silero VAD also comes in Q6_K, Q5_K and Q4_K, which take less memory and are less accurate. Each
-family's page gives the size, the memory and the accuracy of every type, and `speech models` lists the files.
+Every model but Silero VAD and Nemotron 3.5 Transcribe also comes in Q6_K, Q5_K and Q4_K, which take less memory and
+are less accurate; Nemotron 3.5 Transcribe comes in F16, Q8_0 and IQ4_NL. Each family's page gives the size, the memory
+and the accuracy of every type, and `speech models` lists the files.
 
 A name or a type that the catalog does not hold is refused, and the message lists what it holds. A release fetches the
 files it was checked with, so a file updated on Hugging Face reaches you with the next release.
@@ -111,8 +113,8 @@ A voice's name is case-sensitive, and may be neither a voice of the model nor `n
 - A model's languages are BCP 47 tags: two letters, or three for a language without a two-letter code (`yue`, `fil`).
 - A request's `language` is one of them, a region or script of one (`ja-JP`, `zh-Hant`), or `auto`, the default, which
   leaves the choice to the model. Any other language is refused.
-- Qwen3-TTS and Qwen3-ASR are steered by the language. Irodori-TTS, Drama 3 and the FastConformer models only check it
-  against their languages and do not use it. Silero VAD has no languages and takes `auto` alone.
+- Qwen3-TTS and Qwen3-ASR are steered by the language. Irodori-TTS, Drama 3, the FastConformer models and Nemotron 3.5
+  Transcribe only check it against their languages and do not use it. Silero VAD has no languages and takes `auto` alone.
 - Qwen3-ASR's results say which language it heard.
 
 ## Files on Hugging Face
