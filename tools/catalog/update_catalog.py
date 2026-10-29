@@ -26,7 +26,7 @@ CHOSEN = ["name", "repository", "type", "start"]
 TASKS = ["synthesis", "recognition", "detection", "diarization"]
 # A model's files in the order `speech models` and the page list them: the type its name alone means, then the others
 # from the widest.
-WIDEST_FIRST = ["f32", "f16", "q8_0", "q6_k", "q5_k", "q4_k"]
+WIDEST_FIRST = ["f32", "f16", "q8_0", "q6_k", "q5_k", "q4_k", "iq4_nl"]
 
 
 def fetch_json(url):

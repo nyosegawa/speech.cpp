@@ -62,7 +62,7 @@ extern "C" {
  * version and a minor version of m or more. Version 3.0 is first released with speech.cpp 0.7.0, the option prompt
  * included, and a declaration added since says the version that added it.
  */
-#define SPEECH_API_VERSION_MINOR 4
+#define SPEECH_API_VERSION_MINOR 5
 
 /** The SPEECH_API_VERSION_MAJOR the library was built with, for a caller that loads it at run time. */
 SPEECH_API int speech_api_version_major(void);
@@ -632,8 +632,8 @@ SPEECH_API speech_status speech_model_info_source(const speech_model_info * info
 
 /**
  * The type that holds most of the bytes of the model's weights (general.file_type), as ggml names it in capitals:
- * "F32", "F16" or "Q8_0", or "Q6_K", "Q5_K" or "Q4_K" (added in 3.1). The rest, such as the norms and the biases, is in
- * other types.
+ * "F32", "F16" or "Q8_0", "Q6_K", "Q5_K" or "Q4_K" (added in 3.1), or "IQ4_NL" (added in 3.5). The rest, such as the
+ * norms and the biases, is in other types.
  */
 SPEECH_API const char * speech_model_info_weight_type(const speech_model_info * info);
 
@@ -840,14 +840,17 @@ SPEECH_API const char * speech_model_info_meta_value(const speech_model_info * i
 
 /**
  * Writes the model file at `model_path`, whose weights are F32, to `out_path` with its weights in `type`: "F16", "Q8_0",
- * "Q6_K", "Q5_K" or "Q4_K", compared without case, the names speech_model_info_weight_type() gives. Each tensor takes
- * the type the family's layout gives it in a file of that type: a matrix that the model only multiplies by or looks
- * rows up in takes `type`, Q8_0 instead of a K-quant (Q6_K, Q5_K, Q4_K) where its rows are not whole blocks of 256
- * values, and F16 instead of Q8_0 where they are not whole blocks of 32; a codec's or a convolution's weights that the
- * family keeps out of quantization take F16; and the rest stays F32. Every key and tensor of the file is kept, in its
- * order, but general.file_type, general.quantization_version, which a quantized file has, and speech.requires, which
- * names the first release that reads the file: 0.8.0 for Q6_K, Q5_K and Q4_K and for FastConformer's Q8_0, which
- * releases before it refuse. A file
+ * "Q6_K", "Q5_K" or "Q4_K", or "IQ4_NL" (added in 3.5), compared without case, the names speech_model_info_weight_type()
+ * gives. Nemotron 3.5 Transcribe takes F16, Q8_0 and IQ4_NL, and every other family every type but IQ4_NL; a type the
+ * family does not take, or one in which it would keep most of its weights in another type, as Silero VAD keeps them in
+ * F32, is SPEECH_ERROR_INVALID_ARGUMENT naming "type". Each tensor takes the type the family's layout gives it in a file
+ * of that type: a matrix that the model only multiplies by or looks rows up in takes `type`, Q8_0 instead of a K-quant
+ * (Q6_K, Q5_K, Q4_K) where its rows are not whole blocks of 256 values, and F16 instead of Q8_0 or IQ4_NL where they
+ * are not whole blocks of 32; a codec's or a convolution's weights that the family keeps out of quantization take F16;
+ * and the rest stays F32. Every key and tensor of the file is kept, in its order, but general.file_type,
+ * general.quantization_version, which a quantized file has, and speech.requires, which names the first release that
+ * reads the file: 0.8.0 for Q6_K, Q5_K and Q4_K and for FastConformer's Q8_0, and 0.9.1 for IQ4_NL and for every file
+ * of Nemotron 3.5 Transcribe, which releases before it refuse. A file
  * whose weights are not F32 is SPEECH_ERROR_INVALID_ARGUMENT naming "model_path": a quantized file is not quantized
  * again, and a type made of F16 weights would hold other bytes than the same type made of the F32 weights. A weight that
  * is not finite, NaN or an infinity, is SPEECH_ERROR_MODEL_FILE naming "model_path". `out_path`, which may not be the

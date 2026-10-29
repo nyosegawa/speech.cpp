@@ -24,8 +24,16 @@ import tempfile
 SCALARS = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i", 6: "<f", 7: "<?", 10: "<Q", 11: "<q", 12: "<d"}
 STRING, ARRAY = 8, 9
 # ggml's type ids of the types speech.cpp writes, with the values and bytes of one block.
-TYPES = {0: ("F32", 1, 4), 1: ("F16", 1, 2), 8: ("Q8_0", 32, 34), 12: ("Q4_K", 256, 144), 13: ("Q5_K", 256, 176), 14: ("Q6_K", 256, 210)}
-FILE_TYPES = {1: "f16", 7: "q8_0", 14: "q4_k", 16: "q5_k", 18: "q6_k"}
+TYPES = {
+    0: ("F32", 1, 4),
+    1: ("F16", 1, 2),
+    8: ("Q8_0", 32, 34),
+    12: ("Q4_K", 256, 144),
+    13: ("Q5_K", 256, 176),
+    14: ("Q6_K", 256, 210),
+    20: ("IQ4_NL", 32, 18),
+}
+FILE_TYPES = {1: "f16", 7: "q8_0", 14: "q4_k", 16: "q5_k", 18: "q6_k", 25: "iq4_nl"}
 
 
 class Gguf:

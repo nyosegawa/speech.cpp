@@ -33,6 +33,7 @@ const std::vector<WeightType> & weight_types() {
     static const std::vector<WeightType> types = {
         {0, GGML_TYPE_F32, kFirstLayoutRelease}, {1, GGML_TYPE_F16, kFirstLayoutRelease}, {7, GGML_TYPE_Q8_0, kFirstLayoutRelease},
         {18, GGML_TYPE_Q6_K, "0.8.0"},           {16, GGML_TYPE_Q5_K, "0.8.0"},           {14, GGML_TYPE_Q4_K, "0.8.0"},
+        {25, GGML_TYPE_IQ4_NL, "0.9.1"},
     };
     return types;
 }
@@ -50,21 +51,34 @@ Storage float32_storage() {
 }
 
 Storage quantized_storage(std::vector<Since> since) {
-    return {{
-                {GGML_TYPE_F32, {GGML_TYPE_F32}},
-                {GGML_TYPE_F16, {GGML_TYPE_F16}},
-                {GGML_TYPE_Q8_0, {GGML_TYPE_Q8_0, GGML_TYPE_F16}},
-                {GGML_TYPE_Q6_K, {GGML_TYPE_Q6_K, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
-                {GGML_TYPE_Q5_K, {GGML_TYPE_Q5_K, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
-                {GGML_TYPE_Q4_K, {GGML_TYPE_Q4_K, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
-            },
-            std::move(since)};
+    // IQ4_NL's blocks are of 32 values, as Q8_0's are, so a row that is not whole blocks of it takes F16.
+    static const std::vector<Storage::Choice> every = {
+        {GGML_TYPE_F32, {GGML_TYPE_F32}},
+        {GGML_TYPE_F16, {GGML_TYPE_F16}},
+        {GGML_TYPE_Q8_0, {GGML_TYPE_Q8_0, GGML_TYPE_F16}},
+        {GGML_TYPE_Q6_K, {GGML_TYPE_Q6_K, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
+        {GGML_TYPE_Q5_K, {GGML_TYPE_Q5_K, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
+        {GGML_TYPE_Q4_K, {GGML_TYPE_Q4_K, GGML_TYPE_Q8_0, GGML_TYPE_F16}},
+        {GGML_TYPE_IQ4_NL, {GGML_TYPE_IQ4_NL, GGML_TYPE_F16}},
+    };
+    std::vector<Storage::Choice> choices;
+    for (const Storage::Choice & c : every) {
+        if (std::any_of(since.begin(), since.end(), [&](const Since & s) { return s.type == c.file; })) choices.push_back(c);
+    }
+    return {std::move(choices), std::move(since)};
 }
 
 Storage half_storage() {
     std::vector<Storage::Choice> choices;
     for (const WeightType & w : weight_types()) choices.push_back({w.type, {w.type == GGML_TYPE_F32 ? GGML_TYPE_F32 : GGML_TYPE_F16}});
     return {choices, {{GGML_TYPE_F16, kFirstLayoutRelease}, {GGML_TYPE_F32, kFirstLayoutRelease}}};
+}
+
+const Storage::Choice * Storage::choice(ggml_type file) const {
+    for (const Choice & c : choices) {
+        if (c.file == file) return &c;
+    }
+    return nullptr;
 }
 
 std::vector<ggml_type> TensorSpec::types() const {
@@ -74,18 +88,16 @@ std::vector<ggml_type> TensorSpec::types() const {
 }
 
 ggml_type TensorSpec::type_in(ggml_type file) const {
-    for (const Storage::Choice & choice : storage.get().choices) {
-        if (choice.file != file) continue;
-        for (ggml_type t : choice.types) {
-            if (shape.ne[0] % ggml_blck_size(t) != 0) continue;
-            // A type the order gives that the table gives no release for is a defect of the table, which this throws.
-            first_release(t);
-            return t;
-        }
-        throw std::logic_error("the storage of " + name + " gives a file of " + tensor_type_text(file) + " no type whose blocks its rows of " +
-                               std::to_string(shape.ne[0]) + " values are");
+    const Storage::Choice * choice = storage.get().choice(file);
+    if (!choice) throw std::logic_error("the storage of " + name + " says nothing of a file of " + tensor_type_text(file));
+    for (ggml_type t : choice->types) {
+        if (shape.ne[0] % ggml_blck_size(t) != 0) continue;
+        // A type the order gives that the table gives no release for is a defect of the table, which this throws.
+        first_release(t);
+        return t;
     }
-    throw std::logic_error("the storage of " + name + " says nothing of a file of " + tensor_type_text(file));
+    throw std::logic_error("the storage of " + name + " gives a file of " + tensor_type_text(file) + " no type whose blocks its rows of " +
+                           std::to_string(shape.ne[0]) + " values are");
 }
 
 const char * TensorSpec::first_release(ggml_type type) const {

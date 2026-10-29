@@ -33,7 +33,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FAMILIES = ["qwen3-tts", "irodori-tts", "drama3", "qwen3-asr", "nemotron-transcribe", "fastconformer", "silero-vad", "sortformer", "common"]
 # general.file_type's values of the weight types speech.cpp writes, as weight_types() of src/common/storage.cpp lists
 # them; a script cannot read that table.
-FILE_TYPES = {0: "F32", 1: "F16", 7: "Q8_0", 18: "Q6_K", 16: "Q5_K", 14: "Q4_K"}
+FILE_TYPES = {0: "F32", 1: "F16", 7: "Q8_0", 18: "Q6_K", 16: "Q5_K", 14: "Q4_K", 25: "IQ4_NL"}
 REFUSED = 2
 
 SCALARS = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i", 6: "<f", 7: "<?", 10: "<Q", 11: "<q", 12: "<d"}

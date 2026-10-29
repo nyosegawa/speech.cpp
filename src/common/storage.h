@@ -34,7 +34,10 @@ struct WeightType {
     const char * release;
 };
 
-/** The weight types of the files speech.cpp writes, F32 first: F32, F16, Q8_0, Q6_K, Q5_K and Q4_K. */
+/**
+ * The weight types of the files speech.cpp writes, F32 first: F32, F16, Q8_0, Q6_K, Q5_K, Q4_K and IQ4_NL, of which a
+ * layout writes those that the storage of each of its tensors has a choice for (Storage::choice()).
+ */
 const std::vector<WeightType> & weight_types();
 
 /** A ggml type as the model information writes it: F32, F16, Q8_0, Q4_K. */
@@ -62,6 +65,9 @@ struct Storage {
     };
     std::vector<Choice> choices;
     std::vector<Since> since;
+
+    /** The choice for a file of the weight type `file`, or nullptr where a layout with this storage writes no such file. */
+    const Choice * choice(ggml_type file) const;
 };
 
 /**
@@ -73,8 +79,9 @@ Storage float32_storage();
 /**
  * A matrix that only ggml_mul_mat() and ggml_get_rows() read, which ggml computes from every weight type on the CPU,
  * Metal and Vulkan: in the file's own type; in Q8_0 instead of a K-quant where its rows are not whole blocks of 256
- * values; and in F16 instead of Q8_0 where they are not whole blocks of 32; each type read from the release `since`
- * gives it, which differs from family to family.
+ * values; and in F16 instead of Q8_0 or IQ4_NL where they are not whole blocks of 32; each type read from the release
+ * `since` gives it, which differs from family to family. A file of a weight type that `since` does not list has no
+ * choice, so that a layout takes a weight type only where its family's checks have run in it.
  */
 Storage quantized_storage(std::vector<Since> since);
 

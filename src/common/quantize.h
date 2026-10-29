@@ -15,7 +15,8 @@
  * writing fails.
  *
  * Every failure throws an Error naming the input at fault as the C API names it: "model_path" for `in`, which a file
- * that is not F32 throws as the caller's mistake and a weight that is not finite as a file error, and "out_path" for
- * `out`.
+ * that is not F32 throws as the caller's mistake and a weight that is not finite as a file error, "type" for a type that
+ * the storage of some tensor of the layout has no choice for or that would leave most of the bytes in another type, and
+ * "out_path" for `out`.
  */
 void quantize_model_file(const std::string & in, const std::string & out, const WeightType & type, const Layout & layout);

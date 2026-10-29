@@ -231,6 +231,18 @@ void write_model_file(const std::string & in, const std::string & out, const Wei
     }
     std::unordered_map<std::string, TensorSpec> specs;
     for (TensorSpec & spec : layout.tensors(*model)) specs.emplace(spec.name, spec);
+    const auto writes = [&](ggml_type file) {
+        return std::all_of(specs.begin(), specs.end(), [&](const auto & s) { return s.second.storage.get().choice(file) != nullptr; });
+    };
+    if (!writes(type.type)) {
+        std::string names;
+        for (const WeightType & t : weight_types()) {
+            if (t.type != GGML_TYPE_F32 && writes(t.type)) names += (names.empty() ? "" : ", ") + tensor_type_text(t.type);
+        }
+        throw Error(Fault::InvalidArgument,
+                    in + " is a model of " + layout.architecture + ", whose layout takes no " + tensor_type_text(type.type) + " weights; give one of " + names,
+                    "type");
+    }
     const int64_t n = gguf_get_n_tensors(gguf.get()), keys = gguf_get_n_kv(gguf.get());
     std::vector<ggml_type> types(n);
     // The file names the latest of the releases that first read its layout, its general.file_type and each tensor's

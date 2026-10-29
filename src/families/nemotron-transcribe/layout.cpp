@@ -16,14 +16,14 @@ namespace {
 /**
  * How the layout stores a tensor in a file of each weight type: a matrix or an embedding that ggml_mul_mat(),
  * ggml_mul_mat_id() or ggml_get_rows() alone reads, in the file's type; the frontend, the norms, the biases, the Mamba
- * layers' convolutions and decays, the routers, the speaker head and the fusion's kernel in F32.
+ * layers' convolutions and decays, the routers, the speaker head and the fusion's kernel in F32. The language model's
+ * rows of 2688 and 1856 values are not whole blocks of a K-quant's 256, so that a K-quant file would hold most of its
+ * bytes in Q8_0; IQ4_NL, of blocks of 32, takes its place.
  */
 const Storage kMatrix = quantized_storage({{GGML_TYPE_F32, "0.9.1"},
                                            {GGML_TYPE_F16, "0.9.1"},
                                            {GGML_TYPE_Q8_0, "0.9.1"},
-                                           {GGML_TYPE_Q6_K, "0.9.1"},
-                                           {GGML_TYPE_Q5_K, "0.9.1"},
-                                           {GGML_TYPE_Q4_K, "0.9.1"}});
+                                           {GGML_TYPE_IQ4_NL, "0.9.1"}});
 const Storage kF32 = float32_storage();
 
 const std::string p = "nemotron-transcribe.";
