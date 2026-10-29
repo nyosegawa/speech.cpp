@@ -198,8 +198,9 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
 - A text longer than `speech_model_info_max_text_tokens()` is `out_of_range`, option `text`.
 - Audio shorter than two of the model's mel frames (20 ms for FastConformer) is `out_of_range`, option `audio`. Qwen3-ASR
   pads audio under 0.5 s and takes any.
-- A recognition stops at `model_limit` when it reaches the most tokens the model writes (4096 for Qwen3-ASR), with the
-  text written up to there.
+- A recognition stops at `model_limit` when it reaches the most tokens the model writes (4096 for Qwen3-ASR) or, for
+  Nemotron 3.5 Transcribe, when its text falls into a loop the model's guardrail keeps once, with the text written up to
+  there.
 - Audio that comes out not finite, as from extreme option values, is never passed on: the request ends with
   `out_of_range` naming no option.
 - Nothing is cut short or moved to another device behind the caller's back.

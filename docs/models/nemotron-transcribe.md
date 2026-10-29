@@ -24,7 +24,8 @@ speech serve nemotron-3.5-transcribe silero-vad                  # POST /v1/audi
   with punctuation and capitals, in the language spoken, which may change within a recording. It does not translate.
 - It takes up to an hour of audio at once, and writes the text the official implementation, NeMo's
   `SALMAutomodel.generate()`, writes with greedy decoding, after the model card's guardrail against loops: a character
-  repeated more than 20 times, or a block repeated 20 times or more, is kept once.
+  repeated more than 20 times, or a block repeated 20 times or more, is kept once. A text that falls into such a loop
+  ends there, where the official implementation writes on until its limit, and its stop is `model_limit`.
 - It writes no language: the result names none.
 - With `speakers`, it asks with the card's prompt for speaker tags. The tags leave the text, and each segment carries
   its speaker, numbered from 0 in the order they first speak, and ends where the speaker changes or a sentence ends.

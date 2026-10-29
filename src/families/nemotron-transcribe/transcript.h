@@ -20,6 +20,13 @@ public:
 
     std::string apply(const std::string & text) const;
 
+    /**
+     * Whether `text` ends in a run that apply() keeps once: one character written generation.char_run times or more, or
+     * a block of 1 to generation.block_max_chars characters written generation.block_run times or more in a row, up to
+     * its end, as either of the card's expressions anchored at the end matches it.
+     */
+    bool loops(const std::string & text) const;
+
 private:
     size_t char_run_, block_run_, block_max_;
 };

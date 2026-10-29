@@ -26,8 +26,9 @@ struct RecognitionRequest {
 };
 
 /**
- * What a recognition found: its text, and whether the decoding filled the model's context; and where the request asked
- * for speakers or timestamps, the timed tokens and the segments, or why there are none (Timing).
+ * What a recognition found: its text, and whether the decoding stopped before the end of its turn, its text having
+ * fallen into a loop the guardrail keeps once or filled the model's context; and where the request asked for speakers or
+ * timestamps, the timed tokens and the segments, or why there are none (Timing).
  */
 struct Recognition {
     std::string text;
@@ -53,9 +54,10 @@ struct RecognitionReport {
  * through the perception module; the user's turn of the model card's instruction, its verbatim one, its contextual one
  * with the terms for a request with a context, or its prompt for speaker tags for one that asks who speaks, one space and
  * the audio locator, with no system turn, the locator's row replaced by the audio's rows; the language model's prefill
- * and greedy decoding until the end of the turn or the end of the context; and the text decoded with its special tokens,
- * cleaned by the model card's guardrail, and timed by the CTC alignment where the request asks for speakers or
- * timestamps. It reads one GGUF file and computes on one backend, but for the experts that a placement leaves to the CPU.
+ * and greedy decoding until the end of the turn, a loop of the text that the card's guardrail keeps once, or the end of
+ * the context; and the text decoded with its special tokens, cleaned by the model card's guardrail, and timed by the CTC
+ * alignment where the request asks for speakers or timestamps. It reads one GGUF file and computes on one backend, but
+ * for the experts that a placement leaves to the CPU.
  */
 class Recognizer {
 public:

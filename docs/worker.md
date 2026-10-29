@@ -103,7 +103,7 @@ out {"type":"cancelled","id":"a"}
 - `end` of a synthesis has `seed` (the request's, or the one the library drew), `samples` (the number sent in its chunks)
   and `stop` (`complete`, `max_seconds` or `model_limit`).
 - `end` of a recognition has `text` and `stop` (`complete`, or `model_limit` when it reached the most tokens the model
-  writes, with the text written up to there). It has `languages`, the tags of the languages the model heard in the
+  writes or a loop of them that the model's guardrail keeps once, with the text written up to there). It has `languages`, the tags of the languages the model heard in the
   order of the audio, where there are any (Qwen3-ASR), `segments` and `tokens` when the request set `timestamps`, and
   `segments` with each one's `speaker`, a number from 0 or null, when it set `speakers`. Where the model cannot time its
   text (Nemotron 3.5 Transcribe), it has `untimed`, why, and neither.

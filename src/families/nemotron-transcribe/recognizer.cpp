@@ -137,7 +137,11 @@ std::optional<Recognition> Recognizer::recognize(const std::vector<float> & samp
             const int32_t token = (int32_t) (std::max_element(logits.begin(), logits.end()) - logits.begin());
             r.ids.push_back(token);
             if (std::find(eos_.begin(), eos_.end(), token) != eos_.end()) break;
-            if (language_model_.n_past() >= context_length_) {
+            // A text that has fallen into a loop the guardrail keeps once ends there rather than when the context is full:
+            // on the meeting of reference/nemotron-transcribe's dumps rounded to 16-bit samples, the IQ4_NL file repeats
+            // one sentence after about a hundred tokens, and on an Apple M5 would fill the context in about 30 minutes
+            // (2026-10-30).
+            if (guardrail_.loops(tokenizer_.decode(r.ids)) || language_model_.n_past() >= context_length_) {
                 result.limited = true;
                 break;
             }

@@ -54,4 +54,28 @@ std::string Guardrail::apply(const std::string & text) const {
     return encode_utf8(out);
 }
 
+bool Guardrail::loops(const std::string & text) const {
+    const std::optional<std::vector<uint32_t>> decoded = decode_utf8(text);
+    if (!decoded) return false;
+    const std::vector<uint32_t> & s = *decoded;
+    if (s.size() >= char_run_ && std::all_of(s.end() - (std::ptrdiff_t) char_run_, s.end(), [&](uint32_t c) { return c == s.back(); })) return true;
+    // The text's last block_run * p characters repeat a block of p where the reversed end of the text matches itself
+    // shifted by p for all but p of them: its Z-function at p, in time linear in the longest run a block can make.
+    const size_t n = std::min(s.size(), block_run_ * block_max_);
+    const std::vector<uint32_t> r(s.rbegin(), s.rbegin() + (std::ptrdiff_t) n);
+    std::vector<size_t> z(n, 0);
+    for (size_t i = 1, left = 0, right = 0; i < n; i++) {
+        if (i < right) z[i] = std::min(right - i, z[i - left]);
+        while (i + z[i] < n && r[z[i]] == r[i + z[i]]) z[i]++;
+        if (i + z[i] > right) {
+            left = i;
+            right = i + z[i];
+        }
+    }
+    for (size_t p = 1; p * block_run_ <= n; p++) {
+        if (z[p] >= (block_run_ - 1) * p) return true;
+    }
+    return false;
+}
+
 }  // namespace nemotron_transcribe

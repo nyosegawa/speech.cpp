@@ -156,8 +156,8 @@ the words of the text, each Japanese or Chinese character a word of its own. Whe
 its text, speech.cpp's own `untimed` says why, and there are neither. Members the recognizers have no value for are
 left out.
 
-Every answer carries `X-Speech-Stop`: `complete`, or `model_limit` when the model reached the most tokens it writes, with
-the text written up to there. OpenAI's other members (`temperature`, `stream`, `include[]` and the rest) are refused with
+Every answer carries `X-Speech-Stop`: `complete`, or `model_limit` when the model reached the most tokens it writes or a
+loop of them that its guardrail keeps once, with the text written up to there. OpenAI's other members (`temperature`, `stream`, `include[]` and the rest) are refused with
 a 400 rather than ignored, `known_speaker_names[]` and `known_speaker_references[]` among them.
 
 ```sh
