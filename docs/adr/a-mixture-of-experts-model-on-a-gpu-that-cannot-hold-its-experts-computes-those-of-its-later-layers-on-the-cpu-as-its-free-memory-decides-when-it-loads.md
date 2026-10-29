@@ -1,6 +1,8 @@
-# A Drama 3 model on a GPU that cannot hold its experts computes those of its later layers on the CPU, as its free memory decides when it loads
+# A mixture-of-experts model on a GPU that cannot hold its experts computes those of its later layers on the CPU, as its free memory decides when it loads
 
 ## Context
+
+Two families are mixtures of experts: Drama 3, which speaks, and Nemotron 3.5 Transcribe, which recognizes.
 
 Drama 3's Q4_K file holds 20.8 GB, of which its routed experts, 256 in each of 40 layers, hold 18.1 GB and the rest
 of the model 2.7 GB. A row of the text model reads 8 experts of each layer, about 14 MB of a layer and 0.57 GB of a row,
@@ -27,6 +29,12 @@ CPU:
 A layer whose experts the CPU holds costs about 1.15 ms of a row: 0.55 ms of reading its 8 experts and two round
 trips of about 0.3 ms each, the wait for a submission to end rather than the copy, which pinned memory does not shorten.
 
+Nemotron 3.5 Transcribe's language model has 23 MoE layers of 128 experts, of which a row reads 6 and a shared expert,
+between 23 Mamba-2 and 6 attention layers. Its experts hold about 29.4 of its 34 billion parameters. A request's keys
+and values, in float32 for the whole context of 65,536 rows, take 0.8 GB, and a block of the prompt's rows that
+attends to every row before it takes rows × positions × 32 heads × 4 bytes for its scores. Its file also holds two
+layers of multi-token prediction and a CTC head for timestamps, which a recognition does not read.
+
 ## Decision
 
 - **A model loaded on a GPU keeps there the experts of as many layers, from the first, as the GPU's free memory holds**
@@ -44,6 +52,10 @@ trips of about 0.3 ms each, the wait for a submission to end rather than the cop
   experts on the CPU, as a value out of the range such a model takes, naming the option, for a caller that wants the GPU's speed or nothing; the same request then runs with true. A model
   whose GPU holds every expert, or one loaded on the CPU, takes either value.
 - **The prompt's experts are computed on the CPU too**, without the scheduler's offload.
+- **A family says what its requests need beside the weights and which tensors it loads**: Drama 3 its caches for its
+  longest prompt and speech, Nemotron 3.5 Transcribe its keys and values for the whole context, its Mamba states and
+  the scores of a block of its prompt, which it bounds at 512 rows over 8,192 positions by taking fewer rows in a block
+  after more rows. Nemotron 3.5 Transcribe loads neither its multi-token prediction layers nor its CTC head.
 
 The alternatives were turned down:
 
@@ -62,11 +74,11 @@ The alternatives were turned down:
 
 ## Consequences
 
-On the RTX 2080 a model holds the experts of 5 layers on the GPU and speaks at 0.5 to 0.6 times real time, with its
-first audio after 1.1 to 1.3 s, where a GPU of 12 or 16 GB keeps about 18 or 27 layers' experts and comes nearer real
-time. The model holds 6.8 GiB of the GPU's memory from its load on, beside the desktop's 0.6 GiB, and the worst
-request, a voice of about 8,000 rows of recordings, took it to 6.9 GiB. The CPU computes its
-experts in its own arithmetic, which differs from the GPU's: the text model's check against the official dumps gives
-the experts' output at 67.9 dB with them on the CPU against 65.4 dB on Metal, in F32. A prompt of 8,000 rows of
-references takes about a minute before the first audio with most experts on the CPU. Every model holds the memory of
-its largest request from its load on, about 2.1 GB beyond its weights on the M5, whatever requests it serves.
+On the RTX 2080 a Drama 3 model holds the experts of 5 layers on the GPU and speaks at 0.5 to 0.6 times real time, with
+its first audio after 1.1 to 1.3 s, where a GPU of 12 or 16 GB keeps about 18 or 27 layers' experts and comes nearer
+real time. The model holds 6.8 GiB of the GPU's memory from its load on, beside the desktop's 0.6 GiB, and the worst
+request, a voice of about 8,000 rows of recordings, took it to 6.9 GiB. The CPU computes its experts in its own
+arithmetic, which differs from the GPU's: the text model's check against the official dumps gives the experts' output at
+67.9 dB with them on the CPU against 65.4 dB on Metal, in F32. A prompt of 8,000 rows of references takes about a minute
+before the first audio with most experts on the CPU. Every model holds the memory of its largest request from its load
+on, about 2.1 GB beyond its weights on the M5, whatever requests it serves.
