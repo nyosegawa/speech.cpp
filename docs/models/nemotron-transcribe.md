@@ -62,13 +62,13 @@ The languages are `ar` `bg` `bn` `cs` `da` `de` `el` `en` `es` `et` `fi` `fr` `h
 ## Devices and memory
 
 The model needs its whole file in memory, and from its load on the keys and values of an hour of audio and the
-buffers of its largest graphs, about 1.9 GB beyond the weights.
+buffers of its largest graphs, about 2.0 GB beyond the weights.
 
 - **A GPU that holds the whole model computes it all**, as an Apple M5 with 32 GB does with the IQ4_NL file: 18.3 GiB
   of Metal's memory at the load, and 18.4 GiB through an hour of audio.
 - **A GPU that does not hold it keeps the experts of as many layers as its free memory holds**, beside the rest of the
   model and what the largest request needs, and the CPU computes the experts of the other layers with the load's
-  threads (`--threads`). In IQ4_NL the model then needs about 3.6 GB free on the GPU for its weights outside the experts
+  threads (`--threads`). In IQ4_NL the model then needs about 3.7 GB free on the GPU for its weights outside the experts
   (1.7 GB), the caches and the graphs, and each of its 23 layers of experts takes 0.72 GB more on the GPU or in the
   CPU's memory. The load says so:
 

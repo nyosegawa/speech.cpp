@@ -82,7 +82,9 @@ speech, model, *dumps = args
 added = [o.split("=", 1)[0] for i, o in enumerate(options) if i > 0 and options[i - 1] == "--add-voice"]
 load = [o for i, o in enumerate(options) if o in ("--device", "--threads") or (i and options[i - 1] in ("--device", "--threads"))]
 ORIGIN = "http://localhost:5173"
-
+# The texts of a quantized file come from `speech asr`, which loads the model again: before the server holds it, so that
+# a model of half the GPU's memory needs only its own.
+dump_requests_of = {d: dump_requests(speech, model, d, options) for d in dumps}
 
 
 def start_server():
@@ -337,7 +339,7 @@ else:
         name = os.path.basename(os.path.normpath(d))
         samples = read_npy(os.path.join(d, "audio.npy"))
         wav = wav_file(samples, rate)
-        requests = dump_requests(speech, model, d, options)
+        requests = dump_requests_of[d]
         if [r[0] for r in requests] == ["speakers"]:
             # A model that tells who speaks answers diarized_json itself, from one recognition of the whole file.
             [(_, _, want, _)] = requests

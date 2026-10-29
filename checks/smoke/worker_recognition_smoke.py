@@ -127,8 +127,8 @@ for d in dumps:
                  f", {len(m['segments'])} segments and {len(m['tokens'])} tokens joining into it" if timed else "")
               + f", {len(progress)} progress messages")
 
-# The shortest audio the dump has a text of.
-by_length = sorted((n for n in audio if want_text[n]), key=lambda n: len(audio[n]))
+# The shortest and the longest audio that a request without options has a text of; a dump of speaker tags has none.
+by_length = sorted((n for n in audio if want_text.get(n)), key=lambda n: len(audio[n]))
 first, last = by_length[0], by_length[-1]
 short_pcm, short_text, short_languages = audio[first], want_text[first], want_langs[first]
 
