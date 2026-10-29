@@ -554,9 +554,13 @@ elif info["task"] == "recognition":
         w.send({"type": "transcribe", "id": id, "sample_rate": rate, **members})
         return w.terminal(id, "end")
 
-    ends = [worker_end(str(i), pcm, **timed) for i, pcm in enumerate(pcms)]
+    # A dump of the model card's prompt for speaker tags holds no request without the option speakers, and its audio goes
+    # only with it, as worker_recognition_smoke.py and server_smoke.py send it.
+    verbatim = [(f, pcm, r) for f, pcm, r in zip(files, pcms, requests) if r[0][0] != "speakers"]
+    verbatim_files = [f for f, _, _ in verbatim]
+    ends = [worker_end(str(i), pcm, **timed) for i, (_, pcm, _) in enumerate(verbatim)]
     # The worker's languages of each dump are the ones qwen-asr parsed, and the member is left out where there are none.
-    assert [e.get("languages", []) for e in ends] == [r[0][3] for r in requests] and all(e.get("languages") != [] for e in ends), ends
+    assert [e.get("languages", []) for e in ends] == [r[0][3] for _, _, r in verbatim] and all(e.get("languages") != [] for e in ends), ends
     # The last request of each dump: its language forced and its prompt, or its decoding other than the default, where it
     # has one.
     asked = [(f, pcm, r[-1][1], r[-1][3]) for f, pcm, r in zip(files, pcms, requests)]
@@ -567,16 +571,18 @@ elif info["task"] == "recognition":
         """The members of a worker's end that speech asr --format json writes after "file"."""
         return {k: v for k, v in e.items() if k not in ("type", "id", "_at")}
 
-    texts = run("asr", model, *options, *files).stdout.decode().split("\n")
+    texts = run("asr", model, *options, *verbatim_files).stdout.decode().split("\n")
     assert texts == [e["text"] for e in ends] + [""], texts
-    plain = [json.loads(line) for line in run("asr", model, "--format", "json", *options, *files).stdout.decode().splitlines()]
-    assert plain == [{"file": f, **{k: v for k, v in end_members(e).items() if k not in ("segments", "tokens")}} for f, e in zip(files, ends)], plain[:2]
+    plain = [json.loads(line) for line in run("asr", model, "--format", "json", *options, *verbatim_files).stdout.decode().splitlines()]
+    assert plain == [{"file": f, **{k: v for k, v in end_members(e).items() if k not in ("segments", "tokens", "untimed")}} for f, e in zip(verbatim_files, ends)], plain[:2]
     if timed:
-        rows = [line.split("\t") for line in run("asr", model, "--timestamps", *options, *files).stdout.decode().splitlines()]
-        want_rows = [[f, f"{s['start']:.3f}", f"{s['end']:.3f}", s["text"]] for f, e in zip(files, ends) for s in e["segments"]]
+        rows = [line.split("\t") for line in run("asr", model, "--timestamps", *options, *verbatim_files).stdout.decode().splitlines()]
+        # A line per segment, or the text with empty times where the model cannot time it.
+        want_rows = [row for f, e in zip(verbatim_files, ends)
+                     for row in ([[f, "", "", e["text"]]] if "untimed" in e else [[f, f"{s['start']:.3f}", f"{s['end']:.3f}", s["text"]] for s in e["segments"]])]
         assert rows == want_rows, (rows[:3], want_rows[:3])
-        timed_json = run("asr", model, "--format", "json", "--timestamps", *options, *files).stdout.decode().splitlines()
-        want_json = [{"file": f, **end_members(e)} for f, e in zip(files, ends)]
+        timed_json = run("asr", model, "--format", "json", "--timestamps", *options, *verbatim_files).stdout.decode().splitlines()
+        want_json = [{"file": f, **end_members(e)} for f, e in zip(verbatim_files, ends)]
         assert [json.loads(line) for line in timed_json] == want_json, timed_json[:1]
     for (f, _, members, languages), e in zip([a for a in asked if a[2]], asked_ends):
         flags = [x for name, value in members.items() for x in ([f"--{name}"] if value is True else [f"--{name}", value])]
@@ -592,7 +598,7 @@ elif info["task"] == "recognition":
         assert got == {"file": f, **end_members(e)} and got.get("languages", []) == languages, (got, languages)
         if members.get("speakers") and vad:
             run("asr", model, "--speakers", "--vad", vad, *options, f, code=2)
-    print(f"asr: {len(files)} files, the worker's texts as text and as JSON with the stop and the dumps' languages"
+    print(f"asr: {len(verbatim_files)} files, the worker's texts as text and as JSON with the stop and the dumps' languages"
           + (", as segments with --timestamps and as JSON with times" if timed else "")
           + f"; {len(asked_ends)} with the flags of their options, --language and --prompt, --decoding or --speakers, as the worker's requests "
           + "with them, --speakers as a line per segment with its speaker")
