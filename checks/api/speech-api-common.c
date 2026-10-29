@@ -137,6 +137,8 @@ int check_quantize_refusals(const char * model_path) {
     const int f32 = !strcmp(speech_model_info_weight_type(info), "F32");
     // Silero VAD's layout keeps every tensor in F32, of which no file of another type is made.
     const int detection = speech_model_info_task(info) == SPEECH_TASK_DETECTION;
+    // Nemotron 3.5 Transcribe alone takes IQ4_NL, and no K-quant.
+    const char * untaken = !strcmp(speech_model_info_architecture(info), "nemotron-transcribe") ? "q4_k" : "iq4_nl";
     speech_model_info_free(info);
     // The folder does not exist, so that no refusal can leave a file behind and a file of F32 weights, which the library
     // quantizes, is refused only when it comes to create its output.
@@ -152,9 +154,10 @@ int check_quantize_refusals(const char * model_path) {
     if (detection) {
         ok &= expect(speech_quantize(model_path, "q8_0", out), SPEECH_ERROR_INVALID_ARGUMENT, "type", "quantizing a model whose layout keeps F32");
     } else if (f32) {
-        ok &= expect(speech_quantize(model_path, "q4_k", out), SPEECH_ERROR_IO, "out_path", "quantizing F32 weights into a folder that is not there");
+        ok &= expect(speech_quantize(model_path, "q8_0", out), SPEECH_ERROR_IO, "out_path", "quantizing F32 weights into a folder that is not there");
+        ok &= expect(speech_quantize(model_path, untaken, out), SPEECH_ERROR_INVALID_ARGUMENT, "type", "quantizing to a type the family does not take");
     } else {
-        ok &= expect(speech_quantize(model_path, "q4_k", out), SPEECH_ERROR_INVALID_ARGUMENT, "model_path",
+        ok &= expect(speech_quantize(model_path, "q8_0", out), SPEECH_ERROR_INVALID_ARGUMENT, "model_path",
                      "quantizing weights that are not F32");
     }
     return ok ? 0 : 1;

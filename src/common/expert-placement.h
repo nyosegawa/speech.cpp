@@ -58,6 +58,8 @@ public:
 
 private:
     int layers_ = 0, held_ = 0;
+    /** The layers that have experts, and those of them whose experts the GPU holds, where the CPU computes some. */
+    int expert_layers_ = 0, held_expert_layers_ = 0;
     std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> cpu_;
     std::unique_ptr<ggml_threadpool, decltype(&ggml_threadpool_free)> pool_;
 };

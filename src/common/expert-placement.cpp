@@ -58,9 +58,15 @@ ExpertPlacement::ExpertPlacement(const ModelFile & m, int layers, uint64_t worki
     ggml_backend_dev_memory(device, &free, &total);
     held_ = expert_layers_on_device(m, layers, working, free, ggml_backend_name(backend), model, loads);
     if (held_ == layers) return;
-    log_message(LogLevel::Warn, model + " computes the experts of " + std::to_string(layers - held_) + " of its " + std::to_string(layers) +
-                                    " layers on the CPU, since " + ggml_backend_name(backend) + " holds those of " + std::to_string(held_) +
-                                    " beside the rest of the model; a GPU with more memory free runs it faster\n");
+    // The layers that have experts, of which the GPU holds those before held_; a model's other layers have none.
+    for (int l = 0; l < layers; l++) {
+        if (m.weight_bytes([&](const std::string & name) { return loads(name) && is_routed_experts(name) && layer_of(name) == l; }) == 0) continue;
+        expert_layers_++;
+        if (l < held_) held_expert_layers_++;
+    }
+    log_message(LogLevel::Warn, model + " computes the experts of " + std::to_string(expert_layers_ - held_expert_layers_) + " of its " +
+                                    std::to_string(expert_layers_) + " layers of experts on the CPU, since " + ggml_backend_name(backend) + " holds those of " +
+                                    std::to_string(held_expert_layers_) + " beside the rest of the model; a GPU with more memory free runs it faster\n");
     cpu_.reset(start_device(find_device("cpu"), threads));
     // A pool that waits between graphs, since the CPU computes a graph of each layer for every row: ggml's threads
     // started for each graph made a row of Drama 3 take 95 ms where the pool takes 58, on an RTX 2080 with an i9-9900K
@@ -78,7 +84,7 @@ ggml_backend_t ExpertPlacement::place(const std::string & name, ggml_backend_t b
 void ExpertPlacement::allow(bool on_cpu) const {
     if (!cpu_ || on_cpu) return;
     throw Error(Fault::OutOfRange,
-                "the GPU holds the experts of " + std::to_string(held_) + " of the model's " + std::to_string(layers_) +
-                    " layers and the CPU computes the rest, which experts_on_cpu false refuses; free the GPU's memory or load the model on a GPU with more",
+                "the GPU holds the experts of " + std::to_string(held_expert_layers_) + " of the model's " + std::to_string(expert_layers_) +
+                    " layers of experts and the CPU computes the rest, which experts_on_cpu false refuses; free the GPU's memory or load the model on a GPU with more",
                 "experts_on_cpu");
 }

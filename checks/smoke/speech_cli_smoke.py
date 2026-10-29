@@ -142,7 +142,7 @@ source = info["source"]
 assert meta["meta"]["general.source.repo_url"] == source["repository"], source
 assert meta["meta"]["general.source.url"] == f"{source['repository']}/tree/{source['revision']}", source
 # general.file_type of each weight type speech.cpp writes, as gguf-py's LlamaFileType numbers it.
-assert {0: "F32", 1: "F16", 7: "Q8_0", 18: "Q6_K", 16: "Q5_K", 14: "Q4_K"}[meta["meta"]["general.file_type"]] == info["weight_type"], info["weight_type"]
+assert {0: "F32", 1: "F16", 7: "Q8_0", 18: "Q6_K", 16: "Q5_K", 14: "Q4_K", 25: "IQ4_NL"}[meta["meta"]["general.file_type"]] == info["weight_type"], info["weight_type"]
 text = run("info", model, "--meta").stdout.decode()
 assert text.splitlines()[0] == info["name"] and f"general.architecture = \"{info['architecture']}\"" in text, text[:300]
 shown = [info[m] for m in identity if m in info] + [source["repository"], source["revision"], info["weight_type"]]
@@ -540,6 +540,9 @@ elif info["task"] == "recognition":
         pcms.append(pcm)
     takes = {o["name"] for o in info["options"]}
     timed = {"timestamps": True} if "timestamps" in takes else {}
+    # The texts of a quantized file come from `speech asr`, which loads the model again: before the worker holds it, so
+    # that a model of half the GPU's memory needs only its own.
+    requests = [dump_requests(speech, model, d, options) for d in dumps]
     w = Worker(speech, model, options)
 
     def worker_end(id, pcm, **members):
@@ -550,7 +553,6 @@ elif info["task"] == "recognition":
         return w.terminal(id, "end")
 
     ends = [worker_end(str(i), pcm, **timed) for i, pcm in enumerate(pcms)]
-    requests = [dump_requests(speech, model, d, options) for d in dumps]
     # The worker's languages of each dump are the ones qwen-asr parsed, and the member is left out where there are none.
     assert [e.get("languages", []) for e in ends] == [r[0][3] for r in requests] and all(e.get("languages") != [] for e in ends), ends
     # The last request of each dump: its language forced and its prompt, or its decoding other than the default, where it

@@ -82,3 +82,10 @@ arithmetic, which differs from the GPU's: the text model's check against the off
 67.9 dB with them on the CPU against 65.4 dB on Metal, in F32. A prompt of 8,000 rows of references takes about a minute
 before the first audio with most experts on the CPU. Every model holds the memory of its largest request from its load
 on, about 2.1 GB beyond its weights on the M5, whatever requests it serves.
+
+A Nemotron 3.5 Transcribe model in IQ4_NL holds 18.2 GB of weights, of which its experts hold 16.5 GB, 0.72 GB a layer.
+On the M5 it holds every expert on the GPU and 18.3 GiB of Metal's memory from its load on, of which 0.8 GB is the keys
+and values of an hour of audio; an hour of noise took it to 18.4 GiB (2026-10-29), the perception module's graphs of a
+window, which it allocates at the first request long enough to fill them. On a GPU of 8 GB it needs 3.6 GB beside its
+experts, which leaves room for the experts of about 5 of its 23 layers of experts. Its language model's check gives
+67.8 dB over the prefill in F32 with the experts on the CPU, as on Metal, whose other layers round more.

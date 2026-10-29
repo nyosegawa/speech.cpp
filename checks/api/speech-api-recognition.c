@@ -1,11 +1,12 @@
 /*
  * The recognition half of speech-api-check: the C API with a recognition model, through the shared libspeech. Loads the
  * model without a warm-up, compares the information read without loading with the loaded model's, refuses each option's
- * values with the category and the option's name, recognizes the audio of each dump of reference/fastconformer/dump.py
- * or reference/qwen3-asr/dump.py and compares the text with the dump's text byte for byte, the stop with the dump's, at
+ * values with the category and the option's name, recognizes the audio of each dump of reference/fastconformer/dump.py,
+ * reference/qwen3-asr/dump.py or reference/nemotron-transcribe/dump.py, the last with the prompt its request gives, and
+ * compares the text with the dump's text byte for byte, the stop with the dump's, at
  * the model's limit where qwen-asr's decoding of a part reached max_new_tokens, and the languages with the one qwen-asr
  * parsed, or those it merged from the parts of an input it split, by their tags, or with none for a dump of
- * FastConformer, which writes no language, gives each its tokens and segments with their times where the model takes
+ * FastConformer or Nemotron 3.5 Transcribe, which write no language, gives each its tokens and segments with their times where the model takes
  * timestamps, recognizes the audio of each dump with the dump's text as its draft where the model takes one and
  * compares the text, recognizes each other request of a Qwen3-ASR dump of an input qwen-asr did not split, with its
  * language forced and with its prompt, recognizes the audio with each decoding other than the model's default and
@@ -198,6 +199,17 @@ static char * json_string_member(const char * json, const char * key) {
     return out;
 }
 
+/**
+ * The string member `key` of the top level of a meta.json that json.dump(indent=1) wrote, where a member of the top
+ * level alone starts a line with one space, which the caller frees, or NULL as json_string_member() gives it.
+ */
+static char * top_level_member(const char * json, const char * key) {
+    char pattern[128];
+    snprintf(pattern, sizeof pattern, "\n \"%s\": ", key);
+    const char * at = strstr(json, pattern);
+    return at ? json_string_member(at, key) : NULL;
+}
+
 /** The index of `item` in a metadata value that is a JSON array of strings without escapes, or -1. */
 static int index_in_array(const char * array, const char * item) {
     char quoted[256];
@@ -215,6 +227,60 @@ static const char * meta_of(const speech_model_info * info, const char * key) {
         if (!strcmp(speech_model_info_meta_key(info, i), key)) return speech_model_info_meta_value(info, i);
     }
     return NULL;
+}
+
+/** Whether `dump` is one of reference/nemotron-transcribe/dump.py, which holds its language model's tokens. */
+static int nemotron_dump(const char * dump) {
+    char path[4096 + 32];
+    snprintf(path, sizeof path, "%s/llm/tokens.npy", dump);
+    return exists(path);
+}
+
+/** The metadata entry `key` that is a string, unquoted, which the caller frees, or NULL. */
+static char * meta_string(const speech_model_info * info, const char * key) {
+    const char * value = meta_of(info, key);
+    if (!value) return NULL;
+    char * object = (char *) malloc(strlen(value) + 16);
+    sprintf(object, "{\"v\": %s}", value);
+    char * out = json_string_member(object, "v");
+    free(object);
+    return out;
+}
+
+/**
+ * The text of a dump of reference/nemotron-transcribe/dump.py and the prompt of the request that asks what it asked, which
+ * the caller frees: no prompt, NULL, for the model card's verbatim instruction, and the terms for its contextual one, as
+ * nemotron-transcribe.prompt names them. The dump's meta.json holds the text the model decoded, which the card's guardrail
+ * leaves as it is in every dump. A dump of another prompt, which no request asks, fails.
+ */
+static int nemotron_request(const speech_model_info * info, const char * dump, char ** text, char ** prompt) {
+    char path[4096 + 16];
+    size_t size = 0;
+    snprintf(path, sizeof path, "%s/meta.json", dump);
+    char * meta = read_whole(path, &size);
+    const char * object = meta ? strstr(meta, "\n \"prompt\": {") : NULL;
+    char * asked = object ? json_string_member(object, "text") : NULL;
+    char * instruction = meta_string(info, "nemotron-transcribe.prompt.instruction");
+    char * before = meta_string(info, "nemotron-transcribe.prompt.context_before");
+    char * after = meta_string(info, "nemotron-transcribe.prompt.context_after");
+    *text = meta ? top_level_member(meta, "text") : NULL;
+    *prompt = NULL;
+    int ok = *text && asked && instruction && before && after;
+    if (ok && strcmp(asked, instruction) != 0) {
+        const size_t n = strlen(asked), b = strlen(before), a = strlen(after);
+        ok = n > b + a && !strncmp(asked, before, b) && !strcmp(asked + n - a, after);
+        if (ok) {
+            *prompt = (char *) calloc(n - b - a + 1, 1);
+            memcpy(*prompt, asked + b, n - b - a);
+        }
+    }
+    if (!ok) fprintf(stderr, "FAIL: %s asks what no request asks, or its meta.json has no text; give the dumps of the verbatim and context prompts\n", dump);
+    free(meta);
+    free(asked);
+    free(instruction);
+    free(before);
+    free(after);
+    return ok ? 0 : 1;
 }
 
 /** The string member `key` of the meta.json in `folder`, which the caller frees, or NULL as json_string_member() gives it. */
@@ -422,7 +488,14 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
         snprintf(path, sizeof path, "%s/text.txt", folder);
         audio[d] = read_audio(dumps[d], &n);
         lengths[d] = n;
-        texts[d] = read_whole(path, &text_size);
+        Asked asked = plain;
+        char * prompt = NULL;
+        if (nemotron_dump(dumps[d])) {
+            if (nemotron_request(info, dumps[d], &texts[d], &prompt) != 0) return 1;
+            asked.prompt = prompt;
+        } else {
+            texts[d] = read_whole(path, &text_size);
+        }
         if (!audio[d] || !texts[d]) {
             fprintf(stderr, "FAIL: %s has no audio.npy of float32 samples or no text.txt\n", dumps[d]);
             return 1;
@@ -438,7 +511,7 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
             fprintf(stderr, "FAIL: %s: qwen-asr parsed a language the model does not name\n", folder);
             return 1;
         }
-        if (recognize(model, audio[d], n, rate, plain, &progress, &text, &languages, &stop) != SPEECH_OK) return fail("speech_transcribe");
+        if (recognize(model, audio[d], n, rate, asked, &progress, &text, &languages, &stop) != SPEECH_OK) return fail("speech_transcribe");
         const int equal = !strcmp(text, texts[d]) && stop == want_stop, same_languages = !strcmp(languages, want_languages);
         printf("%s: %.2f s of audio in %.3f s, text %s, stop %s, languages %s (%s)\n", dumps[d], (double) n / rate, now_seconds() - start,
                equal ? "equal to the dump's" : "DIFFERS", speech_stop_name(stop), same_languages ? "the dump's" : "DIFFER",
@@ -451,7 +524,7 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
         free(want_languages);
         // The same audio with the dump's text as its draft, whose tokens the model checks against those it writes.
         if (speech_model_info_takes(info, SPEECH_OPT_DRAFT)) {
-            Asked drafted = plain;
+            Asked drafted = asked;
             drafted.draft = texts[d];
             if (recognize(model, audio[d], n, rate, drafted, NULL, &text, NULL, NULL) != SPEECH_OK) return fail("speech_transcribe with a draft");
             const int same = !strcmp(text, texts[d]);
@@ -540,6 +613,7 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
             free(text);
             free(want);
         }
+        free(prompt);
         if (texts[d][0] && (shortest < 0 || n < lengths[shortest])) shortest = d;
         if (n > lengths[longest]) longest = d;
     }

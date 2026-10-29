@@ -38,6 +38,9 @@ args = args[:args.index("--")] if "--" in args else args
 speech, model, *dumps = args
 if not dumps:
     raise SystemExit(__doc__)
+# The texts of a quantized file come from `speech asr`, which loads the model again: before the worker holds it, so that
+# a model of half the GPU's memory needs only its own.
+requests = {d: dump_requests(speech, model, d, flags) for d in dumps}
 w = Worker(speech, model, flags)
 info = w.ready["model"]
 defaults = w.ready["defaults"]
@@ -82,7 +85,7 @@ audio, want_text, want_langs = {}, {}, {}
 for d in dumps:
     name = os.path.basename(os.path.normpath(d))
     audio[name] = pcm16(read_npy(os.path.join(d, "audio.npy")))
-    for request, members, want, want_languages in dump_requests(speech, model, d, flags):
+    for request, members, want, want_languages in requests[d]:
         # A language the model only checks is sent too, which must change nothing.
         if request == "auto":
             want_text[name], want_langs[name] = want, want_languages

@@ -94,7 +94,7 @@ speech tts drama-3 --add-voice cast=cast.voice.gguf --voice cast -o scene.wav \
   with an 8 GB GPU. The load says so:
 
   ```
-  Drama 3 computes the experts of 35 of its 40 layers on the CPU, since Vulkan0 holds those of 5 beside the rest of the model; a GPU with more memory free speaks faster
+  Drama 3 computes the experts of 35 of its 40 layers of experts on the CPU, since Vulkan0 holds those of 5 beside the rest of the model; a GPU with more memory free runs it faster
   ```
 
 - **`experts_on_cpu` false** refuses a request to such a model, for a caller that wants the GPU's speed or nothing.
