@@ -32,6 +32,19 @@ struct CodepointRange {
 };
 
 #include "unicode-data.inc"
+#include "unicode-ranges.inc"
+
+template <size_t N>
+bool in_ranges(const CodepointRange (&ranges)[N], uint32_t cp) {
+    size_t lo = 0, hi = N;
+    while (lo < hi) {
+        const size_t mid = (lo + hi) / 2;
+        if (cp < ranges[mid].first) hi = mid;
+        else if (cp > ranges[mid].last) lo = mid + 1;
+        else return true;
+    }
+    return false;
+}
 
 constexpr uint32_t kHangulFirst = 0xAC00, kLeadFirst = 0x1100, kVowelFirst = 0x1161, kTrailFirst = 0x11A7;
 constexpr uint32_t kLeads = 19, kVowels = 21, kTrails = 28, kSyllables = kLeads * kVowels * kTrails;
@@ -139,3 +152,11 @@ bool python_space(uint32_t cp) {
     }
     return false;
 }
+
+bool unicode_letter(uint32_t cp) { return in_ranges(kLetters, cp); }
+bool unicode_number(uint32_t cp) { return in_ranges(kNumbers, cp); }
+bool unicode_mark(uint32_t cp) { return in_ranges(kMarks, cp); }
+bool unicode_space(uint32_t cp) { return in_ranges(kSpaces, cp); }
+bool unicode_upper(uint32_t cp) { return in_ranges(kUppers, cp); }
+bool unicode_lower(uint32_t cp) { return in_ranges(kLowers, cp); }
+bool unicode_other_letter(uint32_t cp) { return in_ranges(kOtherLetters, cp); }

@@ -8,12 +8,13 @@
 #include <string>
 #include <vector>
 
-/** A little-endian float32, float64 or int32 .npy array in C order, as numpy.save writes it. */
+/** A little-endian float32, float64, int32 or uint8 .npy array in C order, as numpy.save writes it. */
 struct Npy {
     std::vector<int64_t> shape;
     std::vector<float> f32;
     std::vector<double> f64;
     std::vector<int32_t> i32;
+    std::vector<uint8_t> u8;
 
     int64_t size() const {
         int64_t n = 1;
@@ -63,8 +64,11 @@ inline Npy read_npy(const std::string & path) {
     } else if (header.find("'<i4'") != std::string::npos) {
         npy.i32.resize(npy.size());
         f.read((char *) npy.i32.data(), npy.size() * 4);
+    } else if (header.find("'|u1'") != std::string::npos) {
+        npy.u8.resize(npy.size());
+        f.read((char *) npy.u8.data(), npy.size());
     } else {
-        throw std::runtime_error(path + " is neither float32, float64 nor int32");
+        throw std::runtime_error(path + " is neither float32, float64, int32 nor uint8");
     }
     if (!f) throw std::runtime_error("cannot read the data of " + path);
     return npy;

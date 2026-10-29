@@ -349,6 +349,12 @@ void ModelFile::upgrade_f32_array(const std::string & key, const std::vector<flo
     gguf_set_arr_data(gguf_.get(), key.c_str(), GGUF_TYPE_FLOAT32, values.data(), values.size());
 }
 
+void ModelFile::upgrade_str_array(const std::string & key, const std::vector<std::string> & values) {
+    std::vector<const char *> data;
+    for (const std::string & v : values) data.push_back(v.c_str());
+    gguf_set_arr_str(gguf_.get(), key.c_str(), data.data(), data.size());
+}
+
 int ModelFile::size(const std::string & key) const {
     const uint32_t value = u32(key);
     if (value == 0 || value > (uint32_t) INT_MAX) {
@@ -412,6 +418,12 @@ std::string ModelFile::one_of(const std::string & key, std::initializer_list<con
     }
     throw file_error("the key " + key + " of " + path_ + " is \"" + value + "\", which " + layout_name() + " does not know; it knows " +
                      joined(known, known.size()) + "; " + remedy_);
+}
+
+std::vector<uint8_t> ModelFile::u8_array(const std::string & key) const {
+    const int64_t id = key_id(key, GGUF_TYPE_ARRAY, GGUF_TYPE_UINT8);
+    const uint8_t * data = (const uint8_t *) gguf_get_arr_data(gguf_.get(), id);
+    return std::vector<uint8_t>(data, data + gguf_get_arr_n(gguf_.get(), id));
 }
 
 std::vector<int32_t> ModelFile::i32_array(const std::string & key) const {

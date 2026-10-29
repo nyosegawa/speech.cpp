@@ -175,7 +175,7 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
             k + "pre_tokenizer is a pattern this release does not split by");
     require(m.boolean(k + "ignore_merges"), m, k + "ignore_merges is false, which this release does not tokenize by");
     const std::string q = p + "prompt.";
-    for (const char * key : {"before_text", "before_audio", "after_audio", "instruction", "context_before", "context_after"}) m.str(q + key);
+    for (const char * key : {"before_text", "before_audio", "after_audio", "instruction", "context_before", "context_after", "speakers"}) m.str(q + key);
     const uint32_t audio_id = m.u32(q + "audio_id");
     require(audio_id >= (uint32_t) vocab && audio_id < (uint32_t) token_count, m, q + "audio_id is not a token after the language model's vocabulary");
     const std::string g = p + "generation.";
@@ -191,7 +191,22 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
     positive(m, c + "rope_base");
     const int upsampling = m.size(c + "upsampling_factor");
     require(std::isfinite(m.f32(c + "residual_scale")), m, c + "residual_scale is not finite");
+    positive(m, c + "norm_eps");
     const int64_t classes = (int64_t) m.str_array(c + "vocabulary").size() + 1;
+    for (const std::string & token : m.str_array(c + "removed_tokens")) require(!token.empty(), m, c + "removed_tokens holds an empty token");
+
+    // The segments of a result with timestamps, and the settings of the alignment that times its words.
+    for (const char * key : {"separators", "breaks"}) {
+        for (const std::string & mark : m.str_array(p + "segment." + key)) require(!mark.empty(), m, p + "segment." + key + " holds an empty mark");
+    }
+    const std::string a = p + "align.";
+    const float speaker_threshold = m.f32(a + "speaker_activity_threshold");
+    require(speaker_threshold >= 0 && speaker_threshold <= 1, m, a + "speaker_activity_threshold is not a probability");
+    const float weight = m.f32(a + "speaker_logprob_weight");
+    require(weight >= 0 && std::isfinite(weight), m, a + "speaker_logprob_weight is negative or not finite");
+    positive(m, a + "maximum_token_len");
+    positive(m, a + "epsilon");
+    m.size(a + "max_word_frames");
 
     // The widths of the feed-forward layers and of the frontend's window have no key: each is the width of one tensor,
     // which the others are checked against.
@@ -268,9 +283,34 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
     return t;
 }
 
+/**
+ * Brings layout 1, the one before, up: layout 2 adds the CTC head's norm eps; the special tokens of the language model's
+ * tokenizer, which the alignment removes from a transcript; the model card's instruction for speaker tags; the marks that
+ * end a segment; and the settings of NeMo's aligner. Layout 1's converter took one checkpoint, whose values these are:
+ * nn.LayerNorm's default eps, which every norm of the head keeps; the tokenizer's all_special_tokens; the card's prompt
+ * of "Who said what, and when"; NeMo's default segment separators and the breaks of languages written without spaces;
+ * and the defaults of MultiSpeakerSOTWordTimestampAligner, which NeMo Speech and NVIDIA's vLLM plugin run.
+ */
+void upgrade(ModelFile & m) {
+    require(m.str("general.name") == "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B", m, "it is a file of layout 1 of another model than NVIDIA-Nemotron-3.5-Transcribe-30B-A4B");
+    m.upgrade_f32(p + "ctc.norm_eps", 1e-5f);
+    m.upgrade_str_array(p + "ctc.removed_tokens", {"<s>", "<|im_end|>", "<unk>", "<|audio|>"});
+    m.upgrade_str(p + "prompt.speakers",
+                  "Transcribe this audio with punctuation and capitalization. Include all spoken words and verbal fillers. Write numbers in their "
+                  "standard written form. Put speaker tags <spk:0> <spk:1> <spk:2> <spk:3> on the transcription.");
+    m.upgrade_str_array(p + "segment.separators", {".", "?", "!"});
+    m.upgrade_str_array(p + "segment.breaks", {"\u3002", "\uFF1F", "\uFF01"});
+    m.upgrade_f32(p + "align.speaker_activity_threshold", 0.5f);
+    m.upgrade_f32(p + "align.speaker_logprob_weight", 1.0f);
+    m.upgrade_f32(p + "align.maximum_token_len", 1.0f);
+    m.upgrade_f32(p + "align.epsilon", 1e-6f);
+    m.upgrade_u32(p + "align.max_word_frames", 12);
+}
+
 }  // namespace
 
-const Layout layout = {"nemotron-transcribe", 1,
-                       "convert it again with reference/nemotron-transcribe/convert.py, or download it again from its Hugging Face repository", tensors};
+const Layout layout = {"nemotron-transcribe", 2,
+                       "convert it again with reference/nemotron-transcribe/convert.py, or download it again from its Hugging Face repository", tensors,
+                       upgrade};
 
 }  // namespace nemotron_transcribe

@@ -23,3 +23,16 @@ std::vector<uint32_t> nfkc(const std::vector<uint32_t> & text, UnicodeVersion ve
 
 /** Whether Python's str.isspace() takes `cp` for whitespace, which str.strip() removes; Python 3.10 and 3.12 agree. */
 bool python_space(uint32_t cp);
+
+/**
+ * The general categories of Unicode 15.0, as Python 3.12's unicodedata.category() gives them and the tokenizers library's
+ * regular expressions match them: letters (L), numbers (N), marks (M), the whitespace of \s, uppercase and titlecase
+ * letters (Lu, Lt), lowercase letters (Ll), and modifier and other letters (Lm, Lo).
+ */
+bool unicode_letter(uint32_t cp);
+bool unicode_number(uint32_t cp);
+bool unicode_mark(uint32_t cp);
+bool unicode_space(uint32_t cp);
+bool unicode_upper(uint32_t cp);
+bool unicode_lower(uint32_t cp);
+bool unicode_other_letter(uint32_t cp);

@@ -12,32 +12,7 @@
 
 namespace {
 
-struct CodepointRange {
-    uint32_t first, last;
-};
-
-#include "unicode-ranges.inc"
-
-template <size_t N>
-bool in_ranges(const CodepointRange (&ranges)[N], uint32_t cp) {
-    size_t lo = 0, hi = N;
-    while (lo < hi) {
-        const size_t mid = (lo + hi) / 2;
-        if (cp < ranges[mid].first) hi = mid;
-        else if (cp > ranges[mid].last) lo = mid + 1;
-        else return true;
-    }
-    return false;
-}
-
-bool is_letter(uint32_t cp) { return in_ranges(kLetters, cp); }
-bool is_number(uint32_t cp) { return in_ranges(kNumbers, cp); }
-bool is_mark(uint32_t cp) { return in_ranges(kMarks, cp); }
-bool is_space(uint32_t cp) { return in_ranges(kSpaces, cp); }
 bool is_crlf(uint32_t cp) { return cp == '\r' || cp == '\n'; }
-bool is_upper(uint32_t cp) { return in_ranges(kUppers, cp); }
-bool is_lower(uint32_t cp) { return in_ranges(kLowers, cp); }
-bool is_other_letter(uint32_t cp) { return in_ranges(kOtherLetters, cp); }
 
 const char * const kQwen2Regex =
     "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
@@ -59,7 +34,7 @@ std::vector<uint32_t> code_points(const std::string & text) {
 size_t match_space(const std::vector<uint32_t> & cps, size_t i) {
     const size_t n = cps.size();
     size_t run = i;
-    while (run < n && is_space(cps[run])) run++;
+    while (run < n && unicode_space(cps[run])) run++;
     // \s*[\r\n]+ : ends after the last \r or \n of the run.
     for (size_t j = run; j > i; j--) {
         if (is_crlf(cps[j - 1])) return j - i;
@@ -79,15 +54,15 @@ size_t match_space(const std::vector<uint32_t> & cps, size_t i) {
 size_t match_nemotron(const std::vector<uint32_t> & cps, size_t i) {
     const size_t n = cps.size();
     // [\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}] and [\p{Ll}\p{Lm}\p{Lo}\p{M}]
-    const auto is_a = [](uint32_t c) { return is_upper(c) || is_other_letter(c) || is_mark(c); };
-    const auto is_b = [](uint32_t c) { return is_lower(c) || is_other_letter(c) || is_mark(c); };
+    const auto is_a = [](uint32_t c) { return unicode_upper(c) || unicode_other_letter(c) || unicode_mark(c); };
+    const auto is_b = [](uint32_t c) { return unicode_lower(c) || unicode_other_letter(c) || unicode_mark(c); };
     const auto run_of = [&](size_t j, auto is) {
         while (j < n && is(cps[j])) j++;
         return j;
     };
     // [^\r\n\p{L}\p{N}]?, taken where it can be and then not.
     std::vector<size_t> starts;
-    if (!is_crlf(cps[i]) && !is_letter(cps[i]) && !is_number(cps[i]) && i + 1 < n) starts.push_back(i + 1);
+    if (!is_crlf(cps[i]) && !unicode_letter(cps[i]) && !unicode_number(cps[i]) && i + 1 < n) starts.push_back(i + 1);
     starts.push_back(i);
     // ...A*B+ : the longest A run that a B run follows, the B run taken whole.
     for (size_t j : starts) {
@@ -102,9 +77,9 @@ size_t match_nemotron(const std::vector<uint32_t> & cps, size_t i) {
         if (a_end > j) return run_of(a_end, is_b) - i;
     }
     // \p{N}
-    if (is_number(cps[i])) return 1;
+    if (unicode_number(cps[i])) return 1;
     // ' ?[^\s\p{L}\p{N}]+[\r\n/]*'
-    const auto is_other = [](uint32_t c) { return !is_space(c) && !is_letter(c) && !is_number(c); };
+    const auto is_other = [](uint32_t c) { return !unicode_space(c) && !unicode_letter(c) && !unicode_number(c); };
     {
         size_t j = i;
         if (cps[j] == ' ' && j + 1 < n && is_other(cps[j + 1])) j++;
@@ -123,8 +98,8 @@ size_t match_at(const std::vector<uint32_t> & cps, size_t i, Qwen2Pattern patter
     const size_t n = cps.size();
     // A run of letters, of letters and marks in Qwen3.5's pattern, and what is neither whitespace, a number nor that.
     const bool marks = pattern == Qwen2Pattern::Qwen35;
-    const auto is_word = [&](uint32_t c) { return is_letter(c) || (marks && is_mark(c)); };
-    const auto is_other = [&](uint32_t c) { return !is_space(c) && !is_number(c) && !is_word(c); };
+    const auto is_word = [&](uint32_t c) { return unicode_letter(c) || (marks && unicode_mark(c)); };
+    const auto is_other = [&](uint32_t c) { return !unicode_space(c) && !unicode_number(c) && !is_word(c); };
     auto lower = [](uint32_t c) { return c < 128 ? (uint32_t) std::tolower((int) c) : c; };
     // (?i:'s|'t|'re|'ve|'m|'ll|'d)
     if (cps[i] == '\'' && i + 1 < n) {
@@ -136,14 +111,14 @@ size_t match_at(const std::vector<uint32_t> & cps, size_t i, Qwen2Pattern patter
     // [^\r\n\p{L}\p{N}]?\p{L}+, or [^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+
     {
         size_t j = i;
-        if (!is_letter(cps[j]) && !is_crlf(cps[j]) && !is_number(cps[j]) && j + 1 < n && is_word(cps[j + 1])) j++;
+        if (!unicode_letter(cps[j]) && !is_crlf(cps[j]) && !unicode_number(cps[j]) && j + 1 < n && is_word(cps[j + 1])) j++;
         if (is_word(cps[j])) {
             while (j < n && is_word(cps[j])) j++;
             return j - i;
         }
     }
     // \p{N}
-    if (is_number(cps[i])) return 1;
+    if (unicode_number(cps[i])) return 1;
     // ' ?[^\s\p{L}\p{N}]+[\r\n]*', or ' ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*'
     {
         size_t j = i;
