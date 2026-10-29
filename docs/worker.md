@@ -104,7 +104,9 @@ out {"type":"cancelled","id":"a"}
   and `stop` (`complete`, `max_seconds` or `model_limit`).
 - `end` of a recognition has `text` and `stop` (`complete`, or `model_limit` when it reached the most tokens the model
   writes, with the text written up to there). It has `languages`, the tags of the languages the model heard in the
-  order of the audio, where there are any (Qwen3-ASR), and `segments` and `tokens` when the request set `timestamps`.
+  order of the audio, where there are any (Qwen3-ASR), `segments` and `tokens` when the request set `timestamps`, and
+  `segments` with each one's `speaker`, a number from 0 or null, when it set `speakers`. Where the model cannot time its
+  text (Nemotron 3.5 Transcribe), it has `untimed`, why, and neither.
 - `end` of `info` has `model`, `end` of `count_tokens` has `tokens`, and `end` of `add_voice` has nothing more.
 - `error` has `code` (an error category, [c-api.md](c-api.md#errors)), `option` (the input it concerns: an option's
   name, `text`, `audio`, `id`, `type`, `seq`, `pcm`, `name`, `path`, `sample_rate` or another member's name, or null)

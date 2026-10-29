@@ -140,10 +140,14 @@ speech asr MODEL [options] AUDIO.wav...|-|--live
 - Recognizes each WAVE file in the order given: 16-, 24- or 32-bit PCM or 32-bit float at any rate, with its channels
   averaged. The library resamples it to the model's rate. Convert other formats first: `ffmpeg -i in.mp3 out.wav`.
 - `text` writes one line per file. With `--timestamps` it writes one line per segment instead,
-  `FILE<TAB>START<TAB>END<TAB>TEXT`, with the times in seconds and three decimals.
+  `FILE<TAB>START<TAB>END<TAB>TEXT`, with the times in seconds and three decimals, and with `--speakers`, for a model
+  that tells who speaks (Nemotron 3.5 Transcribe), `FILE<TAB>START<TAB>END<TAB>SPEAKER<TAB>TEXT`, `SPEAKER` the
+  model's number from 0, or `-` for words before it named one. Where the model cannot time its text, the line has empty
+  times and the whole text, and stderr says why.
 - `json` writes `{"file":…,"text":…,"stop":…}` for each file, with `"languages"` where the model names the languages it
-  heard (Qwen3-ASR), and `"segments"` and `"tokens"` with `--timestamps`, in the form of the worker's `end`
-  ([worker.md](worker.md#answers)).
+  heard (Qwen3-ASR), `"segments"` and `"tokens"` with `--timestamps`, `"segments"` with their `"speaker"` with
+  `--speakers`, and `"untimed"` where the model cannot time its text, in the form of the worker's `end`
+  ([worker.md](worker.md#answers)). `--speakers` takes no `--vad`, whose regions would each number their speakers.
 - stderr reports the load time and, for each file, its seconds of audio, the time to its text and the RTFx. It also
   reports a recognition that stopped at the most tokens the model writes (4096 for Qwen3-ASR); the command then exits
   with 3 once every file's text is written.

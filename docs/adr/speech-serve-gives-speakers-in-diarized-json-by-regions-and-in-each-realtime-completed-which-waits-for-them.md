@@ -40,6 +40,10 @@ times within a region but FastConformer's segments.
   speech.cpp's own `speakers` gives every speaker's parts of it. `known_speaker_names[]` and `known_speaker_references[]`
   are refused, since the model knows no voices. `speech asr --diarize` gives each region of `--vad` its speakers in the
   same way, and for a stream the same events as the server.
+- **A recognition model that tells who speaks answers `diarized_json` by itself**: one recognition of the whole file
+  with the option `speakers`, without a diarization model, its segments those of the result, each with its speaker's
+  label in the order they first speak and that speaker alone in `speakers`, and speech.cpp's own `untimed` where the
+  model cannot time its text. It refuses `chunking_strategy`, whose regions would each number their speakers from 0.
 
 The alternatives were turned down:
 

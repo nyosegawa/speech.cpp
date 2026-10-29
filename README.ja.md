@@ -59,7 +59,7 @@ speech.cpp は、1つのコマンド `speech` と1つの共有ライブラリ `l
 | 認識 | [`reazonspeech-v2`](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) | ja | 何分もある録音の日本語を、句読点つきで認識します |
 | 認識 | [`parakeet-tdt_ctc-0.6b-ja`](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | ja | 短い日本語の発話を速く認識し、時刻も出します |
 | 認識 | [`parakeet-tdt-0.6b-v3`](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) | ヨーロッパの 25 言語 | 言語を自分で判定し、句読点、大文字、時刻つきで認識します |
-| 認識 | [`nemotron-3.5-transcribe`](https://huggingface.co/sakasegawa/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF) | 40 言語 | 話したとおりに、言いよどみも含めて書き起こし、1 時間までの音声を一度に認識し、人名や用語のプロンプトを受け付けます。ファイルは 19.0 GB です |
+| 認識 | [`nemotron-3.5-transcribe`](https://huggingface.co/sakasegawa/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF) | 40 言語 | 話したとおりに、言いよどみも含めて書き起こし、1 時間までの音声を一度に認識し、人名や用語のプロンプトを受け付けます。誰が話したかと、単語ごとの時刻も出せます。ファイルは 19.0 GB です |
 | 検出 | [`silero-vad`](https://huggingface.co/sakasegawa/silero-vad-GGUF) | どの言語でも | 人が話している区間を見つけ、認識モデルに発話を1つずつ渡します。1.2 MB です |
 | 話者分離 | [`nemotron-3-diarization`](https://huggingface.co/sakasegawa/Nemotron-3-Diarization-GGUF) | どの言語でも | 録音の中で、または音声が届くそばから、誰がいつ話したかを見つけます。話者は8人までです。106 MB です |
 
@@ -129,6 +129,7 @@ speech voice irodori-tts-mf me.wav me.voice.gguf
 speech tts irodori-tts-mf --add-voice me=me.voice.gguf --voice me -o - < story.txt | ffplay -nodisp -autoexit -
 speech asr reazonspeech-v2 --timestamps meeting.wav
 speech asr qwen3-asr-1.7b --language ja --prompt "Claude Code、渋谷" meeting.wav
+speech asr nemotron-3.5-transcribe --speakers meeting.wav
 speech asr reazonspeech-v2 --vad silero-vad --live
 speech vad silero-vad --max-speech-duration-s 10 meeting.wav
 ```

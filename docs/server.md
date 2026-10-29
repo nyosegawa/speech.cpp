@@ -142,16 +142,19 @@ OpenAI's limit.
 | `file` | the audio, required: a WAV file, 16-, 24- or 32-bit PCM or 32-bit float at any rate, its channels averaged and resampled to the model's rate. Any other file is refused with a 400 (`param` `file`); convert it first (`ffmpeg -i in.mp3 out.wav`) |
 | `model` | the recognition model's `id`, or left out; any other model is a 404 (`model_not_found`) |
 | `language` | a tag of one of the model's languages, or `auto` (the default) |
-| `prompt` | what the model is told of the audio before it hears it, for a model that takes it (Qwen3-ASR) |
-| `response_format` | `json` (the default), which answers `{"text":"..."}`; `text`, the text alone as `text/plain`; `verbose_json` (below); or `diarized_json`, with `chunking_strategy`, each region with its speakers ([below](#speakers)). `srt` and `vtt` are refused: speech.cpp gives no subtitles |
-| `timestamp_granularities[]` | `segment`, with `verbose_json`; a model that gives no times refuses it. `word` is refused |
+| `prompt` | what the model is told of the audio before it hears it, for a model that takes it (Qwen3-ASR, Nemotron 3.5 Transcribe) |
+| `response_format` | `json` (the default), which answers `{"text":"..."}`; `text`, the text alone as `text/plain`; `verbose_json` (below); or `diarized_json`, with `chunking_strategy` each region with its speakers, or from a model that tells who speaks its own segments ([below](#speakers)). `srt` and `vtt` are refused: speech.cpp gives no subtitles |
+| `timestamp_granularities[]` | `segment`, `word` or both, with `verbose_json`; a model that gives no times refuses it |
 | `decoding` | speech.cpp's own: `beam` (the default) or `greedy`, for a model that takes it (reazonspeech-nemo-v2) |
 | `chunking_strategy` | `auto`, or OpenAI's `server_vad` object: recognize each region where the detection model finds that someone speaks (below) |
 
 `verbose_json` answers `{"task":"transcribe","language":…,"duration":…,"text":…,"segments":[{"id":0,"start":…,"end":…,"text":…}]}`.
 `duration` is the file's length in seconds. `language` is the tag of the language Qwen3-ASR heard (`ja`, or `ja,en` for a
-long recording in several), and is left out by FastConformer, which names none. `segments` come from a model that gives
-times (FastConformer). Members the recognizers have no value for are left out.
+long recording in several), and is left out by a model that names none. `segments` come from a model that gives times
+(FastConformer, Nemotron 3.5 Transcribe), and with the granularity `word`, `words`, `[{"word":…,"start":…,"end":…}]`:
+the words of the text, each Japanese or Chinese character a word of its own. Where Nemotron 3.5 Transcribe cannot time
+its text, speech.cpp's own `untimed` says why, and there are neither. Members the recognizers have no value for are
+left out.
 
 Every answer carries `X-Speech-Stop`: `complete`, or `model_limit` when the model reached the most tokens it writes, with
 the text written up to there. OpenAI's other members (`temperature`, `stream`, `include[]` and the rest) are refused with
@@ -220,6 +223,16 @@ know; a label does not name a person. A segment's `speaker` is the one who speak
 the diarization finds no one, and speech.cpp's own `speakers` gives each speaker's parts of the region, in seconds of
 the file, two at once where they overlap. Without `chunking_strategy` the request is a 400 (`param`
 `chunking_strategy`), and a server without a diarization model answers a 400 that says to give it one.
+
+A recognition model that tells who speaks itself, Nemotron 3.5 Transcribe, answers `diarized_json` without a
+diarization model and without `chunking_strategy`, which it refuses: it recognizes the whole file with `speakers`, and
+each of its segments, cut where the speaker changes or a sentence ends, carries its speaker, labeled the same way, and
+that speaker alone in `speakers`. Where it cannot time its text, `segments` is empty and `untimed` says why.
+
+```sh
+speech serve nemotron-3.5-transcribe
+curl http://127.0.0.1:8080/v1/audio/transcriptions -F file=@meeting.wav -F response_format=diarized_json
+```
 
 ## Realtime transcription
 

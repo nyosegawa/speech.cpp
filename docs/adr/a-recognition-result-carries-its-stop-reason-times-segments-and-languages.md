@@ -56,8 +56,10 @@ of codes, empty where no language was detected.
   parts of long audio gave several, their tags joined with commas in order, as qwen-asr joins their names; left out
   where the list is empty, as the members of OpenAI's segment without a value are. `verbose_json` sets `timestamps` only
   for a model that gives times, or when the request names a granularity, so a model that gives none answers it without
-  segments, which OpenAI's schema does not require, and refuses a granularity named. `json` and `text` carry the text
-  alone.
+  segments, which OpenAI's schema does not require, and refuses a granularity named. Its `word` granularity gives words
+  made of the tokens: a word starts with a token that begins with whitespace, and each token of a script written
+  without spaces is a word of its own, as Nemotron 3.5 Transcribe's alignment gives a Japanese text's characters.
+  `json` and `text` carry the text alone.
 
 The alternatives were turned down:
 
@@ -78,6 +80,7 @@ The alternatives were turned down:
   an upgrade of every file of the current one to supply it.
 - The name in `verbose_json` as Whisper writes it (`japanese`), as OpenAI's example does. No request takes that form,
   and Qwen3-ASR's names are not Whisper's for every language (`Filipino`, where Whisper writes `tagalog`).
+- The tokens themselves as `verbose_json`'s words. A transducer's tokens are pieces of words.
 - `""` in `verbose_json` for no language, which the schema's required member would have. It names no language, and a
   client cannot tell it from one.
 - `languages` in the `json` answer, as `gpt-transcribe`'s carries it. Given by every model, a FastConformer answer's
