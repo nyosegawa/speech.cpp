@@ -362,12 +362,13 @@ else:
                   f"{len(set(s['speaker'] for s in segments))} labels joining into the expected text"
                   + (f", no times: {diarized['untimed']}" if "untimed" in diarized else ""))
             continue
-        [(_, _, want, _)] = [r for r in requests if r[0] == "auto"]
-        if want and not first:
+        # The request of the dump's own prompt, as a Nemotron 3.5 Transcribe dump of the contextual instruction holds it.
+        [(_, auto, want, _)] = [r for r in requests if r[0] == "auto"]
+        if want and not first and not auto:
             first = (wav, want, samples)
-        status, headers, body = transcribe([("model", info["name"])], [("file", name + ".wav", wav)])
+        status, headers, body = transcribe([("model", info["name"]), *auto.items()], [("file", name + ".wav", wav)])
         assert status == 200 and json.loads(body) == {"text": want} and headers["x-speech-stop"] == "complete", (name, body)
-        status, headers, body = transcribe([("response_format", "text")], [("file", name + ".wav", wav)])
+        status, headers, body = transcribe([("response_format", "text"), *auto.items()], [("file", name + ".wav", wav)])
         assert status == 200 and headers["content-type"].startswith("text/plain") and body.decode() == want, (name, body)
         # verbose_json carries the language the model heard, the tags joined with commas, and leaves it out where there is
         # none; it carries segments where the model gives times, whose granularity is OpenAI's default.
@@ -385,8 +386,8 @@ else:
             assert abs(verbose["duration"] - len(samples) / rate) < 1e-9, verbose["duration"]
             if request == "auto":
                 plain_verbose = verbose
-        verbose_form = [("response_format", "verbose_json"), ("timestamp_granularities[]", "segment")]
-        words_form = [("response_format", "verbose_json"), ("timestamp_granularities[]", "word")]
+        verbose_form = [("response_format", "verbose_json"), ("timestamp_granularities[]", "segment"), *auto.items()]
+        words_form = [("response_format", "verbose_json"), ("timestamp_granularities[]", "word"), *auto.items()]
         if "timestamps" not in takes:
             expect_error(transcribe(verbose_form, [("file", name + ".wav", wav)]), 400, "unsupported_parameter", "timestamps",
                          f"{name}: a segment granularity to a model without timestamps")
