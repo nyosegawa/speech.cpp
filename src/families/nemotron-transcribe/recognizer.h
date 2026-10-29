@@ -70,8 +70,8 @@ public:
 
     /**
      * Recognizes mono samples at sample_rate(). `progress` hears how far the work has come, from 0 to 1: the perception
-     * module's windows a third, the prefill a third and the tokens written, as a share of the context, the rest; false
-     * stops the work, and what it returns is then none. Audio longer than the model takes, and a request whose prompt
+     * module's windows a third, the prefill's blocks a third and the tokens written, as a share of the context, the
+     * rest; false stops the work at the next window, block or token, and what it returns is then none. Audio longer than the model takes, and a request whose prompt
      * with the audio leaves the model no room to write, are refused before any work, out of range naming the audio or
      * the option prompt.
      */

@@ -3,7 +3,9 @@
 // contextual one with the request's terms: the prompt's ids; then the dump's audio with every stage ours, each step's
 // logits at the dump's 16 largest against the dump's, and the ids and the text it writes. Where a greedy choice of ours
 // differs from the dump's, the check takes it for the arithmetic's when the dump's margin between the two tokens is
-// within the sum of our errors on their two logits, and for a defect otherwise, and compares no later step. The logits
+// within twice the largest of our errors on the step's 14 other logits, which bounds what rounding moves either of the
+// two by, and for a defect otherwise, and compares no later step. A prompt of more than one block of rows reports its
+// progress after each block, and a recognition that stops at the first such report ends before it decodes. The logits
 // are compared but bound nothing: where two experts of a MoE layer score within float32's rounding of each other, the
 // port may take the other, as the decoder check counts such rows, and the row's output then departs by the difference
 // of the two experts, which every later layer and step carries. On the quiet input of reference/nemotron-transcribe,
@@ -73,8 +75,12 @@ struct Steps {
             if (top_ids.i32[i * k + j] == want) at_want = j;
             if (top_ids.i32[i * k + j] == got) at_got = j;
         }
-        const bool explained = at_want < k && at_got < k &&
-                               theirs[at_want] - theirs[at_got] <= std::fabs(ours[at_want] - theirs[at_want]) + std::fabs(ours[at_got] - theirs[at_got]);
+        // The error of the two logits themselves always covers the margin a swap of them makes; the step's others do not.
+        float others = 0;
+        for (size_t j = 0; j < k; j++) {
+            if (j != at_want && j != at_got) others = std::max(others, std::fabs(ours[j] - theirs[j]));
+        }
+        const bool explained = at_want < k && at_got < k && theirs[at_want] - theirs[at_got] <= 2 * others;
         if (!explained) unexplained++;
         std::printf("    step %zu: ours %d where the dump's is %d, margin %.4f, %s\n", i, got, want,
                     at_got < k ? theirs[at_want] - theirs[at_got] : NAN, explained ? "within our error on the two logits" : "UNEXPLAINED");
@@ -99,7 +105,7 @@ int main(int argc, char ** argv) {
         std::printf("device: %s\n", ggml_backend_name(backend));
         bool ok = true;
         double worst_snr = INFINITY;
-        size_t checked = 0;
+        size_t checked = 0, stops = 0;
         {
             Recognizer recognizer(args[1], backend);
             const ModelFile & m = recognizer.model();
@@ -134,7 +140,11 @@ int main(int argc, char ** argv) {
                     const size_t i = report.ids.size();
                     if (i < tokens.i32.size()) steps.add(i, logits, top_ids, top, tokens.i32[i]);
                 };
-                const Recognition got = *recognizer.recognize(audio.f32, RecognitionRequest{*context}, {}, &report);
+                std::vector<double> reports;
+                const Recognition got = *recognizer.recognize(audio.f32, RecognitionRequest{*context}, [&](double done) {
+                    reports.push_back(done);
+                    return true;
+                }, &report);
                 const bool same_ids = report.ids == tokens.i32;
                 const std::string want = guardrail.apply(meta.member("text")->text);
                 std::printf("  %-32s %zu of %zu steps ours, top logits' worst SNR %.1f dB, max |diff| %.2e\n", "greedy decoding",
@@ -145,11 +155,23 @@ int main(int argc, char ** argv) {
                 std::printf("  %-32s perception %.1f s, prefill %.1f s of %lld rows, decoding %.1f s\n", "time", report.perception, report.prefill,
                             (long long) report.prompt_rows, report.decode);
                 worst_snr = std::min(worst_snr, steps.worst_snr);
+                const auto within_prefill = [](double done) { return done > 1.0 / 3 + 1e-9 && done < 2.0 / 3 - 1e-9; };
+                const size_t between = (size_t) std::count_if(reports.begin(), reports.end(), within_prefill);
+                if (between > 0) {
+                    RecognitionReport stopped;
+                    const bool none = !recognizer.recognize(audio.f32, RecognitionRequest{*context}, [&](double done) { return !within_prefill(done); }, &stopped);
+                    const bool before_decoding = none && stopped.ids.empty();
+                    std::printf("  %-32s %zu reports between the prefill's blocks; stopped at the first %s\n", "prefill", between,
+                                before_decoding ? "before decoding" : "AFTER IT DECODED");
+                    stops++;
+                    ok = ok && before_decoding;
+                }
                 // A choice the arithmetic explains leaves the rest of the decoding to differ; the text is then not compared.
                 ok = ok && steps.unexplained == 0 && (steps.differ > 0 || (same_ids && got.text == want));
             }
         }
-        ok = ok && checked > 0;
+        // The meeting's prompt runs to more than one block of rows.
+        ok = ok && checked > 0 && stops > 0;
         std::printf("%s: %zu dumps, every choice the dump's or within the arithmetic's error of it, steps' top logits SNR %.1f dB\n", ok ? "OK" : "FAIL",
                     checked, worst_snr);
         ggml_backend_free(backend);

@@ -110,10 +110,11 @@ std::optional<Recognition> Recognizer::recognize(const std::vector<float> & samp
     std::vector<float> last;
     {
         Timer t{&r.prefill};
-        const std::vector<float> out = language_model_.run(input, rows);
+        const std::vector<float> out =
+            language_model_.run(input, rows, nullptr, [&](int64_t done) { return !progress || progress((1 + (double) done / (double) rows) / 3); });
+        if (out.empty()) return std::nullopt;
         last.assign(out.end() - h, out.end());
     }
-    if (progress && !progress(2.0 / 3)) return std::nullopt;
 
     Recognition result;
     {

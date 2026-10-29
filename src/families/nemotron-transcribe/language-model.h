@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -61,9 +62,11 @@ public:
 
     /**
      * Runs `n` rows of input `x`, [hidden, n], after n_past() through the layers, and returns the last layer's output.
-     * `stages`, when given, receives what each layer computed.
+     * `stages`, when given, receives what each layer computed. `proceed`, when given, hears the rows run so far after
+     * each block of them; false stops the run, which then returns no rows.
      */
-    std::vector<float> run(const std::vector<float> & x, int64_t n, LanguageModelStages * stages = nullptr);
+    std::vector<float> run(const std::vector<float> & x, int64_t n, LanguageModelStages * stages = nullptr,
+                           const std::function<bool(int64_t done)> & proceed = {});
 
     /** The head's logits of `hidden`, [hidden] the last layer's output of a row, after the final norm, over the vocabulary. */
     std::vector<float> logits(const std::vector<float> & hidden);

@@ -223,7 +223,8 @@ std::vector<float> LanguageModel::embed(const std::vector<int32_t> & ids) {
     return Graph::read(e);
 }
 
-std::vector<float> LanguageModel::run(const std::vector<float> & input, int64_t n, LanguageModelStages * stages) {
+std::vector<float> LanguageModel::run(const std::vector<float> & input, int64_t n, LanguageModelStages * stages,
+                                      const std::function<bool(int64_t done)> & proceed) {
     if (n < 1 || (int64_t) input.size() != n * h_) throw std::invalid_argument("the language model takes an input of each row");
     if (n_past_ + n > capacity_) throw std::invalid_argument("the language model's rows outgrow the sequence it was started for");
     const int count = last_ - first_;
@@ -253,6 +254,7 @@ std::vector<float> LanguageModel::run(const std::vector<float> & input, int64_t 
         const std::vector<float> y = Graph::read(x);
         out.insert(out.end(), y.begin(), y.end());
         n_past_ += rows;
+        if (proceed && !proceed(from + rows)) return {};
     }
     return out;
 }
