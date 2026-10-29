@@ -188,7 +188,7 @@
       "repository": "sakasegawa/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
       "type": "iq4_nl",
       "start": [],
-      "revision": "c5985ae0f63946a01f93c537bca43ae47935a577",
+      "revision": "cf5239e0e20416a45b5b1c30955c8a0cf457addb",
       "task": "recognition",
       "languages": ["ar", "bg", "bn", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "he", "hi", "hr", "hu", "id", "it", "ja", "ko", "lt", "lv", "mr", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "ta", "te", "th", "tl", "tr", "uk", "vi", "zh"],
       "voice_files": false,
