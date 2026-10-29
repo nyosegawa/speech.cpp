@@ -184,6 +184,21 @@
       ]
     },
     {
+      "name": "nemotron-3.5-transcribe",
+      "repository": "sakasegawa/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
+      "type": "iq4_nl",
+      "start": [],
+      "revision": "c5985ae0f63946a01f93c537bca43ae47935a577",
+      "task": "recognition",
+      "languages": ["ar", "bg", "bn", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "he", "hi", "hr", "hu", "id", "it", "ja", "ko", "lt", "lv", "mr", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "ta", "te", "th", "tl", "tr", "uk", "vi", "zh"],
+      "voice_files": false,
+      "files": [
+        {"type": "iq4_nl", "file": "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-IQ4_NL.gguf", "size": 18997225856, "sha256": "9688cee08c96ee0f54c0cc1cb07856307a79097fb0088cdb8fb31de6dd26c2be"},
+        {"type": "f16", "file": "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-F16.gguf", "size": 67422535296, "sha256": "b99a4737eba6efc5d2d56eb294e90ee04b643a87f5e10bd8bbfda7b677ff3bc4"},
+        {"type": "q8_0", "file": "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Q8_0.gguf", "size": 35840811776, "sha256": "d348a74dad222c96f1b6c7f6a117ede9d56fbc01cfa57c4b54606934e9b1deec"}
+      ]
+    },
+    {
       "name": "silero-vad",
       "repository": "sakasegawa/silero-vad-GGUF",
       "type": "f32",

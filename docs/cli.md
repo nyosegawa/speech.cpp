@@ -341,14 +341,14 @@ The table below is what a pipe or a file gets. On a terminal the list groups the
 with a check, and gives a model's languages once, on its own type's row, cut to the terminal's width.
 
 ```
-NAME                           TYPE  SIZE     FETCHED  TASK         LANGUAGES
-qwen3-tts-0.6b                 q8_0  1.21 GB  no       synthesis    de en es fr it ja ko pt ru zh
-qwen3-tts-0.6b:q6_k            q6_k  0.99 GB  no       synthesis    de en es fr it ja ko pt ru zh
-qwen3-tts-0.6b:q5_k            q5_k  0.87 GB  no       synthesis    de en es fr it ja ko pt ru zh
-qwen3-tts-0.6b:q4_k            q4_k  0.76 GB  no       synthesis    de en es fr it ja ko pt ru zh
+NAME                           TYPE    SIZE     FETCHED  TASK         LANGUAGES
+qwen3-tts-0.6b                 q8_0    1.21 GB  no       synthesis    de en es fr it ja ko pt ru zh
+qwen3-tts-0.6b:q6_k            q6_k    0.99 GB  no       synthesis    de en es fr it ja ko pt ru zh
+qwen3-tts-0.6b:q5_k            q5_k    0.87 GB  no       synthesis    de en es fr it ja ko pt ru zh
+qwen3-tts-0.6b:q4_k            q4_k    0.76 GB  no       synthesis    de en es fr it ja ko pt ru zh
 ...
-reazonspeech-v2                q8_0  0.66 GB  no       recognition  ja
-reazonspeech-v2:f16            f16   1.24 GB  no       recognition  ja
+reazonspeech-v2                q8_0    0.66 GB  no       recognition  ja
+reazonspeech-v2:f16            f16     1.24 GB  no       recognition  ja
 ...
 
 The model to start with for each language:

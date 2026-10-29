@@ -30,6 +30,15 @@ std::string padded(const std::string & s, size_t width) {
     return s.size() >= width ? s + "  " : s + std::string(width - s.size(), ' ');
 }
 
+/** The width of the column of types: the longest type and two spaces. */
+size_t type_width() {
+    size_t width = 4;
+    for (const CatalogModel & m : catalog()) {
+        for (const CatalogFile & f : m.files) width = std::max(width, f.type.size());
+    }
+    return width + 2;
+}
+
 std::string joined(const std::vector<std::string> & items) {
     std::string out;
     for (size_t i = 0; i < items.size(); i++) out += (i ? " " : "") + items[i];
@@ -77,9 +86,9 @@ std::string drawn_listing(FILE * out, size_t width) {
                 const std::string fetched = p.whole ? paint(Color::Mint, "\xE2\x9C\x93", out) + "   "
                                             : p.partial ? paint(Color::Peach, share, out) + std::string(4 - std::min<size_t>(share.size(), 3), ' ')
                                                         : paint(Color::Gray, "-", out) + "   ";
-                const std::string row = "  " + paint(own ? Color::Bold : Color::Gray, padded(choice_name({&m, &f}), width), out) + padded(f.type, 6) +
-                                        padded(gigabytes(f.size), 10) + fetched;
-                const size_t used = 2 + width + 6 + 10 + 4;
+                const std::string row = "  " + paint(own ? Color::Bold : Color::Gray, padded(choice_name({&m, &f}), width), out) +
+                                        padded(f.type, type_width()) + padded(gigabytes(f.size), 10) + fetched;
+                const size_t used = 2 + width + type_width() + 10 + 4;
                 std::string line = row + (own && columns > used + 8 ? fitted(m.languages, columns - used - 1) : "");
                 while (!line.empty() && line.back() == ' ') line.pop_back();
                 text += line + "\n";
@@ -124,12 +133,12 @@ int run_models(const CommandLine & line, FILE * out) {
         return 0;
     }
     std::string text = "The models of speech.cpp " + std::string(speech_version()) + ", fetched into " + model_dir().u8string() + "\n\n" +
-                       padded("NAME", width) + "TYPE  SIZE     FETCHED  TASK         LANGUAGES\n";
+                       padded("NAME", width) + padded("TYPE", type_width()) + "SIZE     FETCHED  TASK         LANGUAGES\n";
     for (const CatalogModel & m : catalog()) {
         for (const CatalogFile & f : m.files) {
             const Presence p = presence({&m, &f});
             const std::string fetched = p.whole ? "yes" : p.partial ? std::to_string(p.partial * 100 / f.size) + "%" : "no";
-            text += padded(choice_name({&m, &f}), width) + padded(f.type, 6) + padded(gigabytes(f.size), 9) + padded(fetched, 9) + padded(m.task, 13) +
+            text += padded(choice_name({&m, &f}), width) + padded(f.type, type_width()) + padded(gigabytes(f.size), 9) + padded(fetched, 9) + padded(m.task, 13) +
                     joined(m.languages) + "\n";
         }
     }
