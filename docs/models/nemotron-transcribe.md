@@ -87,10 +87,29 @@ Japanese test set, trimmed to the voice, with the CER accepting other spellings 
 
 | Type | File | FLEURS ja CER | Common Voice ja CER | FLEURS en WER | The GPU's memory | RTFx, FLEURS ja |
 |---|---|---|---|---|---|---|
-| F16 | 67.4 GB | 6.05% / 2.64% | CVF16 | 8.73% | 61.6 GiB | 17 |
-| Q8_0 | 35.8 GB | 5.86% / 2.64% | CVQ8 | 8.64% | 33.4 GiB | 23 |
-| IQ4_NL | 19.0 GB | 5.88% / 2.62% | CVIQ4 | 8.77% | 18.4 GiB | 24 |
+| F16 | 67.4 GB | 6.05% / 2.64% | 8.85% / 5.06% | 8.73% | 61.6 GiB | 17 |
+| Q8_0 | 35.8 GB | 5.86% / 2.64% | 9.01% / 5.17% | 8.64% | 33.4 GiB | 23 |
+| IQ4_NL | 19.0 GB | 5.88% / 2.62% | 9.16% / 5.33% | 8.77% | 18.4 GiB | 24 |
+
+On an Apple M5 with Metal, the IQ4_NL file gives 6.11% / 2.82% on FLEURS ja, 11.71% / 5.47% on the first 100 utterances
+of Common Voice ja, as on the H100, and 8.68% on FLEURS en.
 
 ## Speed
 
-SPEED
+speech-bench on 2026-10-29, one utterance at a time through the worker, IQ4_NL: the first 100 utterances of FLEURS's
+Japanese and English test sets and of Common Voice 8.0's Japanese test set, trimmed to the voice. The RTFx is the
+seconds of audio over the seconds they took, so larger is faster; the memory is the process's on the M5, whose GPU
+shares it, and the GPU's on the H100. A recognition writes a token at a time, so a short utterance with many words takes
+longest for its length.
+
+| Device | p50 latency, FLEURS ja / CV ja / FLEURS en | RTFx, FLEURS ja / CV ja / FLEURS en | Memory | Load |
+|---|---|---|---|---|
+| Apple M5 (32 GB), Metal | 1.29 s / 0.61 s / 0.88 s | 7.0 / 5.4 / 8.5 | 17.2 GiB | 5 to 6 s |
+| H100 (80 GB), Vulkan | 0.39 s / 0.22 s / 0.29 s | 24 / 13 / 26 | 18.4 GiB | 7 s |
+
+On an RTX 2080 (8 GB) with Vulkan and an i9-9900K, which leaves the experts of 18 of the 23 layers to the CPU,
+`speech asr` wrote 9 s of English in 3.2 s and a 98 s meeting in 46 s, RTFx 2.8 and 2.1, with 6.1 GiB of the GPU's
+memory and 13 GB of the CPU's for the experts, after a load of 40 to 48 s.
+
+The first request after a GPU's driver first meets the model, after an install or a driver update, also waits for its
+shaders to compile: 5 to 11 s on the H100.

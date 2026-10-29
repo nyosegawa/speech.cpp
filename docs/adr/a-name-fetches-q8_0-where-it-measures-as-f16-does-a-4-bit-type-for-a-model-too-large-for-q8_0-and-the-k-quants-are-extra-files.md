@@ -1,4 +1,4 @@
-# A name fetches Q8_0 where it measures as F16 does, Q4_K for a model too large for Q8_0, and the K-quants are extra files
+# A name fetches Q8_0 where it measures as F16 does, a 4-bit type for a model too large for Q8_0, and the K-quants are extra files
 
 ## Context
 
@@ -19,6 +19,10 @@ GPU that holds part of the model computes the experts of the other layers on the
 H100 with Vulkan on 2026-10-16, the same 20 sentences with seeds 1, 2 and 3 in a voice file of one reference, as
 Qwen3-ASR 1.7B hears them, gave F16 1.16, 1.00 and 1.16%, Q8_0 1.00, 1.16 and 1.82%, and Q4_K 1.33, 1.82 and 1.33%;
 Q4_K spoke as fast as Q8_0 (RTFx 2.4 to 2.6 against 2.5) in 21.7 GiB of the GPU's memory against 38.2 GiB.
+Nemotron 3.5 Transcribe, a recognizer of 30B parameters whose rows no K-quant holds, is 35.8 GB in Q8_0 and 19.0 GB in
+IQ4_NL; on the whole of Common Voice 8.0's Japanese test set on an H100 with Vulkan on 2026-10-29, IQ4_NL gave a CER of
+9.16% and 5.33% accepting other spellings, against Q8_0's 9.01% and 5.17%, at the same speed in 18.4 GiB of the GPU's
+memory against 33.4 GiB.
 
 ## Decision
 
@@ -28,11 +32,14 @@ Q4_K spoke as fast as Q8_0 (RTFx 2.4 to 2.6 against 2.5) in 21.7 GiB of the GPU'
   within the range of F16's seeds. reazonspeech-v2 and parakeet-tdt_ctc-0.6b-ja fetch Q8_0; parakeet-tdt-0.6b-v3 and
   both Irodori-TTS models fetch F16. Qwen3-TTS and Qwen3-ASR fetch Q8_0, and their repositories hold no F16
   file to measure it against.
-- **A model whose Q8_0 file a machine with 32 GB cannot hold on its GPU fetches Q4_K, where Q4_K's CER over three seeds
-  lies within the range of Q8_0's seeds.** Drama 3 fetches Q4_K.
-- **Q6_K, Q5_K and Q4_K are extra files** of every model but Silero VAD, published with their size, memory and measured
-  accuracy on the model card and the family's page, and never what a name alone fetches, even where they measure as
-  well as Q8_0, but for Q4_K of a model too large for Q8_0: `NAME:TYPE` asks for one.
+- **A model whose Q8_0 file a machine with 32 GB cannot hold on its GPU fetches its 4-bit type, Q4_K or, where the
+  family has no K-quant, IQ4_NL, where it measures as Q8_0 does**: for a synthesis model its CER over three seeds lies
+  within the range of Q8_0's seeds, and for a recognizer it is within 0.2 points of Q8_0's error rates as above. Drama 3
+  fetches Q4_K, and Nemotron 3.5 Transcribe IQ4_NL.
+- **Q6_K, Q5_K and Q4_K are extra files** of every model but Silero VAD and Nemotron 3.5 Transcribe, published with
+  their size, memory and measured accuracy on the model card and the family's page, and never what a name alone fetches,
+  even where they measure as well as Q8_0, but for the 4-bit type of a model too large for Q8_0: `NAME:TYPE` asks for
+  one.
 - **Every type is published, the ones that measure worse included**, with their numbers, so that a user who needs the
   memory chooses knowing the cost.
 

@@ -221,8 +221,10 @@ utterances; parakeet-tdt-0.6b-v3 on 300 English utterances of FLEURS, three roun
 | `qwen3-asr-0.6b`, Q8_0 | 11.9% (7.0%) | 0.107 s / 0.072 s |
 | `qwen3-asr-1.7b`, Q8_0 | 9.5% (4.7%) | 0.257 s / 0.140 s |
 | `parakeet-tdt-0.6b-v3`, F16 | WER 8.8% on FLEURS en | 0.058 s / 0.095 s |
+| `nemotron-3.5-transcribe`, IQ4_NL | 9.2% (5.3%) | 0.61 s / - |
 
-Each model's page has more.
+Nemotron 3.5 Transcribe was measured on 2026-10-29: its CER on an H100 with Vulkan, and its latency on the M5 over the
+first 100 utterances. Each model's page has more.
 
 ## Documentation
 
