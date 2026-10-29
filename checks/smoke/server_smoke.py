@@ -82,9 +82,39 @@ speech, model, *dumps = args
 added = [o.split("=", 1)[0] for i, o in enumerate(options) if i > 0 and options[i - 1] == "--add-voice"]
 load = [o for i, o in enumerate(options) if o in ("--device", "--threads") or (i and options[i - 1] in ("--device", "--threads"))]
 ORIGIN = "http://localhost:5173"
+SERVER_VAD = ([("chunking_strategy[type]", "server_vad"), ("chunking_strategy[threshold]", "0.6"),
+               ("chunking_strategy[prefix_padding_ms]", "200"), ("chunking_strategy[silence_duration_ms]", "700")],
+              ["--threshold", "0.6", "--speech-pad-ms", "200", "--min-silence-duration-ms", "700"])
+
+
+def wav_file(samples, at_rate):
+    pcm = array.array("h", [max(-32768, min(32767, round(x * 32768))) for x in samples]).tobytes()
+    return (b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, at_rate, at_rate * 2, 2, 16)
+            + b"data" + struct.pack("<I", len(pcm)) + pcm)
+
+
 # The texts of a quantized file come from `speech asr`, which loads the model again: before the server holds it, so that
 # a model of half the GPU's memory needs only its own.
 dump_requests_of = {d: dump_requests(speech, model, d, options) for d in dumps}
+# So do the answers of `speech asr --vad` for the dumps' audio joined with a second of silence after each, which the
+# detection cuts into regions again, with its defaults and with the flags the members of server_vad map to.
+held = json.loads(subprocess.run([speech, "info", model, "--json"], stdout=subprocess.PIPE, check=True).stdout)
+if vad and held["task"] == "recognition":
+    joined = array.array("f", [x for d in dumps for x in list(read_npy(os.path.join(d, "audio.npy"))) + [0.0] * held["sample_rate"]])
+    long = wav_file(joined, held["sample_rate"])
+    timed = ["--timestamps"] if "timestamps" in {o["name"] for o in held["options"]} else []
+    with tempfile.TemporaryDirectory() as work:
+        path = os.path.join(work, "long.wav")
+        with open(path, "wb") as f:
+            f.write(long)
+
+        def vad_cli(*flags):
+            r = subprocess.run([speech, "asr", model, "--vad", vad, "--format", "json", *timed, *flags, *load, path],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            assert r.returncode == 0, r.stderr.decode()[-600:]
+            return json.loads(r.stdout)
+
+        vad_answers = {(): vad_cli(), tuple(SERVER_VAD[1]): vad_cli(*SERVER_VAD[1])}
 
 
 def start_server():
@@ -328,11 +358,6 @@ elif info["task"] == "synthesis":
 else:
     expect_error(post_json("/v1/audio/speech", {"input": "あ。", "voice": "x"}), 404, None, None, "POST /v1/audio/speech to a recognition model")
 
-    def wav_file(samples, at_rate):
-        pcm = array.array("h", [max(-32768, min(32767, round(x * 32768))) for x in samples]).tobytes()
-        return (b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, at_rate, at_rate * 2, 2, 16)
-                + b"data" + struct.pack("<I", len(pcm)) + pcm)
-
     takes = {o["name"] for o in info["options"]}
     first = None
     for d in dumps:
@@ -462,47 +487,35 @@ else:
         expect_error(transcribe([("chunking_strategy", "auto")], [("file", "x.wav", wav)]), 400, "unsupported_parameter", "chunking_strategy",
                      "chunking_strategy without a detection model")
     else:
-        # The dumps' audio joined with a second of silence after each, which the detection cuts into regions again; the
-        # server's answers are speech asr --vad's for the same audio and options, which checks/smoke/speech_cli_smoke.py
+        # The server's answers are speech asr --vad's for the same audio and options, which checks/smoke/speech_cli_smoke.py
         # checks against the worker.
-        joined = array.array("f", [x for d in dumps for x in list(read_npy(os.path.join(d, "audio.npy"))) + [0.0] * rate])
-        long, silence = wav_file(joined, rate), wav_file([0.0] * (6 * rate), rate)
-        with tempfile.TemporaryDirectory() as work:
-            path = os.path.join(work, "long.wav")
-            with open(path, "wb") as f:
-                f.write(long)
-            timed = ["--timestamps"] if "timestamps" in takes else []
-
-            def cli(*flags):
-                r = subprocess.run([speech, "asr", model, "--vad", vad, "--format", "json", *timed, *flags, *load, path],
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                assert r.returncode == 0, r.stderr.decode()[-600:]
-                return json.loads(r.stdout)
-
-            for form, flags in (([("chunking_strategy", "auto")], []),
-                                ([("chunking_strategy[type]", "server_vad"), ("chunking_strategy[threshold]", "0.6"),
-                                  ("chunking_strategy[prefix_padding_ms]", "200"), ("chunking_strategy[silence_duration_ms]", "700")],
-                                 ["--threshold", "0.6", "--speech-pad-ms", "200", "--min-silence-duration-ms", "700"])):
-                want = cli(*flags)
-                status, headers, body = transcribe(form, [("file", "long.wav", long)])
-                assert status == 200 and json.loads(body) == {"text": want["text"]} and headers["x-speech-stop"] == want["stop"], (form, body)
-                status, _, body = transcribe(form + [("response_format", "verbose_json")], [("file", "long.wav", long)])
-                verbose = json.loads(body)
-                assert verbose["text"] == want["text"] and verbose.get("language") == (",".join(want.get("languages", [])) or None), body
-                if timed:
-                    assert verbose["segments"] == [{"id": i, **s} for i, s in enumerate(want["segments"])], body
-            assert json.loads(transcribe([("chunking_strategy", "auto")], [("file", "silence.wav", silence)])[2]) == {"text": ""}
-            # The detection options given to the server as flags are the defaults of chunking_strategy, before OpenAI's:
-            # a threshold of 1 finds no region, so auto gives an empty text, while a request's own threshold wins.
-            tuned = Server(speech, [model, vad, *options, "--vad.threshold", "1"])
-            listed = json.loads(tuned.call("GET", "/v1/models")[2])["data"]
-            assert [m["defaults"] for m in listed] == [entry["defaults"], detector["defaults"] | {"threshold": 1}], listed
-            status, _, body = tuned.transcribe([("chunking_strategy", "auto")], [("file", "long.wav", long)])
-            assert status == 200 and json.loads(body) == {"text": ""}, body
-            own = [("chunking_strategy[type]", "server_vad"), ("chunking_strategy[threshold]", "0.5")]
-            status, _, body = tuned.transcribe(own, [("file", "long.wav", long)])
-            assert status == 200 and json.loads(body) == {"text": cli()["text"]}, body
-            tuned.stop()
+        silence = wav_file([0.0] * (6 * rate), rate)
+        for form, flags in (([("chunking_strategy", "auto")], []), SERVER_VAD):
+            want = vad_answers[tuple(flags)]
+            status, headers, body = transcribe(form, [("file", "long.wav", long)])
+            assert status == 200 and json.loads(body) == {"text": want["text"]} and headers["x-speech-stop"] == want["stop"], (form, body)
+            status, _, body = transcribe(form + [("response_format", "verbose_json")], [("file", "long.wav", long)])
+            verbose = json.loads(body)
+            assert verbose["text"] == want["text"] and verbose.get("language") == (",".join(want.get("languages", [])) or None), body
+            if timed:
+                assert verbose["segments"] == [{"id": i, **s} for i, s in enumerate(want["segments"])], body
+        assert json.loads(transcribe([("chunking_strategy", "auto")], [("file", "silence.wav", silence)])[2]) == {"text": ""}
+        # The detection options given to the server as flags are the defaults of chunking_strategy, before OpenAI's:
+        # a threshold of 1 finds no region, so auto gives an empty text, while a request's own threshold wins. The server
+        # stops meanwhile, so that the model is held once at a time.
+        out = server.stop()
+        if out:
+            raise SystemExit(f"the server wrote to stdout: {out[:200]!r}")
+        tuned = Server(speech, [model, vad, *options, "--vad.threshold", "1"])
+        listed = json.loads(tuned.call("GET", "/v1/models")[2])["data"]
+        assert [m["defaults"] for m in listed] == [entry["defaults"], detector["defaults"] | {"threshold": 1}], listed
+        status, _, body = tuned.transcribe([("chunking_strategy", "auto")], [("file", "long.wav", long)])
+        assert status == 200 and json.loads(body) == {"text": ""}, body
+        own = [("chunking_strategy[type]", "server_vad"), ("chunking_strategy[threshold]", "0.5")]
+        status, _, body = tuned.transcribe(own, [("file", "long.wav", long)])
+        assert status == 200 and json.loads(body) == {"text": vad_answers[()]["text"]}, body
+        tuned.stop()
+        start_server()
         print(f"chunking_strategy: auto and server_vad give speech asr --vad's text, language{' and segments' if timed else ''} "
               f"for {len(joined) / rate:.1f} s of the dumps joined, and silence an empty text; detection flags given to the "
               f"server are auto's defaults, and a request's own threshold wins")
