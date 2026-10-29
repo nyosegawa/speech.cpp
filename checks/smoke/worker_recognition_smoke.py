@@ -138,7 +138,12 @@ for i in range(max(len(a), len(b))):
         w.send(x)
 w.send({"type": "transcribe", "id": "b", "sample_rate": rate})
 w.send({"type": "transcribe", "id": "a", "sample_rate": rate})
-got = [w.read(), w.read()]
+# A recognition that runs for more than two seconds, as on a GPU that leaves experts to the CPU, also reports progress.
+got = []
+while len(got) < 2:
+    m = w.read()
+    if m["type"] != "progress":
+        got.append(m)
 assert [(m["type"], m["id"]) for m in got] == [("end", "b"), ("end", "a")] and got[0]["text"] == got[1]["text"], [short(m) for m in got]
 print("interleaved chunks: answered in the order of the transcribes")
 

@@ -91,3 +91,8 @@ Converting a model is two steps, and the F32 file, 8.1 GB for the 1.7B models an
 Transcribe, is written first. FastConformer's files can be Q8_0 and K-quants. Qwen3-ASR 0.6B's encoder, 896 wide, is
 Q8_0 in its K-quant files, and FastConformer's prediction network and joint, 640 wide, too. A program that lists the
 weight types, as the catalog and the checks' scripts do, lists IQ4_NL too.
+
+IQ4_NL's search for each block's scale rounds by the machine: from the same F32 file, the IQ4_NL file written on an
+Apple M5 differs from the one written on Modal's x86 CPU in about 0.1% of its blocks, each by a step of its scale or by
+one of its values (2026-10-29). Such files are alike in use, but not byte for byte, so a program pins the published
+file by its SHA-256 rather than making its own.
