@@ -44,6 +44,7 @@ Recognizer::Recognizer(const std::string & path, ggml_backend_t backend, int thr
       breaks_(model_.str_array("fastconformer.segment.breaks")),
       allocr_(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))) {
     if (!allocr_) throw Error(Fault::OutOfMemory, "cannot create a graph allocator");
+    if (WordsModel::offers(model_)) words_ = std::make_unique<WordsModel>(model_);
 }
 
 Recognizer::~Recognizer() {
@@ -76,6 +77,13 @@ Decoding Recognizer::decoding(const std::vector<float> & projected, const std::s
     if (on == DecodeOn::Device || on_cpu_) return device_.decoder(name).decode(projected, backend_, progress);
     OnCpu & copy = cpu();
     return copy.transducer.decoder(name).decode(projected, copy.backend.get(), progress);
+}
+
+Decoding Recognizer::decoding(const std::vector<float> & projected, const std::string & name, DecodeOn on,
+                              const DecodingProgress & progress, const Boost & boost) {
+    if (on == DecodeOn::Device || on_cpu_) return device_.decoder(name).decode(projected, backend_, progress, boost);
+    OnCpu & copy = cpu();
+    return copy.transducer.decoder(name).decode(projected, copy.backend.get(), progress, boost);
 }
 
 std::vector<Segment> Recognizer::segments(const Decoding & decoding) const {

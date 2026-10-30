@@ -11,9 +11,8 @@ fallback, so a character outside it is written as the byte pieces of its UTF-8.
 fla's layer decodes with Triton kernels alone (its short convolution's `causal_conv1d_update`, `fused_recurrent_kda` and
 `FusedRMSNormGated`), which need a CUDA GPU: the model card supports Linux with an NVIDIA GPU alone, and its accuracy and
 speed were measured in bfloat16. Haas-ASR pins NeMo below 2.8 and fla at 0.5.2, which it refuses to run without, where
-speech.cpp's other FastConformer checkpoints are dumped with NeMo 3.0.0. Haas-ASR also offers a custom vocabulary, boosted
-with NeMo's GPU phrase boosting while decoding, and `transcribe_longform()`, which cuts a recording at quiet points found
-by volume.
+speech.cpp's other FastConformer checkpoints are dumped with NeMo 3.0.0. Haas-ASR also offers `transcribe_longform()`,
+which cuts a recording at quiet points found by volume.
 
 ## Decision
 
@@ -32,10 +31,8 @@ by volume.
   byte that begins no well-formed character is U+FFFD. The text is NeMo's. NeMo's timestamps decode each byte piece
   alone, so a character of byte pieces stands in NeMo's words and segments as one U+FFFD per byte; speech.cpp's segments
   hold the character, so that the segments joined are the text.
-- **Neither the custom vocabulary nor `transcribe_longform()` is offered.** The boosting needs a phrase-boosting tree in
-  the greedy decoding and a second decoding to guard it, which no other FastConformer model has, and its effect is
-  Haas-ASR's, not the model's. A long recording is recognized by the regions where someone speaks, as for the other models
-  (`speech asr --vad`, `chunking_strategy`), and a request is recognized whole as `transcribe()` does.
+- **`transcribe_longform()` is not offered.** A long recording is recognized by the regions where someone speaks, as for
+  the other models (`speech asr --vad`, `chunking_strategy`), and a request is recognized whole as `transcribe()` does.
 
 The alternatives were turned down:
 

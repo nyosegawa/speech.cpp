@@ -13,14 +13,15 @@ does not. For a
 recognition model: json and text with X-Speech-Stop for each dump of reference/fastconformer/dump.py or
 reference/qwen3-asr/dump.py, each other request a Qwen3-ASR dump holds with its language and its prompt as form fields
 and each decoding other than the default that a FastConformer dump holds as the form field decoding, json without any
-member but the text, verbose_json of each request with the language qwen-asr parsed by its tag or without one
+member but the text, each vocabulary of a FastConformer dump's words/ as the form fields words, words_alpha and
+words_guard where the model takes them, verbose_json of each request with the language qwen-asr parsed by its tag or without one
 (FastConformer, audio without speech), and where the model takes timestamps with its segments, the same with a segment
 granularity, its words with the word granularity, both with both, and those granularities' refusal where it does not,
 or where the model cannot time its text the reason and no segments; for a Nemotron 3.5 Transcribe dump of the model
 card's prompt for speaker tags, diarized_json of the model's own speakers, labeled in the order they first speak, and
 its refusal of chunking_strategy; WAV at three times the model's rate, and the errors of a file that is not WAV or
-cannot be read, a language, a prompt, a decoding, a member and a granularity it does not take, and audio the library
-cannot take.
+cannot be read, a language, a prompt, a decoding, words, a member and a granularity it does not take, words_alpha and
+words_guard of another type, out of range or without words, and audio the library cannot take.
 
 For a synthesis model, also that a request option given to the server as a flag (--seed, and --tts.seed for the
 synthesis model alone) is the default of a request that does not set it, listed in /v1/models' defaults beside the
@@ -398,10 +399,12 @@ else:
         # verbose_json carries the language the model heard, the tags joined with commas, and leaves it out where there is
         # none; it carries segments where the model gives times, whose granularity is OpenAI's default.
         for request, members, want_request, want_languages in requests:
+            # A form field holds text: a boolean member as JSON writes it.
+            fields = [(k, json.dumps(v) if isinstance(v, bool) else str(v)) for k, v in members.items()]
             if request != "auto":
-                status, _, body = transcribe(list(members.items()), [("file", name + ".wav", wav)])
+                status, _, body = transcribe(fields, [("file", name + ".wav", wav)])
                 assert status == 200 and json.loads(body) == {"text": want_request}, (name, request, body)
-            status, _, body = transcribe(list(members.items()) + [("response_format", "verbose_json")], [("file", name + ".wav", wav)])
+            status, _, body = transcribe(fields + [("response_format", "verbose_json")], [("file", name + ".wav", wav)])
             verbose = json.loads(body)
             want_members = {"task", "duration", "text"} | ({"language"} if want_languages else set())
             want_members |= {"segments"} if "timestamps" in takes else set()
@@ -475,6 +478,17 @@ else:
     else:
         expect_error(transcribe([("decoding", "greedy")], [("file", "x.wav", wav)]), 400, "unsupported_parameter", "decoding",
                      "a decoding not taken")
+    if "words" in takes:
+        expect_error(transcribe([("words", "Haas=ハース"), ("words_alpha", "high")], [("file", "x.wav", wav)]), 400, "invalid_type", "words_alpha",
+                     "a words_alpha that is no number")
+        expect_error(transcribe([("words", "Haas=ハース"), ("words_alpha", "0")], [("file", "x.wav", wav)]), 400, "unsupported_value", "words_alpha",
+                     "a words_alpha out of its range")
+        expect_error(transcribe([("words_guard", "maybe")], [("file", "x.wav", wav)]), 400, "invalid_type", "words_guard",
+                     "a words_guard that is no boolean")
+        expect_error(transcribe([("words_guard", "false")], [("file", "x.wav", wav)]), 400, "invalid_value", "words_guard",
+                     "a words_guard without words")
+    else:
+        expect_error(transcribe([("words", "Haas=ハース")], [("file", "x.wav", wav)]), 400, "unsupported_parameter", "words", "words not taken")
     expect_error(transcribe([("temperature", "0")], [("file", "x.wav", wav)]), 400, "unknown_parameter", "temperature", "an unknown member")
     expect_error(transcribe([("response_format", "srt")], [("file", "x.wav", wav)]), 400, "unsupported_value", "response_format", "srt")
     expect_error(transcribe([("response_format", "verbose_json"), ("timestamp_granularities[]", "sentence")], [("file", "x.wav", wav)]), 400,

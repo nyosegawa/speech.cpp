@@ -95,6 +95,16 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
     m.str(p + "tokenizer.unknown_surface");
     m.boolean(p + "tokenizer.strip_leading_space");
     m.str_array(p + "tokenizer.punctuation");
+    if (m.one_of(p + "vocabulary.kind", {"none", "haas-asr"}) == "haas-asr") {
+        require(m.f32_array(p + "tokenizer.scores").size() == blank, m, "fastconformer.tokenizer.scores does not score every piece");
+        m.u8_array(p + "tokenizer.charsmap");
+        for (const char * key : {"add_dummy_prefix", "remove_extra_whitespaces", "escape_whitespaces"}) m.boolean(p + "tokenizer." + key);
+        for (const char * key : {"context_score", "depth_scaling", "unk_score", "alpha", "speech_rms"}) {
+            const float value = m.f32(p + "vocabulary." + key);
+            require(std::isfinite(value), m, p + "vocabulary." + key + " is not finite");
+        }
+        m.size(p + "vocabulary.speech_frame");
+    }
 
     // The window's length and the widths of the subsampling's channels, the feed-forward layers, the prediction network
     // and the joint have no key: each is the width of one tensor, which the others are checked against.
@@ -176,13 +186,16 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
 }
 
 /**
- * Brings layouts 1 and 2 up. Layout 2 adds fastconformer.decoder.rnnt.max_symbols, the most tokens greedy RNN-T
+ * Brings layouts 1 to 3 up. Layout 2 adds fastconformer.decoder.rnnt.max_symbols, the most tokens greedy RNN-T
  * decoding emits on one frame: layout 1's converter took one RNN-T checkpoint, reazonspeech-nemo-v2, whose
  * decoding.greedy.max_symbols is 10. Layout 3 adds fastconformer.decoder.prediction, LSTM layers for every checkpoint
  * before it, and fastconformer.tokenizer.byte_pieces, which no tokenizer before it had: their converters refused byte
- * pieces.
+ * pieces. Layout 4 adds fastconformer.vocabulary.kind, none for a file before it, which holds no custom vocabulary's
+ * settings.
  */
 void upgrade(ModelFile & m) {
+    m.upgrade_str("fastconformer.vocabulary.kind", "none");
+    if (m.layout_version() >= 3) return;
     m.upgrade_str("fastconformer.decoder.prediction", "lstm");
     m.upgrade_i32_array("fastconformer.tokenizer.byte_pieces", {});
     if (m.layout_version() >= 2 || m.one_of("fastconformer.decoder.kind", {"tdt", "rnnt"}) == "tdt") return;
@@ -192,7 +205,7 @@ void upgrade(ModelFile & m) {
 
 }  // namespace
 
-const Layout layout = {"fastconformer", 3,
+const Layout layout = {"fastconformer", 4,
                        "convert it again with reference/fastconformer/convert.py, or download it again from its Hugging Face "
                        "repository",
                        tensors, upgrade};

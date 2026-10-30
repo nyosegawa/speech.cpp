@@ -28,6 +28,17 @@ TdtDecoder::TdtDecoder(const ModelFile & m, const PredictionNetwork & prediction
       max_symbols_(m.u32("fastconformer.decoder.tdt.max_symbols")) {}
 
 Decoding TdtDecoder::decode(const std::vector<float> & projected, ggml_backend_t backend, const DecodingProgress & progress) const {
+    return run(projected, backend, progress, nullptr);
+}
+
+Decoding TdtDecoder::decode(const std::vector<float> & projected, ggml_backend_t backend, const DecodingProgress & progress,
+                            const Boost & boost) const {
+    if (boost.tree.vocab_size() != blank_) throw std::logic_error("the boosting tree's vocabulary is not the model's");
+    return run(projected, backend, progress, &boost);
+}
+
+Decoding TdtDecoder::run(const std::vector<float> & projected, ggml_backend_t backend, const DecodingProgress & progress,
+                         const Boost * boost) const {
     const int hidden = joint_.hidden();
     const int64_t frames = (int64_t) (projected.size() / (size_t) hidden);
     auto frame = [&](int64_t t) {
@@ -37,6 +48,24 @@ Decoding TdtDecoder::decode(const std::vector<float> & projected, ggml_backend_t
     // other runs.
     DecoderStep step(prediction_, joint_, backend, 1);
     const Allocator joint_allocator = new_allocator(backend);
+
+    // The tree's bonus of each token from its state, which the tokens emitted so far reached, and the state each leads to.
+    std::vector<float> bonus, boosted((size_t) blank_);
+    std::vector<int32_t> reached;
+    int32_t tree_state = BoostingTree::kStart;
+    if (boost) boost->tree.advance(tree_state, bonus, reached);
+    // The argmax of the tokens and the blank; where it is a token and words are boosted, the argmax of the tokens'
+    // logits plus alpha times their bonus, rounded as NeMo's float tensors round the product and then the sum, which a
+    // contraction of the two into one fused multiply-add would not.
+    auto label_of = [&](const float * out) {
+        const int32_t label = first_argmax(out, blank_ + 1);
+        if (!boost || label == blank_) return label;
+        for (int i = 0; i < blank_; i++) {
+            const float scaled = bonus[(size_t) i] * boost->alpha;
+            boosted[(size_t) i] = out[i] + scaled;
+        }
+        return (int32_t) first_argmax(boosted.data(), blank_);
+    };
 
     Decoding d;
     PredictionState state = prediction_.initial_state();
@@ -57,7 +86,7 @@ Decoding TdtDecoder::decode(const std::vector<float> & projected, ggml_backend_t
         int64_t label_frame;
         int32_t duration;
         for (;;) {
-            label = first_argmax(out.data(), blank_ + 1);
+            label = label_of(out.data());
             duration = durations_[(size_t) first_argmax(out.data() + blank_ + 1, (int) durations_.size())];
             if (label == blank_ && duration == 0) duration = 1;
             label_frame = t;
@@ -72,6 +101,10 @@ Decoding TdtDecoder::decode(const std::vector<float> & projected, ggml_backend_t
         }
         if (label == blank_) break;
         d.ids.push_back(label);
+        if (boost) {
+            tree_state = reached[(size_t) label];
+            boost->tree.advance(tree_state, bonus, reached);
+        }
         d.frames.push_back(label_frame);
         d.durations.push_back(duration);
         tokens_on_frame = label_frame == last_token_frame ? tokens_on_frame + 1 : 1;

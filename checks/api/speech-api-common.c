@@ -73,7 +73,8 @@ int check_library(void) {
                                      "min_speech_duration_ms", "min_silence_duration_ms", "speech_pad_ms", "max_speech_duration_s",
                                      "decode_on_cpu", "draft", "experts_on_cpu", "streaming_mode", "spkcache_len", "fifo_len",
                                      "chunk_len", "chunk_right_context", "spkcache_update_period", "onset", "offset", "pad_onset",
-                                     "pad_offset", "min_duration_on", "min_duration_off", "speakers"};
+                                     "pad_offset", "min_duration_on", "min_duration_off", "speakers", "words", "words_alpha",
+                                     "words_guard"};
     if (speech_option_count() != sizeof options / sizeof options[0]) {
         fprintf(stderr, "FAIL: the library knows %zu options\n", speech_option_count());
         return 1;
@@ -258,7 +259,8 @@ static speech_status set_neutral(speech_request * r, speech_option option, int *
         case SPEECH_OPT_TIMESTAMPS:
         case SPEECH_OPT_SPEAKERS: return speech_request_set_bool(r, option, 0);
         case SPEECH_OPT_PROMPT:
-        case SPEECH_OPT_INSTRUCTIONS: return speech_request_set_string(r, option, "");
+        case SPEECH_OPT_INSTRUCTIONS:
+        case SPEECH_OPT_WORDS: return speech_request_set_string(r, option, "");
         default: *has = 0; return SPEECH_OK;
     }
 }
@@ -332,6 +334,12 @@ int check_option_refusals(speech_model * model) {
         if (type == SPEECH_TYPE_FLOAT) {
             snprintf(what, sizeof what, "%s at NaN", name);
             ok &= expect(speech_request_set_float(r, o, NAN), SPEECH_ERROR_INVALID_ARGUMENT, name, what);
+        }
+        if (type == SPEECH_TYPE_STRING) {
+            // A lone continuation byte, and a lead byte the text ends before its continuation.
+            snprintf(what, sizeof what, "%s that is not UTF-8", name);
+            ok &= expect(speech_request_set_string(r, o, "x\xff"), SPEECH_ERROR_INVALID_ARGUMENT, name, what) &
+                  expect(speech_request_set_string(r, o, "x\xe3\x83"), SPEECH_ERROR_INVALID_ARGUMENT, name, what);
         }
         int has_neutral = 0;
         const speech_status neutral = set_neutral(r, o, &has_neutral);

@@ -309,7 +309,7 @@ it concerns (an option's name, `text`, `audio`, `device`, `threads`, `name`, `pa
   may be read from any thread. Separate models are independent.
 - **Versions.** `speech_version()` gives the release the library was built from (`"0.9.3"`). `SPEECH_API_VERSION_MAJOR`
   and `SPEECH_API_VERSION_MINOR`, and `speech_api_version_major()` and `speech_api_version_minor()` for a caller that
-  loads the library at run time, give the API's version, 3.6. The major rises when a declaration changes in a way an
+  loads the library at run time, give the API's version, 3.7. The major rises when a declaration changes in a way an
   existing caller notices, and the minor when a function, an option or an enum value is added. A program built against
   M.m runs against a library of the same major version and a minor version of m or more. The shared library's SOVERSION
   is the major version (`libspeech.3.dylib`, `libspeech.so.3`).
@@ -343,6 +343,7 @@ Each model takes some of them, with ranges and defaults from its file, and `spee
 | `streaming_mode`, `spkcache_len`, `fifo_len`, `chunk_len`, `chunk_right_context`, `spkcache_update_period` | string, then int | none | [Sortformer](models/sortformer.md#streaming-modes) |
 | `onset`, `offset`, `pad_onset`, `pad_offset`, `min_duration_on`, `min_duration_off` | float | none | [Sortformer](models/sortformer.md#options) |
 | `speakers` | bool | false | [Nemotron 3.5 Transcribe](models/nemotron-transcribe.md#options) |
+| `words`, `words_alpha`, `words_guard` | string, float, bool | `""` for `words` | [Haas](models/fastconformer.md#a-custom-vocabulary-haas) |
 
 - A value at an option's neutral value is accepted by every model. Any other value of an option a model does not take is
   `unsupported`. An option whose neutral value is "none" has none.

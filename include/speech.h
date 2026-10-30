@@ -62,7 +62,7 @@ extern "C" {
  * version and a minor version of m or more. Version 3.0 is first released with speech.cpp 0.7.0, the option prompt
  * included, and a declaration added since says the version that added it.
  */
-#define SPEECH_API_VERSION_MINOR 6
+#define SPEECH_API_VERSION_MINOR 7
 
 /** The SPEECH_API_VERSION_MAJOR the library was built with, for a caller that loads it at run time. */
 SPEECH_API int speech_api_version_major(void);
@@ -189,8 +189,8 @@ SPEECH_API speech_status speech_device_memory(size_t index, uint64_t * total, ui
 /*
  * Options: the vocabulary of what a request may ask, the same for every family. A value is never reused, and a later
  * minor version only appends. Each option has one type. Some have a neutral value that every model accepts, whether
- * or not it takes the option: speed 1, duration_scale 1, language "auto", timestamps false, prompt "", instructions ""
- * and speakers false. The others have none, and a model that does not take one refuses any value of it.
+ * or not it takes the option: speed 1, duration_scale 1, language "auto", timestamps false, prompt "", instructions "",
+ * speakers false and words "". The others have none, and a model that does not take one refuses any value of it.
  */
 typedef enum speech_option {
     /**
@@ -491,7 +491,27 @@ typedef enum speech_option {
      * model writes for them. A model that tells speakers by what it writes takes it: Nemotron 3.5 Transcribe, which asks
      * with its model card's prompt for speaker tags and so takes no prompt beside it. Added in 3.6.
      */
-    SPEECH_OPT_SPEAKERS = 59
+    SPEECH_OPT_SPEAKERS = 59,
+    /**
+     * "words", a string: the words a recognition listens for and writes as given, one a line, each its written form
+     * followed, where it has readings, by "=" and the readings separated by commas ("Haas=ハース,ハウス"), as Haas-ASR's
+     * Vocabulary.parse() takes each entry; lines of whitespace alone are skipped, and "" (the neutral value) gives none.
+     * The decoding boosts the words' spellings, and the text has each word found in it in its written form. A model whose
+     * file offers it takes it (Haas-ja-v1.0); its recognition gives the text alone, and with timestamps
+     * speech_result_untimed() says why. Added in 3.7.
+     */
+    SPEECH_OPT_WORDS = 60,
+    /**
+     * "words_alpha", a number above 0: how strongly the decoding boosts the words, Haas-ASR's alpha. Setting it without
+     * words is refused when the request runs. Added in 3.7.
+     */
+    SPEECH_OPT_WORDS_ALPHA = 61,
+    /**
+     * "words_guard", a boolean: whether a recognition with words keeps a change the words made to the text only where
+     * it holds a whole word, as it does by default, against the text decoded without them. Setting it without words is
+     * refused when the request runs. Added in 3.7.
+     */
+    SPEECH_OPT_WORDS_GUARD = 62
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */

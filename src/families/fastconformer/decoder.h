@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "boosting.h"
 #include "transducer.h"
 
 namespace fastconformer {
@@ -27,6 +28,16 @@ struct Decoding {
  */
 using DecodingProgress = std::function<bool(double done)>;
 
+/**
+ * The words a greedy decoding boosts, as NeMo's label-looping decoding fuses a boosting tree: wherever the decoding
+ * emits a token rather than a blank, which it decides without the words, it emits instead the token whose logit plus
+ * alpha times its bonus from the tree's state is largest, and each token it emits moves the tree's state.
+ */
+struct Boost {
+    const BoostingTree & tree;
+    float alpha;
+};
+
 /** A decoding of the transducer's outputs into tokens. */
 class Decoder {
 public:
@@ -37,6 +48,10 @@ public:
      * `progress`, when it is given, how far the decoding has come.
      */
     virtual Decoding decode(const std::vector<float> & projected, ggml_backend_t backend, const DecodingProgress & progress) const = 0;
+
+    /** The same with `boost`'s words boosted, by a decoding that boosts words (TDT's); any other throws. */
+    virtual Decoding decode(const std::vector<float> & projected, ggml_backend_t backend, const DecodingProgress & progress,
+                            const Boost & boost) const;
 
     virtual int blank() const = 0;
 };

@@ -24,10 +24,14 @@ public:
     TdtDecoder(const ModelFile & m, const PredictionNetwork & prediction, const Joint & joint);
 
     Decoding decode(const std::vector<float> & projected, ggml_backend_t backend, const DecodingProgress & progress) const override;
+    Decoding decode(const std::vector<float> & projected, ggml_backend_t backend, const DecodingProgress & progress,
+                    const Boost & boost) const override;
 
     int blank() const override { return blank_; }
 
 private:
+    Decoding run(const std::vector<float> & projected, ggml_backend_t backend, const DecodingProgress & progress, const Boost * boost) const;
+
     const PredictionNetwork & prediction_;
     const Joint & joint_;
     int blank_;

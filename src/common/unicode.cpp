@@ -31,6 +31,13 @@ struct CodepointRange {
     uint32_t first, last;
 };
 
+/** What str.lower() makes of a code point alone: `length` code points of kLowercasePool from `offset`. */
+struct CaseMapping {
+    uint32_t code_point;
+    uint32_t offset;
+    uint8_t length;
+};
+
 #include "unicode-data.inc"
 #include "unicode-ranges.inc"
 
@@ -136,6 +143,21 @@ std::vector<uint32_t> normalize(const std::vector<uint32_t> & text, bool compati
     return out;
 }
 
+constexpr uint32_t kCapitalSigma = 0x3A3, kSmallSigma = 0x3C3, kFinalSigma = 0x3C2;
+
+/**
+ * Whether the capital sigma at `i` of `text` is a final sigma, as handle_capital_sigma() of CPython's unicodeobject.c
+ * decides: a cased character before it and none after it, each the first that is not case-ignorable.
+ */
+bool final_sigma(const std::vector<uint32_t> & text, size_t i) {
+    size_t before = i;
+    while (before > 0 && in_ranges(kCaseIgnorable, text[before - 1])) before--;
+    if (before == 0 || !in_ranges(kCased, text[before - 1])) return false;
+    size_t after = i + 1;
+    while (after < text.size() && in_ranges(kCaseIgnorable, text[after])) after++;
+    return after == text.size() || !in_ranges(kCased, text[after]);
+}
+
 }  // namespace
 
 std::vector<uint32_t> nfc(const std::vector<uint32_t> & text, UnicodeVersion version) {
@@ -152,6 +174,29 @@ bool python_space(uint32_t cp) {
     }
     return false;
 }
+
+std::vector<uint32_t> python_lower(const std::vector<uint32_t> & text) {
+    std::vector<uint32_t> out;
+    out.reserve(text.size());
+    for (size_t i = 0; i < text.size(); i++) {
+        const uint32_t cp = text[i];
+        if (cp == kCapitalSigma) {
+            out.push_back(final_sigma(text, i) ? kFinalSigma : kSmallSigma);
+            continue;
+        }
+        const auto * end = std::end(kLowercase);
+        const auto * it = std::lower_bound(std::begin(kLowercase), end, cp,
+                                           [](const CaseMapping & m, uint32_t c) { return m.code_point < c; });
+        if (it == end || it->code_point != cp) {
+            out.push_back(cp);
+            continue;
+        }
+        out.insert(out.end(), kLowercasePool + it->offset, kLowercasePool + it->offset + it->length);
+    }
+    return out;
+}
+
+bool python_digit(uint32_t cp) { return in_ranges(kDigits, cp); }
 
 bool unicode_letter(uint32_t cp) { return in_ranges(kLetters, cp); }
 bool unicode_number(uint32_t cp) { return in_ranges(kNumbers, cp); }

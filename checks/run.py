@@ -374,12 +374,27 @@ def nemotron_transcribe(model, devices, ctx):
 
 def fastconformer(model, devices, ctx):
     out = os.path.join(ctx.reference, "fastconformer", "out")
+    runs = []
+    # Haas-ASR's custom vocabulary takes no model.
+    if model is ctx.first.get("fastconformer"):
+        cases = os.path.join(out, "vocabulary-cases.json")
+        check = "fastconformer-vocabulary-check"
+        runs.append(Run(check, [cases], None, "") if os.path.isfile(cases) else missing(check, "", cases))
     absent = named_dumps("fastconformer", model, out)
     if absent:
-        return [absent]
-    runs = [Run("fastconformer-frontend-check", [model.path, out], None, model.label())]
+        return runs + [absent]
+    runs.append(Run("fastconformer-frontend-check", [model.path, out], None, model.label()))
+    # The encoding of text into the tokenizer's ids runs on the host, on the cases sentencepiece_cases.py writes of a
+    # tokenizer it takes (Haas's).
+    cases = os.path.join(out, model.name, "sentencepiece")
+    runs += reading([os.path.join(cases, "cases.tsv")], [Run("fastconformer-sentencepiece-check", [cases], None, model.label())])
+    # The recognition with a custom vocabulary, for a model whose dumps hold dump.py --words's.
+    root = os.path.join(out, model.name)
+    words = any(os.path.isdir(os.path.join(root, d, "words")) for d in os.listdir(root)) if os.path.isdir(root) else False
     for device in devices:
         runs += [runs_on(device, f"fastconformer-{stage}-check", model, [out]) for stage in ("encoder", "transducer", "times")]
+        if words:
+            runs.append(runs_on(device, "fastconformer-words-check", model, [out]))
     return runs
 
 

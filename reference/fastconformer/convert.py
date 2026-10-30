@@ -3,12 +3,13 @@
 usage: uv run python convert.py <model> <out dir>
 
 Writes parakeet-tdt_ctc-0.6B-ja-F32.gguf, parakeet-tdt-0.6B-v3-F32.gguf, reazonspeech-nemo-619M-v2-F32.gguf or
-Haas-616M-ja-v1.0-F32.gguf, named under GGUF's naming convention, in layout 3: the frontend's window and mel filterbank,
+Haas-616M-ja-v1.0-F32.gguf, named under GGUF's naming convention, in layout 4: the frontend's window and mel filterbank,
 the subsampling, the conformer layers, the prediction network, LSTM layers or Haas's Kimi Delta Attention layers, and
 the joint, with the SentencePiece pieces the token ids name and which of them stand for bytes, the settings of the
 decoding transcribe() runs (greedy TDT's durations and limit, or the beam and length of RNN-T's alignment-length
-synchronous beam search) and, for RNN-T, the limit of the greedy decoding NeMo also runs on it, every other constant the
-C++ reads and the model's identity in the GGUF specification's general keys. A hybrid checkpoint's CTC head is left out,
+synchronous beam search) and, for RNN-T, the limit of the greedy decoding NeMo also runs on it, for Haas the settings of
+Haas-ASR's custom vocabulary with what SentencePiece encodes a word with, every other constant the C++ reads and the
+model's identity in the GGUF specification's general keys. A hybrid checkpoint's CTC head is left out,
 since NeMo decodes with its transducer.
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [out, in] is stored as is
@@ -35,7 +36,7 @@ from pins import MODELS, restore
 ARCH = "fastconformer"
 # Each layout this converter has written, with the first release of speech.cpp whose reader takes it; it writes the
 # last.
-RELEASES = {1: "0.7.0", 2: "0.8.0", 3: "0.9.3"}
+RELEASES = {1: "0.7.0", 2: "0.8.0", 3: "0.9.3", 4: "0.9.4"}
 LAYOUT = max(RELEASES)
 # The ISO 639 two-letter codes of the languages each checkpoint transcribes, from its model card, which requests give as
 # BCP 47 tags. None takes a language: parakeet-tdt-0.6b-v3 finds the language of the audio itself.
@@ -270,6 +271,41 @@ w.add_bool("fastconformer.tokenizer.strip_leading_space",
 assert not any(c.isspace() for p in proto.pieces for c in p.piece)
 assert all(c == " " or not c.isspace() for c in proto.trainer_spec.unk_surface)
 add_array("fastconformer.tokenizer.punctuation", sorted(decoding.supported_punctuation or []), GGUFValueType.STRING)
+# The custom vocabulary of Haas-ASR (haas_asr.vocabulary and haas_asr.boosting), which its package offers for its
+# model alone: each word's spellings are encoded by the tokenizer and boosted while decoding by NeMo's boosting tree.
+vocabulary = "haas-asr" if MODELS[args.model].get("environment") == "haas" else "none"
+w.add_string("fastconformer.vocabulary.kind", vocabulary)
+if vocabulary == "haas-asr":
+    import inspect
+
+    from haas_asr import boosting
+    from haas_asr.vocabulary import Vocabulary
+    from nemo.collections.asr.parts.context_biasing.boosting_graph_batched import BoostingTreeModelConfig
+
+    # SentencePiece's encoding of a BPE model: the pieces' scores rank the merges, after the normalizer's precompiled
+    # character map and its options have normalized the text.
+    assert proto.trainer_spec.model_type == proto.trainer_spec.BPE
+    # The C++ encoder takes normal, unknown and byte pieces alone, which the tokens, the unknown id and the byte pieces
+    # say: SentencePiece treats a user-defined, control or unused piece otherwise in its encoding.
+    assert all(p.type in (proto.SentencePiece.NORMAL, proto.SentencePiece.UNKNOWN, proto.SentencePiece.BYTE) for p in proto.pieces)
+    add_array("fastconformer.tokenizer.scores", [float(p.score) for p in proto.pieces], GGUFValueType.FLOAT32)
+    add_array("fastconformer.tokenizer.charsmap", list(proto.normalizer_spec.precompiled_charsmap), GGUFValueType.UINT8)
+    w.add_bool("fastconformer.tokenizer.add_dummy_prefix", bool(proto.normalizer_spec.add_dummy_prefix))
+    w.add_bool("fastconformer.tokenizer.remove_extra_whitespaces", bool(proto.normalizer_spec.remove_extra_whitespaces))
+    w.add_bool("fastconformer.tokenizer.escape_whitespaces", bool(proto.normalizer_spec.escape_whitespaces))
+    # The tree haas_asr compiles: ContextGraph's bonus per token and its depth scaling (boosting.CONTEXT_SCORE and
+    # DEPTH_SCALING), and GPUBoostingTreeModel's score of a token that starts no word with BoostingTreeModelConfig's
+    # defaults, whose uniform weights are off.
+    defaults = BoostingTreeModelConfig()
+    assert not defaults.uniform_weights
+    w.add_float32("fastconformer.vocabulary.context_score", float(boosting.CONTEXT_SCORE))
+    w.add_float32("fastconformer.vocabulary.depth_scaling", float(boosting.DEPTH_SCALING))
+    w.add_float32("fastconformer.vocabulary.unk_score", float(defaults.unk_score))
+    # Vocabulary's boosting strength when none is given.
+    w.add_float32("fastconformer.vocabulary.alpha", float(inspect.signature(Vocabulary).parameters["alpha"].default))
+    # has_speech(): audio of which no frame of speech_frame samples is speech_rms loud is not boosted.
+    w.add_float32("fastconformer.vocabulary.speech_rms", float(boosting.SPEECH_RMS))
+    w.add_uint32("fastconformer.vocabulary.speech_frame", int(boosting.SPEECH_FRAME))
 # The decoding strips no language tags from the text (strip_lang_tags, for models that write them), which the C++
 # does not do. NeMo before 3.0, in which Haas runs, has no such option and strips none.
 assert not getattr(decoding, "strip_lang_tags", False)

@@ -13,6 +13,7 @@
 #include "model-file.h"
 #include "times.h"
 #include "transducer.h"
+#include "words.h"
 
 namespace fastconformer {
 
@@ -60,6 +61,9 @@ public:
      */
     Decoding decoding(const std::vector<float> & projected, const std::string & name, DecodeOn on = DecodeOn::Cpu,
                       const DecodingProgress & progress = {});
+    /** The same with `boost`'s words boosted, by a decoding that boosts them (TdtDecoder). */
+    Decoding decoding(const std::vector<float> & projected, const std::string & name, DecodeOn on, const DecodingProgress & progress,
+                      const Boost & boost);
     /** The same with the default decoding. */
     Decoding decoding(const std::vector<float> & projected) { return decoding(projected, decodings().front()); }
 
@@ -92,6 +96,8 @@ public:
     const Detokenizer & detokenizer() const { return detokenizer_; }
     /** Whether the model is on the CPU, where DecodeOn::Device decodes too. */
     bool on_cpu() const { return on_cpu_; }
+    /** Haas-ASR's custom vocabulary of a file that offers it (WordsModel::offers()), or null. */
+    const WordsModel * words() const { return words_.get(); }
 
 private:
     /** The prediction network, the joint and the decoders of decodings() over the tensors of one model file. */
@@ -148,6 +154,7 @@ private:
      */
     std::unique_ptr<OnCpu> cpu_;
     Detokenizer detokenizer_;
+    std::unique_ptr<WordsModel> words_;
     std::vector<std::string> separators_, breaks_;
     ggml_gallocr_t allocr_;
 };

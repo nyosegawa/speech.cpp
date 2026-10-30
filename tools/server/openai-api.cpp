@@ -146,7 +146,8 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
         throw ApiError{400, "The body is not multipart/form-data. Send the audio as the form's \"file\", as OpenAI's create transcription takes it.",
                        "", ""};
     }
-    std::vector<std::string> known = {"file", "model", "language", "prompt", "response_format", "decoding", "chunking_strategy", "chunking_strategy[type]"};
+    std::vector<std::string> known = {"file",     "model",       "language",    "prompt",           "response_format", "decoding",
+                                      "words",    "words_alpha", "words_guard", "chunking_strategy", "chunking_strategy[type]"};
     for (const VadMember & m : kServerVad) known.push_back(std::string("chunking_strategy[") + m.name + "]");
     std::string listed;
     for (const std::string & name : known) listed += name + ", ";
@@ -206,6 +207,19 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
     if (language) r.options.push_back({SPEECH_OPT_LANGUAGE, language->content});
     if (prompt) r.options.push_back({SPEECH_OPT_PROMPT, prompt->content});
     if (decoding) r.options.push_back({SPEECH_OPT_DECODING, decoding->content});
+    // speech.cpp's own fields, the custom vocabulary of a model that takes one, read as the command line reads them.
+    for (const speech_option option : {SPEECH_OPT_WORDS, SPEECH_OPT_WORDS_ALPHA, SPEECH_OPT_WORDS_GUARD}) {
+        const std::string name = speech_option_name(option);
+        const FormPart * part = field(name);
+        if (!part) continue;
+        try {
+            r.options.push_back({option, option_from_text(option, part->content)});
+        } catch (const std::invalid_argument &) {
+            throw ApiError{400, name + " is " + json_string(part->content) + "; it takes " +
+                                    (speech_option_type(option) == SPEECH_TYPE_BOOL ? "true or false" : "a number") + ".",
+                           name, "invalid_type"};
+        }
+    }
     // OpenAI's verbose_json requires the language, the duration and the text alone, and its timestamp granularity is
     // segment unless the request names one: a model that gives no times answers it without segments, and refuses a
     // granularity the request names.

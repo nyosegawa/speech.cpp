@@ -110,11 +110,16 @@ add_library(fastconformer STATIC
     src/families/fastconformer/decoder-step.cpp
     src/families/fastconformer/decoder.cpp
     src/families/fastconformer/tdt.cpp
+    src/families/fastconformer/boosting.cpp
+    src/families/fastconformer/words.cpp
     src/families/fastconformer/alsd.cpp
     src/families/fastconformer/rnnt-greedy.cpp
     src/families/fastconformer/detokenizer.cpp
+    src/families/fastconformer/sentencepiece.cpp
     src/families/fastconformer/times.cpp
     src/families/fastconformer/recognizer.cpp
+    src/families/fastconformer/vocabulary.cpp
+    src/families/fastconformer/guard.cpp
 )
 target_include_directories(fastconformer PUBLIC src/families)
 target_link_libraries(fastconformer PUBLIC speechcommon)
@@ -417,9 +422,16 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 # The checks of FastConformer's stages.
-foreach(stage frontend encoder transducer times)
+foreach(stage frontend encoder transducer times sentencepiece)
     add_executable(fastconformer-${stage}-check checks/fastconformer/fastconformer-${stage}-check.cpp)
     target_include_directories(fastconformer-${stage}-check PRIVATE checks)
+    target_link_libraries(fastconformer-${stage}-check PRIVATE fastconformer)
+endforeach()
+# Haas-ASR's custom vocabulary, on the cases of reference/fastconformer/vocabulary_cases.py, and the recognition with
+# it, on the dumps of dump.py --words, which both read with the JSON reader of `speech`.
+foreach(stage vocabulary words)
+    add_executable(fastconformer-${stage}-check checks/fastconformer/fastconformer-${stage}-check.cpp tools/common/json-reader.cpp)
+    target_include_directories(fastconformer-${stage}-check PRIVATE checks tools/common)
     target_link_libraries(fastconformer-${stage}-check PRIVATE fastconformer)
 endforeach()
 

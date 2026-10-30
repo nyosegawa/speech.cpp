@@ -21,8 +21,9 @@ recognition model: `speech asr` on WAVE files of the dumps of reference/fastconf
 reference/qwen3-asr/dump.py against the worker's text of the same samples, as text and as JSON with the stop and the
 languages, the one qwen-asr parsed or none, and where the model takes timestamps as text with --timestamps one line per
 segment and as JSON with them, the segments and tokens the worker's; and for a dump that holds requests with a forced
-language and a prompt, or with a decoding other than the default, `speech asr --language --prompt` or `speech asr
---decoding` against the worker's text of the same request, and as JSON its languages; for a Nemotron 3.5 Transcribe dump
+language and a prompt, with a decoding other than the default or with a vocabulary of its words/, `speech asr --language
+--prompt`, `speech asr --decoding` or `speech asr --words` against the worker's text of the same request, and as JSON its
+languages; for a Nemotron 3.5 Transcribe dump
 of the model card's prompt for speaker tags, `speech asr --speakers` as a line per segment with its speaker and as JSON
 against the worker's end with speakers, and its refusal with --vad; and with --vad a detection model,
 `speech asr --vad` on the dumps' audio joined with silences between them against the worker's ends of the regions that
@@ -585,7 +586,10 @@ elif info["task"] == "recognition":
         want_json = [{"file": f, **end_members(e)} for f, e in zip(verbatim_files, ends)]
         assert [json.loads(line) for line in timed_json] == want_json, timed_json[:1]
     for (f, _, members, languages), e in zip([a for a in asked if a[2]], asked_ends):
-        flags = [x for name, value in members.items() for x in ([f"--{name}"] if value is True else [f"--{name}", value])]
+        flags = []
+        for name, value in members.items():
+            flag = "--" + name.replace("_", "-")
+            flags += [flag] if value is True else [flag + "=false"] if value is False else [flag, str(value)]
         text = run("asr", model, *flags, *options, f).stdout.decode()
         if members.get("speakers"):
             # A line per segment with its speaker, or the text with empty times where the model cannot time it.
@@ -600,7 +604,7 @@ elif info["task"] == "recognition":
             run("asr", model, "--speakers", "--vad", vad, *options, f, code=2)
     print(f"asr: {len(verbatim_files)} files, the worker's texts as text and as JSON with the stop and the dumps' languages"
           + (", as segments with --timestamps and as JSON with times" if timed else "")
-          + f"; {len(asked_ends)} with the flags of their options, --language and --prompt, --decoding or --speakers, as the worker's requests "
+          + f"; {len(asked_ends)} with the flags of their options, --language and --prompt, --decoding, --words or --speakers, as the worker's requests "
           + "with them, --speakers as a line per segment with its speaker")
     if vad:
         # The dumps' audio joined with a second of silence after each, which the detection cuts into regions again.
