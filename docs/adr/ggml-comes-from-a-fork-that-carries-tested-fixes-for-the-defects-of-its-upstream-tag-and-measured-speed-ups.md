@@ -55,6 +55,14 @@ Apple M5 or an RTX 2080 (2026-10-17):
   graph left its steps with equal counts, the beam search wrote another text for a 65 s and a 311 s input on the CPU and
   on Metal (2026-10-30).
 
+- **A depthwise convolution of one position per channel.** `GGML_OP_CONV_2D_DW` takes its channel-fastest path for
+  an input that `ggml_is_contiguous_channels()` accepts, and its other path, which reads the kernel channel by channel
+  without its strides, for any contiguous input. An input of one position per channel, [1, 1, C], is laid out alike
+  either way and is contiguous, so with a channel-fastest kernel the CPU and Vulkan gave wrong values, where Metal,
+  which reads both by their strides, gave right ones: FastConformer's encoder, which convolves [channels, T] over time
+  channel-fastest, gave an output -0.45 dB from the right one on the CPU for an input that subsamples to one frame
+  (2026-10-31).
+
 ggml reads no setting that avoids the first two through its API, only environment variables: `GGML_METAL_TENSOR_DISABLE`,
 which it reads only while it lists its devices, so that a library sets it in its host's process, unsafely while another
 thread reads the environment; and `GGML_VK_DISABLE_MMVQ`, which it reads when it first creates each Vulkan device, and
@@ -113,6 +121,8 @@ picking Qwen3-ASR's tokens on the device was slower than reading the logits back
   each node's flags that change an allocation (input and output) and the position in the graph of each of its sources,
   and a graph that differs in either is planned again. A defect outside the operations is shown by a test of its own in
   the fix's commit, not by `test-backend-ops`.
+- **A depthwise convolution of one position per channel takes the kernel's layout** on the CPU and Vulkan, and the
+  path that reads the kernel channel by channel asserts that it is contiguous.
 - **Every backend's argmax takes the first of equal values**, and **Metal and Vulkan read a row of argmax with as many
   threads as a threadgroup takes**, up to 512 on Vulkan.
 - **A speed-up is a commit of its own, with `test-backend-ops` cases that show it correct in the same commit, and its
@@ -131,6 +141,7 @@ picking Qwen3-ASR's tokens on the device was slower than reading the logits back
   | Metal's matrix units without relaxed precision (fix and speed-up) | `test-backend-ops -o MUL_MAT` on an M5, M6, A19 or A20: the F16 products of 64 and 192 columns, and the products of F32, F16, BF16, Q8_0, Q4_K, Q5_K and Q6_K weights whose outputs end inside a tile, whose K does not fill a step, with broadcast batches, permuted or strided activations and activations in half precision; and the stage checks of speech.cpp on Metal | the tag's tensor-API `kernel_mul_mm` passes those cases, gives the simdgroup kernel's products up to the order of the float sums, and is no slower |
   | Metal's 4-bit scales in float | `test-backend-ops -o GET_ROWS`: the Q4_0, Q4_1 and Q4_K cases with `range` 0.04 and 0.004, on Metal | the tag passes those cases |
   | the allocator plans a graph wired otherwise again | `test-gallocr-topology`: two graphs of as many nodes and leafs and the same sizes, wired otherwise, allocated one after the other with one allocator, on the CPU and Metal | the tag's `ggml_gallocr_alloc_graph()` plans such a graph again |
+  | a depthwise convolution of one position per channel takes the kernel's layout | `test-backend-ops -o CONV_2D_DW`: inputs [1, 1, 64] by 3x3 and [1, 1, 1024] by 9x9 with a channel-fastest kernel, in F32 and F16, on Metal and Vulkan | the tag passes those cases |
   | Vulkan's coopmat2 products keep robust buffer access | no `test-backend-ops` case; Irodori-TTS v4 Large Q8_0 speaking the twenty sentences of speech-bench's `prompts/speak-ja-JP.json` in a loop on an RTX 5090 with NVIDIA's Windows driver 616.92 or 617.42 and the pipelines without robustness, which faults within thirty runs | NVIDIA's Windows driver runs that loop thirty times without a fault with the pipelines without robustness, or the tag keeps robustness on them |
 
   Between tags, a fix found later is a commit of its own on top, with its cases. Moving ggml to a newer tag starts the

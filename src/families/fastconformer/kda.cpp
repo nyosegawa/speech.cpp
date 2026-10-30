@@ -1,5 +1,7 @@
 #include "kda.h"
 
+#include <cmath>
+
 namespace fastconformer {
 
 namespace {
@@ -10,10 +12,13 @@ ggml_tensor * layer_norm(ggml_context * ctx, const ModelFile & m, ggml_tensor * 
 
 /**
  * fused_recurrent_kda()'s normalization of q and k: each head [rows of ne0] divided by the square root of its squares'
- * sum plus `eps`, which ggml_l2_norm() would instead bound below by eps.
+ * sum plus `eps`, which ggml_l2_norm() would instead bound below by eps. It is x / sqrt(mean(x^2) + eps / n) /
+ * sqrt(n), two nodes where the sum, root and division take five: a step of the decoding is mostly the CPU's threads
+ * meeting at each node, or a GPU's dispatches.
  */
 ggml_tensor * qk_norm(ggml_context * ctx, ggml_tensor * x, float eps) {
-    return ggml_div(ctx, x, ggml_sqrt(ctx, ggml_scale_bias(ctx, ggml_sum_rows(ctx, ggml_sqr(ctx, x)), 1.0f, eps)));
+    const float n = (float) x->ne[0];
+    return ggml_scale(ctx, ggml_rms_norm(ctx, x, eps / n), 1.0f / std::sqrt(n));
 }
 
 }  // namespace
@@ -32,10 +37,14 @@ KdaLayers::KdaLayers(const ModelFile & m)
 ggml_tensor * KdaLayers::build(ggml_context * ctx, ggml_tensor * x, ggml_tensor * state, ggml_tensor ** next) const {
     const int64_t d = head_dim_, h = heads_, width = h * d, past = conv_size_ - 1;
     const size_t f = sizeof(float);
-    ggml_tensor * out = nullptr;
+    // Each part of the next state is written into its place, in the order of the layout: a chain of concatenations
+    // would copy all that comes before each part again, and ggml's CPU concatenates a row on one thread, element by
+    // element.
+    ggml_tensor * out = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, state_size());
+    size_t written = 0;
     auto keep = [&](ggml_tensor * t) {
-        t = ggml_reshape_1d(ctx, ggml_cont(ctx, t), ggml_nelements(t));
-        out = out ? ggml_concat(ctx, out, t, 0) : t;
+        out = ggml_nelements(t) == t->ne[0] ? ggml_set_1d_inplace(ctx, out, t, written) : ggml_set_2d_inplace(ctx, out, t, (size_t) t->ne[0] * f, written);
+        written += (size_t) ggml_nelements(t) * f;
     };
     for (int l = 0; l < layers_; l++) {
         const std::string p = "pred.kda." + std::to_string(l) + ".";
