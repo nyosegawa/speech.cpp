@@ -1,7 +1,7 @@
 [project]
 name = "speech-cpp-unicode-reference"
 version = "0"
-description = "Writes the Unicode tables of src/common/unicode.cpp from Python 3.10's unicodedata and the tokenizers library's normalizers, and the cases unicode-check compares its normalization with"
+description = "Writes the Unicode tables of src/common/unicode.cpp from Python 3.10's unicodedata and str methods and the tokenizers library's normalizers, and the cases unicode-check compares its normalization with"
 requires-python = ">=3.10,<3.11"
 dependencies = [
   "tokenizers==0.23.2",
