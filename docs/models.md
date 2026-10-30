@@ -21,6 +21,7 @@ first time.
 | [`reazonspeech-v2`](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) | recognition | ja | `reazonspeech-nemo-619M-v2-Q8_0.gguf`, 0.66 GB | [FastConformer](models/fastconformer.md) |
 | [`parakeet-tdt_ctc-0.6b-ja`](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | recognition | ja | `parakeet-tdt_ctc-0.6B-ja-Q8_0.gguf`, 0.66 GB | [FastConformer](models/fastconformer.md) |
 | [`parakeet-tdt-0.6b-v3`](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) | recognition | 25 European languages | `parakeet-tdt-0.6B-v3-F16.gguf`, 1.26 GB | [FastConformer](models/fastconformer.md) |
+| [`haas-ja-v1.0`](https://huggingface.co/sakasegawa/Haas-ja-v1.0-GGUF) | recognition | ja | `Haas-616M-ja-v1.0-Q8_0.gguf`, 0.66 GB | [FastConformer](models/fastconformer.md) |
 | [`nemotron-3.5-transcribe`](https://huggingface.co/sakasegawa/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF) | recognition | 40 languages | `NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-IQ4_NL.gguf`, 19.0 GB | [Nemotron 3.5 Transcribe](models/nemotron-transcribe.md) |
 | [`silero-vad`](https://huggingface.co/sakasegawa/silero-vad-GGUF) | detection | any | `silero-vad-309K-v6.2-F32.gguf`, 1.2 MB | [Silero VAD](models/silero-vad.md) |
 | [`nemotron-3-diarization`](https://huggingface.co/sakasegawa/Nemotron-3-Diarization-GGUF) | diarization | any | `Nemotron-3-Diarization-99M-Q8_0.gguf`, 106 MB | [Sortformer](models/sortformer.md) |

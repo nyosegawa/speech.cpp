@@ -59,6 +59,7 @@ speech.cpp は、1つのコマンド `speech` と1つの共有ライブラリ `l
 | 認識 | [`reazonspeech-v2`](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) | ja | 何分もある録音の日本語を、句読点つきで認識します |
 | 認識 | [`parakeet-tdt_ctc-0.6b-ja`](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | ja | 短い日本語の発話を速く認識し、時刻も出します |
 | 認識 | [`parakeet-tdt-0.6b-v3`](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) | ヨーロッパの 25 言語 | 言語を自分で判定し、句読点、大文字、時刻つきで認識します |
+| 認識 | [`haas-ja-v1.0`](https://huggingface.co/sakasegawa/Haas-ja-v1.0-GGUF) | ja | 日本語を句読点つきで速く認識し、時刻も出します |
 | 認識 | [`nemotron-3.5-transcribe`](https://huggingface.co/sakasegawa/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF) | 40 言語 | 話したとおりに、言いよどみも含めて書き起こし、1 時間までの音声を一度に認識し、人名や用語のプロンプトを受け付けます。誰が話したかと、単語ごとの時刻も出せます。ファイルは 19.0 GB です |
 | 検出 | [`silero-vad`](https://huggingface.co/sakasegawa/silero-vad-GGUF) | どの言語でも | 人が話している区間を見つけ、認識モデルに発話を1つずつ渡します。1.2 MB です |
 | 話者分離 | [`nemotron-3-diarization`](https://huggingface.co/sakasegawa/Nemotron-3-Diarization-GGUF) | どの言語でも | 録音の中で、または音声が届くそばから、誰がいつ話したかを見つけます。話者は8人までです。106 MB です |
@@ -191,9 +192,10 @@ speech_synthesize(request, on_audio, NULL);   /* on_audio receives the samples a
 | `qwen3-asr-0.6b`, Q8_0 | 11.9% (7.0%) | 0.107 s / 0.072 s |
 | `qwen3-asr-1.7b`, Q8_0 | 9.5% (4.7%) | 0.257 s / 0.140 s |
 | `parakeet-tdt-0.6b-v3`, F16 | FLEURS en の WER 8.8% | 0.058 s / 0.095 s |
+| `haas-ja-v1.0`, Q8_0 | FLEURS ja で 4.4% (2.9%) | 0.063 s / 0.119 s |
 | `nemotron-3.5-transcribe`, IQ4_NL | 9.2% (5.3%) | 0.61 s / - |
 
-Nemotron 3.5 Transcribe は 2026-10-29 に測りました。CER は Vulkan の H100 で、レイテンシは M5 で先頭の 100 発話について測っています。詳しくは各モデルのページを見てください。
+Nemotron 3.5 Transcribe は 2026-10-29 に測りました。CER は Vulkan の H100 で、レイテンシは M5 で先頭の 100 発話について測っています。Haas-ja-v1.0 は Common Voice で学習しているので、2026-10-30 に FLEURS の日本語テストセットの 650 発話で測りました。同じ発話で parakeet-tdt_ctc-0.6b-ja は 5.0% (2.8%) です。詳しくは各モデルのページを見てください。
 
 ## ドキュメント
 
@@ -218,6 +220,6 @@ MIT ライセンスです。[LICENSE](LICENSE) を見てください。モデル
 - Irodori-TTS v4-Large は Aratako 氏のもので、テキストエンコーダーが Google の T5Gemma 2 から派生しているため、Gemma Terms of Use で提供されています。倫理上の制限は v4.1 と同じです。
 - Irodori-TTS のファイルに含まれるコーデック Semantic-DACVAE-Japanese-32dim は Aratako 氏のもので、MIT License で提供されています。これは Meta の facebook/dacvae-watermarked(Apache License 2.0)から派生しています。そのモデルカードの本文は SAM License にも触れていますが、facebookresearch/dacvae で 2025-12-19 に Apache-2.0 に訂正されました。
 - Drama 3 とそのコーデックは Fish Audio のもので、Fish Audio Community License 1.0 で提供されています。研究と非商用の利用は無料で、商用の利用は年間の売上が 50 万米ドル未満なら認められ、他人に音声合成や声のクローンを提供するサービスには Fish Audio との別の契約が要ります。Built with Fish Audio.
-- parakeet のモデルは NVIDIA のもので CC-BY-4.0、reazonspeech-nemo-v2 は reazon-research のもので Apache License 2.0 で提供されています。
+- parakeet のモデルは NVIDIA のもので CC-BY-4.0、reazonspeech-nemo-v2 は reazon-research のもの、Haas-ja-v1.0 は Third Intelligence のもので、どちらも Apache License 2.0 で提供されています。
 - Silero VAD は Silero Team のもので、MIT License で提供されています。
 - Nemotron 3 Diarization と Nemotron 3.5 Transcribe は NVIDIA のもので、OpenMDW License Agreement 1.1 で提供されています。
