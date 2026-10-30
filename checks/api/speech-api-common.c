@@ -335,6 +335,12 @@ int check_option_refusals(speech_model * model) {
             snprintf(what, sizeof what, "%s at NaN", name);
             ok &= expect(speech_request_set_float(r, o, NAN), SPEECH_ERROR_INVALID_ARGUMENT, name, what);
         }
+        if (type == SPEECH_TYPE_STRING) {
+            // A lone continuation byte, and a lead byte the text ends before its continuation.
+            snprintf(what, sizeof what, "%s that is not UTF-8", name);
+            ok &= expect(speech_request_set_string(r, o, "x\xff"), SPEECH_ERROR_INVALID_ARGUMENT, name, what) &
+                  expect(speech_request_set_string(r, o, "x\xe3\x83"), SPEECH_ERROR_INVALID_ARGUMENT, name, what);
+        }
         int has_neutral = 0;
         const speech_status neutral = set_neutral(r, o, &has_neutral);
         if (has_neutral) {

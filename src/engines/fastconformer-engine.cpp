@@ -1,4 +1,5 @@
 #include <cmath>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,8 @@ public:
      * milliseconds, the encoder runs as one graph, and the decoding steps frame by frame.
      */
     Recognized transcribe(const std::vector<float> & samples, const RequestValues & values, Run & run) override {
+        // Before the work passes anything to the caller, so that a request whose words are refused can be fixed and run.
+        const std::optional<fastconformer::Vocabulary> vocabulary = vocabulary_of(values);
         const NemoFrontend & frontend = recognizer_.frontend();
         const std::vector<float> features = frontend.features(samples);
         if (!run.progress(1.0 / 3)) return {};
@@ -25,16 +28,7 @@ public:
         const std::string & name = values.has(SPEECH_OPT_DECODING) ? values.string(SPEECH_OPT_DECODING) : recognizer_.decodings().front();
         const fastconformer::DecodeOn on = values.boolean(SPEECH_OPT_DECODE_ON_CPU) ? fastconformer::DecodeOn::Cpu : fastconformer::DecodeOn::Device;
         const auto progress = [&](double done) { return run.progress((2 + done) / 3); };
-        const std::vector<std::string> words = values.has(SPEECH_OPT_WORDS) ? fastconformer::word_entries(values.string(SPEECH_OPT_WORDS))
-                                                                             : std::vector<std::string>{};
-        if (!words.empty()) return with_words(words, values, samples, projected, name, on, progress, run);
-        for (speech_option unused : {SPEECH_OPT_WORDS_ALPHA, SPEECH_OPT_WORDS_GUARD}) {
-            if (values.given(unused)) {
-                throw Error(Fault::InvalidArgument,
-                            std::string("the option ") + speech_option_name(unused) + " applies only with words; leave it out or give words",
-                            speech_option_name(unused));
-            }
-        }
+        if (vocabulary) return with_words(*vocabulary, values, samples, projected, name, on, progress, run);
         const fastconformer::Decoding decoding = recognizer_.decoding(projected, name, on, progress);
         if (run.stopped()) return {};
         const fastconformer::Detokenizer & detokenizer = recognizer_.detokenizer();
@@ -71,16 +65,31 @@ public:
     bool computes_on_cpu() const override { return true; }
 
 private:
+    /** The vocabulary of the request's words, or none for a request without words, which takes no words_alpha or words_guard. */
+    static std::optional<fastconformer::Vocabulary> vocabulary_of(const RequestValues & values) {
+        const std::vector<std::string> words = values.has(SPEECH_OPT_WORDS) ? fastconformer::word_entries(values.string(SPEECH_OPT_WORDS))
+                                                                             : std::vector<std::string>{};
+        if (words.empty()) {
+            for (speech_option unused : {SPEECH_OPT_WORDS_ALPHA, SPEECH_OPT_WORDS_GUARD}) {
+                if (values.given(unused)) {
+                    throw Error(Fault::InvalidArgument,
+                                std::string("the option ") + speech_option_name(unused) + " applies only with words; leave it out or give words",
+                                speech_option_name(unused));
+                }
+            }
+            return std::nullopt;
+        }
+        return naming(speech_option_name(SPEECH_OPT_WORDS),
+                      [&] { return fastconformer::Vocabulary(words, (float) values.number(SPEECH_OPT_WORDS_ALPHA)); });
+    }
+
     /**
-     * A recognition with the custom vocabulary `words`, entries of Vocabulary.parse(): its text alone, since the words
-     * write it after the decoding, so that no decoding's tokens make it.
+     * A recognition with the custom vocabulary of the request's words: its text alone, since the words write it after
+     * the decoding, so that no decoding's tokens make it.
      */
-    Recognized with_words(const std::vector<std::string> & words, const RequestValues & values, const std::vector<float> & samples,
+    Recognized with_words(const fastconformer::Vocabulary & vocabulary, const RequestValues & values, const std::vector<float> & samples,
                           const std::vector<float> & projected, const std::string & name, fastconformer::DecodeOn on,
                           const fastconformer::DecodingProgress & progress, Run & run) {
-        const fastconformer::Vocabulary vocabulary = naming(speech_option_name(SPEECH_OPT_WORDS), [&] {
-            return fastconformer::Vocabulary(words, (float) values.number(SPEECH_OPT_WORDS_ALPHA));
-        });
         const fastconformer::WordsText found = recognizer_.words()->recognize(recognizer_, vocabulary, values.boolean(SPEECH_OPT_WORDS_GUARD),
                                                                               samples, projected, name, on, progress);
         if (run.stopped()) return {};

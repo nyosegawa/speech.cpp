@@ -16,6 +16,7 @@
 #include "language.h"
 #include "resample.h"
 #include "speech.h"
+#include "utf8.h"
 
 // Requests: each value checked against the model's table as it is set, the whole request when it runs, its
 // cancellation from any thread, and its result.
@@ -73,6 +74,9 @@ void check(const speech_request & request, speech_option option, speech_type typ
     }
     if (type == SPEECH_TYPE_FLOAT && !std::isfinite(std::get<double>(value))) {
         throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, std::string("the option ") + name + " is not a finite number", name);
+    }
+    if (type == SPEECH_TYPE_STRING && !decode_utf8(std::get<std::string>(value))) {
+        throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, std::string("the option ") + name + " is not UTF-8 text; give it in UTF-8", name);
     }
     const FileInfo & file = *request.model->file;
     const OptionSpec * spec = file.spec(option);
