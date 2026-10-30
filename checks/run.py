@@ -374,10 +374,16 @@ def nemotron_transcribe(model, devices, ctx):
 
 def fastconformer(model, devices, ctx):
     out = os.path.join(ctx.reference, "fastconformer", "out")
+    runs = []
+    # Haas-ASR's custom vocabulary takes no model.
+    if model is ctx.first.get("fastconformer"):
+        cases = os.path.join(out, "vocabulary-cases.json")
+        check = "fastconformer-vocabulary-check"
+        runs.append(Run(check, [cases], None, "") if os.path.isfile(cases) else missing(check, "", cases))
     absent = named_dumps("fastconformer", model, out)
     if absent:
-        return [absent]
-    runs = [Run("fastconformer-frontend-check", [model.path, out], None, model.label())]
+        return runs + [absent]
+    runs.append(Run("fastconformer-frontend-check", [model.path, out], None, model.label()))
     for device in devices:
         runs += [runs_on(device, f"fastconformer-{stage}-check", model, [out]) for stage in ("encoder", "transducer", "times")]
     return runs
