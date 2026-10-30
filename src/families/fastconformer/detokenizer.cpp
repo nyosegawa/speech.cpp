@@ -18,6 +18,15 @@ std::string replace_all(std::string s, const std::string & from, const std::stri
 }
 
 /**
+ * Whether Python's \s, which the official pattern of whitespace before a punctuation mark uses, matches the code point:
+ * the characters str.isspace() takes.
+ */
+bool whitespace(uint32_t c) {
+    return (c >= 0x09 && c <= 0x0D) || (c >= 0x1C && c <= 0x20) || c == 0x85 || c == 0xA0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200A) ||
+           c == 0x2028 || c == 0x2029 || c == 0x202F || c == 0x205F || c == 0x3000;
+}
+
+/**
  * The length of the UTF-8 character `bytes` begins at `at`, or 0 where none begins there, as SentencePiece's
  * DecodeUTF8() takes it: the length its first byte announces, if the bytes that follow make a well-formed character.
  */
@@ -83,19 +92,20 @@ std::vector<std::string> Detokenizer::token_texts(const std::vector<int32_t> & i
     const std::vector<std::string> pieces = surfaces(ids);
     std::string text;
     for (const std::string & p : pieces) text += p;
-    // The converter checks that no piece holds whitespace other than "▁" and that the unknown surface holds
-    // only spaces, so the space is the one whitespace character the official pattern's \s can meet here but for a
-    // byte piece's.
+    // A piece's surface is whole characters, a byte piece's included, so each character is tested where it stands.
     std::vector<std::string> out(pieces.size());
     size_t i = 0;
     for (size_t k = 0; k < pieces.size(); k++) {
-        for (char c : pieces[k]) {
+        for (size_t at = 0; at < pieces[k].size();) {
+            const size_t len = std::max<size_t>(character_at(pieces[k], at), 1);
+            const auto c = decode_utf8(pieces[k].substr(at, len));
             bool before_mark = false;
-            if (c == ' ') {
-                for (const std::string & p : punctuation_) before_mark = before_mark || text.compare(i + 1, p.size(), p) == 0;
+            if (c && whitespace(c->front())) {
+                for (const std::string & p : punctuation_) before_mark = before_mark || text.compare(i + len, p.size(), p) == 0;
             }
-            if (!before_mark) out[k] += c;
-            i++;
+            if (!before_mark) out[k] += pieces[k].substr(at, len);
+            at += len;
+            i += len;
         }
     }
     return out;
