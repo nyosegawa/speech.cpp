@@ -1,5 +1,10 @@
 #include "words.h"
 
+#include <algorithm>
+
+#include "guard.h"
+#include "recognizer.h"
+#include "unicode.h"
 #include "utf8.h"
 
 namespace fastconformer {
@@ -9,21 +14,48 @@ namespace {
 /** SentencePiece's word-start piece, U+2581. */
 const std::string kWordStart = "\xE2\x96\x81";
 
+/**
+ * SentencePiece's model of the file's tokenizer. Its pieces are normal but for the unknown piece and the byte pieces:
+ * the converter writes a tokenizer of the kind haas-asr only where it has no other.
+ */
 PieceModel piece_model(const ModelFile & m) {
     const std::string p = "fastconformer.tokenizer.";
     PieceModel model;
     model.pieces = m.str_array(p + "tokens");
     model.scores = m.f32_array(p + "scores");
-    model.byte_pieces = m.i32_array(p + "byte_pieces");
-    model.unknown_id = (int32_t) m.u32(p + "unknown_id");
-    model.charsmap = m.u8_array(p + "charsmap");
+    model.types.assign(model.pieces.size(), PieceType::Normal);
+    model.types[m.u32(p + "unknown_id")] = PieceType::Unknown;
+    for (int32_t id : m.i32_array(p + "byte_pieces")) model.types[(size_t) id] = PieceType::Byte;
+    const std::vector<uint8_t> charsmap = m.u8_array(p + "charsmap");
+    model.charsmap.assign(charsmap.begin(), charsmap.end());
     model.add_dummy_prefix = m.boolean(p + "add_dummy_prefix");
     model.remove_extra_whitespaces = m.boolean(p + "remove_extra_whitespaces");
     model.escape_whitespaces = m.boolean(p + "escape_whitespaces");
     return model;
 }
 
+/** `text` without the whitespace str.strip() removes at either end. */
+std::string strip(const std::string & text) {
+    const std::vector<uint32_t> cps = *decode_utf8(text);
+    size_t a = 0, b = cps.size();
+    while (a < b && python_space(cps[a])) a++;
+    while (b > a && python_space(cps[b - 1])) b--;
+    return encode_utf8(std::vector<uint32_t>(cps.begin() + (std::ptrdiff_t) a, cps.begin() + (std::ptrdiff_t) b));
+}
+
 }  // namespace
+
+std::vector<std::string> word_entries(const std::string & words) {
+    std::vector<std::string> entries;
+    size_t from = 0;
+    while (from <= words.size()) {
+        const size_t end = std::min(words.find('\n', from), words.size());
+        const std::string line = words.substr(from, end - from);
+        if (!strip(line).empty()) entries.push_back(line);
+        from = end + 1;
+    }
+    return entries;
+}
 
 bool WordsModel::offers(const ModelFile & m) {
     return m.one_of("fastconformer.vocabulary.kind", {"none", "haas-asr"}) == "haas-asr";
@@ -83,6 +115,27 @@ BoostingTree WordsModel::tree(const Vocabulary & vocabulary) const {
         for (std::vector<int32_t> & form : word_forms(spelling)) words.push_back(std::move(form));
     }
     return BoostingTree(words, (int32_t) pieces_.size(), context_score_, depth_scaling_, unk_score_);
+}
+
+
+WordsText WordsModel::recognize(Recognizer & recognizer, const Vocabulary & vocabulary, bool guard, const std::vector<float> & samples,
+                                const std::vector<float> & projected, const std::string & name, DecodeOn on,
+                                const DecodingProgress & progress) const {
+    const Detokenizer & detokenizer = recognizer.detokenizer();
+    WordsText out;
+    const Decoding plain = recognizer.decoding(projected, name, on, [&](double done) { return !progress || progress(done / 2); });
+    out.plain = strip(detokenizer.text(plain.ids));
+    out.speech = has_speech(samples, speech_rms_, (size_t) speech_frame_);
+    std::string text = out.plain;
+    if (out.speech) {
+        const BoostingTree boosting = tree(vocabulary);
+        const Decoding boosted = recognizer.decoding(projected, name, on, [&](double done) { return !progress || progress((1 + done) / 2); },
+                                                     Boost{boosting, vocabulary.alpha()});
+        out.boosted = strip(detokenizer.text(boosted.ids));
+        if (out.boosted != out.plain) text = guard ? guarded(out.plain, out.boosted, vocabulary) : out.boosted;
+    }
+    out.text = vocabulary.format(text);
+    return out;
 }
 
 }  // namespace fastconformer

@@ -111,6 +111,7 @@ add_library(fastconformer STATIC
     src/families/fastconformer/decoder.cpp
     src/families/fastconformer/tdt.cpp
     src/families/fastconformer/boosting.cpp
+    src/families/fastconformer/words.cpp
     src/families/fastconformer/alsd.cpp
     src/families/fastconformer/rnnt-greedy.cpp
     src/families/fastconformer/detokenizer.cpp
@@ -424,6 +425,10 @@ foreach(stage frontend encoder transducer times sentencepiece)
     target_include_directories(fastconformer-${stage}-check PRIVATE checks)
     target_link_libraries(fastconformer-${stage}-check PRIVATE fastconformer)
 endforeach()
+# The check of the custom vocabulary reads each dump's meta.json with the JSON reader of `speech`.
+add_executable(fastconformer-words-check checks/fastconformer/fastconformer-words-check.cpp tools/common/json-reader.cpp)
+target_include_directories(fastconformer-words-check PRIVATE checks tools/common)
+target_link_libraries(fastconformer-words-check PRIVATE fastconformer)
 
 # The checks of Qwen3-ASR's stages.
 foreach(stage frontend encoder)

@@ -6,11 +6,28 @@
 #include <vector>
 
 #include "boosting.h"
+#include "decoder.h"
 #include "model-file.h"
 #include "sentencepiece.h"
 #include "vocabulary.h"
 
 namespace fastconformer {
+
+class Recognizer;
+enum class DecodeOn;
+
+/** The entries of the request option words: its lines, but for those of whitespace alone. */
+std::vector<std::string> word_entries(const std::string & words);
+
+/** What Haas-ASR's recognition with words found (haas_asr.boosting.transcribe()). */
+struct WordsText {
+    /** The texts of the decodings without and with the words, stripped; the second empty where `speech` is false. */
+    std::string plain, boosted;
+    /** Whether the audio has speech, has_speech(): without it the words are not boosted. */
+    bool speech;
+    /** The text: the plain one, the guarded or the boosted one, with the words in their written forms. */
+    std::string text;
+};
 
 /**
  * What a file of fastconformer.vocabulary.kind haas-asr holds for Haas-ASR's custom vocabulary: the tokenizer's
@@ -34,6 +51,15 @@ public:
 
     /** The tree of every spelling of `vocabulary` in each of its word forms, in order, as boosting._compiled() builds it. */
     BoostingTree tree(const Vocabulary & vocabulary) const;
+
+    /**
+     * Haas-ASR's text of `samples` with `vocabulary`'s words, from `projected`, their encoder's output, by the decoding
+     * `name` computed where `on` says: the plain decoding's text where the audio has no speech, and otherwise, decoded
+     * again with the words boosted at `vocabulary`'s alpha, the boosted text where it differs, guarded where `guard` is
+     * set, with the words in their written forms. `progress` hears the two decodings in turn, as halves.
+     */
+    WordsText recognize(Recognizer & recognizer, const Vocabulary & vocabulary, bool guard, const std::vector<float> & samples,
+                        const std::vector<float> & projected, const std::string & name, DecodeOn on, const DecodingProgress & progress) const;
 
     float alpha() const { return alpha_; }
     float speech_rms() const { return speech_rms_; }
