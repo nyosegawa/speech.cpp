@@ -114,6 +114,7 @@ add_library(fastconformer STATIC
     src/families/fastconformer/alsd.cpp
     src/families/fastconformer/rnnt-greedy.cpp
     src/families/fastconformer/detokenizer.cpp
+    src/families/fastconformer/sentencepiece.cpp
     src/families/fastconformer/times.cpp
     src/families/fastconformer/recognizer.cpp
 )
@@ -418,7 +419,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 # The checks of FastConformer's stages.
-foreach(stage frontend encoder transducer times)
+foreach(stage frontend encoder transducer times sentencepiece)
     add_executable(fastconformer-${stage}-check checks/fastconformer/fastconformer-${stage}-check.cpp)
     target_include_directories(fastconformer-${stage}-check PRIVATE checks)
     target_link_libraries(fastconformer-${stage}-check PRIVATE fastconformer)
