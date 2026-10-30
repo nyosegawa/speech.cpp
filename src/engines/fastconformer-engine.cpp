@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "engine.h"
+#include "error.h"
 #include "fastconformer/recognizer.h"
 
 namespace {
@@ -124,6 +125,11 @@ FamilyInfo describe_fastconformer(const std::shared_ptr<const ModelFile> & file)
         info.options.push_back({SPEECH_OPT_WORDS, false, true, std::string()});
         info.options.push_back({SPEECH_OPT_WORDS_ALPHA, false, true, (double) file->f32("fastconformer.vocabulary.alpha"), 0, INFINITY, true});
         info.options.push_back({SPEECH_OPT_WORDS_GUARD, false, true, true});
+    } else if (file->layout_version() < 4 && file->str("general.name") == "Haas-ja-v1.0") {
+        // Haas-ASR's vocabulary came with layout 4, the first whose files hold its settings.
+        info.lacks.push_back({SPEECH_OPT_WORDS, "",
+                              file->path() + " has layout " + std::to_string(file->layout_version()) +
+                                  ", which lacks the settings of Haas-ASR's custom vocabulary that words needs; " + file->remedy()});
     }
     return info;
 }

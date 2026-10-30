@@ -99,8 +99,9 @@ std::vector<std::vector<int32_t>> WordsModel::word_forms(const std::string & spe
     if (!rest.empty()) {
         inside = ids_of({rest}, found);
         if (!found) {
+            const std::vector<uint32_t> code_points = *decode_utf8(rest);
             std::vector<std::string> characters;
-            for (uint32_t c : *decode_utf8(rest)) characters.push_back(encode_utf8({c}));
+            for (uint32_t c : code_points) characters.push_back(encode_utf8({c}));
             inside = ids_of(characters, found);
         }
     }

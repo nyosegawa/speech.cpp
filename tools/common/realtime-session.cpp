@@ -135,6 +135,7 @@ std::vector<RequestOption> Session::Config::options() const {
     std::vector<RequestOption> out;
     if (language) out.push_back({SPEECH_OPT_LANGUAGE, *language});
     if (prompt) out.push_back({SPEECH_OPT_PROMPT, *prompt});
+    out.insert(out.end(), words.begin(), words.end());
     return out;
 }
 
@@ -322,10 +323,10 @@ void Session::update(const JsonValue & event) {
                 for (const char * own : {"keywords", "delay"}) {
                     if (given(*transcription, own)) {
                         throw refusal("unsupported_parameter", at + "." + own,
-                                      at + "." + own + " is not supported; speech.cpp takes the model, the language or languages, and the prompt.");
+                                      at + "." + own + " is not supported; speech.cpp takes the model, the language or languages, the prompt and the words.");
                     }
                 }
-                only(*transcription, at, {"model", "language", "languages", "prompt", "keywords", "delay"});
+                only(*transcription, at, {"model", "language", "languages", "prompt", "words", "words_alpha", "words_guard", "keywords", "delay"});
                 // A member given sets its value, null taking it away, and one left out keeps it, as OpenAI's
                 // session.update changes only the members it holds.
                 const auto text = [&](const char * name, std::optional<std::string> & into) {
@@ -335,6 +336,19 @@ void Session::update(const JsonValue & event) {
                 text("model", next.model);
                 text("language", next.language);
                 text("prompt", next.prompt);
+                // words, words_alpha and words_guard, each set by a value of its option's type and taken away by null.
+                for (const speech_option option : {SPEECH_OPT_WORDS, SPEECH_OPT_WORDS_ALPHA, SPEECH_OPT_WORDS_GUARD}) {
+                    const JsonValue * value = transcription->member(speech_option_name(option));
+                    if (!value) continue;
+                    next.words.erase(std::remove_if(next.words.begin(), next.words.end(), [&](const RequestOption & o) { return o.option == option; }),
+                                     next.words.end());
+                    if (value->kind == JsonValue::Kind::Null) continue;
+                    try {
+                        next.words.push_back({option, option_from_json(option, *value)});
+                    } catch (const std::invalid_argument & e) {
+                        throw refusal("invalid_type", at + "." + speech_option_name(option), e.what());
+                    }
+                }
                 if (const JsonValue * languages = transcription->member("languages")) {
                     if (transcription->member("language")) throw refusal("invalid_value", at + ".languages", "Give the language or the languages, not both.");
                     next.language.reset();

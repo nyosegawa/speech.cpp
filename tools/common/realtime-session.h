@@ -103,6 +103,8 @@ private:
         bool transcribe = true;
         std::optional<std::string> language;
         std::optional<std::string> prompt;
+        /** speech.cpp's own members of transcription: the custom vocabulary of a model that takes one. */
+        std::vector<RequestOption> words;
         /** With turn_detection server_vad, the detection options of the members given; nothing for null. */
         std::optional<std::vector<RequestOption>> turns;
         /** With diarization, the diarization options of the members given; nothing for null, the default. */
