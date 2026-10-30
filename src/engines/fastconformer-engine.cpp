@@ -78,7 +78,9 @@ private:
     Recognized with_words(const std::vector<std::string> & words, const RequestValues & values, const std::vector<float> & samples,
                           const std::vector<float> & projected, const std::string & name, fastconformer::DecodeOn on,
                           const fastconformer::DecodingProgress & progress, Run & run) {
-        const fastconformer::Vocabulary vocabulary(words, (float) values.number(SPEECH_OPT_WORDS_ALPHA));
+        const fastconformer::Vocabulary vocabulary = naming(speech_option_name(SPEECH_OPT_WORDS), [&] {
+            return fastconformer::Vocabulary(words, (float) values.number(SPEECH_OPT_WORDS_ALPHA));
+        });
         const fastconformer::WordsText found = recognizer_.words()->recognize(recognizer_, vocabulary, values.boolean(SPEECH_OPT_WORDS_GUARD),
                                                                               samples, projected, name, on, progress);
         if (run.stopped()) return {};

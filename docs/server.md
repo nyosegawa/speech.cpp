@@ -143,6 +143,7 @@ OpenAI's limit.
 | `model` | the recognition model's `id`, or left out; any other model is a 404 (`model_not_found`) |
 | `language` | a tag of one of the model's languages, or `auto` (the default) |
 | `prompt` | what the model is told of the audio before it hears it, for a model that takes it (Qwen3-ASR, Nemotron 3.5 Transcribe) |
+| `words`, `words_alpha`, `words_guard` | speech.cpp's own: the custom vocabulary of a model that takes one (Haas), one word a line, how strongly it is boosted, and whether a change it makes is guarded ([the model's page](models/fastconformer.md#a-custom-vocabulary-haas)) |
 | `response_format` | `json` (the default), which answers `{"text":"..."}`; `text`, the text alone as `text/plain`; `verbose_json` (below); or `diarized_json`, with `chunking_strategy` each region with its speakers, or from a model that tells who speaks its own segments ([below](#speakers)). `srt` and `vtt` are refused: speech.cpp gives no subtitles |
 | `timestamp_granularities[]` | `segment`, `word` or both, with `verbose_json`; a model that gives no times refuses it |
 | `decoding` | speech.cpp's own: `beam` (the default) or `greedy`, for a model that takes it (reazonspeech-nemo-v2) |
@@ -263,7 +264,7 @@ utterance.
 
 | Client event | What it does |
 |---|---|
-| `session.update` | sets `session.audio.input.transcription`: `model` (the recognition model's `id`), `language`, or `languages` with one tag, and `prompt`, each left as it was when left out and taken away by `null`; or `null`, after which commits are not transcribed. Sets `turn_detection`: `null`, or `{"type": "server_vad"}` with `threshold`, `prefix_padding_ms` and `silence_duration_ms` (below). Sets speech.cpp's own `diarization`: `null`, or the diarization model's request options, `{}` for its defaults ([below](#speakers-of-a-session)). `session.type` is `"transcription"`, the format `{"type": "audio/pcm", "rate": 24000}`, and `noise_reduction` `null` |
+| `session.update` | sets `session.audio.input.transcription`: `model` (the recognition model's `id`), `language`, or `languages` with one tag, `prompt`, and speech.cpp's own `words`, `words_alpha` and `words_guard`, each left as it was when left out and taken away by `null`; or `null`, after which commits are not transcribed. Sets `turn_detection`: `null`, or `{"type": "server_vad"}` with `threshold`, `prefix_padding_ms` and `silence_duration_ms` (below). Sets speech.cpp's own `diarization`: `null`, or the diarization model's request options, `{}` for its defaults ([below](#speakers-of-a-session)). `session.type` is `"transcription"`, the format `{"type": "audio/pcm", "rate": 24000}`, and `noise_reduction` `null` |
 | `input_audio_buffer.append` | adds `audio`, base64 of 16-bit little-endian mono PCM at 24000 Hz |
 | `input_audio_buffer.commit` | transcribes the buffer: what was appended since the last commit or clear |
 | `input_audio_buffer.clear` | drops the buffer |

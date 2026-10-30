@@ -16,6 +16,7 @@ parakeet-tdt-0.6b-v3's languages are those of its model card: `bg` `cs` `da` `de
 ```sh
 speech asr parakeet-tdt_ctc-0.6b-ja utterance.wav                  # the text on stdout
 speech asr haas-ja-v1.0 --timestamps utterance.wav                 # Japanese with punctuation, with times
+speech asr haas-ja-v1.0 --words $'Haas=ハース\nAIモデル' talk.wav       # with a custom vocabulary of two words
 speech asr parakeet-tdt-0.6b-v3 --timestamps utterance.wav         # with the times of its segments
 speech asr reazonspeech-v2 --vad silero-vad meeting.wav            # a recording of minutes, by its regions of speech
 speech asr reazonspeech-v2 --decoding greedy meeting.wav           # faster, with greedy decoding
@@ -46,8 +47,26 @@ speech serve parakeet-tdt-0.6b-v3                                  # POST /v1/au
   parakeet-ja and 35 MB for the F16 file of parakeet-v3, and the CPU computes with `--threads`. The CPU's arithmetic
   differs from the GPU's, so a long recording can come out a word different where two words score almost the same.
 
-Not supported: the CTC head of parakeet-tdt_ctc-0.6b-ja, which NeMo does not decode with by default, and the custom
-vocabulary and `transcribe_longform()` of Haas's Python package; recognize a long recording by its regions instead.
+Not supported: the CTC head of parakeet-tdt_ctc-0.6b-ja, which NeMo does not decode with by default, and
+`transcribe_longform()` of Haas's Python package; recognize a long recording by its regions instead.
+
+## A custom vocabulary (Haas)
+
+Haas takes the custom vocabulary of its Python package, Haas-ASR: names and terms it rarely heard in training, which it
+then recognizes more often and writes as given. `words` lists them, one a line, each its written form followed by "=" and
+the readings Haas would write for it, usually in kana (`Haas=ハース,ハウス`); a word Haas already writes as listed needs
+none (`AIモデル`). The decoding boosts each word's readings and written form, the text writes each word found in it in its
+written form whether in hiragana or katakana, full-width or not, in any case or spacing, and the result is Haas-ASR's text
+for the same words.
+
+Boosting can also change text where no listed word was said. As Haas-ASR does, audio without speech is not boosted, and
+each request is also decoded without the words: a change is kept only where it holds a whole listed word (`words_guard`).
+Both decodings share one pass of the encoder. List only the words you need: each adds a small chance that a word is
+written where it was not said.
+
+A recognition with words gives its text alone, since the words write it after the decoding; with `timestamps` the
+result says why it has no times. Files of Haas from before speech.cpp 0.9.4 hold no vocabulary; fetch the file again
+(`speech pull haas-ja-v1.0`) to use one.
 
 ## Options
 
@@ -57,6 +76,9 @@ vocabulary and `transcribe_longform()` of Haas's Python package; recognize a lon
 | `timestamps` | false | add the times of the tokens and segments |
 | `decoding` | `beam` | reazonspeech-v2 only: `beam` or `greedy`. Greedy is faster and can write another text, often with fewer commas and full stops |
 | `decode_on_cpu` | true for Q8_0 and K-quant files, false for F16 and F32 | for a model on a GPU, decode on the CPU (true) or on the GPU (false). A model on the CPU decodes there either way |
+| `words` | `""` | Haas only: the custom vocabulary, one word a line, `written form=reading,reading` |
+| `words_alpha` | 2 | Haas only: how strongly the words are boosted; larger fixes more missed words and writes more words where they were not said |
+| `words_guard` | true | Haas only: keep a change the words made only where it holds a whole word |
 
 ## Accuracy
 

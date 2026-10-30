@@ -4,7 +4,8 @@ worker_client.py: one JSON object per line, and one terminal message per request
 It sends the audio of each dump of reference/fastconformer/dump.py or reference/qwen3-asr/dump.py as 16-bit chunks of
 one second and checks that the text is the dump's, the languages the one qwen-asr parsed by its tag or none (for
 FastConformer, which writes none, a member left out), and the stop complete, for each request a Qwen3-ASR dump holds
-with its forced language and its prompt and each decoding other than the default that a FastConformer dump holds, that
+with its forced language and its prompt, each decoding other than the default that a FastConformer dump holds and each
+vocabulary of its words/ where the model takes words, that
 a language the model only checks changes nothing, and with timestamps, where the model takes them, that the segments
 and tokens join into the text in time order, with speakers, for a Nemotron 3.5 Transcribe dump of the model card's
 prompt for speaker tags, that each segment has its speaker, or where the model cannot time its text, that it says why

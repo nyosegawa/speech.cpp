@@ -475,6 +475,35 @@ static int check_refusals(speech_model * model, const char * model_path, const f
         ok &= expect(speech_transcribe(r), SPEECH_ERROR_OUT_OF_RANGE, "prompt", "speakers with a prompt");
         speech_request_free(r);
     }
+    // A model that takes words refuses words_alpha without them and a word without a written form when the request
+    // runs, and gives the text of words alone, with the reason it has no times.
+    if (speech_model_info_takes(info, SPEECH_OPT_WORDS)) {
+        if (speech_request_new(model, &r) != SPEECH_OK || speech_request_set_audio(r, samples, n, rate) != SPEECH_OK ||
+            speech_request_set_float(r, SPEECH_OPT_WORDS_ALPHA, 3) != SPEECH_OK) {
+            return fail("a request with words_alpha");
+        }
+        ok &= expect(speech_transcribe(r), SPEECH_ERROR_INVALID_ARGUMENT, "words_alpha", "words_alpha without words");
+        speech_request_free(r);
+        if (speech_request_new(model, &r) != SPEECH_OK || speech_request_set_audio(r, samples, n, rate) != SPEECH_OK ||
+            speech_request_set_string(r, SPEECH_OPT_WORDS, "Haas=ハース\n =はーす") != SPEECH_OK) {
+            return fail("a request with words");
+        }
+        ok &= expect(speech_transcribe(r), SPEECH_ERROR_INVALID_ARGUMENT, "words", "a word without a written form");
+        speech_request_free(r);
+        if (speech_request_new(model, &r) != SPEECH_OK || speech_request_set_audio(r, samples, n, rate) != SPEECH_OK ||
+            speech_request_set_string(r, SPEECH_OPT_WORDS, "Haas=ハース,ハウス\n\nAIモデル\n") != SPEECH_OK ||
+            (takes_timestamps && speech_request_set_bool(r, SPEECH_OPT_TIMESTAMPS, 1) != SPEECH_OK)) {
+            return fail("a request with words");
+        }
+        ok &= expect(speech_transcribe(r), SPEECH_OK, NULL, "a recognition with words");
+        const speech_result * with_words = speech_request_result(r);
+        if (!with_words || speech_result_text(with_words)[0] == '\0' || speech_result_segment_count(with_words) != 0 ||
+            (takes_timestamps && !speech_result_untimed(with_words))) {
+            fprintf(stderr, "FAIL: a recognition with words and timestamps has no text, has segments, or has no reason for none\n");
+            ok = 0;
+        }
+        speech_request_free(r);
+    }
     // A refused value leaves the one set before it.
     const speech_option kept = takes_timestamps ? SPEECH_OPT_TIMESTAMPS : SPEECH_OPT_PROMPT;
     if (speech_request_new(model, &r) != SPEECH_OK || speech_request_set_audio(r, samples, n, rate) != SPEECH_OK ||

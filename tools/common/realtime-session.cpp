@@ -85,6 +85,11 @@ bool same(const std::vector<RequestOption> & a, const std::vector<RequestOption>
                       [](const RequestOption & x, const RequestOption & y) { return x.option == y.option && x.value == y.value; });
 }
 
+/** Whether two configurations ask their recognitions alike: neither transcribes, or both do with one model and options. */
+bool same(const std::optional<utterances::Asked> & a, const std::optional<utterances::Asked> & b) {
+    return a.has_value() == b.has_value() && (!a || (a->model == b->model && same(a->options, b->options)));
+}
+
 /**
  * The detection options of a turn_detection that is not null, server_vad's members given; its other members and
  * semantic_vad are refused, since a transcription session creates no response for them to steer.
@@ -187,9 +192,11 @@ std::string Session::session_json() {
     std::string transcription = "null";
     if (config_.transcribe) {
         const std::string model = config_.model.value_or(models_.held());
+        const std::string words = options_json(config_.words);
         transcription = "{" + (model.empty() ? "" : "\"model\":" + json_string(model) + ",") +
                         "\"language\":" + (config_.language ? json_string(*config_.language) : "null") +
-                        (config_.prompt ? ",\"prompt\":" + json_string(*config_.prompt) : "") + "}";
+                        (config_.prompt ? ",\"prompt\":" + json_string(*config_.prompt) : "") +
+                        (config_.words.empty() ? "" : "," + words.substr(1, words.size() - 2)) + "}";
     }
     std::string turns = "null";
     if (config_.turns) {
@@ -349,6 +356,8 @@ void Session::update(const JsonValue & event) {
                         throw refusal("invalid_type", at + "." + speech_option_name(option), e.what());
                     }
                 }
+                // In the vocabulary's order, so that the same values given in another order ask the recognition alike.
+                std::sort(next.words.begin(), next.words.end(), [](const RequestOption & a, const RequestOption & b) { return a.option < b.option; });
                 if (const JsonValue * languages = transcription->member("languages")) {
                     if (transcription->member("language")) throw refusal("invalid_value", at + ".languages", "Give the language or the languages, not both.");
                     next.language.reset();
@@ -417,8 +426,7 @@ void Session::update(const JsonValue & event) {
         }
     }
     const bool undiarize = config_.diarization && !next.diarization;
-    const bool asked_otherwise = next.transcribe != config_.transcribe || next.model != config_.model || next.language != config_.language ||
-                                 next.prompt != config_.prompt;
+    const bool asked_otherwise = !same(next.asked(), config_.asked());
     const bool manual = config_.turns && !next.turns;
     config_ = next;
     if (asked_otherwise) assembly_.ask(config_.asked());

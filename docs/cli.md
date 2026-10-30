@@ -38,6 +38,7 @@ speech asr parakeet-tdt_ctc-0.6b-ja --timestamps --format json one.wav two.wav >
 
 # The text of a recording in Japanese, told the names it holds
 speech asr qwen3-asr-1.7b --language ja --prompt "Claude Code、渋谷" meeting.wav
+speech asr haas-ja-v1.0 --words $'Haas=ハース\nThird Intelligence=サードインテリジェンス' talk.wav
 
 # The text of a long recording, recognized region by region where someone speaks
 speech asr reazonspeech-v2 --vad silero-vad meeting.wav

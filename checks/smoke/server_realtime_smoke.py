@@ -4,7 +4,9 @@ event written in two pieces 350 ms apart, two
 commits of 24000 Hz PCM appended in pieces, each committed in order and transcribed into deltas that only add text and
 the completed of the text, the languages and the duration of the same samples sent as a WAV file of that rate, a
 cleared buffer, a commit with transcription null left untranscribed, an error event for each member and value it does
-not take with the client's event_id, a session.update that changes only the members it gives, the bound on the audio a
+not take with the client's event_id, a session.update that changes only the members it gives, speech.cpp's own words,
+words_alpha and words_guard (a commit transcribed with them as the file with the same fields and a value out of range
+refused, or their refusal by a model that does not take them), the bound on the audio a
 session holds before it is transcribed, two commits and an HTTP request run in the order they arrived, a client gone
 while its commit is transcribed, and the refusals of the upgrade: another model, another query member, another Origin
 and another Host. As someone speaks: deltas of a commit appended in real time before it is committed, and a reading
@@ -172,6 +174,53 @@ ws.send({"type": "session.update", "session": {"type": "transcription", "audio":
 kept = ws.event()["session"]["audio"]["input"]["transcription"]
 assert kept == {"model": name, "language": None}, kept
 print("realtime: a session.update of the model alone keeps the language, and a language of null takes it away")
+
+
+def outcome(ws):
+    """The completed or failed of the commit sent last, past its committed and deltas."""
+    while True:
+        e = ws.event()
+        if e["type"].endswith((".completed", ".failed")):
+            return e
+
+
+# speech.cpp's own words, words_alpha and words_guard: a model that takes them transcribes a commit with them as the same
+# samples sent as a file with the same fields, a session.update without them keeps them, one with a value out of range is
+# refused, and null takes each away; a model that does not take them refuses the session.update. The vocabulary is one of
+# the first dump's words/ (reference/fastconformer/dump.py --words) that changes its text, where it has one.
+metas = []
+folder = os.path.join(dumps[0], "words")
+for vocabulary in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
+    with open(os.path.join(folder, vocabulary, "meta.json"), encoding="utf-8") as f:
+        metas.append(json.load(f))
+v = ([m for m in metas if m["text"] != m["plain"]] or metas or [{"vocabulary": {"words": ["Haas=ハース"], "alpha": 2.0, "guard": True}}])[0]["vocabulary"]
+words = {"words": "\n".join(v["words"]), "words_alpha": v["alpha"], "words_guard": v["guard"]}
+at = "session.audio.input.transcription."
+if any(o["name"] == "words" for o in info["options"]):
+    ws.send(session({"model": name, **words}))
+    assert ws.event()["session"]["audio"]["input"]["transcription"] == {"model": name, "language": None, **words}
+    appended(ws, pcms[0])
+    ws.send({"type": "input_audio_buffer.commit"})
+    done = outcome(ws)
+    status, _, body = transcribe([(k, json.dumps(x) if isinstance(x, bool) else str(x)) for k, x in words.items()], [("file", "x.wav", wav24(pcms[0]))])
+    filed = json.loads(body)["text"]
+    assert status == 200 and done["type"] == "conversation.item.input_audio_transcription.completed" and done["transcript"] == filed, (done, body)
+    ws.send(session({"model": name}))
+    assert ws.event()["session"]["audio"]["input"]["transcription"] == {"model": name, "language": None, **words}
+    ws.send(session({"model": name, "words_alpha": 0}, event_id="alpha"))
+    realtime_error(ws, "unsupported_value", at + "words_alpha", "a words_alpha out of its range", "alpha")
+    ws.send(session({"model": name, "words": None, "words_alpha": None, "words_guard": None}))
+    assert ws.event()["session"]["audio"]["input"]["transcription"] == {"model": name, "language": None}
+    appended(ws, pcms[0])
+    ws.send({"type": "input_audio_buffer.commit"})
+    plain = outcome(ws)
+    assert plain["type"].endswith(".completed") and plain["transcript"] == wants[0][0], plain
+    print(f"realtime: {len(v['words'])} words transcribed as the file with the same fields, "
+          f"{'another text than' if filed != wants[0][0] else 'the same text as'} without them ({filed[:30]!r}), kept by a session.update "
+          f"without them and taken away by null")
+else:
+    ws.send(session({"model": name, **words}, event_id="words"))
+    realtime_error(ws, "unsupported_parameter", at + "words", "words to a model that does not take them", "words")
 for event, code, param, what in (
         (session({"model": name}) | {"session": {"type": "realtime"}}, "unsupported_value", "session.type", "a conversation session"),
         (session({"model": name}, {"type": "semantic_vad"}), "unsupported_value", "session.audio.input.turn_detection.type", "semantic_vad"),
@@ -199,6 +248,9 @@ for event, code, param, what in (
          "two languages"),
         (session({"model": name, "keywords": ["渋谷"]}), "unsupported_parameter", "session.audio.input.transcription.keywords", "keywords"),
         (session({"model": name, "delay": "low"}), "unsupported_parameter", "session.audio.input.transcription.delay", "delay"),
+        (session({"model": name, "words": ["Haas"]}), "invalid_type", "session.audio.input.transcription.words", "words that are no text"),
+        (session({"model": name, "words_guard": "yes"}), "invalid_type", "session.audio.input.transcription.words_guard",
+         "a words_guard that is no boolean"),
         ({"type": "session.update", "session": {"type": "transcription", "audio": {"input": {"noise_reduction": {"type": "near_field"}}}}},
          "unsupported_parameter", "session.audio.input.noise_reduction", "noise reduction"),
         ({"type": "session.update", "session": {"type": "transcription", "audio": {"input": {"format": {"type": "audio/pcmu"}}}}},
@@ -280,10 +332,16 @@ appended(ws, pcms[0] * 4)
 ws.send({"type": "input_audio_buffer.commit"})
 appended(ws, pcms[1])
 ws.send({"type": "input_audio_buffer.commit"})
-first, second = ws.event(), ws.event()
-assert first["type"] == second["type"] == "input_audio_buffer.committed", (first, second)
+# The first commit's transcription can begin, and send its deltas, before the second commit is acknowledged.
+committed, done = [], []
+while len(committed) < 2:
+    e = ws.event()
+    if e["type"] == "input_audio_buffer.committed":
+        committed.append(e)
+    elif e["type"].endswith((".completed", ".failed")):
+        done.append(e)
+first, second = committed
 assert transcribe([], [("file", "x.wav", wav24(pcms[1]))])[0] == 200
-done = []
 while len(done) < 2:
     e = ws.event()
     if e["type"].endswith((".completed", ".failed")):

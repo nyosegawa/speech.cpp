@@ -36,8 +36,8 @@ ApiError error_of(std::exception_ptr failure) {
         return e;
     } catch (const Failure & failure) {
         ApiError e = openai::library_error(failure);
-        if (failure.option() == speech_option_name(SPEECH_OPT_LANGUAGE) || failure.option() == speech_option_name(SPEECH_OPT_PROMPT)) {
-            e.param = std::string(kTranscription) + "." + failure.option();
+        for (const speech_option option : kTranscriptionOptions) {
+            if (failure.option() == speech_option_name(option)) e.param = std::string(kTranscription) + "." + failure.option();
         }
         return e;
     } catch (const std::exception & e) {
