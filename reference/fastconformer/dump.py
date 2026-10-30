@@ -4,6 +4,7 @@ usage: uv run python dump.py <model> <out dir> <audio.wav>...
        uv run python dump.py --times <model> <out dir>
        uv run python dump.py --greedy <model> <out dir>
        uv run python dump.py --texts <model> <out dir>
+       uv run python dump.py --words <words.json> <model> <out dir>
 
 Each WAVE file, mono at the model's sample rate, goes to <out dir>/<model>/<file name without .wav>/. The
 stages are those of the official forward pass and of the default decoding of its transducer (greedy TDT, or beam
@@ -58,6 +59,22 @@ writes (decode_tokens_to_str_with_strip_punctuation()) for token sequences that 
 takes, written in byte pieces, before each of the vocabulary's punctuation marks and before a piece that is none, and
 bytes that make no UTF-8 character, alone and between pieces. ids.npy holds the sequences one after the other and
 id_offsets.npy where each begins, with their end last; text.npy the UTF-8 of the texts and text_offsets.npy the same.
+
+With --words, for Haas, every dump of the model under <out dir>/<model>/ gains a folder words/<name>/ for each custom
+vocabulary of the JSON file, a list of {"name", "words", "alpha", "guard"} whose words are entries of
+Vocabulary.parse(), recognized from the dump's encoder output as Haas-ASR's boosting.transcribe() recognizes audio:
+
+  spellings.txt    the spellings the words are boosted in, one a line (Vocabulary.spellings)
+  word_tokens      the token sequences of every spelling, in order, one after the other, [w], with word_offsets [n + 1]
+                   where each begins, their end last, and word_spellings [n], the spelling each is of
+  tree_arcs        the compiled tree's arcs: from, to, token, [a, 3], and tree_weights their bonuses, [a]
+  tree_states      its states: arcs start, arcs end, order and the state each backs off to, [s, 4], and
+                   tree_backoffs the bonus of backing off, [s]
+  plain_ids        the token ids of the decoding without the words, [m], and boosted_ids those with them, [k]
+
+and meta.json with the vocabulary, the texts of the two decodings, whether the audio has speech (has_speech()), the
+guarded text where the guard runs, and the text Haas-ASR gives, which is asserted to be the text of
+haas_asr.transcribe() of the dump's audio.
 """
 
 import argparse
@@ -78,14 +95,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--times", action="store_true", help="add the times to the model's existing dumps")
 parser.add_argument("--greedy", action="store_true", help="add NeMo's greedy decoding to the model's existing dumps")
 parser.add_argument("--texts", action="store_true", help="write NeMo's texts of token sequences with byte pieces")
+parser.add_argument("--words", help="add Haas-ASR's recognition with each custom vocabulary of this JSON file to the dumps")
 parser.add_argument("model", choices=sorted(MODELS))
 parser.add_argument("out_dir")
 parser.add_argument("audio", nargs="*")
 args = parser.parse_args()
-if args.times + args.greedy + args.texts > 1:
-    parser.error("give one of --times, --greedy and --texts")
-if (args.times or args.greedy or args.texts) == bool(args.audio):
-    parser.error("give WAVE files, or --times, --greedy or --texts without them")
+if args.times + args.greedy + args.texts + bool(args.words) > 1:
+    parser.error("give one of --times, --greedy, --texts and --words")
+if (args.times or args.greedy or args.texts or bool(args.words)) == bool(args.audio):
+    parser.error("give WAVE files, or --times, --greedy, --texts or --words without them")
 
 pin = MODELS[args.model]
 model = restore(pin)
@@ -402,18 +420,84 @@ def dump_texts():
     print(json.dumps({"texts": out, "cases": len(cases)}))
 
 
+def dump_words(dumps, vocabularies):
+    """Saves Haas-ASR's recognition of each dump's encoder output with each custom vocabulary into words/<name>/."""
+    import haas_asr
+    from haas_asr import boosting
+    from haas_asr.vocabulary import Vocabulary
+    from nemo.collections.asr.parts.context_biasing import biasing_multi_model
+
+    boosting.enable(model)
+    decode = model.decoding.rnnt_decoder_predictions_tensor
+    for v in vocabularies:
+        vocabulary = Vocabulary.parse(v["words"], alpha=v["alpha"])
+        tree = biasing_multi_model._BIASING_MODEL_CACHE[boosting._compiled(vocabulary.spellings, model.tokenizer)]
+        forms = [(i, tokens) for i, s in enumerate(vocabulary.spellings) for tokens in boosting.word_forms(model.tokenizer, s)]
+        for out in dumps:
+            model.eval()
+            encoded = torch.from_numpy(np.load(os.path.join(out, "encoded.npy"))).T[None].contiguous()
+            lengths = torch.tensor([encoded.shape[2]])
+            audio = np.load(os.path.join(out, "audio.npy"))
+            plain = decode(encoded, lengths)[0]
+            # transcribe() adds the request's tree to the decoding's models when it begins (_transcribe_on_begin()) and
+            # takes it away when it ends; a decoding called directly does both itself.
+            requests = boosting.requests(vocabulary, 1, model.tokenizer)
+            models = model.decoding.decoding.decoding_computer.biasing_multi_model
+            requests[0].biasing_cfg.add_to_multi_model(tokenizer=model.tokenizer, biasing_multi_model=models)
+            try:
+                boosted = decode(encoded, lengths, partial_hypotheses=requests)[0]
+            finally:
+                requests[0].biasing_cfg.remove_from_multi_model(biasing_multi_model=models)
+            plain_text, boosted_text = plain.text.strip(), boosted.text.strip()
+            speech = boosting.has_speech(audio)
+            guarded = boosting.guarded(plain_text, boosted_text, vocabulary) if v["guard"] else None
+            if boosted_text == plain_text or not speech:
+                text = plain_text
+            else:
+                text = guarded if v["guard"] else boosted_text
+            text = vocabulary.format(text)
+            official = haas_asr.transcribe(model, [audio], vocabulary=vocabulary, guard=v["guard"])[0]
+            assert text == official, f"{out}: the encoder's output gives {text!r}, transcribe() gives {official!r}"
+            words_out = os.path.join(out, "words", v["name"])
+            os.makedirs(words_out, exist_ok=True)
+            n = tree.num_states
+            saved = {
+                "word_tokens": [t for _, tokens in forms for t in tokens],
+                "word_offsets": np.cumsum([0] + [len(tokens) for _, tokens in forms]),
+                "word_spellings": [i for i, _ in forms],
+                "tree_arcs": torch.stack([tree.from_states, tree.to_states, tree.ilabels], dim=1)[: tree.num_arcs_extended],
+                "tree_weights": tree.arcs_weights[: tree.num_arcs_extended],
+                "tree_states": torch.cat([tree.start_end_arcs[:n], tree.state_order[:n, None], tree.backoff_to_states[:n, None]], dim=1),
+                "tree_backoffs": tree.backoff_weights[:n],
+                "plain_ids": [int(i) for i in torch.as_tensor(plain.y_sequence).tolist()],
+                "boosted_ids": [int(i) for i in torch.as_tensor(boosted.y_sequence).tolist()],
+            }
+            for key, value in saved.items():
+                array = value.detach().cpu().numpy() if isinstance(value, torch.Tensor) else np.asarray(value)
+                np.save(os.path.join(words_out, f"{key}.npy"), np.ascontiguousarray(array).astype(np.int32 if array.dtype.kind in "iu" else np.float32))
+            with open(os.path.join(words_out, "spellings.txt"), "w", encoding="utf-8", newline="") as f:
+                f.write("\n".join(vocabulary.spellings))
+            meta = {"nemo": NEMO, "model": pin, "haas_asr": haas_asr.__version__, "vocabulary": v, "plain": plain_text,
+                    "boosted": boosted_text, "has_speech": speech, "guarded": guarded, "text": text}
+            json.dump(meta, open(os.path.join(words_out, "meta.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+            print(json.dumps({"dump": words_out, "plain": plain_text, "boosted": boosted_text, "text": text}, ensure_ascii=False))
+
+
 # The times come from transcribe() as it runs without the recording wrappers, and after the stages of every file, since
 # transcribe(timestamps=True) changes the model's decoding for good.
-outs = [] if args.times or args.greedy or args.texts else [dump_stages(path) for path in args.audio]
+outs = [] if args.times or args.greedy or args.texts or args.words else [dump_stages(path) for path in args.audio]
 model.decoder.predict, model.joint.project_encoder, model.joint.project_prednet, model.joint.joint_after_projection = (
     predict, project_encoder, project_prednet, joint_after_projection)
 if args.texts:
     dump_texts()
-elif args.times or args.greedy:
+elif args.times or args.greedy or args.words:
     root = os.path.join(args.out_dir, args.model)
     dumps = sorted(os.path.join(root, d) for d in os.listdir(root) if os.path.isfile(os.path.join(root, d, "audio.npy")))
     assert dumps, f"no dump of this script is under {root}"
-    if args.greedy:
+    if args.words:
+        assert pin.get("environment") == "haas", "Haas-ASR's custom vocabulary is Haas's"
+        dump_words(dumps, json.load(open(args.words, encoding="utf-8")))
+    elif args.greedy:
         dump_greedy(dumps)
     else:
         for out in dumps:

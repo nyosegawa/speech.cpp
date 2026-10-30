@@ -53,6 +53,10 @@ std::unique_ptr<Decoder> make_decoder(const ModelFile & m, const PredictionNetwo
     throw std::logic_error("a FastConformer model with a " + kind + " decoder has no decoding named " + name);
 }
 
+Decoding Decoder::decode(const std::vector<float> &, ggml_backend_t, const DecodingProgress &, const Boost &) const {
+    throw std::logic_error("this decoding boosts no words");
+}
+
 int first_argmax(const float * v, int n) {
     int best = 0;
     for (int i = 1; i < n; i++) {

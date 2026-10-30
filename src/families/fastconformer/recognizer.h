@@ -60,6 +60,9 @@ public:
      */
     Decoding decoding(const std::vector<float> & projected, const std::string & name, DecodeOn on = DecodeOn::Cpu,
                       const DecodingProgress & progress = {});
+    /** The same with `boost`'s words boosted, by a decoding that boosts them (TdtDecoder). */
+    Decoding decoding(const std::vector<float> & projected, const std::string & name, DecodeOn on, const DecodingProgress & progress,
+                      const Boost & boost);
     /** The same with the default decoding. */
     Decoding decoding(const std::vector<float> & projected) { return decoding(projected, decodings().front()); }
 

@@ -78,6 +78,13 @@ Decoding Recognizer::decoding(const std::vector<float> & projected, const std::s
     return copy.transducer.decoder(name).decode(projected, copy.backend.get(), progress);
 }
 
+Decoding Recognizer::decoding(const std::vector<float> & projected, const std::string & name, DecodeOn on,
+                              const DecodingProgress & progress, const Boost & boost) {
+    if (on == DecodeOn::Device || on_cpu_) return device_.decoder(name).decode(projected, backend_, progress, boost);
+    OnCpu & copy = cpu();
+    return copy.transducer.decoder(name).decode(projected, copy.backend.get(), progress, boost);
+}
+
 std::vector<Segment> Recognizer::segments(const Decoding & decoding) const {
     return fastconformer::segments(detokenizer_.token_texts(decoding.ids), detokenizer_.word_starts(decoding.ids),
                                    token_spans(decoding, detokenizer_), separators_, breaks_);

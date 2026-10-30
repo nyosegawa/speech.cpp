@@ -47,7 +47,8 @@ bool neutral(speech_option option, const OptionValue & value) {
         case SPEECH_OPT_TIMESTAMPS:
         case SPEECH_OPT_SPEAKERS: return !std::get<bool>(value);
         case SPEECH_OPT_PROMPT:
-        case SPEECH_OPT_INSTRUCTIONS: return std::get<std::string>(value).empty();
+        case SPEECH_OPT_INSTRUCTIONS:
+        case SPEECH_OPT_WORDS: return std::get<std::string>(value).empty();
         default: return false;
     }
 }

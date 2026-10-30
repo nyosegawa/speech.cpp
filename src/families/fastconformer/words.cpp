@@ -1,0 +1,88 @@
+#include "words.h"
+
+#include "utf8.h"
+
+namespace fastconformer {
+
+namespace {
+
+/** SentencePiece's word-start piece, U+2581. */
+const std::string kWordStart = "\xE2\x96\x81";
+
+PieceModel piece_model(const ModelFile & m) {
+    const std::string p = "fastconformer.tokenizer.";
+    PieceModel model;
+    model.pieces = m.str_array(p + "tokens");
+    model.scores = m.f32_array(p + "scores");
+    model.byte_pieces = m.i32_array(p + "byte_pieces");
+    model.unknown_id = (int32_t) m.u32(p + "unknown_id");
+    model.charsmap = m.u8_array(p + "charsmap");
+    model.add_dummy_prefix = m.boolean(p + "add_dummy_prefix");
+    model.remove_extra_whitespaces = m.boolean(p + "remove_extra_whitespaces");
+    model.escape_whitespaces = m.boolean(p + "escape_whitespaces");
+    return model;
+}
+
+}  // namespace
+
+bool WordsModel::offers(const ModelFile & m) {
+    return m.one_of("fastconformer.vocabulary.kind", {"none", "haas-asr"}) == "haas-asr";
+}
+
+WordsModel::WordsModel(const ModelFile & m)
+    : encoder_(piece_model(m)),
+      pieces_(m.str_array("fastconformer.tokenizer.tokens")),
+      context_score_(m.f32("fastconformer.vocabulary.context_score")),
+      depth_scaling_(m.f32("fastconformer.vocabulary.depth_scaling")),
+      unk_score_(m.f32("fastconformer.vocabulary.unk_score")),
+      alpha_(m.f32("fastconformer.vocabulary.alpha")),
+      speech_rms_(m.f32("fastconformer.vocabulary.speech_rms")),
+      speech_frame_(m.size("fastconformer.vocabulary.speech_frame")) {
+    for (size_t i = 0; i < pieces_.size(); i++) id_of_.emplace(pieces_[i], (int32_t) i);
+}
+
+std::vector<int32_t> WordsModel::ids_of(const std::vector<std::string> & pieces, bool & found) const {
+    std::vector<int32_t> ids;
+    found = true;
+    for (const std::string & piece : pieces) {
+        const auto it = id_of_.find(piece);
+        if (it == id_of_.end()) {
+            found = false;
+            return {};
+        }
+        ids.push_back(it->second);
+    }
+    return ids;
+}
+
+std::vector<std::vector<int32_t>> WordsModel::word_forms(const std::string & spelling) const {
+    const std::vector<int32_t> ids = encoder_.encode(spelling);
+    const std::string first = ids.empty() ? "" : pieces_[(size_t) ids[0]];
+    if (first.compare(0, kWordStart.size(), kWordStart) != 0) return {ids};
+    const std::string rest = first.substr(kWordStart.size());
+    // `_pieces([rest]) or _pieces(list(rest)) if rest else []`: the merged piece's text as one piece, or else one a
+    // character, or nothing where the word-start piece stands alone.
+    bool found = true;
+    std::vector<int32_t> inside;
+    if (!rest.empty()) {
+        inside = ids_of({rest}, found);
+        if (!found) {
+            std::vector<std::string> characters;
+            for (uint32_t c : *decode_utf8(rest)) characters.push_back(encode_utf8({c}));
+            inside = ids_of(characters, found);
+        }
+    }
+    if (!found || (inside.empty() && ids.size() == 1)) return {ids};
+    inside.insert(inside.end(), ids.begin() + 1, ids.end());
+    return {inside, ids};
+}
+
+BoostingTree WordsModel::tree(const Vocabulary & vocabulary) const {
+    std::vector<std::vector<int32_t>> words;
+    for (const std::string & spelling : vocabulary.spellings()) {
+        for (std::vector<int32_t> & form : word_forms(spelling)) words.push_back(std::move(form));
+    }
+    return BoostingTree(words, (int32_t) pieces_.size(), context_score_, depth_scaling_, unk_score_);
+}
+
+}  // namespace fastconformer
