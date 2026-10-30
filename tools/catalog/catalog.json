@@ -184,6 +184,23 @@
       ]
     },
     {
+      "name": "haas-ja-v1.0",
+      "repository": "sakasegawa/Haas-ja-v1.0-GGUF",
+      "type": "q8_0",
+      "start": [],
+      "revision": "3168c927c1ddceaacff5ec2af9831fc311e62db6",
+      "task": "recognition",
+      "languages": ["ja"],
+      "voice_files": false,
+      "files": [
+        {"type": "q8_0", "file": "Haas-616M-ja-v1.0-Q8_0.gguf", "size": 656128544, "sha256": "9103322fa3d37c7a5f4d09141a34add89b606d09196bfac763b2d8454df4f050"},
+        {"type": "f16", "file": "Haas-616M-ja-v1.0-F16.gguf", "size": 1232875904, "sha256": "f65eda2d152615bafd96f4d42fe40ee75904d5241baa7a82df76e2dd76b36c6f"},
+        {"type": "q6_k", "file": "Haas-616M-ja-v1.0-Q6_K.gguf", "size": 508645920, "sha256": "e7e43675d43bce2058b618cd6442863d0938a9b4f962311aef38494018a4b555"},
+        {"type": "q5_k", "file": "Haas-616M-ja-v1.0-Q5_K.gguf", "size": 427768352, "sha256": "bb8e6a39feccc9222f6af45d66247f5854b93c0db3165ea3cfaaa293d45f69c9"},
+        {"type": "q4_k", "file": "Haas-616M-ja-v1.0-Q4_K.gguf", "size": 351648288, "sha256": "18496606aff41d63cafdcd37cb9e905b86dce1e153821e26a044ae891cd23029"}
+      ]
+    },
+    {
       "name": "nemotron-3.5-transcribe",
       "repository": "sakasegawa/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
       "type": "iq4_nl",
