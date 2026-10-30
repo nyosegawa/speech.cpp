@@ -3,6 +3,7 @@
 usage: uv run python dump.py <model> <out dir> <audio.wav>...
        uv run python dump.py --times <model> <out dir>
        uv run python dump.py --greedy <model> <out dir>
+       uv run python dump.py --texts <model> <out dir>
 
 Each WAVE file, mono at the model's sample rate, goes to <out dir>/<model>/<file name without .wav>/. The
 stages are those of the official forward pass and of the default decoding of its transducer (greedy TDT, or beam
@@ -51,6 +52,12 @@ network the decoding took, and the times of transcribe(timestamps=True) with the
 token_timestep is the frame each token was emitted on. The ids and their frames are asserted to be those of the
 strategy greedy as well (GreedyRNNTInfer, which goes frame by frame), and the text that of transcribe() of the dump's
 audio. The folder holds no features.npy, so that the checks do not take it for a dump of the default decoding.
+
+With --texts, for a model whose vocabulary has byte pieces, <out dir>/<model>/texts/ holds the text NeMo's decoding
+writes (decode_tokens_to_str_with_strip_punctuation()) for token sequences that hold them: each character Python's \s
+takes, written in byte pieces, before each of the vocabulary's punctuation marks and before a piece that is none, and
+bytes that make no UTF-8 character, alone and between pieces. ids.npy holds the sequences one after the other and
+id_offsets.npy where each begins, with their end last; text.npy the UTF-8 of the texts and text_offsets.npy the same.
 """
 
 import argparse
@@ -63,20 +70,22 @@ import numpy as np
 import soundfile
 import torch
 from omegaconf import open_dict
+from sentencepiece import sentencepiece_model_pb2
 
 from pins import MODELS, NEMO, restore
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--times", action="store_true", help="add the times to the model's existing dumps")
 parser.add_argument("--greedy", action="store_true", help="add NeMo's greedy decoding to the model's existing dumps")
+parser.add_argument("--texts", action="store_true", help="write NeMo's texts of token sequences with byte pieces")
 parser.add_argument("model", choices=sorted(MODELS))
 parser.add_argument("out_dir")
 parser.add_argument("audio", nargs="*")
 args = parser.parse_args()
-if args.times and args.greedy:
-    parser.error("give --times or --greedy, not both")
-if (args.times or args.greedy) == bool(args.audio):
-    parser.error("give WAVE files, or --times or --greedy without them")
+if args.times + args.greedy + args.texts > 1:
+    parser.error("give one of --times, --greedy and --texts")
+if (args.times or args.greedy or args.texts) == bool(args.audio):
+    parser.error("give WAVE files, or --times, --greedy or --texts without them")
 
 pin = MODELS[args.model]
 model = restore(pin)
@@ -95,8 +104,10 @@ set_by_checkpoint = {key: key in model.cfg.decoding for key in ("segment_seperat
 # The decoding calls the prediction network on the label each hypothesis ends with, from the state its labels before
 # left, projects the outputs and the encoder's frames for the joint, and evaluates the joint on pairs of them: one at a
 # time in greedy decoding, a batch of the beam's hypotheses at a time in beam search. These wrappers record every row.
-# Rows are told apart by their bytes, which equal tensors share and which the decoding copies without change.
-calls = {}
+# Rows are told apart by their bytes, which equal tensors share and which the decoding copies without change. They record
+# the decoding of the stages alone, not that of transcribe(), whose encoder output need not be the stages' to the bit: with
+# NeMo 2.7.3 it was not for Haas's 25.5 s input.
+calls = {"recording": False}
 predict, project_encoder, project_prednet, joint_after_projection = (
     model.decoder.predict, model.joint.project_encoder, model.joint.project_prednet, model.joint.joint_after_projection)
 
@@ -107,6 +118,8 @@ def row_key(x):
 
 def recording_predict(y, state, *a, **k):
     out = predict(y, state, *a, **k)
+    if not calls["recording"]:
+        return out
     assert y.shape[1] == 1
     for r in range(y.shape[0]):
         # The state a row continues: none or zeros at the start of the sequence, else what an earlier row left.
@@ -121,6 +134,8 @@ def recording_predict(y, state, *a, **k):
 
 def recording_project_encoder(f):
     out = project_encoder(f)
+    if not calls["recording"]:
+        return out
     for x, p in zip(f.reshape(-1, f.shape[-1]), out.reshape(-1, out.shape[-1])):
         calls["projected_frames"][row_key(p)] = calls["frames"][row_key(x)]
     return out
@@ -128,6 +143,8 @@ def recording_project_encoder(f):
 
 def recording_project_prednet(g):
     out = project_prednet(g)
+    if not calls["recording"]:
+        return out
     for x, p in zip(g.reshape(-1, g.shape[-1]), out.reshape(-1, out.shape[-1])):
         calls["projected_steps"][row_key(p)] = calls["outputs"][row_key(x)]
     return out
@@ -135,6 +152,8 @@ def recording_project_prednet(g):
 
 def recording_joint(f, g):
     out = joint_after_projection(f, g)
+    if not calls["recording"]:
+        return out
     f, g, o = f.reshape(-1, f.shape[-1]), g.reshape(-1, g.shape[-1]), out.reshape(-1, out.shape[-1])
     assert f.shape[0] == g.shape[0] == o.shape[0]
     for r in range(o.shape[0]):
@@ -175,11 +194,14 @@ def dump_stages(path):
     saved["encoded"] = encoded[0, :, :t].T
     assert torch.equal(saved["layers"][-1], saved["encoded"])
 
+    # The encoder's output holds frames of the features' padding after the valid ones, which NeMo 2.7's decoding
+    # projects with them.
     frames_of = {}
-    for i in range(t):
+    for i in range(encoded.shape[2]):
         frames_of.setdefault(row_key(encoded[0, :, i]), i)
-    calls.update(pred=[], states={}, outputs={}, frames=frames_of, projected_frames={}, projected_steps={}, joint=[])
+    calls.update(pred=[], states={}, outputs={}, frames=frames_of, projected_frames={}, projected_steps={}, joint=[], recording=True)
     hypothesis = model.decoding.rnnt_decoder_predictions_tensor(encoder_output=encoded, encoded_lengths=length, return_hypotheses=True)[0]
+    calls["recording"] = False
     saved["pred_labels"] = np.array([label for label, _, _ in calls["pred"]], dtype=np.int32)
     saved["pred_parents"] = np.array([parent for _, parent, _ in calls["pred"]], dtype=np.int32)
     saved["pred_output"] = torch.stack([g for _, _, g in calls["pred"]])
@@ -344,12 +366,50 @@ def dump_greedy(dumps):
             dump_times(wave_file(out, tmp), greedy_out)
 
 
+def dump_texts():
+    """Saves NeMo's texts of token sequences that hold byte pieces into <out dir>/<model>/texts/."""
+    proto = sentencepiece_model_pb2.ModelProto()
+    proto.ParseFromString(model.tokenizer.tokenizer.serialized_model_proto())
+    byte_ids = {int(p.piece[3:5], 16): i for i, p in enumerate(proto.pieces) if p.type == proto.SentencePiece.BYTE}
+    if len(byte_ids) != 256:
+        raise SystemExit(f"{args.model}'s vocabulary has no byte pieces")
+    pieces = {p.piece: i for i, p in enumerate(proto.pieces) if p.type == proto.SentencePiece.NORMAL}
+
+    def written(text):
+        return [byte_ids[b] for b in text.encode("utf-8")]
+
+    word = model.tokenizer.text_to_ids("月の")
+    marks = sorted(model.decoding.supported_punctuation)
+    cases = []
+    for c in (chr(i) for i in range(0x110000)):
+        if c.isspace():
+            cases += [word + written(c) + [pieces[m]] if m in pieces else word + written(c) + written(m) for m in marks]
+            cases.append(word + written(c) + word)
+    for bad in ([0xE5], [0xE5, 0xA1], [0xFF], [0x80, 0x41], [0xC0, 0xAF], [0xED, 0xA0, 0x80], [0xF4, 0x90, 0x80, 0x80]):
+        cases += [[byte_ids[b] for b in bad], word + [byte_ids[b] for b in bad] + word]
+    texts = [model.decoding.decode_tokens_to_str_with_strip_punctuation(ids).encode("utf-8") for ids in cases]
+    out = os.path.join(args.out_dir, args.model, "texts")
+    os.makedirs(out, exist_ok=True)
+    arrays = {
+        "ids": np.array([i for ids in cases for i in ids], dtype=np.int32),
+        "id_offsets": np.cumsum([0] + [len(ids) for ids in cases]).astype(np.int32),
+        "text": np.frombuffer(b"".join(texts), dtype=np.uint8),
+        "text_offsets": np.cumsum([0] + [len(t) for t in texts]).astype(np.int32),
+    }
+    for key, array in arrays.items():
+        np.save(os.path.join(out, f"{key}.npy"), array)
+    json.dump({"nemo": NEMO, "model": pin, "cases": len(cases)}, open(os.path.join(out, "meta.json"), "w"), indent=1)
+    print(json.dumps({"texts": out, "cases": len(cases)}))
+
+
 # The times come from transcribe() as it runs without the recording wrappers, and after the stages of every file, since
 # transcribe(timestamps=True) changes the model's decoding for good.
-outs = [] if args.times or args.greedy else [dump_stages(path) for path in args.audio]
+outs = [] if args.times or args.greedy or args.texts else [dump_stages(path) for path in args.audio]
 model.decoder.predict, model.joint.project_encoder, model.joint.project_prednet, model.joint.joint_after_projection = (
     predict, project_encoder, project_prednet, joint_after_projection)
-if args.times or args.greedy:
+if args.texts:
+    dump_texts()
+elif args.times or args.greedy:
     root = os.path.join(args.out_dir, args.model)
     dumps = sorted(os.path.join(root, d) for d in os.listdir(root) if os.path.isfile(os.path.join(root, d, "audio.npy")))
     assert dumps, f"no dump of this script is under {root}"

@@ -2,7 +2,9 @@
 // the order data flows: the prediction network on the dump's labels, the joint on the dump's encoder frames and
 // prediction outputs, each decoding of the model and the detokenization from the dump's encoder output, then the
 // whole path from the dump's audio to the text, which it also times with the graphs each decoding computes. On a GPU
-// each decoding runs twice, on the CPU's copy of its tensors and on the GPU. The
+// each decoding runs twice, on the CPU's copy of its tensors and on the GPU. For a vocabulary with byte pieces, the
+// detokenizer is checked against NeMo's texts of the token sequences of <its general.name>/texts/, which
+// dump.py --texts writes. The
 // dumps are those of the model, in <reference out dir>/<its general.name>/: the model's default decoding is checked
 // against the dump's own tokens and text, and each other one against those in the dump's folder of its name, which
 // dump.py --greedy writes for an RNN-T's greedy decoding.
@@ -130,8 +132,7 @@ int main(int argc, char ** argv) {
                     const PredictionNetwork::Step step =
                         prediction.build(g, pred_labels.i32[n], parents[n] < 0 ? prediction.initial_state() : states[(size_t) parents[n]]);
                     g.output(step.output);
-                    g.output(step.h);
-                    g.output(step.c);
+                    g.output(step.state);
                     g.compute(backend, allocr);
                     const std::vector<float> out = Graph::read(step.output);
                     outputs_got.insert(outputs_got.end(), out.begin(), out.end());
@@ -210,6 +211,25 @@ int main(int argc, char ** argv) {
                 }
             }
             ggml_gallocr_free(allocr);
+
+            // NeMo's texts of token sequences with byte pieces: whitespace in bytes before punctuation marks, and bytes
+            // that make no character.
+            const std::filesystem::path texts = std::filesystem::u8path(args[2]) / std::filesystem::u8path(recognizer.model().str("general.name")) / "texts";
+            if (std::filesystem::is_directory(texts)) {
+                const Npy ids = read_npy((texts / "ids.npy").u8string()), id_offsets = read_npy((texts / "id_offsets.npy").u8string());
+                const Npy text = read_npy((texts / "text.npy").u8string()), text_offsets = read_npy((texts / "text_offsets.npy").u8string());
+                size_t differ = 0;
+                const size_t cases = id_offsets.i32.size() - 1;
+                for (size_t c = 0; c < cases; c++) {
+                    const std::vector<int32_t> sequence(ids.i32.begin() + id_offsets.i32[c], ids.i32.begin() + id_offsets.i32[c + 1]);
+                    const std::string want(text.u8.begin() + text_offsets.i32[c], text.u8.begin() + text_offsets.i32[c + 1]);
+                    const std::string got = recognizer.detokenizer().text(sequence);
+                    if (got == want) continue;
+                    if (differ++ < 5) std::printf("    ids%s: got \"%s\", want \"%s\"\n", ids_text(sequence).c_str(), got.c_str(), want.c_str());
+                }
+                std::printf("texts of token sequences with byte pieces: %zu of %zu differ from NeMo's\n", differ, cases);
+                ok = ok && differ == 0;
+            }
         }
         ggml_backend_free(backend);
         return ok ? 0 : 1;

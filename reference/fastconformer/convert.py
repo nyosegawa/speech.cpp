@@ -2,9 +2,10 @@
 
 usage: uv run python convert.py <model> <out dir>
 
-Writes parakeet-tdt_ctc-0.6B-ja-F32.gguf, parakeet-tdt-0.6B-v3-F32.gguf or reazonspeech-nemo-619M-v2-F32.gguf, named
-under GGUF's naming convention, in layout 2: the frontend's window and mel filterbank, the subsampling, the conformer
-layers, the prediction network and the joint, with the SentencePiece pieces the token ids name, the settings of the
+Writes parakeet-tdt_ctc-0.6B-ja-F32.gguf, parakeet-tdt-0.6B-v3-F32.gguf, reazonspeech-nemo-619M-v2-F32.gguf or
+Haas-616M-ja-v1.0-F32.gguf, named under GGUF's naming convention, in layout 3: the frontend's window and mel filterbank,
+the subsampling, the conformer layers, the prediction network, LSTM layers or Haas's Kimi Delta Attention layers, and
+the joint, with the SentencePiece pieces the token ids name and which of them stand for bytes, the settings of the
 decoding transcribe() runs (greedy TDT's durations and limit, or the beam and length of RNN-T's alignment-length
 synchronous beam search) and, for RNN-T, the limit of the greedy decoding NeMo also runs on it, every other constant the
 C++ reads and the model's identity in the GGUF specification's general keys. A hybrid checkpoint's CTC head is left out,
@@ -15,13 +16,14 @@ Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [
 tensor in the type src/families/fastconformer/layout.cpp gives it. The batch norm of each convolution
 module is folded into its depthwise convolution, which it follows in evaluation, and each LSTM layer's two biases are
 summed. A checkpoint whose conformer layers have no biases (ConformerEncoder's use_bias false) is written without them,
-and fastconformer.encoder.use_bias says so.
+and fastconformer.encoder.use_bias says so. Haas runs in the environment of haas/ (pins.py).
 """
 
 import argparse
 import os
 
 import numpy as np
+import torch
 from gguf import GGUFValueType, GGUFWriter, LlamaFileType, naming_convention, size_label
 from nemo.collections.asr.models import EncDecHybridRNNTCTCBPEModel, EncDecRNNTBPEModel
 from nemo.collections.asr.parts.preprocessing import features
@@ -33,7 +35,7 @@ from pins import MODELS, restore
 ARCH = "fastconformer"
 # Each layout this converter has written, with the first release of speech.cpp whose reader takes it; it writes the
 # last.
-RELEASES = {1: "0.7.0", 2: "0.8.0"}
+RELEASES = {1: "0.7.0", 2: "0.8.0", 3: "0.9.3"}
 LAYOUT = max(RELEASES)
 # The ISO 639 two-letter codes of the languages each checkpoint transcribes, from its model card, which requests give as
 # BCP 47 tags. None takes a language: parakeet-tdt-0.6b-v3 finds the language of the audio itself.
@@ -42,9 +44,11 @@ LANGUAGES = {
     "reazonspeech-nemo-v2": ["ja"],
     "parakeet-tdt-0.6b-v3": ["en", "es", "fr", "de", "bg", "hr", "cs", "da", "nl", "et", "fi", "el", "hu", "it", "lv",
                              "lt", "mt", "pl", "pt", "ro", "sk", "sl", "sv", "ru", "uk"],
+    "Haas-ja-v1.0": ["ja"],
 }
 # The SPDX identifier of each checkpoint's license, from its model card.
-LICENSES = {"parakeet-tdt_ctc-0.6b-ja": "CC-BY-4.0", "parakeet-tdt-0.6b-v3": "CC-BY-4.0", "reazonspeech-nemo-v2": "Apache-2.0"}
+LICENSES = {"parakeet-tdt_ctc-0.6b-ja": "CC-BY-4.0", "parakeet-tdt-0.6b-v3": "CC-BY-4.0", "reazonspeech-nemo-v2": "Apache-2.0",
+            "Haas-ja-v1.0": "Apache-2.0"}
 # The parts of each model's name under GGUF's naming convention (ggml's docs/gguf.md): its line, its size where the name
 # gives one, what it was trained toward (ja, the language of parakeet-tdt_ctc-0.6b-ja) and its version. Where the name
 # gives no size, the size label is counted from the parameters of the file's tensors.
@@ -52,6 +56,7 @@ NAMES = {
     "parakeet-tdt_ctc-0.6b-ja": {"basename": "parakeet-tdt_ctc", "size_label": "0.6B", "finetune": "ja", "version": None},
     "parakeet-tdt-0.6b-v3": {"basename": "parakeet-tdt", "size_label": "0.6B", "finetune": None, "version": "v3"},
     "reazonspeech-nemo-v2": {"basename": "reazonspeech-nemo", "size_label": None, "finetune": None, "version": "v2"},
+    "Haas-ja-v1.0": {"basename": "Haas", "size_label": None, "finetune": "ja", "version": "v1.0"},
 }
 # speech.cpp's addition to NeMo's segments: the marks that end a segment wherever they stand, for a model whose
 # languages are written without spaces. NeMo ends a segment at one of its separators only where a word ends, which
@@ -128,9 +133,32 @@ else:
     assert isinstance(greedy_max_symbols, int) and greedy_max_symbols > 0, greedy_max_symbols
     durations = []
 assert dec.blank_as_pad and dec.blank_idx == decoding.blank_id and not dec.random_state_sampling
-# LSTMDropout is the plain LSTM rnn() makes without a normalization; its dropout is off in evaluation.
-assert type(dec.prediction.dec_rnn).__name__ == "LSTMDropout" and dec.prediction.dec_rnn.lstm.proj_size == 0
-assert dec.prediction.dec_rnn.lstm.bias and not dec.prediction.dec_rnn.lstm.bidirectional
+prediction = {"LSTMDropout": "lstm", "KDAPredictionNetwork": "kda"}[type(dec.prediction.dec_rnn).__name__]
+network = dec.prediction.dec_rnn
+if prediction == "lstm":
+    # LSTMDropout is the plain LSTM rnn() makes without a normalization; its dropout is off in evaluation.
+    assert network.lstm.proj_size == 0 and network.lstm.bias and not network.lstm.bidirectional
+else:
+    # Haas's KDATransducerDecoder: pre-norm residual blocks of fla's KimiDeltaAttention with nn.LayerNorm, the blank as
+    # the embedding's padding and no normalization of its own. Each layer as the C++ computes it: short convolutions
+    # of q, k and v with a SiLU and no bias, a gate without a lower bound and beta through a sigmoid in the kernel,
+    # as many value heads as heads, values as wide as keys, and an output norm gated by a sigmoid.
+    assert type(dec).__name__ == "KDATransducerDecoder" and cfg.decoder.get("normalization_mode") is None
+    assert len(network.layers) == len(network.norms) == dec.pred_rnn_layers
+    first = network.layers[0]
+    for layer, norm in zip(network.layers, network.norms):
+        assert type(layer).__name__ == "KimiDeltaAttention" and layer.use_short_conv and not layer.conv_bias
+        assert not layer.allow_neg_eigval and not layer.safe_gate and layer.lower_bound is None
+        assert layer.num_v_heads == layer.num_heads and layer.head_v_dim == layer.head_k_dim == layer.head_dim
+        assert layer.f_proj[0].out_features == layer.g_proj[0].out_features == layer.head_v_dim
+        assert layer.f_proj[0].bias is None and layer.f_proj[1].bias is None and layer.g_proj[0].bias is None
+        assert layer.g_proj[1].bias is not None and layer.b_proj.bias is None and layer.o_proj.bias is None
+        assert all(c.activation == "silu" and c.bias is None for c in (layer.q_conv1d, layer.k_conv1d, layer.v_conv1d))
+        assert layer.o_norm.activation == "sigmoid" and layer.o_norm.weight is not None and layer.o_norm.bias is None
+        assert (layer.num_heads, layer.head_dim, layer.conv_size, layer.o_norm.eps) == (
+            first.num_heads, first.head_dim, first.conv_size, first.o_norm.eps)
+        assert type(norm) is torch.nn.LayerNorm and norm.elementwise_affine and norm.eps == network.norms[0].eps
+    assert network.final_norm is None or (type(network.final_norm) is torch.nn.LayerNorm and network.final_norm.eps == network.norms[0].eps)
 assert not dec.is_adapter_available() and not joint.is_adapter_available()
 assert float(dec.prediction.embed.weight[dec.blank_idx].abs().max()) == 0
 assert joint.activation == "relu" and joint.temperature == 1.0
@@ -186,16 +214,30 @@ tokenizer = model.tokenizer
 assert not tokenizer.legacy
 proto = sentencepiece_model_pb2.ModelProto()
 proto.ParseFromString(tokenizer.tokenizer.serialized_model_proto())
-# Normal, user-defined and unknown pieces only: SentencePiece writes a user-defined piece (parakeet-tdt-0.6b-v3's
-# <|en|> and the other tags) as it writes a normal one, and the C++ detokenizer handles no control or byte pieces.
-allowed = (proto.SentencePiece.NORMAL, proto.SentencePiece.USER_DEFINED, proto.SentencePiece.UNKNOWN)
+# Normal, user-defined, unknown and byte pieces only: SentencePiece writes a user-defined piece (parakeet-tdt-0.6b-v3's
+# <|en|> and the other tags) as it writes a normal one, and the C++ detokenizer handles no control pieces. A tokenizer
+# with byte fallback (Haas's) has a byte piece <0xXX> for each of the 256 bytes.
+allowed = (proto.SentencePiece.NORMAL, proto.SentencePiece.USER_DEFINED, proto.SentencePiece.UNKNOWN, proto.SentencePiece.BYTE)
 assert all(p.type in allowed for p in proto.pieces)
+byte_pieces = {int(p.piece[3:5], 16): i for i, p in enumerate(proto.pieces) if p.type == proto.SentencePiece.BYTE}
+assert all(proto.pieces[i].piece == f"<0x{b:02X}>" for b, i in byte_pieces.items())
+assert sorted(byte_pieces) == (list(range(256)) if proto.trainer_spec.byte_fallback else [])
 assert not proto.trainer_spec.treat_whitespace_as_suffix
 blank = int(decoding.blank_id)
 assert blank == len(proto.pieces) == tokenizer.vocab_size
 w.add_string("fastconformer.decoder.kind", decoder)
 w.add_uint32("fastconformer.decoder.blank_id", blank)
 w.add_uint32("fastconformer.decoder.prediction_layers", int(dec.pred_rnn_layers))
+w.add_string("fastconformer.decoder.prediction", prediction)
+if prediction == "kda":
+    w.add_uint32("fastconformer.decoder.kda.num_heads", int(first.num_heads))
+    # The epsilon of the blocks' layer norms and of the final one, and of the output norm of each KDA layer.
+    w.add_float32("fastconformer.decoder.kda.norm_eps", float(network.norms[0].eps))
+    w.add_float32("fastconformer.decoder.kda.gate_norm_eps", float(first.o_norm.eps))
+    # The epsilon under the square root of fused_recurrent_kda_fwd_kernel's normalization of q and k
+    # (fla/ops/kda/fused_recurrent.py), a literal of the kernel: b_q / tl.sqrt(tl.sum(b_q * b_q) + 1e-6).
+    w.add_float32("fastconformer.decoder.kda.qk_norm_eps", 1e-6)
+    w.add_bool("fastconformer.decoder.kda.final_norm", network.final_norm is not None)
 if decoder == "tdt":
     add_array("fastconformer.decoder.tdt.durations", durations, GGUFValueType.INT32)
     # The most tokens emitted on one frame before the decoding moves to the next.
@@ -215,6 +257,7 @@ add_array("fastconformer.segment.separators", list(decoding.segment_seperators),
 unspaced = all(language in UNSPACED_LANGUAGES for language in LANGUAGES[args.model])
 add_array("fastconformer.segment.breaks", UNSPACED_BREAKS if unspaced else [], GGUFValueType.STRING)
 add_array("fastconformer.tokenizer.tokens", [p.piece for p in proto.pieces], GGUFValueType.STRING)
+add_array("fastconformer.tokenizer.byte_pieces", [byte_pieces[b] for b in sorted(byte_pieces)], GGUFValueType.INT32)
 w.add_uint32("fastconformer.tokenizer.unknown_id", int(tokenizer.tokenizer.unk_id()))
 w.add_string("fastconformer.tokenizer.unknown_surface", proto.trainer_spec.unk_surface)
 # Whether SentencePiece's decoder drops the leading "▁" of each piece until the text is no longer empty, which it
@@ -228,10 +271,11 @@ assert not any(c.isspace() for p in proto.pieces for c in p.piece)
 assert all(c == " " or not c.isspace() for c in proto.trainer_spec.unk_surface)
 add_array("fastconformer.tokenizer.punctuation", sorted(decoding.supported_punctuation or []), GGUFValueType.STRING)
 # The decoding strips no language tags from the text (strip_lang_tags, for models that write them), which the C++
-# does not do.
-assert not decoding.strip_lang_tags
+# does not do. NeMo before 3.0, in which Haas runs, has no such option and strips none.
+assert not getattr(decoding, "strip_lang_tags", False)
 
-sd = {k: v.detach().float().numpy() for k, v in model.state_dict().items()}
+# Haas's prediction network is on the GPU (pins.py).
+sd = {k: v.detach().float().cpu().numpy() for k, v in model.state_dict().items()}
 
 
 def add(name, data):
@@ -297,13 +341,45 @@ for l in range(int(enc.n_layers)):
     norm("norm_out", o + "out_norm")
 
 # The prediction network: an embedding of the tokens and the blank, then LSTM layers whose gates are stacked as
-# PyTorch stacks them, input, forget, cell and output.
+# PyTorch stacks them, input, forget, cell and output, or KDA blocks. A short convolution's kernel [channels, 1, taps]
+# is written [channels, taps], the oldest input's tap first, as ggml_ssm_conv() takes it.
 add("pred.embed.weight", sd["decoder.prediction.embed.weight"])
 for l in range(int(dec.pred_rnn_layers)):
-    r = "decoder.prediction.dec_rnn.lstm."
-    add(f"pred.lstm.{l}.ih.weight", sd[r + f"weight_ih_l{l}"])
-    add(f"pred.lstm.{l}.hh.weight", sd[r + f"weight_hh_l{l}"])
-    add(f"pred.lstm.{l}.bias", sd[r + f"bias_ih_l{l}"] + sd[r + f"bias_hh_l{l}"])
+    if prediction == "lstm":
+        r = "decoder.prediction.dec_rnn.lstm."
+        add(f"pred.lstm.{l}.ih.weight", sd[r + f"weight_ih_l{l}"])
+        add(f"pred.lstm.{l}.hh.weight", sd[r + f"weight_hh_l{l}"])
+        add(f"pred.lstm.{l}.bias", sd[r + f"bias_ih_l{l}"] + sd[r + f"bias_hh_l{l}"])
+        continue
+    r, o = f"decoder.prediction.dec_rnn.layers.{l}.", f"pred.kda.{l}."
+    add(o + "norm.weight", sd[f"decoder.prediction.dec_rnn.norms.{l}.weight"])
+    add(o + "norm.bias", sd[f"decoder.prediction.dec_rnn.norms.{l}.bias"])
+    for x in ("q", "k", "v"):
+        add(o + f"{x}.weight", sd[r + f"{x}_proj.weight"])
+        add(o + f"{x}_conv.weight", sd[r + f"{x}_conv1d.weight"][:, 0, :])
+    add(o + "f_a.weight", sd[r + "f_proj.0.weight"])
+    add(o + "f_b.weight", sd[r + "f_proj.1.weight"])
+    add(o + "b.weight", sd[r + "b_proj.weight"])
+    add(o + "a_log", sd[r + "A_log"])
+    add(o + "dt_bias", sd[r + "dt_bias"])
+    add(o + "g_a.weight", sd[r + "g_proj.0.weight"])
+    add(o + "g_b.weight", sd[r + "g_proj.1.weight"])
+    add(o + "g_b.bias", sd[r + "g_proj.1.bias"])
+    add(o + "o_norm.weight", sd[r + "o_norm.weight"])
+    add(o + "o.weight", sd[r + "o_proj.weight"])
+if prediction == "kda" and network.final_norm is not None:
+    add("pred.norm.weight", sd["decoder.prediction.dec_rnn.final_norm.weight"])
+    add("pred.norm.bias", sd["decoder.prediction.dec_rnn.final_norm.bias"])
+if prediction == "kda":
+    # Every tensor of the KDA layers is written above.
+    kda_parts = ["q_proj.weight", "k_proj.weight", "v_proj.weight", "q_conv1d.weight", "k_conv1d.weight", "v_conv1d.weight",
+                 "f_proj.0.weight", "f_proj.1.weight", "b_proj.weight", "A_log", "dt_bias", "g_proj.0.weight", "g_proj.1.weight",
+                 "g_proj.1.bias", "o_norm.weight", "o_proj.weight"]
+    expected = {f"layers.{l}.{part}" for l in range(int(dec.pred_rnn_layers)) for part in kda_parts}
+    expected |= {f"norms.{l}.{part}" for l in range(int(dec.pred_rnn_layers)) for part in ("weight", "bias")}
+    expected |= {f"final_norm.{part}" for part in ("weight", "bias")} if network.final_norm is not None else set()
+    present = {k[len("decoder.prediction.dec_rnn."):] for k in sd if k.startswith("decoder.prediction.dec_rnn.")}
+    assert present == expected, sorted(present ^ expected)
 for x in ("enc", "pred"):
     add(f"joint.{x}.weight", sd[f"joint.{x}.weight"])
     add(f"joint.{x}.bias", sd[f"joint.{x}.bias"])

@@ -67,6 +67,7 @@ implementation, from the same inputs.
 | Recognition | [`reazonspeech-v2`](https://huggingface.co/sakasegawa/reazonspeech-nemo-v2-GGUF) | ja | Japanese with punctuation, in recordings of many minutes |
 | Recognition | [`parakeet-tdt_ctc-0.6b-ja`](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) | ja | short Japanese utterances, fast, with times |
 | Recognition | [`parakeet-tdt-0.6b-v3`](https://huggingface.co/sakasegawa/parakeet-tdt-0.6b-v3-GGUF) | 25 European languages | finds the language itself, with punctuation, capitals and times |
+| Recognition | [`haas-ja-v1.0`](https://huggingface.co/sakasegawa/Haas-ja-v1.0-GGUF) | ja | Japanese with punctuation, fast, with times |
 | Recognition | [`nemotron-3.5-transcribe`](https://huggingface.co/sakasegawa/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF) | 40 languages | word for word as spoken, fillers included, up to an hour at once, with a prompt of names and terms, or with who speaks and each word's time; a 19.0 GB file |
 | Detection | [`silero-vad`](https://huggingface.co/sakasegawa/silero-vad-GGUF) | any | where someone speaks, to give a recognizer one utterance at a time; 1.2 MB |
 | Diarization | [`nemotron-3-diarization`](https://huggingface.co/sakasegawa/Nemotron-3-Diarization-GGUF) | any | who speaks when, up to eight speakers, in a recording or as it arrives; 106 MB |
@@ -222,10 +223,12 @@ utterances; parakeet-tdt-0.6b-v3 on 300 English utterances of FLEURS, three roun
 | `qwen3-asr-0.6b`, Q8_0 | 11.9% (7.0%) | 0.107 s / 0.072 s |
 | `qwen3-asr-1.7b`, Q8_0 | 9.5% (4.7%) | 0.257 s / 0.140 s |
 | `parakeet-tdt-0.6b-v3`, F16 | WER 8.8% on FLEURS en | 0.058 s / 0.095 s |
+| `haas-ja-v1.0`, Q8_0 | 4.4% (2.9%) on FLEURS ja | 0.063 s / 0.119 s |
 | `nemotron-3.5-transcribe`, IQ4_NL | 9.2% (5.3%) | 0.61 s / - |
 
 Nemotron 3.5 Transcribe was measured on 2026-10-29: its CER on an H100 with Vulkan, and its latency on the M5 over the
-first 100 utterances. Each model's page has more.
+first 100 utterances. Haas-ja-v1.0 was trained on Common Voice, so it was measured on the 650 utterances of FLEURS'
+Japanese test split on 2026-10-30, where parakeet-tdt_ctc-0.6b-ja gives 5.0% (2.8%). Each model's page has more.
 
 ## Documentation
 
@@ -254,7 +257,7 @@ MIT, see [LICENSE](LICENSE). The model weights are their authors':
 - Drama 3 and its codec are Fish Audio's, under the Fish Audio Community License 1.0: research and non-commercial use
   is free, commercial use is allowed below USD 500,000 of yearly revenue, and a speech or voice-cloning service for
   others needs a separate license from Fish Audio. Built with Fish Audio.
-- The parakeet models are NVIDIA's, under CC-BY-4.0, and reazonspeech-nemo-v2 is reazon-research's, under the Apache
-  License 2.0.
+- The parakeet models are NVIDIA's, under CC-BY-4.0, reazonspeech-nemo-v2 is reazon-research's and Haas-ja-v1.0 is
+  Third Intelligence's, both under the Apache License 2.0.
 - Silero VAD is the Silero Team's, under the MIT License.
 - Nemotron 3 Diarization and Nemotron 3.5 Transcribe are NVIDIA's, under the OpenMDW License Agreement 1.1.

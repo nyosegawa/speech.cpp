@@ -1,0 +1,33 @@
+[project]
+name = "speech-cpp-fastconformer-haas-reference"
+version = "0"
+description = "Runs Third Intelligence's Haas, a FastConformer whose prediction network runs on flash-linear-attention's Triton kernels, to dump reference tensors and convert its weights to GGUF, on Linux with a CUDA GPU"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  # The inference package of the model card, whose KDATransducerDecoder the checkpoint's configuration names; it pins
+  # NeMo below 2.8 and flash-linear-attention 0.5.2, and refuses any other release of the latter.
+  "haas-asr @ git+https://github.com/third-intelligence/Haas-ASR.git@e72638b6e352010c800ffd550af3a51b29e3dbb1",
+  # The versions of Haas-ASR's own uv.lock at that commit, the ones it was tested with.
+  "nemo-toolkit[asr]==2.7.3",
+  "flash-linear-attention==0.5.2",
+  "torch==2.14.0",
+  "triton==3.8.0",
+  "lightning==2.4.0",
+  "numpy",
+  "soundfile",
+  "gguf",
+]
+
+[tool.uv]
+package = false
+# fla's kernels need Triton, which runs on Linux with a CUDA GPU alone.
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+# Haas-ASR's overrides at that commit, above the pins in NeMo 2.7.3's and Lightning 2.4.0's metadata, with
+# Transformers at the version of its lock, which an override alone can pin.
+override-dependencies = [
+  "fsspec[http]>=2026.6.0",
+  "hydra-core>=1.3.6",
+  "packaging>=26.3",
+  "transformers==5.20.2",
+  "virtualenv>=21.14.9",
+]
