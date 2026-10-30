@@ -10,9 +10,24 @@
 namespace fastconformer {
 
 /*
- * Activations are [channels, frames] (ne0 = channels). The subsampling runs on [mels, frames, channels], the
- * layout of ggml's 2D convolutions, whose width is the mel axis and height the time axis.
+ * Activations are [channels, frames] (ne0 = channels). The subsampling runs on [channels, mels, frames], channels
+ * fastest as well, an image whose width is the mel axis and height the time axis.
  */
+
+namespace {
+
+/**
+ * The depthwise convolution of `x` [channels, width, height] by `kernel` [kw, kh, 1, channels], [channels, width',
+ * height']: ggml_conv_2d_dw_direct() on the channel-fastest layout, which its result keeps, with the kernel's taps
+ * channel-fastest as well, as the CPU asserts and Vulkan's shader reads them without looking at the strides.
+ */
+ggml_tensor * depthwise(ggml_context * ctx, ggml_tensor * x, ggml_tensor * kernel, int stride, int pad_w, int pad_h) {
+    kernel = ggml_permute(ctx, ggml_cont(ctx, ggml_permute(ctx, kernel, 2, 3, 1, 0)), 3, 2, 0, 1);
+    ggml_tensor * y = ggml_conv_2d_dw_direct(ctx, kernel, ggml_permute(ctx, x, 2, 0, 1, 3), stride, stride, pad_w, pad_h, 1, 1);
+    return ggml_permute(ctx, y, 1, 2, 0, 3);
+}
+
+}  // namespace
 
 struct Encoder::Positions {
     std::unique_ptr<ggml_context, decltype(&ggml_free)> context{nullptr, ggml_free};
@@ -83,27 +98,24 @@ ggml_tensor * Encoder::layer_norm(ggml_context * ctx, ggml_tensor * x, const std
 
 ggml_tensor * Encoder::subsample(Graph & g, const std::vector<float> & features, int64_t frames) const {
     ggml_context * ctx = g.ctx();
-    auto channel_bias = [&](ggml_tensor * x, const std::string & name) {
-        ggml_tensor * b = m_.tensor(name);
-        return ggml_add(ctx, x, ggml_reshape_3d(ctx, b, 1, 1, ggml_nelements(b)));
-    };
     // ConvSubsampling "dw_striding" (nemo/collections/asr/parts/submodules/subsampling.py): a 3x3 convolution of
-    // stride 2, then (depthwise 3x3 of stride 2, pointwise) for each further halving, each followed by a ReLU.
-    ggml_tensor * x = g.input(features, mels_, frames);
-    x = ggml_conv_2d_direct(ctx, m_.tensor("sub.conv.0.weight"), x, 2, 2, 1, 1, 1, 1);
-    x = ggml_relu(ctx, channel_bias(x, "sub.conv.0.bias"));
+    // stride 2, then (depthwise 3x3 of stride 2, pointwise) for each further halving, each followed by a ReLU. The
+    // first convolution, of one input channel, is the product of its kernel [9, channels] with the input's im2col [9,
+    // positions], channel-fastest: ggml_conv_2d_direct() took 18.9 ms of a 112.6 ms encoder on 25.5 s on Metal, and the
+    // copies between it and the pointwise convolutions' layout 7 ms more (Apple M5, Haas-ja-v1.0 in Q8_0, 2026-10-31).
+    ggml_tensor * w0 = m_.tensor("sub.conv.0.weight");
+    ggml_tensor * cols = ggml_im2col(ctx, w0, g.input(features, mels_, frames), 2, 2, 1, 1, 1, 1, true, GGML_TYPE_F32);
+    const int64_t c = w0->ne[3];
+    ggml_tensor * x = mul_mat(ctx, ggml_reshape_2d(ctx, w0, w0->ne[0] * w0->ne[1], c), ggml_reshape_2d(ctx, cols, cols->ne[0], cols->ne[1] * cols->ne[2]));
+    x = ggml_reshape_3d(ctx, ggml_relu(ctx, ggml_add(ctx, x, m_.tensor("sub.conv.0.bias"))), c, cols->ne[1], cols->ne[2]);
     for (int i = 1; i < sub_layers_; i++) {
         const std::string p = "sub.conv." + std::to_string(i);
-        x = channel_bias(ggml_conv_2d_dw_direct(ctx, m_.tensor(p + ".dw.weight"), x, 2, 2, 1, 1, 1, 1), p + ".dw.bias");
-        const int64_t w = x->ne[0], h = x->ne[1], c = x->ne[2];
-        // [mels, frames, channels] to [channels, mels * frames] for the pointwise convolution.
-        x = ggml_reshape_2d(ctx, ggml_cont(ctx, ggml_permute(ctx, x, 1, 2, 0, 3)), c, w * h);
-        x = ggml_relu(ctx, linear(ctx, x, p + ".pw", true));
-        x = ggml_reshape_3d(ctx, x, c, w, h);
-        if (i + 1 < sub_layers_) x = ggml_cont(ctx, ggml_permute(ctx, x, 2, 0, 1, 3));
+        x = ggml_add(ctx, depthwise(ctx, x, m_.tensor(p + ".dw.weight"), 2, 1, 1), m_.tensor(p + ".dw.bias"));
+        const int64_t w = x->ne[1], h = x->ne[2];
+        x = ggml_reshape_3d(ctx, ggml_relu(ctx, linear(ctx, ggml_reshape_2d(ctx, x, c, w * h), p + ".pw", true)), c, w, h);
     }
     // ConvSubsampling.forward() flattens (channels, mels) with the mel axis fastest.
-    const int64_t c = x->ne[0], w = x->ne[1], h = x->ne[2];
+    const int64_t w = x->ne[1], h = x->ne[2];
     x = ggml_reshape_2d(ctx, ggml_cont(ctx, ggml_permute(ctx, x, 1, 0, 2, 3)), w * c, h);
     return linear(ctx, x, "sub.out", true);
 }
@@ -164,9 +176,9 @@ Encoder::AttentionInputs Encoder::attention_inputs(Graph & g, int64_t t) const {
  *     scores = ((q + u) k^T + rel_shift((q + v) p^T)) / sqrt(d_k)
  *
  * where p is linear_pos of the encodings of the relative positions T - 1 down to -(T - 1). rel_shift() pads a
- * zero column on the left, reads the [T, 2T] result as [2T, T] and drops its first row; in the padded rows' flat
- * order, element (i, j) of the result is element T + i (2T - 1) + j, so it is a strided view. The zero column is
- * concatenated, since Metal's ggml_pad_ext() pads on the right only.
+ * zero column on the left, reads the [T, 2T] result as [2T, T] and drops its first row; element (i, j) of the result
+ * is then element T - 1 - i + j of row i of (q + v) p^T, which never reaches the zero column: element
+ * i (2T - 2) + j + T - 1 of [T, 2T - 1], a view whose rows step by 2T - 2.
  */
 ggml_tensor * Encoder::attention(Graph & g, ggml_tensor * x, const AttentionInputs & in, const std::string & name) const {
     ggml_context * ctx = g.ctx();
@@ -193,9 +205,8 @@ ggml_tensor * Encoder::attention(Graph & g, ggml_tensor * x, const AttentionInpu
 
     ggml_tensor * ac = mul_mat(ctx, heads(k, t), qu);
     ggml_tensor * bd = mul_mat(ctx, p, qv);
-    bd = ggml_concat(ctx, g.input(std::vector<float>((size_t) (t * heads_), 0.0f), 1, t, heads_), bd, 0);
-    bd = ggml_view_3d(ctx, bd, t, t, heads_, (size_t) (2 * t - 1) * sizeof(float), bd->nb[2], (size_t) t * sizeof(float));
-    ggml_tensor * scores = ggml_add(ctx, ac, ggml_cont(ctx, bd));
+    bd = ggml_view_3d(ctx, bd, t, t, heads_, (size_t) (2 * t - 2) * sizeof(float), bd->nb[2], (size_t) (t - 1) * sizeof(float));
+    ggml_tensor * scores = ggml_add(ctx, ac, bd);
     ggml_tensor * weights = ggml_soft_max_ext(ctx, scores, nullptr, 1.0f / std::sqrt((float) dk), 0.0f);
 
     // [d_k, heads, T] to [T, d_k, heads], so that the product contracts over the keys.
@@ -286,20 +297,18 @@ ggml_tensor * Encoder::local_attention(Graph & g, ggml_tensor * q, ggml_tensor *
 /**
  * ConformerConvolution.forward() (nemo/collections/asr/parts/submodules/conformer_modules.py): pointwise to twice
  * the channels, GLU, a depthwise convolution over time with symmetric zero padding, batch norm (folded into the
- * depthwise convolution by the converter), Swish and pointwise back. The depthwise convolution runs as
- * ggml_ssm_conv(), which takes time as the fastest axis and slides the kernel over its input without padding, so
- * the zeros are concatenated on both sides.
+ * depthwise convolution by the converter), Swish and pointwise back. The depthwise convolution takes [channels, T]
+ * as it is, an image one row high with the padding of its width, rather than transposed for ggml_ssm_conv() and
+ * padded by two concatenations, which copy it three times.
  */
 ggml_tensor * Encoder::convolution(Graph & g, ggml_tensor * x, const std::string & name) const {
     ggml_context * ctx = g.ctx();
     const int64_t t = x->ne[1], pad = (conv_kernel_ - 1) / 2;
     ggml_tensor * h = layer_norm(ctx, x, name + "_norm");
     h = ggml_mul(ctx, linear(ctx, h, name + "_pw1_a", use_bias_), ggml_sigmoid(ctx, linear(ctx, h, name + "_pw1_gate", use_bias_)));
-    h = ggml_cont(ctx, ggml_transpose(ctx, h));
-    h = ggml_concat(ctx, g.zeros(pad, d_model_), h, 0);
-    h = ggml_concat(ctx, h, g.zeros(pad, d_model_), 0);
-    h = ggml_ssm_conv(ctx, ggml_reshape_3d(ctx, h, t + 2 * pad, d_model_, 1), m_.tensor(name + "_dw.weight"));
-    h = ggml_silu(ctx, ggml_add(ctx, ggml_reshape_2d(ctx, h, d_model_, t), m_.tensor(name + "_dw.bias")));
+    ggml_tensor * kernel = ggml_reshape_4d(ctx, m_.tensor(name + "_dw.weight"), conv_kernel_, 1, 1, d_model_);
+    h = ggml_reshape_2d(ctx, depthwise(ctx, ggml_reshape_3d(ctx, h, d_model_, t, 1), kernel, 1, (int) pad, 0), d_model_, t);
+    h = ggml_silu(ctx, ggml_add(ctx, h, m_.tensor(name + "_dw.bias")));
     return ggml_add(ctx, x, linear(ctx, h, name + "_pw2", use_bias_));
 }
 
