@@ -378,6 +378,10 @@ def fastconformer(model, devices, ctx):
     if absent:
         return [absent]
     runs = [Run("fastconformer-frontend-check", [model.path, out], None, model.label())]
+    # The encoding of text into the tokenizer's ids runs on the host, on the cases sentencepiece_cases.py writes of a
+    # tokenizer it takes (Haas's).
+    cases = os.path.join(out, model.name, "sentencepiece")
+    runs += reading([os.path.join(cases, "cases.tsv")], [Run("fastconformer-sentencepiece-check", [cases], None, model.label())])
     for device in devices:
         runs += [runs_on(device, f"fastconformer-{stage}-check", model, [out]) for stage in ("encoder", "transducer", "times")]
     return runs
