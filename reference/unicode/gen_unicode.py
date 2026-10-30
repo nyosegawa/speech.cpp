@@ -1,5 +1,5 @@
 """Writes src/common/unicode-data.inc: the tables src/common/unicode.cpp normalizes text with, NFC and NFKC, in the
-Unicode version of each reference, and those of Python's str.isspace().
+Unicode version of each reference, and those of Python's str.isspace(), str.lower() and str.isdigit().
 
 usage: uv run python gen_unicode.py ../../src/common/unicode-data.inc
 
@@ -36,6 +36,24 @@ entry is marked with the first version that has it, 9 or 13:
   kCompositions       the pairs that canonical composition joins, what they join into and its version, other than
                       Hangul
   kWhitespace         ranges of the code points str.isspace() accepts, which Python 3.10 and 3.12 accept alike
+
+The tables of str.lower() and str.isdigit() are this Python's, Unicode 13.0, as the NFC of 13.0 is, for the custom
+vocabulary of Haas-ASR (src/families/fastconformer/vocabulary.cpp), which runs on Python 3.11 or later. Python 3.11,
+Unicode 14.0, lowers 40 code points otherwise, and takes 167 for cased, 191 for case-ignorable and 10 for digits
+otherwise, found on 2026-10-31: all assigned in 14.0 but U+1734, which 14.0 makes a spacing mark, no longer
+case-ignorable.
+
+str.lower() replaces each code point with its full lowercase mapping, but for U+03A3, the capital sigma, which CPython's
+lower() writes as the final sigma U+03C2 where a cased character comes before it and none after it, skipping
+case-ignorable characters on both sides, and as U+03C3 elsewhere. unicodedata gives neither property, so they are read
+from what str does: str.title() lowers a letter after a cased character and capitalizes it after any other, and
+str.lower() shows which characters the sigma looks past.
+
+  kLowercase          code point, offset and length into kLowercasePool of what str.lower() makes of it alone, for
+                      every code point it changes
+  kCased              ranges of the code points CPython takes for cased (_PyUnicode_IsCased)
+  kCaseIgnorable      ranges of the code points CPython takes for case-ignorable (_PyUnicode_IsCaseIgnorable)
+  kDigits             ranges of the code points str.isdigit() accepts
 """
 
 import sys
@@ -140,6 +158,25 @@ for cp in sorted(mappings):
 combining_ranges = ranges((cp, (classes[cp], class_since[cp])) for cp in sorted(classes))
 whitespace = ranges((cp, 1) for cp in range(0x110000) if chr(cp).isspace())
 
+lowercase, lowercase_pool = [], []
+for cp in code_points:
+    lower = chr(cp).lower()
+    if lower != chr(cp):
+        lowercase.append((cp, len(lowercase_pool), len(lower)))
+        lowercase_pool.extend(ord(c) for c in lower)
+cased = {cp for cp in code_points if (chr(cp) + "a").title()[-1] == "a"}
+# A sigma looks past a case-ignorable character before it, to the cased "A", and stops at any other, which makes it
+# final only if it is cased.
+ignorable = {cp for cp in code_points
+             if ("A" + chr(cp) + "\u03a3").lower()[-1] == "\u03c2" and (chr(cp) + "\u03a3").lower()[-1] != "\u03c2"}
+for cp in code_points:
+    final = cp in cased and cp not in ignorable
+    assert ((chr(cp) + "\u03a3").lower()[-1] == "\u03c2") == final, hex(cp)
+    assert (("A\u03a3" + chr(cp)).lower()[1] == "\u03c2") == (cp in ignorable or cp not in cased), hex(cp)
+cased_ranges = ranges((cp, 1) for cp in sorted(cased))
+ignorable_ranges = ranges((cp, 1) for cp in sorted(ignorable))
+digits = ranges((cp, 1) for cp in code_points if chr(cp).isdigit())
+
 
 def rows(items, per_line, fmt):
     lines = []
@@ -161,8 +198,17 @@ with open(sys.argv[1], "w") as f:
     f.write(rows(compositions, 4, lambda c: "{0x%X, 0x%X, 0x%X, %d}" % c) + "\n};\n")
     f.write("static const CodepointRange kWhitespace[] = {\n")
     f.write(rows(whitespace, 4, lambda r: "{0x%X, 0x%X}" % tuple(r[:2])) + "\n};\n")
+    f.write("static const CaseMapping kLowercase[] = {\n")
+    f.write(rows(lowercase, 4, lambda m: "{0x%X, %d, %d}" % m) + "\n};\n")
+    f.write("static const uint32_t kLowercasePool[] = {\n")
+    f.write(rows(lowercase_pool, 10, lambda c: "0x%X" % c) + "\n};\n")
+    for name, table in (("kCased", cased_ranges), ("kCaseIgnorable", ignorable_ranges), ("kDigits", digits)):
+        f.write(f"static const CodepointRange {name}[] = {{\n")
+        f.write(rows(table, 4, lambda r: "{0x%X, 0x%X}" % tuple(r[:2])) + "\n};\n")
 for version in VERSIONS:
     print(f"{version}: {sum(d[4] <= version for d in decompositions)} decompositions, "
           f"{sum(s <= version for s in class_since.values())} combining classes, "
           f"{sum(c[3] <= version for c in compositions)} compositions")
 print(len(pool), "code points of mappings,", len(combining_ranges), "ranges of classes,", len(whitespace), "of whitespace")
+print(len(lowercase), "lowercase mappings,", len(cased_ranges), "ranges of cased,", len(ignorable_ranges), "of case-ignorable,",
+      len(digits), "of digits")

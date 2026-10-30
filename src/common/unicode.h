@@ -25,6 +25,16 @@ std::vector<uint32_t> nfkc(const std::vector<uint32_t> & text, UnicodeVersion ve
 bool python_space(uint32_t cp);
 
 /**
+ * `text` as Python 3.10's str.lower() writes it: each code point as its full lowercase mapping, which is two code points
+ * for U+0130, and a capital sigma as the final sigma where CPython takes it to end a word, after a cased character and
+ * before none, with the case-ignorable characters between them looked past.
+ */
+std::vector<uint32_t> python_lower(const std::vector<uint32_t> & text);
+
+/** Whether Python 3.10's str.isdigit() takes `cp` for a digit, a character whose numeric type is Digit or Decimal. */
+bool python_digit(uint32_t cp);
+
+/**
  * The general categories of Unicode 15.0, as Python 3.12's unicodedata.category() gives them and the tokenizers library's
  * regular expressions match them: letters (L), numbers (N), marks (M), the whitespace of \s, uppercase and titlecase
  * letters (Lu, Lt), lowercase letters (Ll), and modifier and other letters (Lm, Lo).

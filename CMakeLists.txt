@@ -118,6 +118,8 @@ add_library(fastconformer STATIC
     src/families/fastconformer/sentencepiece.cpp
     src/families/fastconformer/times.cpp
     src/families/fastconformer/recognizer.cpp
+    src/families/fastconformer/vocabulary.cpp
+    src/families/fastconformer/guard.cpp
 )
 target_include_directories(fastconformer PUBLIC src/families)
 target_link_libraries(fastconformer PUBLIC speechcommon)
@@ -425,10 +427,13 @@ foreach(stage frontend encoder transducer times sentencepiece)
     target_include_directories(fastconformer-${stage}-check PRIVATE checks)
     target_link_libraries(fastconformer-${stage}-check PRIVATE fastconformer)
 endforeach()
-# The check of the custom vocabulary reads each dump's meta.json with the JSON reader of `speech`.
-add_executable(fastconformer-words-check checks/fastconformer/fastconformer-words-check.cpp tools/common/json-reader.cpp)
-target_include_directories(fastconformer-words-check PRIVATE checks tools/common)
-target_link_libraries(fastconformer-words-check PRIVATE fastconformer)
+# Haas-ASR's custom vocabulary, on the cases of reference/fastconformer/vocabulary_cases.py, and the recognition with
+# it, on the dumps of dump.py --words, which both read with the JSON reader of `speech`.
+foreach(stage vocabulary words)
+    add_executable(fastconformer-${stage}-check checks/fastconformer/fastconformer-${stage}-check.cpp tools/common/json-reader.cpp)
+    target_include_directories(fastconformer-${stage}-check PRIVATE checks tools/common)
+    target_link_libraries(fastconformer-${stage}-check PRIVATE fastconformer)
+endforeach()
 
 # The checks of Qwen3-ASR's stages.
 foreach(stage frontend encoder)
