@@ -30,7 +30,7 @@ trimmed by VAD with a 0.2 s margin, reazonspeech-nemo-v2 in F16 on an Apple M5 (
 ## Decision
 
 - **A model decodes by default with the decoding `transcribe()` runs for it**, ported from NeMo and checked step by step
-  against it: greedy TDT for the parakeet models, ported from NeMo's label-looping decoder, and the beam search for
+  against it: greedy TDT for the parakeet models and Haas-ja-v1.0, ported from NeMo's label-looping decoder, and the beam search for
   reazonspeech-nemo-v2. A hybrid's CTC head is not converted, and there is no option to choose it.
 - **An RNN-T model also decodes greedily when a request asks**, through the option `decoding`, a string whose choices
   the model declares: reazonspeech-nemo-v2 takes `beam`, the default, and `greedy`. The choices name the decodings, not

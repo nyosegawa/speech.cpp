@@ -2,16 +2,17 @@
 
 ## Context
 
-NVIDIA NeMo's parakeet-tdt-0.6b-v3 (25 European languages) and parakeet-tdt_ctc-0.6b-ja (Japanese), and
-reazon-research's reazonspeech-nemo-v2 (Japanese) are one architecture, FastConformer: a log-mel frontend, a subsampling
-by 8 with depthwise convolutions, and conformer layers with relative positional attention. They differ in their decoders
-and a few options: TDT for parakeet-v3, TDT and a CTC head for parakeet-ja, RNN-T and local attention for ReazonSpeech,
-and the number of mel bins.
+NVIDIA NeMo's parakeet-tdt-0.6b-v3 (25 European languages) and parakeet-tdt_ctc-0.6b-ja (Japanese),
+reazon-research's reazonspeech-nemo-v2 (Japanese) and Third Intelligence's Haas-ja-v1.0 (Japanese) are one architecture,
+FastConformer: a log-mel frontend, a subsampling by 8 with depthwise convolutions, and conformer layers with relative
+positional attention. They differ in their decoders and a few options: TDT for parakeet-v3, TDT and a CTC head for
+parakeet-ja, RNN-T and local attention for ReazonSpeech, TDT with a prediction network of Kimi Delta Attention layers
+for Haas, and the number of mel bins.
 
 ## Decision
 
-speech.cpp ports FastConformer once, as the family `src/families/fastconformer/`, on ggml, and runs the three NeMo
-models through it, each stage checked against tensors dumped from NeMo itself (`reference/fastconformer/`). Their
+speech.cpp ports FastConformer once, as the family `src/families/fastconformer/`, on ggml, and runs the four NeMo
+checkpoints through it, each stage checked against tensors dumped from NeMo itself (`reference/fastconformer/`). Their
 decoders run on the same encoder ([the decoding
 record](a-fastconformer-model-decodes-as-transcribe-does-and-an-rnnt-model-also-greedily-on-request.md)).
 
@@ -27,5 +28,5 @@ The alternatives were turned down:
 
 ## Consequences
 
-Recognition with the three models costs one family, whose encoder they share; the family's layout grows with each
+Recognition with the four models costs one family, whose encoder they share; the family's layout grows with each
 decoder it runs. A model outside FastConformer and Qwen3-ASR needs a decision of its own.
