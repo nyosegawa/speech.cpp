@@ -95,8 +95,10 @@ set_by_checkpoint = {key: key in model.cfg.decoding for key in ("segment_seperat
 # The decoding calls the prediction network on the label each hypothesis ends with, from the state its labels before
 # left, projects the outputs and the encoder's frames for the joint, and evaluates the joint on pairs of them: one at a
 # time in greedy decoding, a batch of the beam's hypotheses at a time in beam search. These wrappers record every row.
-# Rows are told apart by their bytes, which equal tensors share and which the decoding copies without change.
-calls = {}
+# Rows are told apart by their bytes, which equal tensors share and which the decoding copies without change. They record
+# the decoding of the stages alone, not that of transcribe(), whose encoder output need not be the stages' to the bit: with
+# NeMo 2.7.3 it was not for Haas's 25.5 s input.
+calls = {"recording": False}
 predict, project_encoder, project_prednet, joint_after_projection = (
     model.decoder.predict, model.joint.project_encoder, model.joint.project_prednet, model.joint.joint_after_projection)
 
@@ -107,6 +109,8 @@ def row_key(x):
 
 def recording_predict(y, state, *a, **k):
     out = predict(y, state, *a, **k)
+    if not calls["recording"]:
+        return out
     assert y.shape[1] == 1
     for r in range(y.shape[0]):
         # The state a row continues: none or zeros at the start of the sequence, else what an earlier row left.
@@ -121,6 +125,8 @@ def recording_predict(y, state, *a, **k):
 
 def recording_project_encoder(f):
     out = project_encoder(f)
+    if not calls["recording"]:
+        return out
     for x, p in zip(f.reshape(-1, f.shape[-1]), out.reshape(-1, out.shape[-1])):
         calls["projected_frames"][row_key(p)] = calls["frames"][row_key(x)]
     return out
@@ -128,6 +134,8 @@ def recording_project_encoder(f):
 
 def recording_project_prednet(g):
     out = project_prednet(g)
+    if not calls["recording"]:
+        return out
     for x, p in zip(g.reshape(-1, g.shape[-1]), out.reshape(-1, out.shape[-1])):
         calls["projected_steps"][row_key(p)] = calls["outputs"][row_key(x)]
     return out
@@ -135,6 +143,8 @@ def recording_project_prednet(g):
 
 def recording_joint(f, g):
     out = joint_after_projection(f, g)
+    if not calls["recording"]:
+        return out
     f, g, o = f.reshape(-1, f.shape[-1]), g.reshape(-1, g.shape[-1]), out.reshape(-1, out.shape[-1])
     assert f.shape[0] == g.shape[0] == o.shape[0]
     for r in range(o.shape[0]):
@@ -175,11 +185,14 @@ def dump_stages(path):
     saved["encoded"] = encoded[0, :, :t].T
     assert torch.equal(saved["layers"][-1], saved["encoded"])
 
+    # The encoder's output holds frames of the features' padding after the valid ones, which NeMo 2.7's decoding
+    # projects with them.
     frames_of = {}
-    for i in range(t):
+    for i in range(encoded.shape[2]):
         frames_of.setdefault(row_key(encoded[0, :, i]), i)
-    calls.update(pred=[], states={}, outputs={}, frames=frames_of, projected_frames={}, projected_steps={}, joint=[])
+    calls.update(pred=[], states={}, outputs={}, frames=frames_of, projected_frames={}, projected_steps={}, joint=[], recording=True)
     hypothesis = model.decoding.rnnt_decoder_predictions_tensor(encoder_output=encoded, encoded_lengths=length, return_hypotheses=True)[0]
+    calls["recording"] = False
     saved["pred_labels"] = np.array([label for label, _, _ in calls["pred"]], dtype=np.int32)
     saved["pred_parents"] = np.array([parent for _, parent, _ in calls["pred"]], dtype=np.int32)
     saved["pred_output"] = torch.stack([g for _, _, g in calls["pred"]])

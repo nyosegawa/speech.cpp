@@ -6,7 +6,7 @@
 
 namespace fastconformer {
 
-/** A fixed-shape prediction and joint graph, reused with new labels, recurrent states and encoder frames. */
+/** A fixed-shape prediction and joint graph, reused with new labels, prediction states and encoder frames. */
 class DecoderStep {
 public:
     DecoderStep(const PredictionNetwork & prediction, const Joint & joint, ggml_backend_t backend, int64_t frames);
@@ -22,8 +22,7 @@ private:
     Graph graph_{512};
     std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator_{nullptr, ggml_gallocr_free};
     ggml_tensor * label_;
-    ggml_tensor * h_;
-    ggml_tensor * c_;
+    ggml_tensor * state_;
     ggml_tensor * frames_;
     ggml_tensor * predicted_;
     ggml_tensor * logits_;

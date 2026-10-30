@@ -76,10 +76,22 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
         m.size(p + "decoder.rnnt.max_symbols");
     }
     const int prediction_layers = m.count(p + "decoder.prediction_layers");
+    const bool kda = m.one_of(p + "decoder.prediction", {"lstm", "kda"}) == "kda";
+    int64_t kda_heads = 0;
+    bool final_norm = false;
+    if (kda) {
+        kda_heads = m.size(p + "decoder.kda.num_heads");
+        for (const char * key : {"norm_eps", "gate_norm_eps", "qk_norm_eps"}) m.f32(p + "decoder.kda." + key);
+        final_norm = m.boolean(p + "decoder.kda.final_norm");
+    }
     m.str_array(p + "segment.separators");
     m.str_array(p + "segment.breaks");
     require(m.str_array(p + "tokenizer.tokens").size() == blank, m, "the blank does not follow the last of fastconformer.tokenizer.tokens");
     require(m.u32(p + "tokenizer.unknown_id") < blank, m, "fastconformer.tokenizer.unknown_id is not a piece");
+    const std::vector<int32_t> byte_pieces = m.i32_array(p + "tokenizer.byte_pieces");
+    require(byte_pieces.empty() || byte_pieces.size() == 256, m, "fastconformer.tokenizer.byte_pieces holds neither none nor 256 pieces");
+    require(std::all_of(byte_pieces.begin(), byte_pieces.end(), [&](int32_t id) { return id >= 0 && (uint32_t) id < blank; }), m,
+            "fastconformer.tokenizer.byte_pieces holds an id that is not a piece");
     m.str(p + "tokenizer.unknown_surface");
     m.boolean(p + "tokenizer.strip_leading_space");
     m.str_array(p + "tokenizer.punctuation");
@@ -135,27 +147,52 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
                       {"attn_v.bias", {d}, kF32},      {"attn_out.bias", {d}, kF32},   {"conv_pw1_a.bias", {d}, kF32},
                       {"conv_pw1_gate.bias", {d}, kF32}, {"conv_pw2.bias", {d}, kF32}});
     }
-    // An LSTM layer's four gates, input, forget, cell and output, are stacked in its matrices and its summed biases.
-    add_numbered(t, "pred.lstm.", prediction_layers,
-                 {{"ih.weight", {predicted, 4 * predicted}, kMatrix}, {"hh.weight", {predicted, 4 * predicted}, kMatrix},
-                  {"bias", {4 * predicted}, kF32}});
+    if (!kda) {
+        // An LSTM layer's four gates, input, forget, cell and output, are stacked in its matrices and its summed biases.
+        add_numbered(t, "pred.lstm.", prediction_layers,
+                     {{"ih.weight", {predicted, 4 * predicted}, kMatrix}, {"hh.weight", {predicted, 4 * predicted}, kMatrix},
+                      {"bias", {4 * predicted}, kF32}});
+        return t;
+    }
+    // A KDA layer's head width is the width of its output norm and its convolutions' taps those of their kernels. Its
+    // keys and values are as wide (expand_v 1) and as many (num_v_heads num_heads), and its gate's low rank is the
+    // head width, as KimiDeltaAttention makes them.
+    const int64_t head = m.width("pred.kda.0.o_norm.weight", 0), taps = m.width("pred.kda.0.q_conv.weight", 0), width = kda_heads * head;
+    // The widths ggml_gated_delta_net() takes on every backend: Vulkan computes heads of 16, 32, 64 and 128 values,
+    // and Metal multiples of 32.
+    require(head == 32 || head == 64 || head == 128, m, "the heads of the KDA layers are not 32, 64 or 128 wide");
+    add_numbered(t, "pred.kda.", prediction_layers,
+                 {{"norm.weight", {predicted}, kF32},          {"norm.bias", {predicted}, kF32},
+                  {"q.weight", {predicted, width}, kMatrix},   {"k.weight", {predicted, width}, kMatrix},
+                  {"v.weight", {predicted, width}, kMatrix},   {"q_conv.weight", {taps, width}, kF32},
+                  {"k_conv.weight", {taps, width}, kF32},      {"v_conv.weight", {taps, width}, kF32},
+                  {"f_a.weight", {predicted, head}, kMatrix},  {"f_b.weight", {head, width}, kMatrix},
+                  {"b.weight", {predicted, kda_heads}, kMatrix}, {"a_log", {kda_heads}, kF32},
+                  {"dt_bias", {width}, kF32},                  {"g_a.weight", {predicted, head}, kMatrix},
+                  {"g_b.weight", {head, width}, kMatrix},      {"g_b.bias", {width}, kF32},
+                  {"o_norm.weight", {head}, kF32},             {"o.weight", {width, predicted}, kMatrix}});
+    if (final_norm) add_block(t, "pred.norm.", {{"weight", {predicted}, kF32}, {"bias", {predicted}, kF32}});
     return t;
 }
 
 /**
- * Brings layout 1, the one before, up: layout 2 adds fastconformer.decoder.rnnt.max_symbols, the most tokens greedy
- * RNN-T decoding emits on one frame. Layout 1's converter took one RNN-T checkpoint, reazonspeech-nemo-v2, whose
- * decoding.greedy.max_symbols is 10.
+ * Brings layouts 1 and 2 up. Layout 2 adds fastconformer.decoder.rnnt.max_symbols, the most tokens greedy RNN-T
+ * decoding emits on one frame: layout 1's converter took one RNN-T checkpoint, reazonspeech-nemo-v2, whose
+ * decoding.greedy.max_symbols is 10. Layout 3 adds fastconformer.decoder.prediction, LSTM layers for every checkpoint
+ * before it, and fastconformer.tokenizer.byte_pieces, which no tokenizer before it had: their converters refused byte
+ * pieces.
  */
 void upgrade(ModelFile & m) {
-    if (m.one_of("fastconformer.decoder.kind", {"tdt", "rnnt"}) == "tdt") return;
+    m.upgrade_str("fastconformer.decoder.prediction", "lstm");
+    m.upgrade_i32_array("fastconformer.tokenizer.byte_pieces", {});
+    if (m.layout_version() >= 2 || m.one_of("fastconformer.decoder.kind", {"tdt", "rnnt"}) == "tdt") return;
     require(m.str("general.name") == "reazonspeech-nemo-v2", m, "it is an RNN-T model of layout 1 other than reazonspeech-nemo-v2");
     m.upgrade_u32("fastconformer.decoder.rnnt.max_symbols", 10);
 }
 
 }  // namespace
 
-const Layout layout = {"fastconformer", 2,
+const Layout layout = {"fastconformer", 3,
                        "convert it again with reference/fastconformer/convert.py, or download it again from its Hugging Face "
                        "repository",
                        tensors, upgrade};

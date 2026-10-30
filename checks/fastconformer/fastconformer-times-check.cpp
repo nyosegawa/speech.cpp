@@ -60,6 +60,18 @@ std::string without_spaces(const std::string & s) {
 }
 
 /**
+ * The text of the segment `s` of the tokens `ids`, with the texts `texts` they have in the text, as NeMo's timestamps
+ * write it: NeMo decodes each word alone, and every byte piece begins a word, so that a character of byte pieces stands
+ * as its bytes each decoded alone, one U+FFFD for each past ASCII.
+ */
+std::string nemo_segment_text(const Detokenizer & detokenizer, const std::vector<int32_t> & ids, const std::vector<std::string> & texts,
+                              const Segment & s) {
+    std::string out;
+    for (size_t k = s.first; k < s.end; k++) out += detokenizer.byte_piece(ids[k]) ? detokenizer.decoded_alone(ids[k]) : texts[k];
+    return out;
+}
+
+/**
  * The spans as NeMo writes them. Its greedy decodings, of TDT and of RNN-T, record the frame a token was emitted on, as
  * speech.cpp does; its beam search records the step of the search, the frame plus the tokens emitted before it.
  */
@@ -177,7 +189,7 @@ bool check_times(Recognizer & recognizer, const std::string & dump, const std::v
     // The segments' number and texts are required whatever the times; their spans only where the times are.
     bool segment_texts = joined == want_text && segs.size() == want_segments.size(), segment_times = segs.size() == want_segments.size();
     for (size_t k = 0; segs.size() == want_segments.size() && k < segs.size(); k++) {
-        segment_texts = segment_texts && without_spaces(segs[k].text) == without_spaces(want_segments[k]);
+        segment_texts = segment_texts && without_spaces(nemo_segment_text(detokenizer, decoding.ids, texts, segs[k])) == without_spaces(want_segments[k]);
         segment_times = segment_times && segs[k].span.start == segment_offsets.i32[2 * k] && segs[k].span.end == segment_offsets.i32[2 * k + 1] &&
                         recognizer.seconds(segs[k].span.start) == segment_seconds.f64[2 * k] &&
                         recognizer.seconds(segs[k].span.end) == segment_seconds.f64[2 * k + 1];

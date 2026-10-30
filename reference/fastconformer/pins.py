@@ -1,7 +1,13 @@
-"""The pinned checkpoints every script in this folder runs, and the version of NeMo pyproject.toml pins."""
+"""The pinned checkpoints every script in this folder runs, and the version of NeMo their environment pins.
+
+A checkpoint runs in the environment its pin names: pyproject.toml's here, or haas/pyproject.toml's for Haas, whose
+prediction network needs Haas-ASR, flash-linear-attention and a CUDA GPU (`uv run --project haas python dump.py ...` on
+Linux).
+"""
 
 import hashlib
 import importlib.metadata
+import importlib.util
 import os
 
 import torch
@@ -9,6 +15,8 @@ from huggingface_hub import hf_hub_download
 from nemo.collections.asr.models import ASRModel
 
 NEMO = importlib.metadata.version("nemo-toolkit")
+# The environment the scripts run in: haas/'s, the one that holds Haas-ASR, or this folder's.
+ENVIRONMENT = "haas" if importlib.util.find_spec("haas_asr") else None
 MODELS = {
     "parakeet-tdt_ctc-0.6b-ja": {
         "repository": "nvidia/parakeet-tdt_ctc-0.6b-ja",
@@ -31,6 +39,14 @@ MODELS = {
         "size": 2477946880,
         "sha256": "d196d43ad03466ca88beeda4bf5fafb07bab7202d4b663b8e4f12cb0a4381fae",
     },
+    "Haas-ja-v1.0": {
+        "repository": "third-intelligence/Haas-ja-v1.0",
+        "revision": "660728d39019e5e065046154beca44ac9a66a540",
+        "file": "Haas-ja-v1.0.nemo",
+        "size": 1232384000,
+        "sha256": "c6ed38698300a371a86eadab4b56d5458f47623f7fc4a5f1e938b5adbe8458aa",
+        "environment": "haas",
+    },
 }
 
 
@@ -49,8 +65,41 @@ def checkpoint(pin):
     return path
 
 
+def prediction_on_gpu(model):
+    """Moves the prediction network of a Haas model on the CPU to the CUDA GPU, where it computes in float32 without
+    TF32, its inputs going there and its outputs and state coming back to the CPU.
+
+    fla's KimiDeltaAttention, which each of its layers is, decodes with Triton kernels alone: ShortConvolution's
+    causal_conv1d_update, fused_recurrent_kda and FusedRMSNormGated. The rest of the model stays on the CPU, as every
+    other checkpoint here runs, and the decoding with it, on CPU tensors.
+    """
+    if not torch.cuda.is_available():
+        raise SystemExit("Haas's prediction network runs flash-linear-attention's Triton kernels, which need a CUDA GPU")
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    network = model.decoder.prediction["dec_rnn"]
+    network.cuda()
+    forward = network.forward
+
+    def on_gpu(y, state=None):
+        g, state = forward(y.cuda(), None if state is None else tuple(s.cuda() for s in state))
+        return g.cpu(), tuple(s.cpu() for s in state)
+
+    network.forward = on_gpu
+
+
 def restore(pin):
-    """The official model of a pinned checkpoint, on the CPU in float32 and in evaluation."""
+    """The official model of a pinned checkpoint, on the CPU in float32 and in evaluation, but for Haas's prediction
+    network, which prediction_on_gpu() puts on the GPU."""
+    if pin.get("environment") != ENVIRONMENT:
+        where = "the environment of haas/ (uv run --project haas)" if pin.get("environment") else "this folder's environment"
+        raise SystemExit(f"{pin['repository']} runs in {where}")
     torch.set_grad_enabled(False)
-    model = ASRModel.restore_from(checkpoint(pin), map_location="cpu")
-    return model.float().eval()
+    if ENVIRONMENT == "haas":
+        # Adds haas_asr to the packages whose classes NeMo builds from a configuration: the checkpoint's decoder is
+        # haas_asr.prednet.KDATransducerDecoder.
+        import haas_asr  # noqa: F401
+    model = ASRModel.restore_from(checkpoint(pin), map_location="cpu").float().eval()
+    if ENVIRONMENT == "haas":
+        prediction_on_gpu(model)
+    return model
