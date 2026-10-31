@@ -218,17 +218,19 @@ utterances; parakeet-tdt-0.6b-v3 on 300 English utterances of FLEURS, three roun
 
 | Model | CER on Common Voice ja | p50 latency, M5 / RTX 2080 |
 |---|---|---|
-| `parakeet-tdt_ctc-0.6b-ja`, Q8_0 | 7.9% (3.0%) | 0.027 s / 0.050 s |
-| `reazonspeech-v2`, Q8_0 | 12.0% (7.1%) | 0.046 s / 0.092 s |
+| `parakeet-tdt_ctc-0.6b-ja`, Q8_0 | 7.9% (3.0%) | 0.025 s / 0.047 s |
+| `reazonspeech-v2`, Q8_0 | 12.0% (7.1%) | 0.049 s / 0.096 s |
 | `qwen3-asr-0.6b`, Q8_0 | 11.9% (7.0%) | 0.107 s / 0.072 s |
 | `qwen3-asr-1.7b`, Q8_0 | 9.5% (4.7%) | 0.257 s / 0.140 s |
-| `parakeet-tdt-0.6b-v3`, F16 | WER 8.8% on FLEURS en | 0.058 s / 0.095 s |
-| `haas-ja-v1.0`, Q8_0 | 4.4% (2.9%) on FLEURS ja | 0.063 s / 0.119 s |
+| `parakeet-tdt-0.6b-v3`, F16 | WER 8.8% on FLEURS en | 0.050 s / 0.083 s |
+| `haas-ja-v1.0`, Q8_0 | 4.4% (2.9%) on FLEURS ja | 0.042 s / 0.097 s |
 | `nemotron-3.5-transcribe`, IQ4_NL | 9.2% (5.3%) | 0.61 s / - |
 
-Nemotron 3.5 Transcribe was measured on 2026-10-29: its CER on an H100 with Vulkan, and its latency on the M5 over the
-first 100 utterances. Haas-ja-v1.0 was trained on Common Voice, so it was measured on the 650 utterances of FLEURS'
-Japanese test split on 2026-10-30, where parakeet-tdt_ctc-0.6b-ja gives 5.0% (2.8%). Each model's page has more.
+The FastConformer models (parakeet, ReazonSpeech and Haas-ja-v1.0) were measured again on 2026-10-31 with 0.9.4's
+build. Nemotron 3.5 Transcribe was measured on 2026-10-29: its CER on an H100 with Vulkan, and its latency on the M5
+over the first 100 utterances. Haas-ja-v1.0 was trained on Common Voice, so it was measured on the 650 utterances of
+FLEURS' Japanese test split, where parakeet-tdt_ctc-0.6b-ja gave 5.0% (2.8%) on 2026-10-30. Each model's page has
+more.
 
 ## Documentation
 

@@ -88,7 +88,7 @@
       "repository": "sakasegawa/drama-3-GGUF",
       "type": "q4_k",
       "start": [],
-      "revision": "b6fa51cff778b69e72ee4994f85311b4c5ab6bc5",
+      "revision": "9a01354d04ab6eb521bc9cdfc56ab6824c474af2",
       "task": "synthesis",
       "languages": ["af", "am", "ar", "as", "az", "be", "bg", "bn", "bo", "br", "bs", "ca", "cs", "cy", "da", "de", "el", "en", "es", "et", "eu", "fa", "fi", "fo", "fr", "gl", "gu", "he", "hi", "hr", "ht", "hu", "hy", "id", "is", "it", "ja", "jv", "ka", "kk", "km", "kn", "ko", "la", "lt", "lv", "mi", "ml", "mn", "mr", "ms", "my", "ne", "nl", "nn", "no", "pa", "pl", "ps", "pt", "ro", "ru", "sa", "sd", "si", "sk", "sl", "sn", "sq", "sr", "sv", "sw", "ta", "te", "th", "tl", "tr", "uk", "ur", "vi", "yi", "yo", "zh"],
       "voice_files": true,
@@ -188,16 +188,16 @@
       "repository": "sakasegawa/Haas-ja-v1.0-GGUF",
       "type": "q8_0",
       "start": [],
-      "revision": "3168c927c1ddceaacff5ec2af9831fc311e62db6",
+      "revision": "25c400baaa9c002df8feffc140804e84228f069b",
       "task": "recognition",
       "languages": ["ja"],
       "voice_files": false,
       "files": [
-        {"type": "q8_0", "file": "Haas-616M-ja-v1.0-Q8_0.gguf", "size": 656128544, "sha256": "9103322fa3d37c7a5f4d09141a34add89b606d09196bfac763b2d8454df4f050"},
-        {"type": "f16", "file": "Haas-616M-ja-v1.0-F16.gguf", "size": 1232875904, "sha256": "f65eda2d152615bafd96f4d42fe40ee75904d5241baa7a82df76e2dd76b36c6f"},
-        {"type": "q6_k", "file": "Haas-616M-ja-v1.0-Q6_K.gguf", "size": 508645920, "sha256": "e7e43675d43bce2058b618cd6442863d0938a9b4f962311aef38494018a4b555"},
-        {"type": "q5_k", "file": "Haas-616M-ja-v1.0-Q5_K.gguf", "size": 427768352, "sha256": "bb8e6a39feccc9222f6af45d66247f5854b93c0db3165ea3cfaaa293d45f69c9"},
-        {"type": "q4_k", "file": "Haas-616M-ja-v1.0-Q4_K.gguf", "size": 351648288, "sha256": "18496606aff41d63cafdcd37cb9e905b86dce1e153821e26a044ae891cd23029"}
+        {"type": "q8_0", "file": "Haas-616M-ja-v1.0-Q8_0.gguf", "size": 656381472, "sha256": "cd5f60b2f1c411404b83fca4a65e3ce30a26d9e951b6a346529e65f22758afeb"},
+        {"type": "f16", "file": "Haas-616M-ja-v1.0-F16.gguf", "size": 1233128832, "sha256": "f752e02f68c1dfff795900e40aa82e5302976fb5360080fcbd330d8b3c992cd8"},
+        {"type": "q6_k", "file": "Haas-616M-ja-v1.0-Q6_K.gguf", "size": 508898848, "sha256": "19b33195b691abda293648a02702086754e1392728871d0dafcd3d50682f5dc3"},
+        {"type": "q5_k", "file": "Haas-616M-ja-v1.0-Q5_K.gguf", "size": 428021280, "sha256": "880ee2d3068b98834d88cff5794442a7f36f1808a6b365a5f6188a060b689658"},
+        {"type": "q4_k", "file": "Haas-616M-ja-v1.0-Q4_K.gguf", "size": 351901216, "sha256": "d24d53f29b75214a933ff482b0de1217e0a800f4118cca39ad6cf03609a89d6f"}
       ]
     },
     {
@@ -205,7 +205,7 @@
       "repository": "sakasegawa/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
       "type": "iq4_nl",
       "start": [],
-      "revision": "cf5239e0e20416a45b5b1c30955c8a0cf457addb",
+      "revision": "55d289085ed6b1acd1cfd2e6cf279fdeb32fee5f",
       "task": "recognition",
       "languages": ["ar", "bg", "bn", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "he", "hi", "hr", "hu", "id", "it", "ja", "ko", "lt", "lv", "mr", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "ta", "te", "th", "tl", "tr", "uk", "vi", "zh"],
       "voice_files": false,

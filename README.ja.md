@@ -187,15 +187,15 @@ speech_synthesize(request, on_audio, NULL);   /* on_audio receives the samples a
 
 | モデル | Common Voice ja の CER | レイテンシの p50、M5 / RTX 2080 |
 |---|---|---|
-| `parakeet-tdt_ctc-0.6b-ja`, Q8_0 | 7.9% (3.0%) | 0.027 s / 0.050 s |
-| `reazonspeech-v2`, Q8_0 | 12.0% (7.1%) | 0.046 s / 0.092 s |
+| `parakeet-tdt_ctc-0.6b-ja`, Q8_0 | 7.9% (3.0%) | 0.025 s / 0.047 s |
+| `reazonspeech-v2`, Q8_0 | 12.0% (7.1%) | 0.049 s / 0.096 s |
 | `qwen3-asr-0.6b`, Q8_0 | 11.9% (7.0%) | 0.107 s / 0.072 s |
 | `qwen3-asr-1.7b`, Q8_0 | 9.5% (4.7%) | 0.257 s / 0.140 s |
-| `parakeet-tdt-0.6b-v3`, F16 | FLEURS en の WER 8.8% | 0.058 s / 0.095 s |
-| `haas-ja-v1.0`, Q8_0 | FLEURS ja で 4.4% (2.9%) | 0.063 s / 0.119 s |
+| `parakeet-tdt-0.6b-v3`, F16 | FLEURS en の WER 8.8% | 0.050 s / 0.083 s |
+| `haas-ja-v1.0`, Q8_0 | FLEURS ja で 4.4% (2.9%) | 0.042 s / 0.097 s |
 | `nemotron-3.5-transcribe`, IQ4_NL | 9.2% (5.3%) | 0.61 s / - |
 
-Nemotron 3.5 Transcribe は 2026-10-29 に測りました。CER は Vulkan の H100 で、レイテンシは M5 で先頭の 100 発話について測っています。Haas-ja-v1.0 は Common Voice で学習しているので、2026-10-30 に FLEURS の日本語テストセットの 650 発話で測りました。同じ発話で parakeet-tdt_ctc-0.6b-ja は 5.0% (2.8%) です。詳しくは各モデルのページを見てください。
+FastConformer のモデル(parakeet、ReazonSpeech、Haas-ja-v1.0)は、2026-10-31 に 0.9.4 のビルドで測り直しました。Nemotron 3.5 Transcribe は 2026-10-29 に測りました。CER は Vulkan の H100 で、レイテンシは M5 で先頭の 100 発話について測っています。Haas-ja-v1.0 は Common Voice で学習しているので、FLEURS の日本語テストセットの 650 発話で測りました。同じ発話で、parakeet-tdt_ctc-0.6b-ja は 2026-10-30 に 5.0% (2.8%) でした。詳しくは各モデルのページを見てください。
 
 ## ドキュメント
 
