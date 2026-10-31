@@ -143,7 +143,8 @@ OpenAI's limit.
 | `model` | the recognition model's `id`, or left out; any other model is a 404 (`model_not_found`) |
 | `language` | a tag of one of the model's languages, or `auto` (the default) |
 | `prompt` | what the model is told of the audio before it hears it, for a model that takes it (Qwen3-ASR, Nemotron 3.5 Transcribe) |
-| `words`, `words_alpha`, `words_guard` | speech.cpp's own: the custom vocabulary of a model that takes one (Haas), one word a line, how strongly it is boosted, and whether a change it makes is guarded ([the model's page](models/fastconformer.md#a-custom-vocabulary-haas)) |
+| `keywords[]` | the words or phrases a model that takes them (Haas) listens for and writes as given, a field each, with its readings after "=" (`Haas=ハース,ハウス`), and no line break ([the model's page](models/fastconformer.md#a-custom-vocabulary-haas)); `verbose_json` then has no segments, and a granularity is refused |
+| `keywords_alpha`, `keywords_guard` | speech.cpp's own: how strongly the keywords are boosted, and whether a change they make is guarded |
 | `response_format` | `json` (the default), which answers `{"text":"..."}`; `text`, the text alone as `text/plain`; `verbose_json` (below); or `diarized_json`, with `chunking_strategy` each region with its speakers, or from a model that tells who speaks its own segments ([below](#speakers)). `srt` and `vtt` are refused: speech.cpp gives no subtitles |
 | `timestamp_granularities[]` | `segment`, `word` or both, with `verbose_json`; a model that gives no times refuses it |
 | `decoding` | speech.cpp's own: `beam` (the default) or `greedy`, for a model that takes it (reazonspeech-nemo-v2) |
@@ -264,7 +265,7 @@ utterance.
 
 | Client event | What it does |
 |---|---|
-| `session.update` | sets `session.audio.input.transcription`: `model` (the recognition model's `id`), `language`, or `languages` with one tag, `prompt`, and speech.cpp's own `words`, `words_alpha` and `words_guard`, each left as it was when left out and taken away by `null`; or `null`, after which commits are not transcribed. Sets `turn_detection`: `null`, or `{"type": "server_vad"}` with `threshold`, `prefix_padding_ms` and `silence_duration_ms` (below). Sets speech.cpp's own `diarization`: `null`, or the diarization model's request options, `{}` for its defaults ([below](#speakers-of-a-session)). `session.type` is `"transcription"`, the format `{"type": "audio/pcm", "rate": 24000}`, and `noise_reduction` `null` |
+| `session.update` | sets `session.audio.input.transcription`: `model` (the recognition model's `id`), `language`, or `languages` with one tag, `prompt`, `keywords`, an array of strings as `keywords[]` takes them, and speech.cpp's own `keywords_alpha` and `keywords_guard`, each left as it was when left out and taken away by `null`; or `null`, after which commits are not transcribed. Sets `turn_detection`: `null`, or `{"type": "server_vad"}` with `threshold`, `prefix_padding_ms` and `silence_duration_ms` (below). Sets speech.cpp's own `diarization`: `null`, or the diarization model's request options, `{}` for its defaults ([below](#speakers-of-a-session)). `session.type` is `"transcription"`, the format `{"type": "audio/pcm", "rate": 24000}`, and `noise_reduction` `null` |
 | `input_audio_buffer.append` | adds `audio`, base64 of 16-bit little-endian mono PCM at 24000 Hz |
 | `input_audio_buffer.commit` | transcribes the buffer: what was appended since the last commit or clear |
 | `input_audio_buffer.clear` | drops the buffer |
@@ -293,7 +294,7 @@ an append past that is an `error` event (`input_audio_buffer_full`) and adds not
 speech.cpp does not take is an `error` event rather than ignored: a conversation session (`session.type: "realtime"`),
 `semantic_vad`, the members of `server_vad` that steer a response (`create_response`, `interrupt_response`,
 `idle_timeout_ms`), `noise_reduction`, the formats `audio/pcmu` and `audio/pcma` and rates other than 24000, `include`
-(log probabilities), `keywords`, `delay`, more than one language, and every other client event.
+(log probabilities), `delay`, more than one language, and every other client event.
 
 ### Turn detection
 

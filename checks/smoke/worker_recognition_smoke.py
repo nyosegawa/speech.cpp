@@ -5,16 +5,16 @@ It sends the audio of each dump of reference/fastconformer/dump.py or reference/
 one second and checks that the text is the dump's, the languages the one qwen-asr parsed by its tag or none (for
 FastConformer, which writes none, a member left out), and the stop complete, for each request a Qwen3-ASR dump holds
 with its forced language and its prompt, each decoding other than the default that a FastConformer dump holds and each
-vocabulary of its words/ where the model takes words, that
-a language the model only checks changes nothing, and with timestamps, where the model takes them, that the segments
-and tokens join into the text in time order, with speakers, for a Nemotron 3.5 Transcribe dump of the model card's
+vocabulary of its words/ as keywords where the model takes them, that
+a language the model only checks changes nothing, and with timestamps, where the model takes them and the request has
+no keywords, that the segments and tokens join into the text in time order, with speakers, for a Nemotron 3.5 Transcribe dump of the model card's
 prompt for speaker tags, that each segment has its speaker, or where the model cannot time its text, that it says why
 and has neither; that the chunks of two requests may interleave and the requests are
 answered in the order of their transcribes; cancels while a request collects chunks (whose later lines are dropped and
 whose id a chunk 0 starts again), while it waits and while it runs; that audio at three times the model's rate is
 recognized; each error with its code and option (a chunk out of order, not base64 or of odd bytes, a sample rate
 missing or 0, an unknown language or member, a prompt the model does not take or too long, a decoding it does not take
-or does not have, audio missing, the other task's messages); info, also answered while a recognition runs, and the
+or does not have, timestamps with keywords, audio missing, the other task's messages); info, also answered while a recognition runs, and the
 model information of ready; progress for a recognition that runs for more than two seconds, which the worker reports
 a second after the request starts and then at most once a second; the error of a request still collecting chunks
 when stdin closes; and, where the model takes timestamps, that --timestamps given to the worker is the default of a
@@ -103,8 +103,10 @@ for d in dumps:
             if not options["language"]["steers"]:
                 members = {**members, "language": info["languages"][0]}
         id = f"{name}/{request}"
+        # A recognition with keywords has no times, and timestamps with them is refused (below).
+        times = {} if "keywords" in members else timed
         t1 = time.perf_counter()
-        send_audio(id, audio[name], **members, **timed)
+        send_audio(id, audio[name], **members, **times)
         sent = time.perf_counter()
         messages = w.until(id)
         m = messages[-1]
@@ -114,7 +116,8 @@ for d in dumps:
         # A result without a language leaves the member out.
         if m.get("languages", []) != want_languages or m.get("languages") == []:
             raise SystemExit(f"{id}: the languages {m.get('languages')} differ from the ones qwen-asr parsed, {want_languages}")
-        check_times(m, members.get("speakers", False))
+        if times:
+            check_times(m, members.get("speakers", False))
         seconds = len(audio[name]) / 2 / rate
         progress = [p for p in messages if p["type"] == "progress"]
         gaps = [b["_at"] - a["_at"] for a, b in zip(progress, progress[1:])]
@@ -125,7 +128,7 @@ for d in dumps:
             assert progress, f"{id}: a recognition of {m['_at'] - sent:.1f} s sent no progress"
         print(f"{id} {members}: {seconds:.2f} s, the expected text and languages {want_languages} in {time.perf_counter() - t1:.3f} s"
               + (f", no times: {m['untimed']}" if "untimed" in m else
-                 f", {len(m['segments'])} segments and {len(m['tokens'])} tokens joining into it" if timed else "")
+                 f", {len(m['segments'])} segments and {len(m['tokens'])} tokens joining into it" if times else "")
               + f", {len(progress)} progress messages")
 
 # The shortest and the longest audio that a request without options has a text of; a dump of speaker tags has none.
@@ -221,6 +224,9 @@ if "decoding" in options:
 else:
     send_audio("j4", short_pcm, decoding="greedy")
     expect_error("j4", "unsupported", "decoding", "a decoding to a model that takes none")
+if "keywords" in options and timed:
+    send_audio("j5", short_pcm, keywords="Haas=ハース", **timed)
+    expect_error("j5", "invalid_argument", "timestamps", "timestamps with keywords")
 w.request({"type": "transcribe", "id": "k", "sample_rate": rate})
 expect_error("k", "invalid_argument", "audio", "a transcribe without chunks")
 w.request({"type": "synthesize", "id": "l", "text": "明日の東京は晴れです。", "voice": "x"})

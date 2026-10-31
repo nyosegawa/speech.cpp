@@ -21,8 +21,8 @@ recognition model: `speech asr` on WAVE files of the dumps of reference/fastconf
 reference/qwen3-asr/dump.py against the worker's text of the same samples, as text and as JSON with the stop and the
 languages, the one qwen-asr parsed or none, and where the model takes timestamps as text with --timestamps one line per
 segment and as JSON with them, the segments and tokens the worker's; and for a dump that holds requests with a forced
-language and a prompt, with a decoding other than the default or with a vocabulary of its words/, `speech asr --language
---prompt`, `speech asr --decoding` or `speech asr --words` against the worker's text of the same request, and as JSON its
+language and a prompt, with a decoding other than the default or with a vocabulary of its words/ as keywords, `speech asr
+--language --prompt`, `speech asr --decoding` or `speech asr --keywords` against the worker's text of the same request, and as JSON its
 languages; for a Nemotron 3.5 Transcribe dump
 of the model card's prompt for speaker tags, `speech asr --speakers` as a line per segment with its speaker and as JSON
 against the worker's end with speakers, and its refusal with --vad; and with --vad a detection model,
@@ -604,7 +604,7 @@ elif info["task"] == "recognition":
             run("asr", model, "--speakers", "--vad", vad, *options, f, code=2)
     print(f"asr: {len(verbatim_files)} files, the worker's texts as text and as JSON with the stop and the dumps' languages"
           + (", as segments with --timestamps and as JSON with times" if timed else "")
-          + f"; {len(asked_ends)} with the flags of their options, --language and --prompt, --decoding, --words or --speakers, as the worker's requests "
+          + f"; {len(asked_ends)} with the flags of their options, --language and --prompt, --decoding, --keywords or --speakers, as the worker's requests "
           + "with them, --speakers as a line per segment with its speaker")
     if vad:
         # The dumps' audio joined with a second of silence after each, which the detection cuts into regions again.

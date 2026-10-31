@@ -200,7 +200,7 @@ private:
             for (const auto & [file_name, file] : req.form.files) parts.push_back({file_name, file.content, file.filename, true});
             asked = openai::read_transcription_request(req.is_multipart_form_data(), parts, speech_model_info_name(info.get()),
                                                        speech_model_info_takes(info.get(), SPEECH_OPT_TIMESTAMPS),
-                                                       speech_model_info_takes(info.get(), SPEECH_OPT_SPEAKERS));
+                                                       speech_model_info_takes(info.get(), SPEECH_OPT_SPEAKERS), served->defaults());
         } catch (const ApiError & e) {
             send_error(res, e);
             return;
@@ -255,7 +255,7 @@ private:
             if (!asked.regions) check(speech_request_set_audio(job->request.get(), asked.samples.data(), asked.samples.size(), asked.sample_rate));
             apply_options(job->request.get(), asked.options);
         } catch (const Failure & e) {
-            send_error(res, openai::library_error(e));
+            send_error(res, openai::transcription_error(e));
             return;
         }
         if (asked.regions) {
@@ -270,7 +270,7 @@ private:
         std::unique_lock<std::mutex> lock(job->mutex);
         if (!wait_for(*job, lock, [] { return false; }, [&] { return req.is_connection_closed(); })) return;
         if (job->failure) {
-            send_error(res, openai::library_error(*job->failure));
+            send_error(res, openai::transcription_error(*job->failure));
             return;
         }
         if (job->status != SPEECH_OK) return;

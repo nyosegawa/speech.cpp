@@ -38,7 +38,7 @@ speech asr parakeet-tdt_ctc-0.6b-ja --timestamps --format json one.wav two.wav >
 
 # The text of a recording in Japanese, told the names it holds
 speech asr qwen3-asr-1.7b --language ja --prompt "Claude Code、渋谷" meeting.wav
-speech asr haas-ja-v1.0 --words $'Haas=ハース\nThird Intelligence=サードインテリジェンス' talk.wav
+speech asr haas-ja-v1.0 --keywords $'Haas=ハース\nThird Intelligence=サードインテリジェンス' talk.wav
 
 # The text of a long recording, recognized region by region where someone speaks
 speech asr reazonspeech-v2 --vad silero-vad meeting.wav
@@ -84,9 +84,9 @@ speech info irodori-tts-mf
   as a line with a spinner and its seconds, and marks it when it is done. Colors are off with `NO_COLOR=1`. In a pipe or a file the same lines come
   without color, mark or spinner.
 - On Windows the command line is read as UTF-8, and stdin and stdout are binary.
-- `speech --version` prints the release and the C API's version: `speech.cpp 0.9.4, C API 3.7`.
+- `speech --version` prints the release and the C API's version: `speech.cpp 0.10.0, C API 4.0`.
 - On a terminal, a subcommand says on stderr when a later release is out, once it ends (`speech serve` as it starts):
-  `speech: speech.cpp 0.9.5 is out (this is 0.9.4); run speech update to install it`. It asks github.com at most once a
+  `speech: speech.cpp 0.10.1 is out (this is 0.10.0); run speech update to install it`. It asks github.com at most once a
   day, and only when stderr is a terminal, so a script or a program that starts `speech` never makes the request; the
   worker never asks. `SPEECH_NO_UPDATE_CHECK=1` turns it off.
 

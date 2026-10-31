@@ -141,24 +141,35 @@ SpeechRequest read_speech_request(const std::string & body, const std::string & 
 }
 
 TranscriptionRequest read_transcription_request(bool multipart, const std::vector<FormPart> & parts, const std::string & model_name,
-                                                bool gives_times, bool tells_speakers) {
+                                                bool gives_times, bool tells_speakers, const std::vector<RequestOption> & defaults) {
     if (!multipart) {
         throw ApiError{400, "The body is not multipart/form-data. Send the audio as the form's \"file\", as OpenAI's create transcription takes it.",
                        "", ""};
     }
-    std::vector<std::string> known = {"file",     "model",       "language",    "prompt",           "response_format", "decoding",
-                                      "words",    "words_alpha", "words_guard", "chunking_strategy", "chunking_strategy[type]"};
+    std::vector<std::string> known = {"file", "model", "language", "prompt", "response_format", "decoding",
+                                      "keywords_alpha", "keywords_guard", "chunking_strategy", "chunking_strategy[type]"};
     for (const VadMember & m : kServerVad) known.push_back(std::string("chunking_strategy[") + m.name + "]");
     std::string listed;
     for (const std::string & name : known) listed += name + ", ";
     std::map<std::string, const FormPart *> given;
     std::vector<std::string> granularities;
+    std::optional<std::string> keywords;
     for (const FormPart & part : parts) {
         if (part.name == "timestamp_granularities[]") {
             granularities.push_back(part.content);
             continue;
         }
-        if (std::find(known.begin(), known.end(), part.name) == known.end()) throw unknown_member(part.name, listed + "and timestamp_granularities[]");
+        if (part.name == "keywords[]") {
+            if (part.content.find_first_of("\r\n") != std::string::npos) {
+                throw ApiError{400, "A keyword holds a line break; give each keyword, with its readings, as one keywords[] of one line.",
+                               "keywords[]", "invalid_value"};
+            }
+            keywords = keywords ? *keywords + "\n" + part.content : part.content;
+            continue;
+        }
+        if (std::find(known.begin(), known.end(), part.name) == known.end()) {
+            throw unknown_member(part.name, listed + "keywords[] and timestamp_granularities[]");
+        }
         if (given.count(part.name)) throw ApiError{400, "\"" + part.name + "\" is given twice; give it once.", part.name, "invalid_value"};
         given[part.name] = &part;
     }
@@ -207,8 +218,9 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
     if (language) r.options.push_back({SPEECH_OPT_LANGUAGE, language->content});
     if (prompt) r.options.push_back({SPEECH_OPT_PROMPT, prompt->content});
     if (decoding) r.options.push_back({SPEECH_OPT_DECODING, decoding->content});
-    // speech.cpp's own fields, the custom vocabulary of a model that takes one, read as the command line reads them.
-    for (const speech_option option : {SPEECH_OPT_WORDS, SPEECH_OPT_WORDS_ALPHA, SPEECH_OPT_WORDS_GUARD}) {
+    if (keywords) r.options.push_back({SPEECH_OPT_KEYWORDS, *keywords});
+    // speech.cpp's own fields, how a model that takes keywords boosts them, read as the command line reads them.
+    for (const speech_option option : {SPEECH_OPT_KEYWORDS_ALPHA, SPEECH_OPT_KEYWORDS_GUARD}) {
         const std::string name = speech_option_name(option);
         const FormPart * part = field(name);
         if (!part) continue;
@@ -221,9 +233,13 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
         }
     }
     // OpenAI's verbose_json requires the language, the duration and the text alone, and its timestamp granularity is
-    // segment unless the request names one: a model that gives no times answers it without segments, and refuses a
-    // granularity the request names.
-    r.timestamps = r.format == "verbose_json" && (gives_times || !granularities.empty());
+    // segment unless the request names one: a model that gives no times, as none does with keywords, answers it without
+    // segments, and refuses a granularity the request names.
+    const std::vector<RequestOption> in_effect = with_defaults(defaults, r.options);
+    const bool with_keywords = std::any_of(in_effect.begin(), in_effect.end(), [](const RequestOption & o) {
+        return o.option == SPEECH_OPT_KEYWORDS && !std::get<std::string>(o.value).empty();
+    });
+    r.timestamps = r.format == "verbose_json" && ((gives_times && !with_keywords) || !granularities.empty());
     if (r.timestamps) r.options.push_back({SPEECH_OPT_TIMESTAMPS, true});
     const std::string & bytes = file->content;
     if (bytes.size() < 12 || bytes.compare(0, 4, "RIFF") != 0 || bytes.compare(8, 4, "WAVE") != 0) {
@@ -239,6 +255,12 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
         throw ApiError{400, std::string("The file cannot be read: ") + e.what() + ".", "file", "invalid_value"};
     }
     return r;
+}
+
+ApiError transcription_error(const Failure & failure) {
+    ApiError e = library_error(failure);
+    if (failure.option() == speech_option_name(SPEECH_OPT_KEYWORDS)) e.param = "keywords[]";
+    return e;
 }
 
 std::string sse_delta(const std::string & pcm) {
