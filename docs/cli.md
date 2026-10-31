@@ -446,8 +446,8 @@ exits with the installer's status. `--check` only says whether a later release i
 
 ```
 $ speech update
-speech.cpp 0.9.5 is out (this is 0.9.4); running the installer
-Downloading https://github.com/nyosegawa/speech.cpp/releases/download/v0.9.5/speech-0.9.5-macos-arm64-metal.zip
+speech.cpp 0.10.1 is out (this is 0.10.0); running the installer
+Downloading https://github.com/nyosegawa/speech.cpp/releases/download/v0.10.1/speech-0.10.1-macos-arm64-metal.zip
 ...
 ```
 
