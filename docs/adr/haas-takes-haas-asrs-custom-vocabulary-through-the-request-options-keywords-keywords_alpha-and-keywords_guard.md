@@ -34,7 +34,9 @@ keyword with a line break. Its `verbose_json` answers with `words`, the timed wo
   - `keywords`, a string: the keywords, one a line, each its written form followed, where it has readings, by "=" and
     the readings separated by commas, as `Vocabulary.parse()` takes each entry; lines with nothing but whitespace are
     skipped, and "" (the neutral value) boosts nothing. A written form that is empty once stripped is refused, as
-    `Vocabulary` refuses it.
+    `Vocabulary` refuses it, and so is a value of blank lines alone, so that a request has keywords exactly where the
+    value is not "": the server reads that to leave out `verbose_json`'s times without the library's rules of
+    whitespace.
   - `keywords_alpha`, a number above 0: `Vocabulary`'s alpha, its default from the file (2).
   - `keywords_guard`, a boolean: `transcribe()`'s guard, true by default.
 

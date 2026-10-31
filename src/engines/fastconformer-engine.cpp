@@ -68,11 +68,16 @@ private:
     /**
      * The vocabulary of the request's keywords, or none for a request without keywords, which takes no keywords_alpha or
      * keywords_guard. A request with keywords takes no timestamps, since the keywords write the text after the decoding,
-     * so that no decoding's tokens make it.
+     * so that no decoding's tokens make it. Keywords of blank lines alone are refused rather than read as none, so that a
+     * request has keywords exactly where their value is not "", which a caller tells without the rules of whitespace.
      */
     static std::optional<fastconformer::Vocabulary> vocabulary_of(const RequestValues & values) {
-        const std::vector<std::string> keywords = values.has(SPEECH_OPT_KEYWORDS) ? fastconformer::word_entries(values.string(SPEECH_OPT_KEYWORDS))
-                                                                                   : std::vector<std::string>{};
+        const std::string given = values.has(SPEECH_OPT_KEYWORDS) ? values.string(SPEECH_OPT_KEYWORDS) : std::string();
+        const std::vector<std::string> keywords = fastconformer::word_entries(given);
+        if (keywords.empty() && !given.empty()) {
+            throw Error(Fault::InvalidArgument, "the option keywords holds blank lines alone; give a keyword on a line, or \"\" for none",
+                        speech_option_name(SPEECH_OPT_KEYWORDS));
+        }
         if (keywords.empty()) {
             for (speech_option unused : {SPEECH_OPT_KEYWORDS_ALPHA, SPEECH_OPT_KEYWORDS_GUARD}) {
                 if (values.given(unused)) {

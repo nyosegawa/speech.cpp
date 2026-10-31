@@ -489,7 +489,8 @@ typedef enum speech_option {
      * "keywords", a string: the words or phrases a recognition listens for and writes as given, as OpenAI's
      * transcription names them, one a line, each its written form followed, where it has readings, by "=" and the
      * readings separated by commas ("Haas=ハース,ハウス"), as Haas-ASR's Vocabulary.parse() takes each entry; lines of
-     * whitespace alone are skipped, and "" (the neutral value) gives none. The decoding boosts the keywords' spellings,
+     * whitespace alone are skipped, a value of such lines alone is refused when the request runs, and "" (the neutral
+     * value) gives none. The decoding boosts the keywords' spellings,
      * and the text has each keyword found in it in its written form, which no decoding's tokens make, so timestamps
      * with keywords is refused when the request runs. A model whose file offers it takes it (Haas-ja-v1.0).
      */

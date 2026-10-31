@@ -475,9 +475,9 @@ static int check_refusals(speech_model * model, const char * model_path, const f
         ok &= expect(speech_transcribe(r), SPEECH_ERROR_OUT_OF_RANGE, "prompt", "speakers with a prompt");
         speech_request_free(r);
     }
-    // A model that takes keywords refuses keywords_alpha without them, timestamps with them and a keyword without a
-    // written form before the work, so that the same request, given keywords that it takes, runs: its text that of the
-    // keywords alone.
+    // A model that takes keywords refuses keywords_alpha without them, timestamps with them, keywords of blank lines
+    // alone and a keyword without a written form before the work, so that the same request, given keywords that it
+    // takes, runs: its text that of the keywords alone.
     if (speech_model_info_takes(info, SPEECH_OPT_KEYWORDS)) {
         if (speech_request_new(model, &r) != SPEECH_OK || speech_request_set_audio(r, samples, n, rate) != SPEECH_OK ||
             speech_request_set_float(r, SPEECH_OPT_KEYWORDS_ALPHA, 3) != SPEECH_OK ||
@@ -489,6 +489,8 @@ static int check_refusals(speech_model * model, const char * model_path, const f
               (!takes_timestamps ||
                (expect(speech_transcribe(r), SPEECH_ERROR_INVALID_ARGUMENT, "timestamps", "timestamps with keywords") &&
                 expect(speech_request_set_bool(r, SPEECH_OPT_TIMESTAMPS, 0), SPEECH_OK, NULL, "no timestamps after the refusal"))) &&
+              expect(speech_request_set_string(r, SPEECH_OPT_KEYWORDS, " \n\t\n"), SPEECH_OK, NULL, "keywords after the refusal") &&
+              expect(speech_transcribe(r), SPEECH_ERROR_INVALID_ARGUMENT, "keywords", "keywords of blank lines alone") &&
               expect(speech_request_set_string(r, SPEECH_OPT_KEYWORDS, "Haas=ハース\n =はーす"), SPEECH_OK, NULL, "keywords after the refusal") &&
               expect(speech_transcribe(r), SPEECH_ERROR_INVALID_ARGUMENT, "keywords", "a keyword without a written form") &&
               expect(speech_request_set_string(r, SPEECH_OPT_KEYWORDS, "Haas=ハース,ハウス\n\nAIモデル\n"), SPEECH_OK, NULL, "keywords after the refusal") &&

@@ -22,7 +22,7 @@ or where the model cannot time its text the reason and no segments; for a Nemotr
 card's prompt for speaker tags, diarized_json of the model's own speakers, labeled in the order they first speak, and
 its refusal of chunking_strategy; WAV at three times the model's rate, and the errors of a file that is not WAV or
 cannot be read, a language, a prompt, a decoding, keywords, a member and a granularity it does not take, a keyword of two
-lines or without a written form, keywords_alpha and keywords_guard of another type, out of range or without keywords, a
+lines or without a written form, blank keywords alone, keywords_alpha and keywords_guard of another type, out of range or without keywords, a
 granularity with keywords, given or the server's flag, verbose_json without segments with the server's keywords, and
 audio the library cannot take.
 
@@ -495,6 +495,8 @@ else:
                      "a keyword of two lines")
         expect_error(transcribe([("keywords[]", "=ハース")], [("file", "x.wav", wav)]), 400, "invalid_value", "keywords[]",
                      "a keyword without a written form")
+        expect_error(transcribe([("keywords[]", ""), ("keywords[]", " "), ("response_format", "verbose_json")], [("file", "x.wav", wav)]), 400,
+                     "invalid_value", "keywords[]", "blank keywords alone")
         expect_error(transcribe([("keywords[]", "Haas=ハース"), ("response_format", "verbose_json"), ("timestamp_granularities[]", "segment")],
                                 [("file", "x.wav", wav)]), 400, "invalid_value", "timestamps", "a granularity with keywords")
         # Keywords given to the server as a flag are the default of every request, which verbose_json then answers without
