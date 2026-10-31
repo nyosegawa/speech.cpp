@@ -16,7 +16,10 @@ Read AGENTS.md first; this skill adds the order of work and the checks that are 
   its speed and its memory justify a port; the measurement stays in speech-bench, where later ports compare with it.
 - **List the official request's every field** (the runtime's request object, `transcribe()`'s or `generate()`'s
   arguments, the server's form) and decide each one: a request option, a property of a voice file, or not offered,
-  with the reason. Write the decision in an ADR before porting; a field found later changes the C API.
+  with the reason. Before naming an option, look for a field of OpenAI's audio API (speech, transcriptions and the
+  Realtime session) that takes the same input, and where there is one, use its name: OpenAI's clients send it, and
+  `speech serve` takes every option by its name. Write the decision in an ADR before porting; a field found later
+  changes the C API.
 - **List what the checkpoint holds.** Dropping weights at conversion (a second head, a null speaker, a caption encoder)
   means a new layout later, an upgrade of every file users have, and a new upload. Drop nothing without an ADR saying
   why.
