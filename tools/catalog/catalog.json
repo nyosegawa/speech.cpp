@@ -188,7 +188,7 @@
       "repository": "sakasegawa/Haas-ja-v1.0-GGUF",
       "type": "q8_0",
       "start": [],
-      "revision": "25c400baaa9c002df8feffc140804e84228f069b",
+      "revision": "6b965d5007ba780585de51549d57a8c1c0d67c7e",
       "task": "recognition",
       "languages": ["ja"],
       "voice_files": false,
