@@ -54,15 +54,15 @@ extern "C" {
  * program built against one major version runs only against a library of the same major version. The shared
  * library's SOVERSION is this number.
  */
-#define SPEECH_API_VERSION_MAJOR 3
+#define SPEECH_API_VERSION_MAJOR 4
 
 /**
  * The minor version of this API. It rises when a function, an option or an enum value is added, and returns to 0
  * when the major version rises. A program built against minor version m runs against a library of the same major
- * version and a minor version of m or more. Version 3.0 is first released with speech.cpp 0.7.0, the option prompt
- * included, and a declaration added since says the version that added it.
+ * version and a minor version of m or more. Version 4.0 is first released with speech.cpp 0.10.0, and a declaration
+ * added since says the version that added it.
  */
-#define SPEECH_API_VERSION_MINOR 7
+#define SPEECH_API_VERSION_MINOR 0
 
 /** The SPEECH_API_VERSION_MAJOR the library was built with, for a caller that loads it at run time. */
 SPEECH_API int speech_api_version_major(void);
@@ -190,7 +190,7 @@ SPEECH_API speech_status speech_device_memory(size_t index, uint64_t * total, ui
  * Options: the vocabulary of what a request may ask, the same for every family. A value is never reused, and a later
  * minor version only appends. Each option has one type. Some have a neutral value that every model accepts, whether
  * or not it takes the option: speed 1, duration_scale 1, language "auto", timestamps false, prompt "", instructions "",
- * speakers false and words "". The others have none, and a model that does not take one refuses any value of it.
+ * speakers false and keywords "". The others have none, and a model that does not take one refuses any value of it.
  */
 typedef enum speech_option {
     /**
@@ -239,28 +239,27 @@ typedef enum speech_option {
      * "decoding", a string: how a recognition chooses its tokens from the model's outputs, one of the names the model
      * takes (speech_model_info_option_choice()), compared with case: "beam", a beam search, or "greedy", the most
      * likely token at each step, which takes less time and can write another text. Taken by a model that runs more
-     * than one; it has no neutral value. Added in 3.1.
+     * than one; it has no neutral value.
      */
     SPEECH_OPT_DECODING = 10,
     /**
      * "do_sample", a boolean: whether a model that predicts tokens one by one draws each from its distribution (true)
      * or takes the most likely (false), as transformers' generate() names it. A model that has a second stack takes the
      * same of it under the stack's name (SPEECH_OPT_CODE_PREDICTOR_DO_SAMPLE). Setting top_k, top_p or temperature of a
-     * stack that does not draw is refused when the request runs, since they would change nothing. Added in 3.1.
+     * stack that does not draw is refused when the request runs, since they would change nothing.
      */
     SPEECH_OPT_DO_SAMPLE = 11,
-    /** "top_k", an integer: the most likely tokens a draw keeps, 0 keeping every token. Added in 3.1. */
+    /** "top_k", an integer: the most likely tokens a draw keeps, 0 keeping every token. */
     SPEECH_OPT_TOP_K = 12,
     /**
      * "top_p", a number: the smallest set of the most likely tokens whose probability reaches it, which a draw keeps.
-     * Added in 3.1.
      */
     SPEECH_OPT_TOP_P = 13,
-    /** "temperature", a number above 0: what the logits are divided by before a draw. Added in 3.1. */
+    /** "temperature", a number above 0: what the logits are divided by before a draw. */
     SPEECH_OPT_TEMPERATURE = 14,
     /**
      * "repetition_penalty", a number above 0: what the logit of a token that the speech has already taken is divided
-     * by where it is positive, and multiplied by where it is negative, before a pick. Added in 3.1.
+     * by where it is positive, and multiplied by where it is negative, before a pick.
      */
     SPEECH_OPT_REPETITION_PENALTY = 15,
     /**
@@ -269,27 +268,26 @@ typedef enum speech_option {
      * in 3.1.
      */
     SPEECH_OPT_CODE_PREDICTOR_DO_SAMPLE = 16,
-    /** "code_predictor_top_k", an integer: top_k of the code predictor. Added in 3.1. */
+    /** "code_predictor_top_k", an integer: top_k of the code predictor. */
     SPEECH_OPT_CODE_PREDICTOR_TOP_K = 17,
-    /** "code_predictor_top_p", a number: top_p of the code predictor. Added in 3.1. */
+    /** "code_predictor_top_p", a number: top_p of the code predictor. */
     SPEECH_OPT_CODE_PREDICTOR_TOP_P = 18,
-    /** "code_predictor_temperature", a number above 0: temperature of the code predictor. Added in 3.1. */
+    /** "code_predictor_temperature", a number above 0: temperature of the code predictor. */
     SPEECH_OPT_CODE_PREDICTOR_TEMPERATURE = 19,
     /**
      * "instructions", a string: how to speak the text, described in words ("怒った口調で", "Speak slowly and softly."), as
      * OpenAI's speech API names it, for a model trained to follow such a description, which may describe the voice too
      * (Irodori-TTS's caption); "" (the neutral value) gives none. One too long for the model is refused when the request
-     * runs, naming the option. Added in 3.1.
+     * runs, naming the option.
      */
     SPEECH_OPT_INSTRUCTIONS = 20,
     /**
      * "cfg_scale_text", a number of 0 or more: how strongly a guided sampler follows the text, against a branch of the
-     * batch that runs without it; 0 runs no such branch. Added in 3.1.
+     * batch that runs without it; 0 runs no such branch.
      */
     SPEECH_OPT_CFG_SCALE_TEXT = 21,
     /**
      * "cfg_scale_speaker", a number of 0 or more: how strongly a guided sampler follows the voice, as cfg_scale_text.
-     * Added in 3.1.
      */
     SPEECH_OPT_CFG_SCALE_SPEAKER = 22,
     /**
@@ -301,95 +299,90 @@ typedef enum speech_option {
     SPEECH_OPT_CFG_GUIDANCE_MODE = 23,
     /**
      * "cfg_min_t", a number from 0 to 1, and "cfg_max_t": the guidance runs at the sampler's steps whose time, which
-     * falls from 1 at the noise to 0 at the speech, lies from cfg_min_t to cfg_max_t. Added in 3.1.
+     * falls from 1 at the noise to 0 at the speech, lies from cfg_min_t to cfg_max_t.
      */
     SPEECH_OPT_CFG_MIN_T = 24,
-    /** "cfg_max_t", a number from 0 to 1: the latest time of the guidance, as cfg_min_t says. Added in 3.1. */
+    /** "cfg_max_t", a number from 0 to 1: the latest time of the guidance, as cfg_min_t says. */
     SPEECH_OPT_CFG_MAX_T = 25,
-    /** "truncation_factor", a number above 0: the factor of the sampler's starting noise. Added in 3.1. */
+    /** "truncation_factor", a number above 0: the factor of the sampler's starting noise. */
     SPEECH_OPT_TRUNCATION_FACTOR = 26,
     /**
      * "rescale_k", a number above 0, and "rescale_sigma": the temporal score rescaling of each step's velocity (Xu et
-     * al., 2025), which a request sets with both or neither. Added in 3.1.
+     * al., 2025), which a request sets with both or neither.
      */
     SPEECH_OPT_RESCALE_K = 27,
-    /** "rescale_sigma", a number above 0: the other setting of the rescaling, as rescale_k says. Added in 3.1. */
+    /** "rescale_sigma", a number above 0: the other setting of the rescaling, as rescale_k says. */
     SPEECH_OPT_RESCALE_SIGMA = 28,
     /**
      * "speaker_uncond_mode", a string: what the branch without the voice attends to in its place. "mask", nothing;
-     * "noise", noise of the voice condition's spread. Added in 3.1.
+     * "noise", noise of the voice condition's spread.
      */
     SPEECH_OPT_SPEAKER_UNCOND_MODE = 29,
     /**
      * "sway_coeff", a number: the coefficient of Sway Sampling (F5-TTS), which moves the sampler's steps toward the
      * noise when below 0 and toward the speech when above; 0 spaces them evenly. A coefficient that leaves two steps
-     * at the same time with the request's steps is refused when the request runs. Added in 3.1.
+     * at the same time with the request's steps is refused when the request runs.
      */
     SPEECH_OPT_SWAY_COEFF = 30,
     /**
      * "keep_tail", a boolean: whether the speech keeps all of its length, rather than ending where the model's output
-     * turns flat and quiet. Added in 3.1.
+     * turns flat and quiet.
      */
     SPEECH_OPT_KEEP_TAIL = 31,
     /**
      * "tail_window_size", an integer: the frames over which the model's output must be flat for the speech to end.
-     * Added in 3.1.
      */
     SPEECH_OPT_TAIL_WINDOW_SIZE = 32,
-    /** "tail_std_threshold", a number: the standard deviation below which the window counts as flat. Added in 3.1. */
+    /** "tail_std_threshold", a number: the standard deviation below which the window counts as flat. */
     SPEECH_OPT_TAIL_STD_THRESHOLD = 33,
-    /**
-     * "tail_mean_threshold", a number: how near to 0 the window's mean must lie for it to count as quiet. Added in
-     * 3.1.
-     */
+    /** "tail_mean_threshold", a number: how near to 0 the window's mean must lie for it to count as quiet. */
     SPEECH_OPT_TAIL_MEAN_THRESHOLD = 34,
     /**
      * "speaker_kv_scale", a number above 0: the factor of the keys and values a guided sampler's model attends to of the
      * voice, which above 1 makes the speech follow the voice more closely, in the first speaker_kv_max_layers layers and
-     * at every step that starts at a time of speaker_kv_min_t or more; 1 leaves them as they are. Added in 3.1.
+     * at every step that starts at a time of speaker_kv_min_t or more; 1 leaves them as they are.
      */
     SPEECH_OPT_SPEAKER_KV_SCALE = 35,
     /**
      * "speaker_kv_min_t", a number from 0 to 1: the time below which speaker_kv_scale stops, as speaker_kv_scale says;
-     * one above the first step's time keeps it to the end. Added in 3.1.
+     * one above the first step's time keeps it to the end.
      */
     SPEECH_OPT_SPEAKER_KV_MIN_T = 36,
     /**
      * "speaker_kv_max_layers", an integer of 1 or more: the layers, from the first, that speaker_kv_scale reaches.
-     * Added in 3.1.
      */
     SPEECH_OPT_SPEAKER_KV_MAX_LAYERS = 37,
     /**
      * "cfg_scale_instructions", a number of 0 or more: how strongly a guided sampler follows the instructions, as
-     * cfg_scale_text. Added in 3.1.
+     * cfg_scale_text.
      */
     SPEECH_OPT_CFG_SCALE_INSTRUCTIONS = 38,
     /**
      * "threshold", a number from 0 to 1: the speech probability from which a chunk of a detection's audio counts as
      * speech, as Silero VAD's get_speech_timestamps() names it. A region ends once the probability has stayed below the
-     * threshold less 0.15, or 0.01 at least, for min_silence_duration_ms. Added in 3.1.
+     * threshold less 0.15, or 0.01 at least, for min_silence_duration_ms.
      */
     SPEECH_OPT_THRESHOLD = 39,
     /**
      * "min_speech_duration_ms", an integer of 0 or more: the milliseconds a region of a detection must last, before its
-     * padding, to be kept. Added in 3.1.
+     * padding, to be kept.
      */
     SPEECH_OPT_MIN_SPEECH_DURATION_MS = 40,
     /**
      * "min_silence_duration_ms", an integer of 0 or more: the milliseconds the speech probability must stay below the
-     * threshold of a region's end before the region ends. Added in 3.1.
+     * threshold of a region's end before the region ends.
      */
     SPEECH_OPT_MIN_SILENCE_DURATION_MS = 41,
     /**
      * "speech_pad_ms", an integer of 0 or more: the milliseconds a detection adds before and after each region, where
-     * two regions closer than twice it share the silence between them half and half. Added in 3.1.
+     * two regions closer than twice it share the silence between them half and half.
      */
     SPEECH_OPT_SPEECH_PAD_MS = 42,
     /**
      * "max_speech_duration_s", a number above 0: the longest a region of a detection may be, in seconds, its padding
      * included. A region that would grow longer is cut at the longest silence within it that lasted longer than the
      * model's least (98 ms for Silero VAD), the next region beginning where that silence ended, or, without one, at the
-     * chunk that reaches the limit. Without it a region has no limit. Added in 3.1.
+     * chunk that reaches the limit. Without it a region has no limit.
      */
     SPEECH_OPT_MAX_SPEECH_DURATION_S = 43,
     /**
@@ -399,7 +392,7 @@ typedef enum speech_option {
      * in less time than a round trip to a GPU takes where its weights are quantized, so the model's default is true
      * where they are quantized and false where they are F16 or F32 (speech_model_info_option_default_bool()). The two
      * compute in different arithmetic, which can choose another token where two score almost the same. A model on the
-     * CPU decodes there either way. Added in 3.2.
+     * CPU decodes there either way.
      */
     SPEECH_OPT_DECODE_ON_CPU = 44,
     /**
@@ -408,7 +401,7 @@ typedef enum speech_option {
      * several of the draft's tokens in one step of its decoding and keeps those it would have written itself, so that it
      * writes the text it writes without the draft, in less time where the draft is right and in about the same time
      * where it is wrong. A step that checks several tokens computes several rows at once, which rounds differently from
-     * a step of one, so that where two tokens score almost the same the draft can choose the other. Added in 3.3.
+     * a step of one, so that where two tokens score almost the same the draft can choose the other.
      */
     SPEECH_OPT_DRAFT = 45,
     /**
@@ -419,7 +412,7 @@ typedef enum speech_option {
      * threads; the model's information then reports those threads (speech_model_info_threads()). True by default; false
      * refuses a request to a model that holds some of its experts on the CPU with SPEECH_ERROR_OUT_OF_RANGE, a value
      * such a model does not take, for a caller that wants the GPU's speed or nothing; the request then runs with true.
-     * A model on the CPU, or one whose GPU holds every expert, takes either. Added in 3.3.
+     * A model on the CPU, or one whose GPU holds every expert, takes either.
      */
     SPEECH_OPT_EXPERTS_ON_CPU = 46,
     /**
@@ -428,90 +421,90 @@ typedef enum speech_option {
      * Diarization "offline", chunks of 27.2 s, and "low_latency", "very_low_latency" and "ultra_low_latency", which wait
      * 1.04, 0.64 and 0.32 s of audio for each chunk. It has no default: speech_diarize() takes "offline", and a
      * diarization of audio given a piece at a time the file's mode for streams, "low_latency". spkcache_len, fifo_len,
-     * chunk_len, chunk_right_context and spkcache_update_period each replace the value the mode gives. Added in 3.4.
+     * chunk_len, chunk_right_context and spkcache_update_period each replace the value the mode gives.
      */
     SPEECH_OPT_STREAMING_MODE = 47,
     /**
      * "spkcache_len", an integer: the 80 ms frames a diarization's speaker cache keeps of the speech before, by which it
      * tells the speakers it has heard apart, at least as many as the model's speakers times the silence frames it keeps
-     * for each and one more. Without it the streaming mode's. Added in 3.4.
+     * for each and one more. Without it the streaming mode's.
      */
     SPEECH_OPT_SPKCACHE_LEN = 48,
     /**
      * "fifo_len", an integer of 0 or more: the 80 ms frames a diarization's FIFO queue keeps of the latest chunks before it
-     * gives them to the speaker cache. Without it the streaming mode's. Added in 3.4.
+     * gives them to the speaker cache. Without it the streaming mode's.
      */
     SPEECH_OPT_FIFO_LEN = 49,
     /**
      * "chunk_len", an integer of 1 or more: the 80 ms frames of a diarization's chunk, each step's new audio. Without it
-     * the streaming mode's. Added in 3.4.
+     * the streaming mode's.
      */
     SPEECH_OPT_CHUNK_LEN = 50,
     /**
      * "chunk_right_context", an integer of 0 or more: the 80 ms frames after a chunk that its step hears without
-     * diarizing them, which a stream waits for. Without it the streaming mode's. Added in 3.4.
+     * diarizing them, which a stream waits for. Without it the streaming mode's.
      */
     SPEECH_OPT_CHUNK_RIGHT_CONTEXT = 51,
     /**
      * "spkcache_update_period", an integer of 1 or more: the 80 ms frames the FIFO queue gives the speaker cache at once
      * when it is full, or, where that is less than a chunk or more than the queue holds with a chunk, as many as a chunk
-     * or as the queue then holds. Without it the streaming mode's. Added in 3.4.
+     * or as the queue then holds. Without it the streaming mode's.
      */
     SPEECH_OPT_SPKCACHE_UPDATE_PERIOD = 52,
     /**
      * "onset", a number from 0 to 1: the probability above which a speaker begins to speak, as NeMo's postprocessing of a
-     * diarization names it. Added in 3.4.
+     * diarization names it.
      */
     SPEECH_OPT_ONSET = 53,
     /**
      * "offset", a number from 0 to 1: the probability below which a speaker stops speaking; between the two a speaker
-     * goes on as before where onset is not below offset, and changes at every frame where it is. Added in 3.4.
+     * goes on as before where onset is not below offset, and changes at every frame where it is.
      */
     SPEECH_OPT_OFFSET = 54,
     /**
      * "pad_onset", a number from 0 to 3600: the seconds a diarization's segment begins before its speech; the durations
-     * that follow take the same range. Added in 3.4.
+     * that follow take the same range.
      */
     SPEECH_OPT_PAD_ONSET = 55,
     /**
      * "pad_offset", a number of 0 or more: the seconds a segment ends after its speech; padded segments of one speaker that
-     * meet are joined. Added in 3.4.
+     * meet are joined.
      */
     SPEECH_OPT_PAD_OFFSET = 56,
-    /** "min_duration_on", a number of 0 or more: the seconds below which a padded segment is dropped. Added in 3.4. */
+    /** "min_duration_on", a number of 0 or more: the seconds below which a padded segment is dropped. */
     SPEECH_OPT_MIN_DURATION_ON = 57,
     /**
      * "min_duration_off", a number of 0 or more: the seconds below which a pause between two segments of one speaker that
-     * min_duration_on keeps is filled. Added in 3.4.
+     * min_duration_on keeps is filled.
      */
     SPEECH_OPT_MIN_DURATION_OFF = 58,
     /**
      * "speakers", a boolean: whether a recognition tells who speaks, false being neutral. Its segments then end where the
      * speaker changes and carry the speaker (speech_result_segment_speaker()), and its text leaves out the marks the
      * model writes for them. A model that tells speakers by what it writes takes it: Nemotron 3.5 Transcribe, which asks
-     * with its model card's prompt for speaker tags and so takes no prompt beside it. Added in 3.6.
+     * with its model card's prompt for speaker tags and so takes no prompt beside it.
      */
     SPEECH_OPT_SPEAKERS = 59,
     /**
-     * "words", a string: the words a recognition listens for and writes as given, one a line, each its written form
-     * followed, where it has readings, by "=" and the readings separated by commas ("Haas=ハース,ハウス"), as Haas-ASR's
-     * Vocabulary.parse() takes each entry; lines of whitespace alone are skipped, and "" (the neutral value) gives none.
-     * The decoding boosts the words' spellings, and the text has each word found in it in its written form. A model whose
-     * file offers it takes it (Haas-ja-v1.0); its recognition gives the text alone, and with timestamps
-     * speech_result_untimed() says why. Added in 3.7.
+     * "keywords", a string: the words or phrases a recognition listens for and writes as given, as OpenAI's
+     * transcription names them, one a line, each its written form followed, where it has readings, by "=" and the
+     * readings separated by commas ("Haas=ハース,ハウス"), as Haas-ASR's Vocabulary.parse() takes each entry; lines of
+     * whitespace alone are skipped, and "" (the neutral value) gives none. The decoding boosts the keywords' spellings,
+     * and the text has each keyword found in it in its written form, which no decoding's tokens make, so timestamps
+     * with keywords is refused when the request runs. A model whose file offers it takes it (Haas-ja-v1.0).
      */
-    SPEECH_OPT_WORDS = 60,
+    SPEECH_OPT_KEYWORDS = 60,
     /**
-     * "words_alpha", a number above 0: how strongly the decoding boosts the words, Haas-ASR's alpha. Setting it without
-     * words is refused when the request runs. Added in 3.7.
+     * "keywords_alpha", a number above 0: how strongly the decoding boosts the keywords, Haas-ASR's alpha. Setting it
+     * without keywords is refused when the request runs.
      */
-    SPEECH_OPT_WORDS_ALPHA = 61,
+    SPEECH_OPT_KEYWORDS_ALPHA = 61,
     /**
-     * "words_guard", a boolean: whether a recognition with words keeps a change the words made to the text only where
-     * it holds a whole word, as it does by default, against the text decoded without them. Setting it without words is
-     * refused when the request runs. Added in 3.7.
+     * "keywords_guard", a boolean: whether a recognition with keywords keeps a change the keywords made to the text only
+     * where it holds a whole keyword, as it does by default, against the text decoded without them. Setting it without
+     * keywords is refused when the request runs.
      */
-    SPEECH_OPT_WORDS_GUARD = 62
+    SPEECH_OPT_KEYWORDS_GUARD = 62
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */
@@ -583,9 +576,9 @@ typedef enum speech_task {
     SPEECH_TASK_SYNTHESIS = 0,
     /** Audio to text, through speech_transcribe(). */
     SPEECH_TASK_RECOGNITION = 1,
-    /** Audio to the regions where someone speaks, through speech_detect(). Added in 3.1. */
+    /** Audio to the regions where someone speaks, through speech_detect(). */
     SPEECH_TASK_DETECTION = 2,
-    /** Audio to who speaks where, through speech_diarize(). Added in 3.4. */
+    /** Audio to who speaks where, through speech_diarize(). */
     SPEECH_TASK_DIARIZATION = 3
 } speech_task;
 
@@ -735,7 +728,7 @@ SPEECH_API const char * speech_model_info_voice_codec(const speech_model_info * 
 /**
  * Whether speech_voice_add() takes a reference recording in a WAVE file as well as a voice file (1). A model that needs
  * the words of each recording (Drama 3) takes voice files alone, made with speech_voice_make_from(), and is 0, as is a
- * model that takes no voice files. Added in 3.3.
+ * model that takes no voice files.
  */
 SPEECH_API int speech_model_info_voice_recordings(const speech_model_info * info);
 
@@ -755,7 +748,7 @@ SPEECH_API speech_status speech_model_info_text_tokens(const speech_model_info *
 
 /**
  * The most speakers a diarization model tells apart, which number the speakers of its segments from 0 (8 for Nemotron 3
- * Diarization); 0 for a model of another task. Added in 3.4.
+ * Diarization); 0 for a model of another task.
  */
 SPEECH_API int speech_model_info_speakers(const speech_model_info * info);
 
@@ -882,7 +875,7 @@ SPEECH_API const char * speech_model_info_meta_value(const speech_model_info * i
  * again, and a type made of F16 weights would hold other bytes than the same type made of the F32 weights. A weight that
  * is not finite, NaN or an infinity, is SPEECH_ERROR_MODEL_FILE naming "model_path". `out_path`, which may not be the
  * model file itself, is replaced, and removed again when the writing fails. It runs on the CPU, with the machine's
- * threads; a thread that the host cannot start is SPEECH_ERROR_OUT_OF_MEMORY. Added in 3.1.
+ * threads; a thread that the host cannot start is SPEECH_ERROR_OUT_OF_MEMORY.
  */
 SPEECH_API speech_status speech_quantize(const char * model_path, const char * type, const char * out_path);
 
@@ -945,32 +938,32 @@ SPEECH_API speech_status speech_voice_make(const char * model_path, const char *
  * Voice parameters: what speech_voice_make_from() makes a voice file of: several reference recordings and the loudness
  * each is brought to, as Irodori-TTS's runtime's ref_wavs and ref_normalize_db, or a speaker-inversion embedding, as
  * its ref_embed; or, for Drama 3, recordings with their transcripts and voice files, each given to one of the speakers
- * a text names. Added in 3.1.
+ * a text names.
  */
 typedef struct speech_voice_params speech_voice_params;
 
-/** Parameters without a reference, at the model's loudness. Added in 3.1. */
+/** Parameters without a reference, at the model's loudness. */
 SPEECH_API speech_status speech_voice_params_new(speech_voice_params ** params);
 
-/** Frees parameters. NULL is ignored. Added in 3.1. */
+/** Frees parameters. NULL is ignored. */
 SPEECH_API void speech_voice_params_free(speech_voice_params * params);
 
 /**
  * Adds a reference recording in the WAVE file at `path`, which is encoded on its own and joined after the references
  * added before. The references together may be at most as long as the model's file allows; a failure names
- * "references". Added in 3.1.
+ * "references".
  */
 SPEECH_API speech_status speech_voice_params_add_reference(speech_voice_params * params, const char * path);
 
 /**
  * Brings each reference to `lufs`, a finite loudness in LUFS, before it is encoded, instead of the model's
- * (irodori-tts.reference.lufs, -16 LUFS), which speech_voice_make() and speech_voice_add() take. Added in 3.1.
+ * (irodori-tts.reference.lufs, -16 LUFS), which speech_voice_make() and speech_voice_add() take.
  */
 SPEECH_API speech_status speech_voice_params_set_loudness(speech_voice_params * params, double lufs);
 
 /**
  * Keeps each reference's loudness as recorded, scaling down one whose peak exceeds 1, instead of bringing it to a
- * loudness. Added in 3.1.
+ * loudness.
  */
 SPEECH_API speech_status speech_voice_params_keep_loudness(speech_voice_params * params);
 
@@ -979,35 +972,35 @@ SPEECH_API speech_status speech_voice_params_keep_loudness(speech_voice_params *
  * `tokens` vectors of `dim` finite values, row by row, which the model attends to in place of the speaker condition it
  * makes of a reference, and whose first vector the duration predictor takes as the speaker's. `dim` must be the model's
  * irodori-tts.speaker.dim. The values are copied. An embedding is learned against one model, which the voice file names
- * and no other model takes; it has no references and no loudness. Added in 3.1.
+ * and no other model takes; it has no references and no loudness.
  */
 SPEECH_API speech_status speech_voice_params_set_embedding(speech_voice_params * params, const float * values, size_t tokens,
                                                            size_t dim);
 
 /**
  * Gives the reference recording added last its transcript, the words it speaks in UTF-8, which a model that writes a
- * reference's words into its prompt needs for every recording (Drama 3) and any other refuses. Added in 3.3.
+ * reference's words into its prompt needs for every recording (Drama 3) and any other refuses.
  */
 SPEECH_API speech_status speech_voice_params_set_transcript(speech_voice_params * params, const char * text);
 
 /**
  * Gives what was added last, a reference recording or a voice file of one speaker, the speaker `speaker`, from 0, under
  * which a text's speaker tag finds it (Drama 3: `<|speaker:N|>`). A recording is speaker 0's and a voice file keeps its
- * speakers unless one is given; a model of one speaker refuses it. Added in 3.3.
+ * speakers unless one is given; a model of one speaker refuses it.
  */
 SPEECH_API speech_status speech_voice_params_set_speaker(speech_voice_params * params, int speaker);
 
 /**
  * Adds the references of the voice file at `path`, made for a model of the same family and codec, as they are, without
  * encoding them again, so that a voice of several speakers is put together from voices made before (Drama 3); a model
- * that joins its references into one voice refuses it. Added in 3.3.
+ * that joins its references into one voice refuses it.
  */
 SPEECH_API speech_status speech_voice_params_add_voice(speech_voice_params * params, const char * path);
 
 /**
  * Makes a voice file at `voice_path` of `voice`, its references, at least one, or its embedding, for the model file at
  * `model_path`, as speech_voice_make() makes one of a single reference at the model's loudness, which this gives for one
- * reference and no loudness of its own. Added in 3.1.
+ * reference and no loudness of its own.
  */
 SPEECH_API speech_status speech_voice_make_from(const char * model_path, const speech_voice_params * voice, const char * voice_path,
                                                 const speech_load_params * params);
@@ -1110,7 +1103,7 @@ SPEECH_API speech_status speech_transcribe(speech_request * request);
  * the result holds them, none where no one speaks, SPEECH_CANCELLED once it was cancelled, or an error. The model takes
  * the audio in chunks, each after the one before, so that its time grows with the audio's length; the request's options
  * (threshold, min_speech_duration_ms, min_silence_duration_ms, speech_pad_ms, max_speech_duration_s) only turn the
- * chunks' speech probabilities into regions. A model of another task is SPEECH_ERROR_UNSUPPORTED. Added in 3.1.
+ * chunks' speech probabilities into regions. A model of another task is SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_detect(speech_request * request);
 
@@ -1124,7 +1117,7 @@ SPEECH_API speech_status speech_detect(speech_request * request);
  * name the person. The model takes the audio in chunks of its streaming_mode, "offline" unless the request sets one,
  * each step hearing the speaker cache and FIFO queue the steps before it left, so that its time grows with the audio's
  * length; onset, offset, pad_onset, pad_offset, min_duration_on and min_duration_off only turn each speaker's
- * probabilities every 10 ms into segments. A model of another task is SPEECH_ERROR_UNSUPPORTED. Added in 3.4.
+ * probabilities every 10 ms into segments. A model of another task is SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_diarize(speech_request * request);
 
@@ -1132,7 +1125,7 @@ SPEECH_API speech_status speech_diarize(speech_request * request);
  * Detections of audio that arrives a piece at a time, as from a microphone, for a detection model: the regions where
  * someone speaks, each given as soon as the audio heard makes it certain. Once the audio has ended, the regions are those
  * speech_detect() gives for all of it, sample for sample, however it was cut into pieces. A detection is used by one
- * thread at a time. Added in 3.1.
+ * thread at a time.
  */
 typedef struct speech_detection speech_detection;
 
@@ -1141,11 +1134,11 @@ typedef struct speech_detection speech_detection;
  * checked as speech_detect() checks them and copied; the request is left as it was. A request that has audio is
  * SPEECH_ERROR_INVALID_ARGUMENT naming "audio", as its audio would go unused, and so is a rate that
  * speech_request_set_audio() refuses. A model of another task is SPEECH_ERROR_UNSUPPORTED. On success `*detection` is
- * a detection that speech_detection_free() frees before the model. Added in 3.1.
+ * a detection that speech_detection_free() frees before the model.
  */
 SPEECH_API speech_status speech_detection_start(const speech_request * request, int sample_rate, speech_detection ** detection);
 
-/** Frees a detection. NULL is ignored. Added in 3.1. */
+/** Frees a detection. NULL is ignored. */
 SPEECH_API void speech_detection_free(speech_detection * detection);
 
 /**
@@ -1155,14 +1148,14 @@ SPEECH_API void speech_detection_free(speech_detection * detection);
  * its chunks (32 ms for Silero VAD) once its samples have arrived, and the regions that the audio heard makes certain
  * are given (speech_detection_region_count()). It computes on the model's device while the model does nothing else, so
  * that the pushes of detections on one model and the model's requests wait for each other. A detection that has ended,
- * or whose push or end failed, takes no more audio: SPEECH_ERROR_INVALID_ARGUMENT. Added in 3.1.
+ * or whose push or end failed, takes no more audio: SPEECH_ERROR_INVALID_ARGUMENT.
  */
 SPEECH_API speech_status speech_detection_push(speech_detection * detection, const float * samples, size_t n_samples);
 
 /**
  * Ends the audio: the samples held back are resampled, the model computes its last chunk, padded with zeros, and every
  * region left is given, after which the regions are those speech_detect() gives for all of the audio pushed. A detection
- * that has ended, or whose push failed, is SPEECH_ERROR_INVALID_ARGUMENT. Added in 3.1.
+ * that has ended, or whose push failed, is SPEECH_ERROR_INVALID_ARGUMENT.
  */
 SPEECH_API speech_status speech_detection_end(speech_detection * detection);
 
@@ -1172,13 +1165,13 @@ SPEECH_API speech_status speech_detection_end(speech_detection * detection);
  * after the region has lasted min_silence_duration_ms and ends it. With less, the region's end waits on whether speech
  * resumes within twice speech_pad_ms of it, for at most 2 · speech_pad_ms + min_speech_duration_ms +
  * min_silence_duration_ms and two chunks after the region. A region that max_speech_duration_s cuts is given at the cut
- * at the earliest, and may wait as long after it. Added in 3.1.
+ * at the earliest, and may wait as long after it.
  */
 SPEECH_API size_t speech_detection_region_count(const speech_detection * detection);
 
 /**
  * The region at `index` in the order given: its start and end in seconds from the start of the audio pushed, as
- * speech_detect() times a region. A region once given never changes. Added in 3.1.
+ * speech_detect() times a region. A region once given never changes.
  */
 SPEECH_API speech_status speech_detection_region(const speech_detection * detection, size_t index, double * start, double * end);
 
@@ -1190,7 +1183,7 @@ SPEECH_API speech_status speech_detection_region(const speech_detection * detect
  * still take leaves it as short as min_speech_duration_ms: its speech has lasted longer than that, to the audio heard or,
  * where its probability has fallen below the threshold less 0.15 (0.01 at least) and not risen above the threshold
  * since, to where it fell. Until then it is dropped, and no region is given from its start, if its speech ends that
- * soon. 0 when neither, and after speech_detection_end(). Added in 3.1.
+ * soon. 0 when neither, and after speech_detection_end().
  */
 SPEECH_API int speech_detection_speaking(const speech_detection * detection, double * start, int * kept);
 
@@ -1200,7 +1193,7 @@ SPEECH_API int speech_detection_speaking(const speech_detection * detection, dou
  * and FIFO queue from chunk to chunk, so that a speaker keeps its number for as long as it lasts, and two diarizations
  * on one model number their speakers each its own way. Once the audio has ended, the segments are those
  * speech_diarize() gives for all of it with the same options, however it was cut into pieces. A diarization is used by
- * one thread at a time. Added in 3.4.
+ * one thread at a time.
  */
 typedef struct speech_diarization speech_diarization;
 
@@ -1210,11 +1203,11 @@ typedef struct speech_diarization speech_diarization;
  * "low_latency", unless the request sets one; the request is left as it was. A request that has audio is
  * SPEECH_ERROR_INVALID_ARGUMENT naming "audio", as its audio would go unused, and so is a rate that
  * speech_request_set_audio() refuses. A model of another task is SPEECH_ERROR_UNSUPPORTED. On success `*diarization`
- * is a diarization that speech_diarization_free() frees before the model. Added in 3.4.
+ * is a diarization that speech_diarization_free() frees before the model.
  */
 SPEECH_API speech_status speech_diarization_start(const speech_request * request, int sample_rate, speech_diarization ** diarization);
 
-/** Frees a diarization. NULL is ignored. Added in 3.4. */
+/** Frees a diarization. NULL is ignored. */
 SPEECH_API void speech_diarization_free(speech_diarization * diarization);
 
 /**
@@ -1223,7 +1216,7 @@ SPEECH_API void speech_diarization_free(speech_diarization * diarization);
  * milliseconds as a detection's push does; the model computes each chunk once its audio and its right context's have
  * arrived, on the model's device while the model does nothing else, so that the pushes of diarizations on one model and
  * the model's requests wait for each other, and gives the segments that become final. A diarization that has ended, or
- * whose push or end failed, takes no more audio: SPEECH_ERROR_INVALID_ARGUMENT. Added in 3.4.
+ * whose push or end failed, takes no more audio: SPEECH_ERROR_INVALID_ARGUMENT.
  */
 SPEECH_API speech_status speech_diarization_push(speech_diarization * diarization, const float * samples, size_t n_samples);
 
@@ -1231,18 +1224,18 @@ SPEECH_API speech_status speech_diarization_push(speech_diarization * diarizatio
  * Ends the audio: the samples held back are resampled, the model computes the chunks left, the last right contexts cut
  * short as the audio's end cuts them, and every segment left is given, after which the segments are those
  * speech_diarize() gives for all of the audio pushed. A diarization that has ended, or whose push failed, is
- * SPEECH_ERROR_INVALID_ARGUMENT. Added in 3.4.
+ * SPEECH_ERROR_INVALID_ARGUMENT.
  */
 SPEECH_API speech_status speech_diarization_end(speech_diarization * diarization);
 
-/** The number of segments given so far. Added in 3.4. */
+/** The number of segments given so far. */
 SPEECH_API size_t speech_diarization_segment_count(const speech_diarization * diarization);
 
 /**
  * The segment at `index` in the order given: its start and end in seconds from the start of the audio pushed and its
  * speaker, as speech_diarize() gives a segment, each unless NULL. A segment is given once it is final, about as late as
  * its end and the streaming mode's chunk and right context, so that the segments of different speakers come in the order
- * they end rather than begin. A segment once given never changes. Added in 3.4.
+ * they end rather than begin. A segment once given never changes.
  */
 SPEECH_API speech_status speech_diarization_segment(const speech_diarization * diarization, size_t index, double * start, double * end,
                                                     int * speaker);
@@ -1252,7 +1245,7 @@ SPEECH_API speech_status speech_diarization_segment(const speech_diarization * d
  * before it has been given, and a segment that began before it and goes on past it keeps the start
  * speech_diarization_speaking() gives. It trails the audio pushed by the streaming mode's latency, the chunk under way
  * and its right context, and by pad_onset, min_duration_on, min_duration_off and 10 ms more, the reach of what later
- * audio can still join, fill or keep. INFINITY once the audio has ended. Added in 3.4.
+ * audio can still join, fill or keep. INFINITY once the audio has ended.
  */
 SPEECH_API double speech_diarization_settled(const speech_diarization * diarization);
 
@@ -1331,7 +1324,7 @@ SPEECH_API speech_status speech_result_segment(const speech_result * result, siz
 /**
  * The speaker of the segment at `index` of a diarization, from 0, as speech_diarize() says, or of a recognition that set
  * speakers, the number the model gives the speaker, from 0 in the order they first speak, -1 for words the model wrote
- * before it named a speaker; -1 for a segment of another task and past the last. Added in 3.4.
+ * before it named a speaker; -1 for a segment of another task and past the last.
  */
 SPEECH_API int speech_result_segment_speaker(const speech_result * result, size_t index);
 
@@ -1358,7 +1351,7 @@ SPEECH_API speech_status speech_result_token(const speech_result * result, size_
  * Why a recognition that set timestamps or speakers has neither tokens nor segments though its text holds what the model
  * wrote, such as a character the model's alignment cannot spell, or a speaker whose words it finds no place for in the
  * audio: a message owned by the result. NULL for a recognition that has them, holds no text, or set neither option, and
- * for a result of another task. The text is the recognition's all the same. Added in 3.6.
+ * for a result of another task. The text is the recognition's all the same.
  */
 SPEECH_API const char * speech_result_untimed(const speech_result * result);
 
@@ -1370,13 +1363,13 @@ SPEECH_API const char * speech_result_untimed(const speech_result * result);
  * after a forced language), and a name the model wrote that is none of its languages, which a warning in the log
  * reports. A recognition of audio that the model takes in parts (Qwen3-ASR past 1200 s) has the languages of its parts
  * in the order of the audio, one for each run of parts of the same language, as qwen-asr's merge_languages() merges
- * them; one of a single part has one at most. Added in 3.1.
+ * them; one of a single part has one at most.
  */
 SPEECH_API size_t speech_result_language_count(const speech_result * result);
 
 /**
  * The language at `index` as a BCP 47 tag, one of the model's languages as speech_model_info_language() gives them
- * ("ja", "yue"), or NULL past the last. Added in 3.1.
+ * ("ja", "yue"), or NULL past the last.
  */
 SPEECH_API const char * speech_result_language(const speech_result * result, size_t index);
 

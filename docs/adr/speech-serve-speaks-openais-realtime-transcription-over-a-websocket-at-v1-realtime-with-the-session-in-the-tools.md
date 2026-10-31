@@ -64,7 +64,10 @@ while it goes on and recognizes it whole once committed
   naming it there or in `session.update` is the same. Everything else the reference defines is answered with an `error`
   event that names it, never ignored: a conversation session, `semantic_vad`, the members of `server_vad` that steer a
   response (`create_response`, `interrupt_response`, `idle_timeout_ms`), `noise_reduction`, the G.711 formats and
-  other rates, `include`, `keywords`, `delay`, more than one language, and every other client event. A connection is
+  other rates, `include`, `delay`, more than one language, and every other client event. `keywords` go to a model that
+  takes them, as the request option of their name
+  ([the record of keywords](haas-takes-haas-asrs-custom-vocabulary-through-the-request-options-keywords-keywords_alpha-and-keywords_guard.md)),
+  and a model that does not refuses them. A connection is
   refused before the upgrade, as an HTTP error, for another model or another query member.
 - **The completed event carries** the usage in seconds of audio, the languages the model names (Qwen3-ASR) as OpenAI's
   `gpt-transcribe` gives them, and `stop`, speech.cpp's own, since a text cut at the model's limit reads like one that

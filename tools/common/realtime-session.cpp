@@ -79,6 +79,33 @@ std::vector<RequestOption> diarization_options(const JsonValue & diarization) {
     return out;
 }
 
+/** OpenAI's keywords, an array of strings, as the lines of the option keywords, one a keyword. */
+std::string keyword_lines(const JsonValue & keywords, const std::string & param) {
+    if (keywords.kind != JsonValue::Kind::Array) {
+        throw refusal("invalid_type", param, param + " is " + json_excerpt(keywords) + "; give an array of strings, one a keyword.");
+    }
+    std::string lines;
+    for (size_t i = 0; i < keywords.items.size(); i++) {
+        const std::string & keyword = string_at(keywords.items[i], param);
+        if (keyword.find_first_of("\r\n") != std::string::npos) {
+            throw refusal("invalid_value", param, "A keyword holds a line break; give each keyword, with its readings, as one string of one line.");
+        }
+        lines += (i ? "\n" : "") + keyword;
+    }
+    return lines;
+}
+
+/** The lines of the option keywords as OpenAI's array of keywords. */
+std::string keywords_json(const std::string & lines) {
+    std::string out = "[";
+    for (size_t start = 0; !lines.empty() && start <= lines.size();) {
+        const size_t end = std::min(lines.find('\n', start), lines.size());
+        out += (start ? "," : "") + json_string(lines.substr(start, end - start));
+        start = end + 1;
+    }
+    return out + "]";
+}
+
 /** Whether two lists of options set the same values in the same order. */
 bool same(const std::vector<RequestOption> & a, const std::vector<RequestOption> & b) {
     return std::equal(a.begin(), a.end(), b.begin(), b.end(),
@@ -140,7 +167,7 @@ std::vector<RequestOption> Session::Config::options() const {
     std::vector<RequestOption> out;
     if (language) out.push_back({SPEECH_OPT_LANGUAGE, *language});
     if (prompt) out.push_back({SPEECH_OPT_PROMPT, *prompt});
-    out.insert(out.end(), words.begin(), words.end());
+    out.insert(out.end(), keywords.begin(), keywords.end());
     return out;
 }
 
@@ -192,11 +219,15 @@ std::string Session::session_json() {
     std::string transcription = "null";
     if (config_.transcribe) {
         const std::string model = config_.model.value_or(models_.held());
-        const std::string words = options_json(config_.words);
+        std::string keywords;
+        for (const RequestOption & o : config_.keywords) {
+            const std::string member = options_json({o});
+            keywords += "," + (o.option == SPEECH_OPT_KEYWORDS ? "\"keywords\":" + keywords_json(std::get<std::string>(o.value))
+                                                                 : member.substr(1, member.size() - 2));
+        }
         transcription = "{" + (model.empty() ? "" : "\"model\":" + json_string(model) + ",") +
                         "\"language\":" + (config_.language ? json_string(*config_.language) : "null") +
-                        (config_.prompt ? ",\"prompt\":" + json_string(*config_.prompt) : "") +
-                        (config_.words.empty() ? "" : "," + words.substr(1, words.size() - 2)) + "}";
+                        (config_.prompt ? ",\"prompt\":" + json_string(*config_.prompt) : "") + keywords + "}";
     }
     std::string turns = "null";
     if (config_.turns) {
@@ -327,13 +358,11 @@ void Session::update(const JsonValue & event) {
             if (next.transcribe) {
                 object_at(*transcription, kTranscription);
                 const std::string at = kTranscription;
-                for (const char * own : {"keywords", "delay"}) {
-                    if (given(*transcription, own)) {
-                        throw refusal("unsupported_parameter", at + "." + own,
-                                      at + "." + own + " is not supported; speech.cpp takes the model, the language or languages, the prompt and the words.");
-                    }
+                if (given(*transcription, "delay")) {
+                    throw refusal("unsupported_parameter", at + ".delay",
+                                  at + ".delay is not supported; speech.cpp takes the model, the language or languages, the prompt and the keywords.");
                 }
-                only(*transcription, at, {"model", "language", "languages", "prompt", "words", "words_alpha", "words_guard", "keywords", "delay"});
+                only(*transcription, at, {"model", "language", "languages", "prompt", "keywords", "keywords_alpha", "keywords_guard", "delay"});
                 // A member given sets its value, null taking it away, and one left out keeps it, as OpenAI's
                 // session.update changes only the members it holds.
                 const auto text = [&](const char * name, std::optional<std::string> & into) {
@@ -343,21 +372,27 @@ void Session::update(const JsonValue & event) {
                 text("model", next.model);
                 text("language", next.language);
                 text("prompt", next.prompt);
-                // words, words_alpha and words_guard, each set by a value of its option's type and taken away by null.
-                for (const speech_option option : {SPEECH_OPT_WORDS, SPEECH_OPT_WORDS_ALPHA, SPEECH_OPT_WORDS_GUARD}) {
+                // OpenAI's keywords, each a line of the option, and speech.cpp's own keywords_alpha and keywords_guard,
+                // each set by a value of its option's type, each taken away by null.
+                for (const speech_option option : {SPEECH_OPT_KEYWORDS, SPEECH_OPT_KEYWORDS_ALPHA, SPEECH_OPT_KEYWORDS_GUARD}) {
+                    const std::string param = at + "." + speech_option_name(option);
                     const JsonValue * value = transcription->member(speech_option_name(option));
                     if (!value) continue;
-                    next.words.erase(std::remove_if(next.words.begin(), next.words.end(), [&](const RequestOption & o) { return o.option == option; }),
-                                     next.words.end());
+                    next.keywords.erase(std::remove_if(next.keywords.begin(), next.keywords.end(), [&](const RequestOption & o) { return o.option == option; }),
+                                        next.keywords.end());
                     if (value->kind == JsonValue::Kind::Null) continue;
+                    if (option == SPEECH_OPT_KEYWORDS) {
+                        next.keywords.push_back({option, keyword_lines(*value, param)});
+                        continue;
+                    }
                     try {
-                        next.words.push_back({option, option_from_json(option, *value)});
+                        next.keywords.push_back({option, option_from_json(option, *value)});
                     } catch (const std::invalid_argument & e) {
-                        throw refusal("invalid_type", at + "." + speech_option_name(option), e.what());
+                        throw refusal("invalid_type", param, e.what());
                     }
                 }
                 // In the vocabulary's order, so that the same values given in another order ask the recognition alike.
-                std::sort(next.words.begin(), next.words.end(), [](const RequestOption & a, const RequestOption & b) { return a.option < b.option; });
+                std::sort(next.keywords.begin(), next.keywords.end(), [](const RequestOption & a, const RequestOption & b) { return a.option < b.option; });
                 if (const JsonValue * languages = transcription->member("languages")) {
                     if (transcription->member("language")) throw refusal("invalid_value", at + ".languages", "Give the language or the languages, not both.");
                     next.language.reset();

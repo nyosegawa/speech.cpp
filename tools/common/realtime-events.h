@@ -29,8 +29,8 @@ constexpr int kRate = 24000;
 constexpr const char * kTranscription = "session.audio.input.transcription";
 
 /** The request options that the members of kTranscription of the same names set. */
-constexpr speech_option kTranscriptionOptions[] = {SPEECH_OPT_LANGUAGE, SPEECH_OPT_PROMPT, SPEECH_OPT_WORDS, SPEECH_OPT_WORDS_ALPHA,
-                                                   SPEECH_OPT_WORDS_GUARD};
+constexpr speech_option kTranscriptionOptions[] = {SPEECH_OPT_LANGUAGE, SPEECH_OPT_PROMPT, SPEECH_OPT_KEYWORDS, SPEECH_OPT_KEYWORDS_ALPHA,
+                                                   SPEECH_OPT_KEYWORDS_GUARD};
 
 /**
  * The error of what a transcription or the check of its options threw: an ApiError as it is, the library's Failure by

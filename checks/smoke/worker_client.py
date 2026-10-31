@@ -20,7 +20,7 @@ import unicodedata
 
 TERMINAL = {"end", "error", "cancelled"}
 # The protocol this client speaks; a worker that says another in ready is one its callers must change for.
-PROTOCOL = 3
+PROTOCOL = 4
 
 
 class Worker:
@@ -204,8 +204,8 @@ def dump_requests(speech, model, dump, options=()):
     reference/fastconformer/dump.py, the request without options, the dump's text and no language, since FastConformer
     writes none, then, for a model that takes the option decoding (read with speech info --json), a request with each
     decoding other than the default and the text in the dump's folder of its name, and for one that takes the option
-    words, a request with each vocabulary of the dump's words/ (dump.py --words), its words_alpha where it is not the
-    model's default and its words_guard where it is false, and the text of its meta.json; for one of
+    keywords, a request with each vocabulary of the dump's words/ (dump.py --words) as its keywords, its keywords_alpha
+    where it is not the model's default and its keywords_guard where it is false, and the text of its meta.json; for one of
     reference/qwen3-asr/dump.py, which keeps each request in a folder of its own, auto, forced, auto-prompt and
     forced-prompt, the forced language given by the tag of general.languages whose name qwen3-asr.language_names gives
     (read with speech info --json --meta), the prompt by its text, and the language qwen-asr parsed by its tag, or
@@ -247,16 +247,16 @@ def dump_requests(speech, model, dump, options=()):
         others = [c for c in takes["decoding"]["choices"] if c != takes["decoding"]["default"]] if "decoding" in takes else []
         requests = [("auto", {}, text(dump), [])] + [(c, {"decoding": c}, text(os.path.join(dump, c)), []) for c in others]
         folder = os.path.join(dump, "words")
-        for name in sorted(os.listdir(folder)) if "words" in takes and os.path.isdir(folder) else []:
+        for name in sorted(os.listdir(folder)) if "keywords" in takes and os.path.isdir(folder) else []:
             with open(os.path.join(folder, name, "meta.json"), encoding="utf-8") as f:
                 dumped = json.load(f)
             v = dumped["vocabulary"]
-            members = {"words": "\n".join(v["words"])}
-            if v["alpha"] != takes["words_alpha"]["default"]:
-                members["words_alpha"] = v["alpha"]
+            members = {"keywords": "\n".join(v["words"])}
+            if v["alpha"] != takes["keywords_alpha"]["default"]:
+                members["keywords_alpha"] = v["alpha"]
             if not v["guard"]:
-                members["words_guard"] = False
-            requests.append((f"words-{name}", members, dumped["text"], []))
+                members["keywords_guard"] = False
+            requests.append((f"keywords-{name}", members, dumped["text"], []))
         return library_texts(speech, model, dump, options, requests)
     r = subprocess.run([speech, "info", model, "--json", "--meta"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     meta = json.loads(r.stdout)["meta"]

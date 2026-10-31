@@ -59,7 +59,7 @@ struct TranscriptionRequest {
     int sample_rate = 0;
     /** "json", "text", "verbose_json" or "diarized_json". */
     std::string format = "json";
-    /** The language, the prompt, the decoding, and timestamps for verbose_json. */
+    /** The language, the prompt, the decoding, the keywords, and timestamps for verbose_json. */
     std::vector<RequestOption> options;
     /** Whether the options set timestamps, so that the answer carries the segments, and which granularities it gives. */
     bool timestamps = false, segments = true, words = false;
@@ -75,16 +75,21 @@ struct TranscriptionRequest {
 /**
  * Reads a create transcription request from the parts of its form: "file", a WAV file, its channels averaged;
  * "model"; "language"; "prompt", the option prompt; "response_format"; "decoding", the option decoding, speech.cpp's
- * own; "chunking_strategy", "auto" or the members of server_vad, which diarized_json needs unless the model
+ * own; "keywords[]", each a line of the option keywords; "keywords_alpha" and "keywords_guard", speech.cpp's own;
+ * "chunking_strategy", "auto" or the members of server_vad, which diarized_json needs unless the model
  * `tells_speakers` itself, as one that takes the option speakers does, and which such a model's diarized_json refuses;
  * and "timestamp_granularities[]", "segment" or "word", with verbose_json. verbose_json sets the option timestamps for a
- * model that `gives_times`, and for any model when the request names a granularity, which a model without times then
- * refuses; diarized_json of a model that tells speakers sets the option speakers. A member it does not have is refused,
- * known_speaker_names[] and known_speaker_references[] among them, and so is one given twice but
+ * model that `gives_times` unless keywords are in effect, from the request or the model's `defaults`, and for any
+ * model when the request names a granularity, which a model without times, or with keywords, then refuses;
+ * diarized_json of a model that tells speakers sets the option speakers. A member it does not have is refused,
+ * known_speaker_names[] and known_speaker_references[] among them, and so is one given twice but keywords[] and
  * timestamp_granularities[]. Anything it cannot read throws an ApiError.
  */
 TranscriptionRequest read_transcription_request(bool multipart, const std::vector<FormPart> & parts, const std::string & model_name,
-                                                bool gives_times, bool tells_speakers);
+                                                bool gives_times, bool tells_speakers, const std::vector<RequestOption> & defaults);
+
+/** A library failure of a create transcription request as OpenAI's error (library_error()), the option keywords named by its field, keywords[]. */
+ApiError transcription_error(const Failure & failure);
 
 /** A speech.audio.delta event with a chunk of 16-bit PCM. */
 std::string sse_delta(const std::string & pcm);

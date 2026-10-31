@@ -5,7 +5,7 @@ It sends the audio of each dump of reference/fastconformer/dump.py or reference/
 one second and checks that the text is the dump's, the languages the one qwen-asr parsed by its tag or none (for
 FastConformer, which writes none, a member left out), and the stop complete, for each request a Qwen3-ASR dump holds
 with its forced language and its prompt, each decoding other than the default that a FastConformer dump holds and each
-vocabulary of its words/ where the model takes words, that
+vocabulary of its words/ as keywords where the model takes them, that
 a language the model only checks changes nothing, and with timestamps, where the model takes them, that the segments
 and tokens join into the text in time order, with speakers, for a Nemotron 3.5 Transcribe dump of the model card's
 prompt for speaker tags, that each segment has its speaker, or where the model cannot time its text, that it says why

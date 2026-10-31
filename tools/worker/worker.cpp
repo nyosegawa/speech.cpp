@@ -29,7 +29,7 @@ namespace {
  * The number of the worker protocol, in `ready`. It rises when a caller must change to keep working: a message or member
  * removed, renamed or given another meaning.
  */
-constexpr int kProtocol = 3;
+constexpr int kProtocol = 4;
 
 using Clock = std::chrono::steady_clock;
 

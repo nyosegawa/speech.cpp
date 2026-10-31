@@ -18,7 +18,7 @@ public:
      * milliseconds, the encoder runs as one graph, and the decoding steps frame by frame.
      */
     Recognized transcribe(const std::vector<float> & samples, const RequestValues & values, Run & run) override {
-        // Before the work passes anything to the caller, so that a request whose words are refused can be fixed and run.
+        // Before the work passes anything to the caller, so that a request whose keywords are refused can be fixed and run.
         const std::optional<fastconformer::Vocabulary> vocabulary = vocabulary_of(values);
         const NemoFrontend & frontend = recognizer_.frontend();
         const std::vector<float> features = frontend.features(samples);
@@ -28,7 +28,7 @@ public:
         const std::string & name = values.has(SPEECH_OPT_DECODING) ? values.string(SPEECH_OPT_DECODING) : recognizer_.decodings().front();
         const fastconformer::DecodeOn on = values.boolean(SPEECH_OPT_DECODE_ON_CPU) ? fastconformer::DecodeOn::Cpu : fastconformer::DecodeOn::Device;
         const auto progress = [&](double done) { return run.progress((2 + done) / 3); };
-        if (vocabulary) return with_words(*vocabulary, values, samples, projected, name, on, progress, run);
+        if (vocabulary) return with_keywords(*vocabulary, values, samples, projected, name, on, progress, run);
         const fastconformer::Decoding decoding = recognizer_.decoding(projected, name, on, progress);
         if (run.stopped()) return {};
         const fastconformer::Detokenizer & detokenizer = recognizer_.detokenizer();
@@ -65,40 +65,43 @@ public:
     bool computes_on_cpu() const override { return true; }
 
 private:
-    /** The vocabulary of the request's words, or none for a request without words, which takes no words_alpha or words_guard. */
+    /**
+     * The vocabulary of the request's keywords, or none for a request without keywords, which takes no keywords_alpha or
+     * keywords_guard. A request with keywords takes no timestamps, since the keywords write the text after the decoding,
+     * so that no decoding's tokens make it.
+     */
     static std::optional<fastconformer::Vocabulary> vocabulary_of(const RequestValues & values) {
-        const std::vector<std::string> words = values.has(SPEECH_OPT_WORDS) ? fastconformer::word_entries(values.string(SPEECH_OPT_WORDS))
-                                                                             : std::vector<std::string>{};
-        if (words.empty()) {
-            for (speech_option unused : {SPEECH_OPT_WORDS_ALPHA, SPEECH_OPT_WORDS_GUARD}) {
+        const std::vector<std::string> keywords = values.has(SPEECH_OPT_KEYWORDS) ? fastconformer::word_entries(values.string(SPEECH_OPT_KEYWORDS))
+                                                                                   : std::vector<std::string>{};
+        if (keywords.empty()) {
+            for (speech_option unused : {SPEECH_OPT_KEYWORDS_ALPHA, SPEECH_OPT_KEYWORDS_GUARD}) {
                 if (values.given(unused)) {
                     throw Error(Fault::InvalidArgument,
-                                std::string("the option ") + speech_option_name(unused) + " applies only with words; leave it out or give words",
+                                std::string("the option ") + speech_option_name(unused) + " applies only with keywords; leave it out or give keywords",
                                 speech_option_name(unused));
                 }
             }
             return std::nullopt;
         }
-        return naming(speech_option_name(SPEECH_OPT_WORDS),
-                      [&] { return fastconformer::Vocabulary(words, (float) values.number(SPEECH_OPT_WORDS_ALPHA)); });
+        if (values.boolean(SPEECH_OPT_TIMESTAMPS)) {
+            throw Error(Fault::InvalidArgument,
+                        "the option timestamps applies only without keywords, which write the text after the decoding, so that no tokens "
+                        "carry its times; leave out timestamps or keywords",
+                        speech_option_name(SPEECH_OPT_TIMESTAMPS));
+        }
+        return naming(speech_option_name(SPEECH_OPT_KEYWORDS),
+                      [&] { return fastconformer::Vocabulary(keywords, (float) values.number(SPEECH_OPT_KEYWORDS_ALPHA)); });
     }
 
-    /**
-     * A recognition with the custom vocabulary of the request's words: its text alone, since the words write it after
-     * the decoding, so that no decoding's tokens make it.
-     */
-    Recognized with_words(const fastconformer::Vocabulary & vocabulary, const RequestValues & values, const std::vector<float> & samples,
-                          const std::vector<float> & projected, const std::string & name, fastconformer::DecodeOn on,
-                          const fastconformer::DecodingProgress & progress, Run & run) {
-        const fastconformer::WordsText found = recognizer_.words()->recognize(recognizer_, vocabulary, values.boolean(SPEECH_OPT_WORDS_GUARD),
+    /** A recognition with the custom vocabulary of the request's keywords: its text alone. */
+    Recognized with_keywords(const fastconformer::Vocabulary & vocabulary, const RequestValues & values, const std::vector<float> & samples,
+                             const std::vector<float> & projected, const std::string & name, fastconformer::DecodeOn on,
+                             const fastconformer::DecodingProgress & progress, Run & run) {
+        const fastconformer::WordsText found = recognizer_.words()->recognize(recognizer_, vocabulary, values.boolean(SPEECH_OPT_KEYWORDS_GUARD),
                                                                               samples, projected, name, on, progress);
         if (run.stopped()) return {};
         Recognized out;
         out.text = found.text;
-        if (values.boolean(SPEECH_OPT_TIMESTAMPS)) {
-            out.untimed = "the words write the text after the decoding, so that its tokens and segments carry no times; recognize "
-                          "without words for them";
-        }
         run.progress(1);
         return out;
     }
@@ -133,14 +136,14 @@ FamilyInfo describe_fastconformer(const std::shared_ptr<const ModelFile> & file)
     }
     info.options.push_back({SPEECH_OPT_DECODE_ON_CPU, false, true, fastconformer::quantized_decoding(*file)});
     if (fastconformer::WordsModel::offers(*file)) {
-        info.options.push_back({SPEECH_OPT_WORDS, false, true, std::string()});
-        info.options.push_back({SPEECH_OPT_WORDS_ALPHA, false, true, (double) file->f32("fastconformer.vocabulary.alpha"), 0, INFINITY, true});
-        info.options.push_back({SPEECH_OPT_WORDS_GUARD, false, true, true});
+        info.options.push_back({SPEECH_OPT_KEYWORDS, false, true, std::string()});
+        info.options.push_back({SPEECH_OPT_KEYWORDS_ALPHA, false, true, (double) file->f32("fastconformer.vocabulary.alpha"), 0, INFINITY, true});
+        info.options.push_back({SPEECH_OPT_KEYWORDS_GUARD, false, true, true});
     } else if (file->layout_version() < 4 && file->str("general.name") == "Haas-ja-v1.0") {
         // Haas-ASR's vocabulary came with layout 4, the first whose files hold its settings.
-        info.lacks.push_back({SPEECH_OPT_WORDS, "",
+        info.lacks.push_back({SPEECH_OPT_KEYWORDS, "",
                               file->path() + " has layout " + std::to_string(file->layout_version()) +
-                                  ", which lacks the settings of Haas-ASR's custom vocabulary that words needs; " + file->remedy()});
+                                  ", which lacks the settings of Haas-ASR's custom vocabulary that keywords needs; " + file->remedy()});
     }
     return info;
 }

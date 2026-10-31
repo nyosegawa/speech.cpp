@@ -16,7 +16,7 @@ namespace fastconformer {
 class Recognizer;
 enum class DecodeOn;
 
-/** The entries of the request option words: its lines, but for those of whitespace alone. */
+/** The entries of words given one a line, as Vocabulary.parse() takes each: the lines, but for those of whitespace alone. */
 std::vector<std::string> word_entries(const std::string & words);
 
 /** What Haas-ASR's recognition with words found (haas_asr.boosting.transcribe()). */
