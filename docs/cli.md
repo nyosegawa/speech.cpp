@@ -204,8 +204,9 @@ Speakers are numbered from 0 in the order they first speak in the file. The diar
 recognition model and takes the flags of `speech enhance` that no other model takes, such as `--chunk-size-in-seconds`.
 Each file is enhanced whole, and with `--vad` its regions are found in the enhanced audio. With `-` and `--live`, each
 utterance is enhanced whole once its region has ended, before its final text, while the detection and the text shown as
-it is said hear the audio as it arrives. Enhancement is off unless `--enhance` is given: it can help a recognizer on
-audio recorded in a crowd or on a street and hurt it on audio that is already clean, so compare both on your own audio.
+it is said hear the audio as it arrives. Enhancement is off unless `--enhance` is given: it can help a fast recognizer
+on audio recorded in a crowd or on a street, does little for Qwen3-ASR 1.7B, and hurts both on audio that holds music or
+other voices, such as television, so compare both on your own audio.
 
 ### Transcribing as someone speaks
 

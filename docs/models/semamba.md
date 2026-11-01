@@ -3,8 +3,9 @@
 This page describes speech.cpp's port of NVIDIA NemotronLabs RE-USE, a SEMamba network that removes noise,
 reverberation, clipping, band limits and codec damage from recorded speech and gives back the same recording, at the
 rate it was given, for people to listen to: a recorded meeting or call, a voice message, or a reference recording for a
-cloned voice. In front of a recognizer it lowers the error a little in loud noise and raises it on broadcast audio
-([below](#recognition-in-noise)), so recognition runs it only when asked.
+cloned voice. In front of a recognizer it lowers a fast recognizer's error a little in loud noise, hardly changes
+Qwen3-ASR 1.7B's and raises both on broadcast audio ([below](#recognition-in-noise)), so recognition runs it only when
+asked.
 
 | Name | Upstream | Languages | File |
 |---|---|---|---|
@@ -72,29 +73,34 @@ bit for bit on every device.
 ## Recognition in noise
 
 RE-USE was trained to give speech back for people to listen to: of speech that overlaps it keeps the main speaker and
-removes the others. The error rates of two recognizers, each utterance as recorded and enhanced whole as
-`speech asr --enhance` enhances it, here by the official code, with speech-bench's counting (2026-10-31 and
-2026-11-01, speech 0.9.2's files):
+removes the others. The error rates of a fast recognizer of each language and of `qwen3-asr-1.7b`, each utterance as
+recorded and enhanced whole as `speech asr --enhance` enhances it, here by the official code, with speech-bench's
+counting, WER in English and CER in Japanese (2026-10-31 to 2026-11-02, speech 0.9.2's files):
 
-| Audio | Recognizer | As recorded | Enhanced |
-|---|---|---|---|
-| LibriSpeech test-clean, 2,620 utterances, under pub noise at 10 dB | `parakeet-tdt-0.6b-v3` | WER 2.82% | 2.51% |
-| the same at 5 dB | | 4.11% | 3.82% |
-| the same at 0 dB | | 9.13% | 8.18% |
-| FLEURS en_us test, the first 300, as recorded | | 5.21% | 4.96% |
-| FLEURS ja test, 650 utterances, under a cafeteria, a station or a square of DEMAND at 10 dB | `reazonspeech-v2` | CER 6.47% | 6.58% |
-| the same at 5 dB | | 7.28% | 7.04% |
-| the same at 0 dB | | 9.99% | 9.06% |
-| FLEURS ja test as recorded | | 6.34% | 6.01% |
-| ReazonSpeech test, 5,263 clips of Japanese television | `reazonspeech-v2` | 4.69% | 8.36% |
-| | `qwen3-asr-1.7b` | 25.63% | 27.20% |
+| Audio | Fast recognizer | As recorded | Enhanced | `qwen3-asr-1.7b` as recorded | Enhanced |
+|---|---|---|---|---|---|
+| LibriSpeech test-clean, 2,620 utterances, under pub noise at 10 dB | `parakeet-tdt-0.6b-v3` | 2.82% | 2.51% | 2.28% | 2.30% |
+| the same at 5 dB | | 4.11% | 3.82% | 3.07% | 3.28% |
+| the same at 0 dB | | 9.13% | 8.18% | 6.36% | 6.79% |
+| FLEURS en_us test, the first 300, as recorded | | 5.21% | 4.96% | 3.81% | 4.97% |
+| FLEURS ja test, 650 utterances, under a cafeteria, a station or a square of DEMAND at 10 dB | `reazonspeech-v2` | 6.47% | 6.58% | 5.93% | 5.84% |
+| the same at 5 dB | | 7.28% | 7.04% | 6.67% | 6.40% |
+| the same at 0 dB | | 9.99% | 9.06% | 9.33% | 9.06% |
+| FLEURS ja test as recorded | | 6.34% | 6.01% | 5.33% | 5.48% |
+| ReazonSpeech test, 5,263 clips of Japanese television | `reazonspeech-v2` | 4.69% | 8.36% | 25.63% | 27.20% |
 
-In loud noise enhancement takes off about a tenth of the errors, and at 10 dB little or none. On television it nearly
-doubles ReazonSpeech v2's: it removes music and the speech of other people that the clips hold, and with them, in some
-clips, a short reply or the voice itself. speech.cpp's own enhancement of the first 300 utterances of each language at
-5 dB gives the official's error within 0.02 points (2.67% against 2.67% in English, 7.08% against 7.10% in Japanese),
-and chunks of 5 s, as `speech enhance` takes them by default, give the error of whole utterances within 0.05 points
-(3.82% at 5 dB in English, 6.99% against 7.04% in Japanese).
+In loud noise enhancement takes about a tenth of the fast recognizers' errors off, and at 10 dB little or none.
+Qwen3-ASR 1.7B makes fewer errors in noise to begin with and gains less: its CER falls by at most 0.27 points under
+Japanese noise, and its WER rises by up to 0.43 points under English pub noise. On FLEURS en its rate rises because
+after enhancement it writes numbers as words in 44 more of the 300 transcriptions ("six thousand" for "6,000"), which
+the counting does not take as the same; over the 244 utterances whose reference holds no digit it falls from 3.55% to
+3.18%. On television enhancement nearly doubles ReazonSpeech v2's errors: it removes music and the speech of other
+people that the clips hold, and with them, in some clips, a short reply or the voice itself.
+
+speech.cpp's own enhancement of the first 300 utterances of each language at 5 dB gives the official's error within
+0.02 points (2.67% against 2.67% in English, 7.08% against 7.10% in Japanese), and chunks of 5 s, as `speech enhance`
+takes them by default, give the error of whole utterances within 0.05 points (3.82% at 5 dB in English, 6.99% against
+7.04% in Japanese).
 
 ## Speed
 
