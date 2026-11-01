@@ -25,6 +25,8 @@ first time.
 | [`nemotron-3.5-transcribe`](https://huggingface.co/sakasegawa/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF) | recognition | 40 languages | `NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-IQ4_NL.gguf`, 19.0 GB | [Nemotron 3.5 Transcribe](models/nemotron-transcribe.md) |
 | [`silero-vad`](https://huggingface.co/sakasegawa/silero-vad-GGUF) | detection | any | `silero-vad-309K-v6.2-F32.gguf`, 1.2 MB | [Silero VAD](models/silero-vad.md) |
 | [`nemotron-3-diarization`](https://huggingface.co/sakasegawa/Nemotron-3-Diarization-GGUF) | diarization | any | `Nemotron-3-Diarization-99M-Q8_0.gguf`, 106 MB | [Sortformer](models/sortformer.md) |
+| [`re-use`](https://huggingface.co/sakasegawa/NVIDIA-NemotronLabs-RE-USE-GGUF) | enhancement | any | `NVIDIA-NemotronLabs-RE-USE-10M-F32.gguf`, 38.5 MB | [SEMamba](models/semamba.md) |
+| [`re-use-laughter`](https://huggingface.co/sakasegawa/NVIDIA-NemotronLabs-RE-USE-laughter-GGUF) | enhancement | any | `NVIDIA-NemotronLabs-RE-USE-10M-laughter-F32.gguf`, 38.5 MB | [SEMamba](models/semamba.md) |
 
 `speech models` prints the same, with what is fetched. Each family's page links the upstream models.
 
@@ -40,11 +42,12 @@ which one to start with:
 | recognition | `qwen3-asr-0.6b` | the 29 other languages of Qwen3-ASR |
 | recognition | `parakeet-tdt-0.6b-v3` | bg et hr lt lv mt sk sl uk, the European languages Qwen3-ASR does not recognize |
 
-A detection model takes no language, and `speech vad` without a model lists every detection model.
+A detection, diarization or enhancement model takes no language, and `speech vad`, `speech diarize` and `speech enhance`
+without a model list every model of their task.
 
 ## Names
 
-Every subcommand that takes a model (`tts`, `asr`, `vad`, `diarize`, `voice`, `info`, `serve`, `worker`) takes a model file's path,
+Every subcommand that takes a model (`tts`, `asr`, `vad`, `diarize`, `enhance`, `voice`, `info`, `serve`, `worker`) takes a model file's path,
 which ends in `.gguf`, or `NAME[:TYPE]`:
 
 - NAME is a name of the catalog, or the Hugging Face repository of its converted files.
@@ -59,8 +62,8 @@ speech asr qwen3-asr-0.6b:q4_k meeting.wav                  # Qwen3-ASR-0.6B-Q4_
 speech serve reazonspeech-v2                                # fetched before the server starts
 ```
 
-Every model but Silero VAD and Nemotron 3.5 Transcribe also comes in Q6_K, Q5_K and Q4_K, which take less memory and
-are less accurate; Nemotron 3.5 Transcribe comes in F16, Q8_0 and IQ4_NL. Each family's page gives the size, the memory
+Every model but Silero VAD, RE-USE and Nemotron 3.5 Transcribe also comes in Q6_K, Q5_K and Q4_K, which take less
+memory and are less accurate; Nemotron 3.5 Transcribe comes in F16, Q8_0 and IQ4_NL, and RE-USE in F32 alone. Each family's page gives the size, the memory
 and the accuracy of every type, and `speech models` lists the files.
 
 A name or a type that the catalog does not hold is refused, and the message lists what it holds. A release fetches the

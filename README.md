@@ -27,8 +27,8 @@
 
 speech.cpp is one command, `speech`, and one shared library, `libspeech`, behind one C API, on the CPU, Metal and
 Vulkan through [ggml](https://github.com/ggml-org/ggml). The command speaks text, writes the text of recordings, finds
-where someone speaks in them, transcribes the microphone as someone speaks (`speech asr --live`), serves OpenAI's audio
-API and its Realtime transcription over HTTP, and runs a worker process for any program that keeps models loaded between
+where someone speaks in them, removes their noise, transcribes the microphone as someone speaks (`speech asr --live`),
+serves OpenAI's audio API and its Realtime transcription over HTTP, and runs a worker process for any program that keeps models loaded between
 requests, [ASIST](https://github.com/nyosegawa/asist) among them.
 
 **A time to first audio of a quarter of a second or less.** On an Apple M5, Qwen3-TTS 0.6B sends its first audio
@@ -71,13 +71,14 @@ implementation, from the same inputs.
 | Recognition | [`nemotron-3.5-transcribe`](https://huggingface.co/sakasegawa/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF) | 40 languages | word for word as spoken, fillers included, up to an hour at once, with a prompt of names and terms, or with who speaks and each word's time; a 19.0 GB file |
 | Detection | [`silero-vad`](https://huggingface.co/sakasegawa/silero-vad-GGUF) | any | where someone speaks, to give a recognizer one utterance at a time; 1.2 MB |
 | Diarization | [`nemotron-3-diarization`](https://huggingface.co/sakasegawa/Nemotron-3-Diarization-GGUF) | any | who speaks when, up to eight speakers, in a recording or as it arrives; 106 MB |
+| Enhancement | [`re-use`](https://huggingface.co/sakasegawa/NVIDIA-NemotronLabs-RE-USE-GGUF), [`re-use-laughter`](https://huggingface.co/sakasegawa/NVIDIA-NemotronLabs-RE-USE-laughter-GGUF) | any | removes noise, reverberation and band limits from a recording at 8 to 48 kHz, for people to listen to; the laughter model keeps laughter; 38.5 MB |
 
 A command takes a model by its name and fetches its converted file from Hugging Face, from the repository the name links
 to, the first time. [docs/models.md](docs/models.md) lists the models with their sizes, voices and languages, and each
 family has a page: [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md), [Drama 3](docs/models/drama3.md),
 [FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md),
-[Nemotron 3.5 Transcribe](docs/models/nemotron-transcribe.md), [Silero VAD](docs/models/silero-vad.md) and
-[Sortformer](docs/models/sortformer.md).
+[Nemotron 3.5 Transcribe](docs/models/nemotron-transcribe.md), [Silero VAD](docs/models/silero-vad.md),
+[Sortformer](docs/models/sortformer.md) and [SEMamba](docs/models/semamba.md).
 
 ## Install
 
@@ -133,6 +134,7 @@ source](docs/install.md#build-from-source).
 | `speech asr` | writes the text of WAVE files, or of the microphone as someone speaks |
 | `speech vad` | writes where someone speaks in WAVE files |
 | `speech diarize` | writes who speaks where in WAVE files |
+| `speech enhance` | removes noise and other degradations from WAVE files |
 | `speech voice` | makes a voice file for Irodori-TTS or Drama 3 from reference recordings |
 | `speech info` | prints what a model file says of its model |
 | `speech devices` | lists the devices a model can run on |
@@ -150,6 +152,7 @@ speech asr qwen3-asr-1.7b --language ja --prompt "Claude Code、渋谷" meeting.
 speech asr nemotron-3.5-transcribe --speakers meeting.wav
 speech asr reazonspeech-v2 --vad silero-vad --live
 speech vad silero-vad --max-speech-duration-s 10 meeting.wav
+speech enhance re-use street.wav -o clean.wav
 ```
 
 Every request option is a flag, and `speech info MODEL` lists the ones a model takes. [docs/cli.md](docs/cli.md) lists
@@ -239,7 +242,7 @@ more.
 | [Install](docs/install.md) | installers, updating, uninstalling, requirements, release archives and building from source |
 | [Command line](docs/cli.md) | every subcommand and option |
 | [Models](docs/models.md) | the catalog, names, where models are kept, voices and languages |
-| [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md), [Drama 3](docs/models/drama3.md), [FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md), [Nemotron 3.5 Transcribe](docs/models/nemotron-transcribe.md), [Silero VAD](docs/models/silero-vad.md), [Sortformer](docs/models/sortformer.md) | each family: what it does, its options, accuracy and speed |
+| [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md), [Drama 3](docs/models/drama3.md), [FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md), [Nemotron 3.5 Transcribe](docs/models/nemotron-transcribe.md), [Silero VAD](docs/models/silero-vad.md), [Sortformer](docs/models/sortformer.md), [SEMamba](docs/models/semamba.md) | each family: what it does, its options, accuracy and speed |
 | [Server and page](docs/server.md) | `speech serve` and OpenAI's audio API |
 | [Worker protocol](docs/worker.md) | `speech worker` for programs |
 | [C API](docs/c-api.md) | `speech.h` |

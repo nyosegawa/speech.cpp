@@ -25,7 +25,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT ライセンス"></a>
 </p>
 
-speech.cpp は、1つのコマンド `speech` と1つの共有ライブラリ `libspeech` からなり、どちらも1つの C API の上に作られています。[ggml](https://github.com/ggml-org/ggml) を通して CPU、Metal、Vulkan で動きます。このコマンドは、テキストを読み上げ、録音を文字に起こし、録音の中で人が話している区間を見つけ、マイクの音声を話している間に文字に起こします(`speech asr --live`)。また、OpenAI の音声 API と Realtime の文字起こしを HTTP で提供し、リクエストの間もモデルを読み込んだままにしておきたいプログラムのためにワーカープロセスを動かします。[ASIST](https://github.com/nyosegawa/asist) もこのワーカーを使っています。
+speech.cpp は、1つのコマンド `speech` と1つの共有ライブラリ `libspeech` からなり、どちらも1つの C API の上に作られています。[ggml](https://github.com/ggml-org/ggml) を通して CPU、Metal、Vulkan で動きます。このコマンドは、テキストを読み上げ、録音を文字に起こし、録音の中で人が話している区間を見つけ、録音から雑音を取り除き、マイクの音声を話している間に文字に起こします(`speech asr --live`)。また、OpenAI の音声 API と Realtime の文字起こしを HTTP で提供し、リクエストの間もモデルを読み込んだままにしておきたいプログラムのためにワーカープロセスを動かします。[ASIST](https://github.com/nyosegawa/asist) もこのワーカーを使っています。
 
 **最初の音声までの時間は 0.25 秒以内です。** Apple M5 では、Qwen3-TTS 0.6B はテキストを受け取ってから 0.029 秒で、Irodori-TTS v4.1-Small-MF は 0.16 秒で最初の音声を送り、残りは再生している間に続けて届きます。
 
@@ -63,8 +63,9 @@ speech.cpp は、1つのコマンド `speech` と1つの共有ライブラリ `l
 | 認識 | [`nemotron-3.5-transcribe`](https://huggingface.co/sakasegawa/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF) | 40 言語 | 話したとおりに、言いよどみも含めて書き起こし、1 時間までの音声を一度に認識し、人名や用語のプロンプトを受け付けます。誰が話したかと、単語ごとの時刻も出せます。ファイルは 19.0 GB です |
 | 検出 | [`silero-vad`](https://huggingface.co/sakasegawa/silero-vad-GGUF) | どの言語でも | 人が話している区間を見つけ、認識モデルに発話を1つずつ渡します。1.2 MB です |
 | 話者分離 | [`nemotron-3-diarization`](https://huggingface.co/sakasegawa/Nemotron-3-Diarization-GGUF) | どの言語でも | 録音の中で、または音声が届くそばから、誰がいつ話したかを見つけます。話者は8人までです。106 MB です |
+| 音声強調 | [`re-use`](https://huggingface.co/sakasegawa/NVIDIA-NemotronLabs-RE-USE-GGUF), [`re-use-laughter`](https://huggingface.co/sakasegawa/NVIDIA-NemotronLabs-RE-USE-laughter-GGUF) | どの言語でも | 8〜48 kHz の録音から雑音、残響、帯域の制限を取り除き、人が聞くための音声にします。laughter のモデルは笑い声を残します。38.5 MB です |
 
-コマンドはモデルを名前で受け取り、初めて使うときに、名前のリンク先の Hugging Face のリポジトリから変換済みのファイルを取得します。[docs/models.md](docs/models.md) には各モデルのサイズ、声、言語が載っています。ファミリーごとのページもあります。[Qwen3-TTS](docs/models/qwen3-tts.md)、[Irodori-TTS](docs/models/irodori-tts.md)、[Drama 3](docs/models/drama3.md)、[FastConformer](docs/models/fastconformer.md)、[Qwen3-ASR](docs/models/qwen3-asr.md)、[Nemotron 3.5 Transcribe](docs/models/nemotron-transcribe.md)、[Silero VAD](docs/models/silero-vad.md)、[Sortformer](docs/models/sortformer.md)。
+コマンドはモデルを名前で受け取り、初めて使うときに、名前のリンク先の Hugging Face のリポジトリから変換済みのファイルを取得します。[docs/models.md](docs/models.md) には各モデルのサイズ、声、言語が載っています。ファミリーごとのページもあります。[Qwen3-TTS](docs/models/qwen3-tts.md)、[Irodori-TTS](docs/models/irodori-tts.md)、[Drama 3](docs/models/drama3.md)、[FastConformer](docs/models/fastconformer.md)、[Qwen3-ASR](docs/models/qwen3-asr.md)、[Nemotron 3.5 Transcribe](docs/models/nemotron-transcribe.md)、[Silero VAD](docs/models/silero-vad.md)、[Sortformer](docs/models/sortformer.md)、[SEMamba](docs/models/semamba.md)。
 
 ## インストール
 
@@ -116,6 +117,7 @@ irm https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.ps1 | ie
 | `speech asr` | WAVE ファイルの音声、または話している最中のマイクの音声を文字に起こします |
 | `speech vad` | WAVE ファイルの中で人が話している区間を書き出します |
 | `speech diarize` | WAVE ファイルの中で誰がどこで話しているかを書き出します |
+| `speech enhance` | WAVE ファイルから雑音などの劣化を取り除きます |
 | `speech voice` | 参照録音から Irodori-TTS か Drama 3 の声のファイルを作ります |
 | `speech info` | モデルファイルに書かれているモデルの情報を表示します |
 | `speech devices` | モデルを動かせるデバイスを一覧にします |
@@ -133,6 +135,7 @@ speech asr qwen3-asr-1.7b --language ja --prompt "Claude Code、渋谷" meeting.
 speech asr nemotron-3.5-transcribe --speakers meeting.wav
 speech asr reazonspeech-v2 --vad silero-vad --live
 speech vad silero-vad --max-speech-duration-s 10 meeting.wav
+speech enhance re-use street.wav -o clean.wav
 ```
 
 リクエストのオプションはすべてフラグとして指定でき、モデルが受け付けるオプションは `speech info MODEL` で確かめられます。すべてのサブコマンドとオプションは [docs/cli.md](docs/cli.md) に載っています。
@@ -206,7 +209,7 @@ FastConformer のモデル(parakeet、ReazonSpeech、Haas-ja-v1.0)は、2026-10-
 | [Install](docs/install.md) | インストーラ、更新、アンインストール、必要なもの、リリースのアーカイブ、ソースからのビルド |
 | [Command line](docs/cli.md) | すべてのサブコマンドとオプション |
 | [Models](docs/models.md) | カタログ、モデルの名前、モデルを置く場所、声、言語 |
-| [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md), [Drama 3](docs/models/drama3.md), [FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md), [Nemotron 3.5 Transcribe](docs/models/nemotron-transcribe.md), [Silero VAD](docs/models/silero-vad.md), [Sortformer](docs/models/sortformer.md) | 各ファミリーができること、オプション、精度、速度 |
+| [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md), [Drama 3](docs/models/drama3.md), [FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md), [Nemotron 3.5 Transcribe](docs/models/nemotron-transcribe.md), [Silero VAD](docs/models/silero-vad.md), [Sortformer](docs/models/sortformer.md), [SEMamba](docs/models/semamba.md) | 各ファミリーができること、オプション、精度、速度 |
 | [Server and page](docs/server.md) | `speech serve` と OpenAI の音声 API |
 | [Worker protocol](docs/worker.md) | プログラムから使う `speech worker` |
 | [C API](docs/c-api.md) | `speech.h` |
