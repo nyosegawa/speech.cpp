@@ -6,6 +6,20 @@
 
 namespace semamba {
 
+namespace {
+
+/**
+ * A matrix product whose operands stay in float32 on every device: RE-USE's activations reach 7.07e4 before its output
+ * projection, past the 65504 of half precision, in which Metal and Vulkan otherwise stage the operands of an F32 matrix.
+ */
+ggml_tensor * mul_mat_f32(ggml_context * ctx, ggml_tensor * a, ggml_tensor * b) {
+    ggml_tensor * t = mul_mat(ctx, a, b);
+    ggml_prec_set_src(t, GGML_PREC_F32, 1);
+    return t;
+}
+
+}  // namespace
+
 Network::Network(const ModelFile & m)
     : m_(m),
       hidden_((int) m.width("enc.in.conv.weight", 3)),
@@ -56,17 +70,17 @@ ggml_tensor * Network::encode(ggml_context * ctx, ggml_tensor * input) const {
 }
 
 ggml_tensor * Network::mamba(ggml_context * ctx, const std::string & prefix, ggml_tensor * x, bool reverse) const {
-    ggml_tensor * xz = mul_mat(ctx, w(prefix + ".in_proj.weight"), x);
+    ggml_tensor * xz = mul_mat_f32(ctx, w(prefix + ".in_proj.weight"), x);
     ggml_tensor * a = ggml_neg(ctx, ggml_exp(ctx, w(prefix + ".A_log")));
     ggml_tensor * y = ggml_mamba1(ctx, xz, w(prefix + ".conv1d.weight"), w(prefix + ".conv1d.bias"), w(prefix + ".x_proj.weight"),
                                   w(prefix + ".dt_proj.weight"), w(prefix + ".dt_proj.bias"), a, w(prefix + ".D"), reverse);
-    return mul_mat(ctx, w(prefix + ".out_proj.weight"), y);
+    return mul_mat_f32(ctx, w(prefix + ".out_proj.weight"), y);
 }
 
 ggml_tensor * Network::bidirectional(ggml_context * ctx, const std::string & prefix, ggml_tensor * x) const {
     ggml_tensor * forward = ggml_add(ctx, mamba(ctx, prefix + ".fw", x, false), x);
     ggml_tensor * backward = ggml_add(ctx, mamba(ctx, prefix + ".bw", x, true), x);
-    ggml_tensor * y = mul_mat(ctx, w(prefix + ".proj.weight"), ggml_concat(ctx, forward, backward, 0));
+    ggml_tensor * y = mul_mat_f32(ctx, w(prefix + ".proj.weight"), ggml_concat(ctx, forward, backward, 0));
     y = ggml_add(ctx, y, w(prefix + ".proj.bias"));
     return ggml_add(ctx, ggml_mul(ctx, ggml_norm(ctx, y, layer_eps_), w(prefix + ".norm.weight")), w(prefix + ".norm.bias"));
 }
