@@ -1,0 +1,30 @@
+[project]
+name = "speech-cpp-semamba-reference"
+version = "0"
+description = "Runs NVIDIA NemotronLabs RE-USE, a SEMamba speech enhancement network on mamba-ssm's CUDA kernels, to dump reference tensors and convert its weights to GGUF, on Linux with a CUDA GPU"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "torch==2.8.0",
+  "torchaudio==2.8.0",
+  # The releases' prebuilt wheels for CUDA 12 and torch 2.8, built with the C++11 ABI that torch 2.8's wheels have; the
+  # wheels of torch 2.6 named cxx11abiFALSE reference symbols torch 2.6's wheels do not export.
+  "mamba-ssm @ https://github.com/state-spaces/mamba/releases/download/v2.3.2.post1/mamba_ssm-2.3.2.post1%2Bcu12torch2.8cxx11abiTRUE-cp311-cp311-linux_x86_64.whl",
+  "causal-conv1d @ https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.7.0/causal_conv1d-1.7.0%2Bcu12torch2.8cxx11abiTRUE-cp311-cp311-linux_x86_64.whl",
+  # mamba_ssm's package imports its language model, which imports transformers' generation utilities.
+  "transformers==4.46.3",
+  "einops==0.8.1",
+  "pyyaml==6.0.2",
+  "huggingface_hub==0.30.2",
+  "safetensors==0.5.3",
+  "numpy==2.2.4",
+  "soundfile==0.13.1",
+  "gguf",
+]
+
+[tool.uv]
+package = false
+# mamba-ssm's selective scan and causal-conv1d run on CUDA alone, and their wheels are built for Linux on x86-64.
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+# mamba-ssm's metadata asks for Triton 3.5, which only its Triton kernels of Mamba-2 and its norms use; torch 2.8 pins
+# 3.4, with which the package imports and Mamba-1 runs on the CUDA kernels of the wheel.
+override-dependencies = ["triton==3.4.0"]
