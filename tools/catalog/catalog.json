@@ -242,6 +242,32 @@
         {"type": "f32", "file": "Nemotron-3-Diarization-99M-F32.gguf", "size": 397065056, "sha256": "189427ebbe4668c71be376e97ba699fce90b13f312ff169c7a60e6a50fd9154e"},
         {"type": "f16", "file": "Nemotron-3-Diarization-99M-F16.gguf", "size": 199015264, "sha256": "ce6dc36d68d97c9ef80c93195b8712bb24f66045318e5ed452ef95cf152d8020"}
       ]
+    },
+    {
+      "name": "re-use",
+      "repository": "sakasegawa/NVIDIA-NemotronLabs-RE-USE-GGUF",
+      "type": "f32",
+      "start": [],
+      "revision": "117011d06bba5522006f5fcfeadfdb714b58b236",
+      "task": "enhancement",
+      "languages": [],
+      "voice_files": false,
+      "files": [
+        {"type": "f32", "file": "NVIDIA-NemotronLabs-RE-USE-10M-F32.gguf", "size": 38519136, "sha256": "827faf209c6988b9cfd07b08ee7f212a7b2eeb7870a25380df671d55338b3879"}
+      ]
+    },
+    {
+      "name": "re-use-laughter",
+      "repository": "sakasegawa/NVIDIA-NemotronLabs-RE-USE-laughter-GGUF",
+      "type": "f32",
+      "start": [],
+      "revision": "452f2af2f689e3b273bd9c550170217ec4fba978",
+      "task": "enhancement",
+      "languages": [],
+      "voice_files": false,
+      "files": [
+        {"type": "f32", "file": "NVIDIA-NemotronLabs-RE-USE-10M-laughter-F32.gguf", "size": 38519200, "sha256": "15715fbb45e1ba3ae45da52c3018f60ef32f4fd48ff278cb14b402f9e12a32bf"}
+      ]
     }
   ]
 }

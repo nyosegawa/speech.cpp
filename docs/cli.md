@@ -89,9 +89,9 @@ speech info irodori-tts-mf
   as a line with a spinner and its seconds, and marks it when it is done. Colors are off with `NO_COLOR=1`. In a pipe or a file the same lines come
   without color, mark or spinner.
 - On Windows the command line is read as UTF-8, and stdin and stdout are binary.
-- `speech --version` prints the release and the C API's version: `speech.cpp 0.10.0, C API 4.0`.
+- `speech --version` prints the release and the C API's version: `speech.cpp 0.10.1, C API 4.1`.
 - On a terminal, a subcommand says on stderr when a later release is out, once it ends (`speech serve` as it starts):
-  `speech: speech.cpp 0.10.1 is out (this is 0.10.0); run speech update to install it`. It asks github.com at most once a
+  `speech: speech.cpp 0.10.2 is out (this is 0.10.1); run speech update to install it`. It asks github.com at most once a
   day, and only when stderr is a terminal, so a script or a program that starts `speech` never makes the request; the
   worker never asks. `SPEECH_NO_UPDATE_CHECK=1` turns it off.
 
@@ -490,8 +490,8 @@ exits with the installer's status. `--check` only says whether a later release i
 
 ```
 $ speech update
-speech.cpp 0.10.1 is out (this is 0.10.0); running the installer
-Downloading https://github.com/nyosegawa/speech.cpp/releases/download/v0.10.1/speech-0.10.1-macos-arm64-metal.zip
+speech.cpp 0.10.2 is out (this is 0.10.1); running the installer
+Downloading https://github.com/nyosegawa/speech.cpp/releases/download/v0.10.2/speech-0.10.2-macos-arm64-metal.zip
 ...
 ```
 
