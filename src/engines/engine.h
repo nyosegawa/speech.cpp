@@ -252,10 +252,29 @@ public:
 };
 
 /**
+ * An enhancement of mono audio that arrives a piece at a time, with a request's options, passing the enhanced audio to
+ * the sink it was started with once no later audio changes it; once the audio has ended, the samples passed are those
+ * enhance() passes for the whole audio.
+ */
+class EnhancementStream {
+public:
+    virtual ~EnhancementStream() = default;
+
+    /** Takes the next `n` samples at the rate the stream was started with; false once the sink has asked to stop. */
+    virtual bool push(const float * samples, size_t n) = 0;
+
+    /** Ends the audio and passes the rest; false as push() is. */
+    virtual bool end() = 0;
+};
+
+/** Where an enhancement passes its audio: false to stop. */
+using AudioSink = std::function<bool(const float * samples, size_t n)>;
+
+/**
  * One loaded model of a family behind the C API, which has checked each value of a request against the family's table
  * and the request as a whole for what the table shows. A synthesis family overrides speak(), a recognition family
- * transcribe(), a detection family detect() and a diarization family diarize(); a family that takes voice files
- * overrides add_voice().
+ * transcribe(), a detection family detect(), a diarization family diarize() and an enhancement family enhance(); a
+ * family that takes voice files overrides add_voice().
  */
 class Engine {
 public:
@@ -300,6 +319,20 @@ public:
     virtual std::unique_ptr<DiarizationStream> start_diarization(const RequestValues & values);
 
     /**
+     * Enhances mono samples at `sample_rate`, the rate they were given at, passing the enhanced audio to `run` at the rate
+     * it enhances at, after checking what the family's rules ask of the request as a whole: the rate and the length the
+     * model takes, which are refused naming "audio".
+     */
+    virtual void enhance(const std::vector<float> & samples, int sample_rate, const RequestValues & values, Run & run);
+
+    /**
+     * An enhancement of audio at `sample_rate` that arrives a piece at a time, with the request's options, after checking
+     * what the family's rules ask of them and of the rate; its length is checked when it ends. It computes on the engine,
+     * which runs one of its calls at a time, and lives no longer.
+     */
+    virtual std::unique_ptr<EnhancementStream> start_enhancement(int sample_rate, const RequestValues & values, AudioSink sink);
+
+    /**
      * Adds a voice from a voice file or a WAVE file under a name the C API has checked is new, and returns what the
      * model information says of it, or "" for nothing.
      */
@@ -336,3 +369,6 @@ std::unique_ptr<Engine> load_silero_vad(const std::string & path, ggml_backend_t
 
 FamilyInfo describe_sortformer(const std::shared_ptr<const ModelFile> & file);
 std::unique_ptr<Engine> load_sortformer(const std::string & path, ggml_backend_t backend, int threads);
+
+FamilyInfo describe_semamba(const std::shared_ptr<const ModelFile> & file);
+std::unique_ptr<Engine> load_semamba(const std::string & path, ggml_backend_t backend, int threads);

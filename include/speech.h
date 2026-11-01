@@ -62,7 +62,7 @@ extern "C" {
  * version and a minor version of m or more. Version 4.0 is first released with speech.cpp 0.10.0, and a declaration
  * added since says the version that added it.
  */
-#define SPEECH_API_VERSION_MINOR 0
+#define SPEECH_API_VERSION_MINOR 1
 
 /** The SPEECH_API_VERSION_MAJOR the library was built with, for a caller that loads it at run time. */
 SPEECH_API int speech_api_version_major(void);
@@ -505,7 +505,24 @@ typedef enum speech_option {
      * where it holds a whole keyword, as it does by default, against the text decoded without them. Setting it without
      * keywords is refused when the request runs.
      */
-    SPEECH_OPT_KEYWORDS_GUARD = 62
+    SPEECH_OPT_KEYWORDS_GUARD = 62,
+    /**
+     * "chunk_size_in_seconds", a number above 0: the seconds of audio an enhancement computes at once, as RE-USE's
+     * inference_chunk.py names them; audio shorter than a chunk is one chunk, and a chunk at least as long as the audio
+     * enhances it whole. Its activations grow with it. Added in 4.1.
+     */
+    SPEECH_OPT_CHUNK_SIZE_IN_SECONDS = 63,
+    /**
+     * "hop_length_portion", a number above 0 and at most 1: the share of a chunk from one chunk's start to the next's, the
+     * last chunk ending with the audio, the overlaps joined by a Hann window. Added in 4.1.
+     */
+    SPEECH_OPT_HOP_LENGTH_PORTION = 64,
+    /**
+     * "bwe", an integer: the rate in Hz an enhancement resamples the audio to before it enhances it, and passes the audio
+     * at, as RE-USE's flag --BWE names it; a rate above the audio's lets the model extend its band. Without it the audio is
+     * enhanced at its own rate. Its range is the rates the model takes. Added in 4.1.
+     */
+    SPEECH_OPT_BWE = 65
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */
@@ -580,7 +597,9 @@ typedef enum speech_task {
     /** Audio to the regions where someone speaks, through speech_detect(). */
     SPEECH_TASK_DETECTION = 2,
     /** Audio to who speaks where, through speech_diarize(). */
-    SPEECH_TASK_DIARIZATION = 3
+    SPEECH_TASK_DIARIZATION = 3,
+    /** Audio to the same audio with its noise and other degradations removed, through speech_enhance(). Added in 4.1. */
+    SPEECH_TASK_ENHANCEMENT = 4
 } speech_task;
 
 /*
@@ -667,26 +686,27 @@ SPEECH_API const char * speech_model_info_architecture(const speech_model_info *
 /** The version of the family's file layout that the file has. */
 SPEECH_API uint32_t speech_model_info_layout(const speech_model_info * info);
 
-/** Whether the model speaks, recognizes speech, detects it or diarizes its speakers. */
+/** Whether the model speaks, recognizes speech, detects it, diarizes its speakers or enhances it. */
 SPEECH_API speech_task speech_model_info_task(const speech_model_info * info);
 
 /**
  * The sample rate in Hz of the audio a synthesis model makes, or of the audio a recognition, detection or diarization
  * model takes. Audio given at another rate, to recognize, to detect speech in, to diarize or as a voice's reference, is
- * resampled to it.
+ * resampled to it. 0 for an enhancement model, which enhances audio at the rate it is given, or at the request's bwe,
+ * within the range of bwe (speech_model_info_option_range()).
  */
 SPEECH_API int speech_model_info_sample_rate(const speech_model_info * info);
 
 /**
  * Whether a synthesis model passes audio while it is still generating the rest (1), so that its first audio does not
  * wait on the length of the text, or generates a request's whole speech before it decodes the speech into audio (0).
- * 0 for a recognition, detection or diarization model.
+ * 0 for a model of another task.
  */
 SPEECH_API int speech_model_info_incremental(const speech_model_info * info);
 
 /**
- * The number of languages the model speaks or recognizes; 0 for a detection or diarization model, whose file names no
- * language and which takes the language "auto" alone.
+ * The number of languages the model speaks or recognizes; 0 for a detection, diarization or enhancement model, whose
+ * file names no language and which takes the language "auto" alone.
  */
 SPEECH_API size_t speech_model_info_language_count(const speech_model_info * info);
 
@@ -1028,9 +1048,10 @@ SPEECH_API void speech_request_free(speech_request * request);
 SPEECH_API speech_status speech_request_set_text(speech_request * request, const char * text);
 
 /**
- * The audio a recognition request recognizes, a detection request finds speech in, or a diarization request diarizes:
- * `n_samples` mono samples, nominally within [-1, 1], at `sample_rate` Hz, copied. Audio at a rate other than the model's
- * is resampled to it when the request runs. At least one sample is needed. A synthesis model is
+ * The audio a recognition request recognizes, a detection request finds speech in, a diarization request diarizes or an
+ * enhancement request enhances: `n_samples` mono samples, nominally within [-1, 1], at `sample_rate` Hz, copied. Audio
+ * at a rate other than the model's is resampled to it when the request runs; an enhancement model, whose sample rate is
+ * 0, enhances it at its own rate or the request's bwe. At least one sample is needed. A synthesis model is
  * SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_request_set_audio(speech_request * request, const float * samples, size_t n_samples,
@@ -1051,8 +1072,8 @@ SPEECH_API speech_status speech_request_set_bool(speech_request * request, speec
 /**
  * Receives how far a request has come while it does work that passes no audio: `done` rises from 0 to 1 as the
  * family's steps finish (the sampler's steps of a speech made whole before its audio, the stages and the decoding of
- * a recognition, the blocks of chunks of a detection, the chunks of a diarization). The time between two calls is that
- * of one step, which for the encoder of a long recording can be seconds. Returning nonzero stops the request. It runs
+ * a recognition, the blocks of chunks of a detection, the chunks of a diarization or of an enhancement). The time
+ * between two calls is that of one step, which for the encoder of a long recording can be seconds. Returning nonzero stops the request. It runs
  * on the thread that runs the request.
  */
 typedef int (*speech_progress_callback)(double done, void * user_data);
@@ -1070,10 +1091,10 @@ SPEECH_API speech_status speech_request_set_progress(speech_request * request, s
 SPEECH_API void speech_request_cancel(speech_request * request);
 
 /**
- * Receives the audio of a synthesis as it is made: `n_samples` mono samples, at least one, at the model's sample
- * rate, nominally within [-1, 1] and not clamped, each a finite number, valid only during the call. Returning nonzero
- * stops the request. It runs on the thread that called speech_synthesize() and must not call into the library with the
- * same model.
+ * Receives the audio of a synthesis as it is made, at the model's sample rate, or of an enhancement, at the rate it
+ * enhances at: `n_samples` mono samples, at least one, nominally within [-1, 1] and not clamped, each a finite number,
+ * valid only during the call. Returning nonzero stops the request. It runs on the thread that called
+ * speech_synthesize() or speech_enhance() and must not call into the library with the same model.
  */
 typedef int (*speech_audio_callback)(const float * samples, size_t n_samples, void * user_data);
 
@@ -1121,6 +1142,18 @@ SPEECH_API speech_status speech_detect(speech_request * request);
  * probabilities every 10 ms into segments. A model of another task is SPEECH_ERROR_UNSUPPORTED.
  */
 SPEECH_API speech_status speech_diarize(speech_request * request);
+
+/**
+ * Enhances a request's audio, passing the enhanced audio to `on_audio` with `user_data`: as many samples as the audio
+ * has, at the rate it is enhanced at, each piece once no later part of the work changes it. It returns SPEECH_OK once
+ * the audio has been passed whole, SPEECH_CANCELLED once it was cancelled, or an error, after which no more audio comes.
+ * The model takes the audio in chunks of chunk_size_in_seconds that start every hop_length_portion of a chunk, the last
+ * one ending with the audio, so that its time grows with the audio's length and its memory with the chunk's; the first
+ * audio comes once the first chunk is done. Audio at a rate outside the range of bwe, without bwe, or too short for the
+ * model's STFT is refused with SPEECH_ERROR_OUT_OF_RANGE naming "audio". A model of another task is
+ * SPEECH_ERROR_UNSUPPORTED. Added in 4.1.
+ */
+SPEECH_API speech_status speech_enhance(speech_request * request, speech_audio_callback on_audio, void * user_data);
 
 /*
  * Detections of audio that arrives a piece at a time, as from a microphone, for a detection model: the regions where
@@ -1258,9 +1291,46 @@ SPEECH_API double speech_diarization_settled(const speech_diarization * diarizat
  */
 SPEECH_API int speech_diarization_speaking(const speech_diarization * diarization, int speaker, double * start);
 
+/*
+ * Enhancements of audio that arrives a piece at a time, as from a microphone, for an enhancement model: the enhanced
+ * audio passed to a callback as each part of it is settled. The samples passed are those speech_enhance() passes for the
+ * whole audio with the same options, bit for bit, however it was cut into pieces. A sample is passed once a chunk that
+ * starts after it has been computed, between one chunk and a chunk and a hop of audio after it arrives, or at the end; a
+ * shorter chunk_size_in_seconds passes it sooner. An enhancement is used by one thread at a time. Added in 4.1.
+ */
+typedef struct speech_enhancement speech_enhancement;
+
+/**
+ * Starts an enhancement of audio at `sample_rate` Hz, which speech_enhancement_push() gives, with the options of
+ * `request`, which must have no audio of its own, passing the enhanced audio to `on_audio` with `user_data` as
+ * speech_enhance() passes it, at the rate it is enhanced at: `sample_rate`, or the request's bwe. The request's options
+ * and the rate are checked here; the request itself is not used again and may be freed. A model of another task is
+ * SPEECH_ERROR_UNSUPPORTED. Added in 4.1.
+ */
+SPEECH_API speech_status speech_enhancement_start(const speech_request * request, int sample_rate, speech_audio_callback on_audio,
+                                                  void * user_data, speech_enhancement ** enhancement);
+
+/** Frees an enhancement. NULL is ignored. Added in 4.1. */
+SPEECH_API void speech_enhancement_free(speech_enhancement * enhancement);
+
+/**
+ * Takes the next `n_samples` mono samples and passes on, before it returns, the enhanced samples they settle, computing
+ * each chunk whose audio has arrived while it holds the model as a request does. It returns SPEECH_CANCELLED once the
+ * callback asked to stop, after which the enhancement takes no more audio, and an error after which it takes none
+ * either. Added in 4.1.
+ */
+SPEECH_API speech_status speech_enhancement_push(speech_enhancement * enhancement, const float * samples, size_t n_samples);
+
+/**
+ * Ends the audio: the samples held back are resampled where bwe asks, the last chunk, which ends with the audio, is
+ * computed, and every sample not yet passed is passed. Audio too short for the model's STFT is refused here with
+ * SPEECH_ERROR_OUT_OF_RANGE naming "audio". It returns as speech_enhancement_push() does. Added in 4.1.
+ */
+SPEECH_API speech_status speech_enhancement_end(speech_enhancement * enhancement);
+
 /** Why a request ended. */
 typedef enum speech_stop {
-    /** It did all it was asked: the speech came to its end, or the audio was recognized or searched whole. */
+    /** It did all it was asked: the speech came to its end, or the audio was recognized, searched or enhanced whole. */
     SPEECH_STOP_COMPLETE = 0,
     /** The speech reached the request's max_seconds and was stopped there. */
     SPEECH_STOP_MAX_SECONDS = 1,
@@ -1296,8 +1366,8 @@ SPEECH_API speech_stop speech_result_stop(const speech_result * result);
 SPEECH_API int64_t speech_result_seed(const speech_result * result);
 
 /**
- * The number of samples a synthesis passed to its callback, whose length in seconds is this over the sample rate; 0 for
- * a model of another task.
+ * The number of samples a synthesis or an enhancement passed to its callback, whose length in seconds is this over the
+ * rate they were passed at; 0 for a model of another task.
  */
 SPEECH_API uint64_t speech_result_samples(const speech_result * result);
 

@@ -555,12 +555,12 @@ ModelIdentity read_identity(const ModelFile & file) {
 
 void check_model_keys(const ModelFile & file, const char * task, const char * language_use) {
     read_identity(file);
-    const std::string file_task = file.one_of("speech.task", {"synthesis", "recognition", "detection", "diarization"});
+    const std::string file_task = file.one_of("speech.task", {"synthesis", "recognition", "detection", "diarization", "enhancement"});
     if (file_task != task) {
         throw file_error(file.path() + " says its speech.task is " + file_task + ", where its family does " + task + "; " + file.remedy());
     }
-    file.size("speech.sample_rate");
-    if ((file_task == "detection" || file_task == "diarization") != !language_use) {
+    if (file_task != "enhancement") file.size("speech.sample_rate");
+    if ((file_task == "detection" || file_task == "diarization" || file_task == "enhancement") != !language_use) {
         throw std::logic_error(std::string("a family of ") + task + (language_use ? " gives a use of languages" : " gives no use of languages"));
     }
     if (!language_use) return;

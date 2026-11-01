@@ -165,6 +165,16 @@ if (NOT MSVC)
     set_source_files_properties(src/common/sortformer-cache.cpp PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
 endif()
 
+# NVIDIA NemotronLabs RE-USE speech enhancement (NVIDIA): the family of SEMamba.
+add_library(semamba STATIC
+    src/families/semamba/layout.cpp
+    src/families/semamba/stft.cpp
+    src/families/semamba/network.cpp
+    src/families/semamba/enhancer.cpp
+)
+target_include_directories(semamba PUBLIC src/families)
+target_link_libraries(semamba PUBLIC speechcommon)
+
 # NVIDIA Nemotron 3.5 Transcribe speech recognition (NVIDIA): the family.
 add_library(nemotrontranscribe STATIC
     src/families/nemotron-transcribe/layout.cpp
@@ -207,18 +217,19 @@ target_link_libraries(drama3 PUBLIC speechcommon)
 # The C API, include/speech.h, twice: static for the executables, so that each stays one file, and shared as
 # libspeech for bindings and other programs. On Windows the two would both write speech.lib, the static one as
 # the library and the shared one as its import library, hence speech-static.
-set(SPEECH_SOURCES src/api/speech.cpp src/api/info.cpp src/api/request.cpp src/api/detection.cpp src/api/diarization.cpp src/api/voice.cpp
+set(SPEECH_SOURCES src/api/speech.cpp src/api/info.cpp src/api/request.cpp src/api/detection.cpp src/api/diarization.cpp src/api/enhancement.cpp src/api/voice.cpp
     src/engines/qwen3-tts-engine.cpp src/engines/irodori-tts-engine.cpp src/engines/drama3-engine.cpp src/engines/fastconformer-engine.cpp
-    src/engines/qwen3-asr-engine.cpp src/engines/nemotron-transcribe-engine.cpp src/engines/silero-vad-engine.cpp src/engines/sortformer-engine.cpp)
+    src/engines/qwen3-asr-engine.cpp src/engines/nemotron-transcribe-engine.cpp src/engines/silero-vad-engine.cpp src/engines/sortformer-engine.cpp
+    src/engines/semamba-engine.cpp)
 
 add_library(speech-static STATIC ${SPEECH_SOURCES})
 target_include_directories(speech-static PUBLIC include PRIVATE src/engines)
-target_link_libraries(speech-static PUBLIC qwen3tts irodoritts drama3 fastconformer qwen3asr nemotrontranscribe silerovad sortformer)
+target_link_libraries(speech-static PUBLIC qwen3tts irodoritts drama3 fastconformer qwen3asr nemotrontranscribe silerovad sortformer semamba)
 target_compile_definitions(speech-static PRIVATE SPEECH_VERSION="${PROJECT_VERSION}")
 
 add_library(speech SHARED ${SPEECH_SOURCES})
 target_include_directories(speech PUBLIC include PRIVATE src/engines)
-target_link_libraries(speech PRIVATE qwen3tts irodoritts drama3 fastconformer qwen3asr nemotrontranscribe silerovad sortformer)
+target_link_libraries(speech PRIVATE qwen3tts irodoritts drama3 fastconformer qwen3asr nemotrontranscribe silerovad sortformer semamba)
 target_compile_definitions(speech PRIVATE SPEECH_BUILD_SHARED SPEECH_VERSION="${PROJECT_VERSION}" INTERFACE SPEECH_SHARED)
 set_target_properties(speech PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 # The shared library's SOVERSION is the C API's major version, which speech.h defines and nothing else repeats.
@@ -480,6 +491,13 @@ foreach(stage frontend network cache segments stream)
     add_executable(sortformer-${stage}-check checks/sortformer/sortformer-${stage}-check.cpp tools/common/json-reader.cpp)
     target_include_directories(sortformer-${stage}-check PRIVATE checks tools/common)
     target_link_libraries(sortformer-${stage}-check PRIVATE sortformer)
+endforeach()
+
+# SEMamba's stages against the dumps of reference/semamba/dump.py.
+foreach(stage stft network enhance)
+    add_executable(semamba-${stage}-check checks/semamba/semamba-${stage}-check.cpp tools/common/json-reader.cpp)
+    target_include_directories(semamba-${stage}-check PRIVATE checks tools/common)
+    target_link_libraries(semamba-${stage}-check PRIVATE semamba)
 endforeach()
 
 # Drama 3's codec against the dumps of reference/drama3/dump.py.

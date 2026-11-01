@@ -21,6 +21,7 @@
 #include "nemotron-transcribe/layout.h"
 #include "qwen3-asr/layout.h"
 #include "qwen3-tts/layout.h"
+#include "semamba/layout.h"
 #include "silero-vad/layout.h"
 #include "sortformer/layout.h"
 
@@ -44,6 +45,7 @@ const Family families[] = {
     {SPEECH_TASK_RECOGNITION, nemotron_transcribe::layout, describe_nemotron_transcribe, load_nemotron_transcribe, nullptr},
     {SPEECH_TASK_DETECTION, silero_vad::layout, describe_silero_vad, load_silero_vad, nullptr},
     {SPEECH_TASK_DIARIZATION, sortformer::layout, describe_sortformer, load_sortformer, nullptr},
+    {SPEECH_TASK_ENHANCEMENT, semamba::layout, describe_semamba, load_semamba, nullptr},
 };
 
 thread_local std::string last_error;
@@ -125,6 +127,9 @@ const OptionName vocabulary[] = {
     {"keywords", SPEECH_TYPE_STRING},
     {"keywords_alpha", SPEECH_TYPE_FLOAT},
     {"keywords_guard", SPEECH_TYPE_BOOL},
+    {"chunk_size_in_seconds", SPEECH_TYPE_FLOAT},
+    {"hop_length_portion", SPEECH_TYPE_FLOAT},
+    {"bwe", SPEECH_TYPE_INT},
 };
 constexpr size_t kOptions = sizeof vocabulary / sizeof vocabulary[0];
 
@@ -181,6 +186,14 @@ std::vector<SpeakerSegment> Engine::diarize(const std::vector<float> &, const Re
 
 std::unique_ptr<DiarizationStream> Engine::start_diarization(const RequestValues &) {
     throw std::logic_error("the family's engine does not diarize speakers, though the table of families says it does");
+}
+
+void Engine::enhance(const std::vector<float> &, int, const RequestValues &, Run &) {
+    throw std::logic_error("the family's engine does not enhance speech, though the table of families says it does");
+}
+
+std::unique_ptr<EnhancementStream> Engine::start_enhancement(int, const RequestValues &, AudioSink) {
+    throw std::logic_error("the family's engine does not enhance speech, though the table of families says it does");
 }
 
 std::string Engine::add_voice(const std::string &, const std::string &) {
@@ -264,7 +277,8 @@ std::shared_ptr<const FileInfo> read_file_info(const std::string & path) {
     info->file = std::make_shared<const ModelFile>(path, family.layout);
     const ModelFile & m = *info->file;
     info->identity = read_identity(m);
-    info->sample_rate = (int) m.u32("speech.sample_rate");
+    // An enhancement model enhances audio at the rate it is given, and its file has no rate of its own.
+    info->sample_rate = family.task == SPEECH_TASK_ENHANCEMENT ? 0 : (int) m.u32("speech.sample_rate");
     if (task_has_languages(family.task)) info->languages = m.str_array("general.languages");
     info->described = family.describe(info->file);
     for (size_t i = 1; i < info->described.options.size(); i++) {

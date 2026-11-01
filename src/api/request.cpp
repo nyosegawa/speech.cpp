@@ -333,7 +333,7 @@ speech_status speech_request_set_audio(speech_request * request, const float * s
         require(samples, "samples", "audio");
         if (request->ran) throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the request has run; make a new one for the next");
         try {
-            Resampler(sample_rate, file.sample_rate);
+            Resampler(sample_rate, file.sample_rate ? file.sample_rate : sample_rate);
         } catch (const std::invalid_argument & e) {
             throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, e.what(), "audio");
         }
@@ -432,6 +432,25 @@ speech_status speech_diarize(speech_request * request) {
                 result.speakers.push_back(s.speaker);
             }
         });
+    });
+}
+
+speech_status speech_enhance(speech_request * request, speech_audio_callback on_audio, void * user_data) {
+    return guarded([&] {
+        if (!on_audio) throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "on_audio is NULL; give a callback that takes the audio");
+        const RequestValues values = take(request, SPEECH_TASK_ENHANCEMENT);
+        auto result = std::make_unique<speech_result>();
+        result->task = SPEECH_TASK_ENHANCEMENT;
+        RequestRun run(*request, on_audio, user_data);
+        std::lock_guard<std::mutex> lock(request->model->busy);
+        spend(*request, run, [&] {
+            if (!run.stopped()) request->model->engine->enhance(request->audio, request->sample_rate, values, run);
+        });
+        if (run.stopped()) result->stop = SPEECH_STOP_CANCELLED;
+        result->samples = run.samples();
+        const speech_status status = result->stop == SPEECH_STOP_CANCELLED ? SPEECH_CANCELLED : SPEECH_OK;
+        request->result = std::move(result);
+        return status;
     });
 }
 
