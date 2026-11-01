@@ -7,7 +7,8 @@
  * progress rises to 1 and its result counts the samples, complete; the same audio given a piece at a time, in pieces of
  * random sizes, passes the same samples bit for bit; with bwe, a request and a stream pass the audio at bwe's rate, the
  * same samples. It refuses what an enhancement cannot take (another task's calls, a text, no audio, a rate outside the
- * model's range without bwe, audio shorter than its STFT, a chunk shorter than it) and runs a request it refused before
+ * model's range without bwe, bwe at a ratio the resampler does not take, audio shorter than its STFT, a chunk shorter
+ * than it) and runs a request it refused before
  * its work again; a callback that returns nonzero stops a request and a stream, which then takes no more audio; a stream
  * refuses a request with audio and audio too short at its end; and a request is cancelled from another thread while it
  * runs.
@@ -176,6 +177,13 @@ static int check_refusals(speech_model * model, const char * model_path, const f
           expect(speech_enhance(r, collect, &audio), SPEECH_ERROR_OUT_OF_RANGE, "audio", "audio at 96000 Hz without bwe");
     ok &= expect(speech_request_set_audio(r, samples, n, 4000), SPEECH_OK, NULL, "audio at 4000 Hz") &&
           expect(speech_enhance(r, collect, &audio), SPEECH_ERROR_OUT_OF_RANGE, "audio", "audio at 4000 Hz without bwe");
+    // bwe one away from the audio's rate, a ratio the resampler does not take, is refused naming bwe, and the request
+    // runs once bwe is the audio's own rate.
+    const int64_t odd = rate < 48000 ? rate + 1 : rate - 1;
+    ok &= expect(speech_request_set_audio(r, samples, n, rate), SPEECH_OK, NULL, "the audio") &&
+          expect(speech_request_set_int(r, SPEECH_OPT_BWE, odd), SPEECH_OK, NULL, "bwe one away from the audio's rate") &&
+          expect(speech_enhance(r, collect, &audio), SPEECH_ERROR_OUT_OF_RANGE, "bwe", "bwe at a ratio the resampler does not take") &&
+          expect(speech_request_set_int(r, SPEECH_OPT_BWE, rate), SPEECH_OK, NULL, "bwe at the audio's rate");
     ok &= expect(speech_request_set_audio(r, samples, 100, rate), SPEECH_OK, NULL, "100 samples") &&
           expect(speech_enhance(r, collect, &audio), SPEECH_ERROR_OUT_OF_RANGE, "audio", "audio shorter than the STFT");
     ok &= expect(speech_request_set_audio(r, samples, n, rate), SPEECH_OK, NULL, "the audio") &&

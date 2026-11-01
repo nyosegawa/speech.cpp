@@ -1,13 +1,21 @@
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
-#include <memory>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <system_error>
 #include <vector>
+
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 #include "commands.h"
 #include "enhancement.h"
@@ -26,6 +34,23 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 namespace fs = std::filesystem;
+
+/**
+ * What has arrived on stdin, up to `size` bytes, as soon as any has: fread() would wait for the whole buffer, and so
+ * hold back audio that a short chunk would already enhance. 0 at its end.
+ */
+size_t read_stdin(unsigned char * data, size_t size) {
+    for (;;) {
+#ifdef _WIN32
+        const int got = _read(0, data, (unsigned) size);
+#else
+        const ssize_t got = read(0, data, size);
+#endif
+        if (got < 0 && errno == EINTR) continue;
+        if (got < 0) throw Failure(speech_status_name(SPEECH_ERROR_IO), "audio", std::string("cannot read stdin: ") + std::strerror(errno));
+        return (size_t) got;
+    }
+}
 
 double seconds_since(Clock::time_point t0) {
     return std::chrono::duration<double>(Clock::now() - t0).count();
@@ -119,8 +144,7 @@ void enhance_stdin(speech_model * model, const speech_model_info * info, const s
     uint64_t total = 0;
     speech_status pushed = SPEECH_OK;
     for (;;) {
-        const size_t got = std::fread(bytes.data() + carried, 1, bytes.size() - carried, stdin);
-        if (got == 0 && std::ferror(stdin)) throw Failure(speech_status_name(SPEECH_ERROR_IO), "audio", "cannot read stdin");
+        const size_t got = read_stdin(bytes.data() + carried, bytes.size() - carried);
         const size_t have = carried + got;
         samples.resize(have / 2);
         for (size_t i = 0; i < samples.size(); i++) samples[i] = (float) (int16_t) ((uint16_t) bytes[2 * i] | (uint16_t) bytes[2 * i + 1] << 8) / 32768.0f;

@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -87,6 +88,14 @@ private:
                         name + " enhances audio at " + std::to_string(lowest) + " to " + std::to_string(highest) + " Hz, and this audio is at " +
                             std::to_string(sample_rate) + " Hz; set bwe to a rate in that range to resample it",
                         "audio");
+        }
+        // The resampler refuses a ratio whose terms are too large, which a request learns before its audio is spent.
+        if (rate != sample_rate) {
+            try {
+                Resampler(sample_rate, rate);
+            } catch (const std::invalid_argument & e) {
+                throw Error(Fault::OutOfRange, std::string(e.what()) + ", or give bwe such a rate", "bwe");
+            }
         }
         const size_t fewest = enhancer_.fewest_samples(rate);
         const double chunk = values.number(SPEECH_OPT_CHUNK_SIZE_IN_SECONDS), portion = values.number(SPEECH_OPT_HOP_LENGTH_PORTION);

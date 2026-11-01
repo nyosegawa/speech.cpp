@@ -45,7 +45,8 @@ file's audio as 16-bit PCM through -, each completed with the speakers of `speec
 samples and each line of text beginning with its main speaker, and the refusals of --diarize without --vad and of a
 model of another task. For an enhancement model, given dumps of reference/semamba/dump.py: `speech enhance` on 16-bit
 WAVE files of their audio at their rates against the worker's audio of the same samples, into a file with its sizes set,
-to stdout, from stdin through - and into a folder for several files; --bwe's rate; the refusals (exit 2) of no -o, of -o -
+to stdout, from stdin through - and into a folder for several files; the audio of a pipe that stays open, enhanced
+before it ends; --bwe's rate; the refusals (exit 2) of no -o, of -o -
 or one folder for two files of one name, of an input as -o, of - with a file and of --rate without -, and (exit 1) of a
 rate the model does not take, which leaves no file, a chunk shorter than its STFT and an odd byte on stdin; with --asr,
 `speech asr --enhance`, and the refusal of --enhance with a model of another task; and with --vad too, `speech asr --vad
@@ -584,6 +585,24 @@ elif info["task"] == "enhancement":
             assert wave_of(f.read(), at) == want, path
     shutil.rmtree(folder)
     print("enhance: several files into a folder, each under its own name")
+    # Half a second, fewer bytes at any rate than a buffer of 64 KiB holds, written to a pipe that stays open, comes out
+    # enhanced in chunks of 0.1 s before stdin ends.
+    at = rates[0]
+    live = subprocess.Popen([speech, "enhance", model, *options, "--chunk-size-in-seconds", "0.1", "--rate", str(at), "-o", "-", "-"],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    pieces = []
+    reader = threading.Thread(target=lambda: pieces.extend(iter(lambda: live.stdout.read1(65536), b"")), daemon=True)
+    reader.start()
+    live.stdin.write(pcms[0][:at])
+    live.stdin.flush()
+    deadline = time.monotonic() + 120
+    while len(b"".join(pieces)) <= 44 and time.monotonic() < deadline:
+        time.sleep(0.1)
+    early = len(b"".join(pieces)) - 44
+    live.stdin.close()
+    live.wait()
+    assert early > 0, "enhance -: no audio came out while stdin stayed open after half a second of it"
+    print(f"enhance -: {early // 2} samples out of a pipe that stays open, before it ends")
     bwe = 8000 if rates[0] != 8000 else 16000
     data = run("enhance", model, *options, "--bwe", str(bwe), "-o", "-", files[0]).stdout
     assert struct.unpack("<I", data[24:28])[0] == bwe and len(wave_of(data, bwe)) > 0, data[:44]

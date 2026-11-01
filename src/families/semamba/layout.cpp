@@ -47,7 +47,8 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
     const float floor = m.f32(p + "window_floor"), zero = m.f32(p + "zero_portion"), pad = m.f32(p + "pad_value");
     require(floor > 0 && floor < 1 && zero >= 0 && zero <= 1 && std::isfinite(pad), m,
             "semamba.window_floor is not between 0 and 1, semamba.zero_portion is not a share, or semamba.pad_value is not finite");
-    m.u32(p + "input_padding");
+    // The padding of the input's bins and frames: more than an FFT would pad a chunk with more zeros than it holds.
+    require(m.u32(p + "input_padding") <= (uint32_t) n_fft, m, "semamba.input_padding is longer than semamba.stft.n_fft");
     const int depth = m.count(p + "dense_depth"), frame_stride = m.size(p + "frame_stride"), bin_stride = m.size(p + "bin_stride");
     const int blocks = m.count(p + "block_count");
     for (const char * key : {"instance_norm_eps", "layer_norm_eps"}) {

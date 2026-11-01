@@ -60,7 +60,9 @@ Enhancer::Enhancer(const std::string & path, ggml_backend_t backend)
     Graph g;
     const Stft s = stft(lowest_);
     const int64_t frames = 6, bins = s.bins();
-    network_.forward(g, std::vector<float>((size_t) (frames * bins), 0.0f), std::vector<float>((size_t) (frames * bins), 0.0f), frames, bins);
+    const Network::Outputs probe =
+        network_.forward(g, std::vector<float>((size_t) (frames * bins), 0.0f), std::vector<float>((size_t) (frames * bins), 0.0f), frames, bins);
+    for (ggml_tensor * t : {probe.magnitude, probe.real, probe.imag}) g.output(t);
     for (int i = 0; i < ggml_graph_n_nodes(g.cgraph()); i++) {
         ggml_tensor * node = ggml_graph_node(g.cgraph(), i);
         if (!ggml_backend_supports_op(backend, node)) {
