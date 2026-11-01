@@ -43,7 +43,14 @@ space and of a file that is not there, and `speech asr` of the diarization model
 with the speakers of `speech diarize` within it, as JSON and as the main speaker of each line of text, and on the first
 file's audio as 16-bit PCM through -, each completed with the speakers of `speech diarize` in low_latency of the same
 samples and each line of text beginning with its main speaker, and the refusals of --diarize without --vad and of a
-model of another task.
+model of another task. For an enhancement model, given dumps of reference/semamba/dump.py: `speech enhance` on 16-bit
+WAVE files of their audio at their rates against the worker's audio of the same samples, into a file with its sizes set,
+to stdout, from stdin through - and into a folder for several files; --bwe's rate; the refusals (exit 2) of no -o, of -o -
+or one folder for two files of one name, of an input as -o, of - with a file and of --rate without -, and (exit 1) of a
+rate the model does not take, which leaves no file, a chunk shorter than its STFT and an odd byte on stdin; with --asr,
+`speech asr --enhance`, and the refusal of --enhance with a model of another task; and with --vad too, `speech asr --vad
+--enhance -`, whose utterances begin where those of `speech asr --vad -` begin and whose texts are those of `speech asr
+--enhance` of each region `speech vad --split` writes.
 
 usage: python3 checks/smoke/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav [--transcript TEXT]]
                                                 [--embedding E.speaker.safetensors] [--vad DETECTION.gguf] [--asr RECOGNITION.gguf]
@@ -97,7 +104,7 @@ if "--asr" in args:
 speech, work, model, *dumps = args
 os.makedirs(work, exist_ok=True)
 added = [o.split("=", 1)[0] for i, o in enumerate(options) if i > 0 and options[i - 1] == "--add-voice"]
-SUBCOMMANDS = ["tts", "asr", "vad", "diarize", "voice", "info", "devices", "models", "pull", "rm", "quantize", "update", "serve", "worker"]
+SUBCOMMANDS = ["tts", "asr", "vad", "diarize", "enhance", "voice", "info", "devices", "models", "pull", "rm", "quantize", "update", "serve", "worker"]
 
 
 def run(*command, input=None, stdout=subprocess.PIPE, code=0):
@@ -528,6 +535,109 @@ elif info["task"] == "diarization":
         run("asr", recognizer, "--diarize", model, *options, files[0], code=2)
         run("asr", recognizer, "--vad", vad, "--diarize", vad, *options, files[0], code=2)
         print("asr --diarize without --vad, and of a detection model: exit 2")
+    for path in files:
+        os.remove(path)
+elif info["task"] == "enhancement":
+    # The dumps of reference/semamba/dump.py, as 16-bit WAVE files at their own rates: the enhancement model takes any rate
+    # within its range and passes its audio at the same.
+    files, pcms, rates = [], [], []
+    for d in dumps:
+        with open(os.path.join(d, "meta.json")) as f:
+            at = json.load(f)["rate"]
+        pcm = pcm16(read_npy(os.path.join(d, "audio.npy")))
+        path = os.path.join(work, os.path.basename(os.path.normpath(d)) + ".wav")
+        with open(path, "wb") as f:
+            f.write(b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, at, at * 2, 2, 16)
+                    + b"data" + struct.pack("<I", len(pcm)) + pcm)
+        files.append(path)
+        pcms.append(pcm)
+        rates.append(at)
+
+    def wave_of(data, at):
+        assert data[:4] == b"RIFF" and data[36:40] == b"data" and struct.unpack("<I", data[24:28])[0] == at, data[:44]
+        return data[44:]
+
+    w = Worker(speech, model, options)
+    worker_audio = []
+    for k, (pcm, at) in enumerate(zip(pcms, rates)):
+        w.request({"type": "chunk", "id": str(k), "seq": 0, "pcm": base64.b64encode(pcm).decode()})
+        w.send({"type": "enhance", "id": str(k), "sample_rate": at})
+        got = b"".join(base64.b64decode(m["pcm"]) for m in w.until(str(k)) if m["type"] == "chunk")
+        worker_audio.append(got)
+    w.close()
+    for path, at, want in zip(files, rates, worker_audio):
+        out = os.path.join(work, "enhanced.wav")
+        run("enhance", model, *options, "-o", out, path)
+        with open(out, "rb") as f:
+            data = f.read()
+        assert struct.unpack("<II", data[4:8] + data[40:44]) == (36 + len(want), len(want)) and wave_of(data, at) == want, path
+        streamed = run("enhance", model, *options, "-o", "-", path).stdout
+        assert wave_of(streamed, at) == want, f"{path}: -o - differs from the worker's audio"
+        piped = run("enhance", model, *options, "--rate", str(at), "-o", "-", "-", input=pcms[files.index(path)]).stdout
+        assert wave_of(piped, at) == want, f"{path}: - differs from the worker's audio"
+    print(f"enhance: {len(files)} files into a file, to stdout and from stdin (-) at their rates, the worker's audio sample for sample")
+    folder = os.path.join(work, "enhanced")
+    shutil.rmtree(folder, ignore_errors=True)
+    run("enhance", model, *options, "-o", folder, *files)
+    for path, want, at in zip(files, worker_audio, rates):
+        with open(os.path.join(folder, os.path.splitext(os.path.basename(path))[0] + ".wav"), "rb") as f:
+            assert wave_of(f.read(), at) == want, path
+    shutil.rmtree(folder)
+    print("enhance: several files into a folder, each under its own name")
+    bwe = 8000 if rates[0] != 8000 else 16000
+    data = run("enhance", model, *options, "--bwe", str(bwe), "-o", "-", files[0]).stdout
+    assert struct.unpack("<I", data[24:28])[0] == bwe and len(wave_of(data, bwe)) > 0, data[:44]
+    print(f"enhance --bwe {bwe}: the WAVE at {bwe} Hz")
+    twin = os.path.join(work, "twin")
+    os.makedirs(twin, exist_ok=True)
+    shutil.copy(files[0], twin)
+    for command in [["enhance", model, files[0]], ["enhance", model, "-o", "-", files[0], os.path.join(twin, os.path.basename(files[0]))],
+                    ["enhance", model, "-o", work, files[0], os.path.join(twin, os.path.basename(files[0]))], ["enhance", model, "-o", files[0], files[0]],
+                    ["enhance", model, "-o", "-", "-", files[0]], ["enhance", model, "--rate", "16000", "-o", "-", files[0]]]:
+        run(*command, *options, code=2)
+    shutil.rmtree(twin)
+    high = os.path.join(work, "high.wav")
+    with open(files[0], "rb") as f:
+        data = bytearray(f.read())
+    data[24:32] = struct.pack("<II", 96000, 192000)
+    with open(high, "wb") as f:
+        f.write(data)
+    left = os.path.join(work, "left.wav")
+    failure(run("enhance", model, *options, "-o", left, high, code=1), "out_of_range", "audio")
+    assert not os.path.exists(left), "a failed run left its file"
+    failure(run("enhance", model, *options, "--chunk-size-in-seconds", "0.001", "-o", left, files[0], code=1), "out_of_range", "chunk_size_in_seconds")
+    failure(run("enhance", model, *options, "-o", "-", "-", input=b"\0" * 21, code=1), "invalid_argument", "audio")
+    os.remove(high)
+    print("enhance without -o, -o - with two files, two inputs of one name, -o an input, - with a file and --rate without -: exit 2; "
+          "a rate of 96000 Hz, a chunk shorter than the STFT and an odd byte on stdin: exit 1, and no file left")
+    if recognizer:
+        run("asr", recognizer, "--enhance", recognizer, *options, files[0], code=2)
+        enhanced_text = run("asr", recognizer, "--enhance", model, *options, files[0]).stdout.decode()
+        assert enhanced_text.endswith("\n"), enhanced_text
+        print(f"asr --enhance: {enhanced_text.strip()!r}; --enhance of a recognition model: exit 2")
+        if vad:
+            # The detection hears the audio as it arrives, so the stream's utterances are the regions `speech vad --split`
+            # writes, and each utterance is recognized as `speech asr --enhance` recognizes its region alone.
+            split = os.path.join(work, "regions")
+            shutil.rmtree(split, ignore_errors=True)
+            detection = ["--threshold", "0.5", "--speech-pad-ms", "300", "--min-silence-duration-ms", "500", "--max-speech-duration-s", "10"]
+            for path, pcm, at in zip(files, pcms, rates):
+                plain = run("asr", recognizer, "--vad", vad, "--format", "json", *detection, *options, "--rate", str(at), "-", input=pcm).stdout.decode()
+                events = [json.loads(line) for line in run("asr", recognizer, "--vad", vad, "--enhance", model, "--format", "json", *detection, *options,
+                                                            "--rate", str(at), "-", input=pcm).stdout.decode().splitlines()]
+                starts = [e["audio_start_ms"] for e in events if e["type"] == "input_audio_buffer.speech_started"]
+                assert starts == [json.loads(line)["audio_start_ms"] for line in plain.splitlines()
+                                  if json.loads(line)["type"] == "input_audio_buffer.speech_started"], "the detection heard enhanced audio"
+                # speech asr runs its detection on the CPU, and speech vad there gives the same regions.
+                run("vad", vad, "--split", split, "--device", "cpu", *detection, path)
+                regions = sorted(os.listdir(split))
+                texts = [e["transcript"] for e in events if e["type"] == "conversation.item.input_audio_transcription.completed"]
+                assert len(texts) == len(regions), (texts, regions)
+                for region, text in zip(regions, texts):
+                    alone = run("asr", recognizer, "--enhance", model, *options, os.path.join(split, region)).stdout.decode().strip()
+                    assert text == alone, (region, text, alone)
+                shutil.rmtree(split)
+            print("asr --vad --enhance -: the regions of the audio unenhanced, each utterance the text of speech asr --enhance of its region")
     for path in files:
         os.remove(path)
 elif info["task"] == "recognition":

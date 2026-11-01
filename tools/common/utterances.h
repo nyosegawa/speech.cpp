@@ -26,15 +26,20 @@
 // row agree on goes out as deltas, which only ever add text; once it is committed, it is recognized whole, and that
 // recognition, which may differ from the deltas, completes it. With a diarization, the completion waits until the
 // diarization has settled the utterance's audio, and carries the speakers within it, while the recognitions after it go
-// on. The events go out in order: an utterance's speech started, its deltas, its speech stopped and its commit, then its
+// on. With an enhancer asked for, each utterance is enhanced whole once it is committed, before its recognition, while
+// the detection and the readings of an utterance under way hear the audio as it arrives. The events go out in order: an utterance's speech started, its deltas, its speech stopped and its commit, then its
 // completion, with the next utterance's events begun meanwhile, and the completions in the order of the utterances.
 
 namespace utterances {
 
-/** What a recognition is asked: the name of the model, or "" for the one the host holds, and the request options. */
+/**
+ * What a recognition is asked: the name of the model, or "" for the one the host holds, the request options, and whether
+ * each utterance is enhanced whole before its recognition.
+ */
 struct Asked {
     std::string model;
     std::vector<RequestOption> options;
+    bool enhance = false;
 };
 
 /** An event of the assembly, about one utterance. */
@@ -88,6 +93,20 @@ public:
                                                  const std::string & draft) = 0;
 };
 
+/** The enhancer of an assembly's utterances, which its host gives where its utterances may be enhanced. */
+class Enhancer {
+public:
+    virtual ~Enhancer() = default;
+    /** Takes the place of an enhancement accepted now among the host's requests; it throws what the host refuses. */
+    virtual std::unique_ptr<Reservation> reserve() = 0;
+    /**
+     * The whole utterance `samples` at `rate` enhanced in the place `reservation` took, with the rate it came at, or
+     * nothing once `cancellation` stops it; it throws what it refuses. The samples are its own.
+     */
+    virtual std::optional<std::pair<std::vector<float>, int>> enhance(Reservation & reservation, std::vector<float> samples, int rate,
+                                                                       Cancellation & cancellation) = 0;
+};
+
 /**
  * A detection of audio given a piece at a time (speech_detection), on a detection model that `keep` keeps until the
  * detection is freed, with the request options it was started with.
@@ -139,9 +158,10 @@ class Assembly {
 public:
     /**
      * An assembly of audio at `rate`, whose utterances the caller commits until it is given a detection. `emit` takes
-     * each event, one at a time, on the caller's thread or the assembly's, and must not call the assembly.
+     * each event, one at a time, on the caller's thread or the assembly's, and must not call the assembly. `enhancer`
+     * enhances the utterances where the recognition asks for it, and may be null for a host that asks for none.
      */
-    Assembly(Recognizer & recognizer, int rate, std::function<void(const Event &)> emit);
+    Assembly(Recognizer & recognizer, int rate, std::function<void(const Event &)> emit, Enhancer * enhancer = nullptr);
     /** Stops the recognition under way and drops those that wait; no event follows. */
     ~Assembly();
     Assembly(const Assembly &) = delete;
@@ -233,6 +253,8 @@ private:
         /** The samples' count, which counts toward held() until the recognition has ended. */
         size_t length = 0;
         Asked asked;
+        /** The place of its enhancement where the recognition asks for one, taken before the recognition's. */
+        std::unique_ptr<Reservation> enhancement;
         std::unique_ptr<Reservation> reservation;
         std::exception_ptr refused;
     };
@@ -264,6 +286,7 @@ private:
     void send(const Event & e);
 
     Recognizer & recognizer_;
+    Enhancer * enhancer_;
     const int rate_;
     std::function<void(const Event &)> emit_;
     /** The detection, used by the caller alone, and whether the caller commits while there is none. */

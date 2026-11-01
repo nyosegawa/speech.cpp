@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <memory>
 
+#include "enhancement.h"
 #include "jobs.h"
 #include "json.h"
 #include "realtime-session.h"
@@ -30,8 +31,9 @@ struct Held : utterances::Reservation {
 };
 
 /**
- * The models a session works with: the recognition model the server holds when a recognition is accepted, and the
- * detection model it holds, which a session's detection keeps until the session lets it go.
+ * The models a session works with: the recognition model the server holds when a recognition is accepted, the enhancement
+ * model it holds when an enhancement is, and the detection model it holds, which a session's detection keeps until the
+ * session lets it go.
  */
 class HeldModels : public realtime::Models {
 public:
@@ -51,13 +53,13 @@ public:
         return std::make_unique<Held>(served(model));
     }
 
-    std::optional<Transcript> transcribe(utterances::Reservation & reservation, std::vector<float> samples,
+    std::optional<Transcript> transcribe(utterances::Reservation & reservation, std::vector<float> samples, int rate,
                                          const std::vector<RequestOption> & options, Cancellation & cancellation, const std::string & item,
                                          bool provisional, const std::string & draft) override {
         Held & held = static_cast<Held &>(reservation);
         const Request request = new_request(held.on->get());
         const size_t n = samples.size();
-        ::check(speech_request_set_audio(request.get(), samples.data(), n, realtime::kRate));
+        ::check(speech_request_set_audio(request.get(), samples.data(), n, rate));
         // The request holds a copy of its own, so that a reading, whose samples are a copy of the buffer, adds nothing to
         // the audio the session holds while it waits and runs.
         samples = std::vector<float>();
@@ -71,15 +73,15 @@ public:
         try {
             status = ::check(cancellation.run(request.get(), [&] { return speech_transcribe(request.get()); }));
         } catch (const Failure & e) {
-            log(name, n, held.accepted, started, ", failed: " + e.code() + ": " + e.what());
+            log(name, (double) n / rate, held.accepted, started, ", failed: " + e.code() + ": " + e.what());
             throw;
         }
         if (status == SPEECH_CANCELLED) {
-            log(name, n, held.accepted, started, provisional ? ", stopped: its utterance ended" : ", stopped: the session ended");
+            log(name, (double) n / rate, held.accepted, started, provisional ? ", stopped: its utterance ended" : ", stopped: the session ended");
             return std::nullopt;
         }
         Transcript t = transcript_of(speech_request_result(request.get()), false);
-        if (!provisional) log(name, n, held.accepted, started, ", " + std::to_string(t.text.size()) + " bytes of text");
+        if (!provisional) log(name, (double) n / rate, held.accepted, started, ", " + std::to_string(t.text.size()) + " bytes of text");
         return t;
     }
 
@@ -121,10 +123,50 @@ public:
         return on ? on->defaults() : std::vector<RequestOption>();
     }
 
+    bool enhances() override { return models_.of(SPEECH_TASK_ENHANCEMENT) != nullptr; }
+
+    std::unique_ptr<utterances::Reservation> reserve_enhancement() override {
+        const auto on = models_.of(SPEECH_TASK_ENHANCEMENT);
+        if (!on) {
+            const std::string coming = models_.replacing(SPEECH_TASK_ENHANCEMENT);
+            if (!coming.empty()) {
+                throw ApiError{503, "The speech enhancement model, which noise_reduction needs, is being loaded (" + coming +
+                                    "); commit the audio again once it is in place.", "", "model_loading"};
+            }
+            throw ApiError{400, "noise_reduction runs a speech enhancement model, and this server holds none any more; give noise_reduction null.",
+                           "session.audio.input.noise_reduction", "unsupported_value"};
+        }
+        return std::make_unique<Held>(on);
+    }
+
+    std::optional<std::pair<std::vector<float>, int>> enhance(utterances::Reservation & reservation, std::vector<float> samples, int rate,
+                                                               Cancellation & cancellation) override {
+        Held & held = static_cast<Held &>(reservation);
+        const size_t n = samples.size();
+        const Request request = enhancement_request(held.on->get(), samples, rate, held.on->defaults());
+        samples = std::vector<float>();
+        const int out_rate = enhanced_rate(held.on->info().get(), rate, held.on->defaults());
+        held.turn.wait();
+        const Clock::time_point started = Clock::now();
+        std::optional<Enhanced> enhanced;
+        try {
+            enhanced = gather_enhanced(request.get(), out_rate, cancellation);
+        } catch (const Failure & e) {
+            log("an enhancement", (double) n / rate, held.accepted, started, ", failed: " + e.code() + ": " + e.what());
+            throw;
+        }
+        if (!enhanced) {
+            log("an enhancement", (double) n / rate, held.accepted, started, ", stopped: the session ended");
+            return std::nullopt;
+        }
+        log("an enhancement", (double) n / rate, held.accepted, started, "");
+        return std::make_pair(std::move(enhanced->samples), enhanced->rate);
+    }
+
 private:
-    static void log(const std::string & item, size_t samples, Clock::time_point arrived, Clock::time_point started, const std::string & outcome) {
+    static void log(const std::string & item, double seconds, Clock::time_point arrived, Clock::time_point started, const std::string & outcome) {
         char line[128];
-        std::snprintf(line, sizeof line, ": %.2f s of audio: waited %.3f s", (double) samples / realtime::kRate, seconds_between(arrived, started));
+        std::snprintf(line, sizeof line, ": %.2f s of audio: waited %.3f s", seconds, seconds_between(arrived, started));
         char took[32];
         std::snprintf(took, sizeof took, " in %.3f s", seconds_between(started, Clock::now()));
         server::log("realtime " + item + line + outcome + took);

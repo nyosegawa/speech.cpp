@@ -290,6 +290,8 @@ add_executable(speech-cli
     tools/cli/miniaudio.c
     tools/cli/vad.cpp
     tools/cli/diarize.cpp
+    tools/cli/enhance.cpp
+    tools/cli/wave-output.cpp
     tools/cli/model.cpp
     tools/cli/models.cpp
     tools/cli/quantize.cpp
@@ -303,6 +305,7 @@ add_executable(speech-cli
     ${CMAKE_CURRENT_BINARY_DIR}/catalog-json.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/page-files.cpp
     tools/common/command-line.cpp
+    tools/common/enhancement.cpp
     tools/common/json-reader.cpp
     tools/common/request-options.cpp
     tools/common/openai-error.cpp
@@ -319,6 +322,8 @@ add_executable(speech-cli
     tools/worker/inbox.cpp
     tools/server/server.cpp
     tools/server/audio-speech.cpp
+    tools/server/audio-enhancements.cpp
+    tools/server/audio-stream.cpp
     tools/server/openai-api.cpp
     tools/server/served-models.cpp
     tools/server/log.cpp
@@ -416,6 +421,7 @@ target_link_libraries(quantize-check PRIVATE speechcommon)
 
 add_executable(speech-api-check checks/api/speech-api-check.c checks/api/speech-api-irodori.c checks/api/speech-api-drama3.c checks/api/speech-api-recognition.c
                checks/api/speech-api-detection.c checks/api/speech-api-detection-stream.c checks/api/speech-api-diarization.c
+               checks/api/speech-api-enhancement.c
                checks/api/speech-api-common.c
                checks/api/speech-api-platform.c)
 target_link_libraries(speech-api-check PRIVATE speech)

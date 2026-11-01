@@ -1,7 +1,7 @@
 # Worker protocol
 
-This page describes `speech worker`, a process that another program starts to speak texts or recognize speech, as
-[ASIST](https://github.com/nyosegawa/asist) does, and the protocol it speaks.
+This page describes `speech worker`, a process that another program starts to speak texts, recognize speech or enhance
+it, as [ASIST](https://github.com/nyosegawa/asist) does, and the protocol it speaks.
 
 ```
 speech worker MODEL [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup] [request options]
@@ -12,6 +12,7 @@ speech worker qwen3-tts-0.6b
 speech worker irodori-tts-mf --add-voice me=me.voice.gguf --add-voice calm=calm-reference.wav
 speech worker irodori-tts-mf --steps 8 --add-voice me=me.voice.gguf
 speech worker reazonspeech-v2
+speech worker re-use
 ```
 
 A request option given as a flag ([cli.md](cli.md#speech-serve-and-speech-worker)) is the default of every request that
@@ -43,7 +44,7 @@ flags with their values (`{}` without any), and `model` is the model information
 information keeps the model's own defaults.
 
 `fatal` comes instead when the worker cannot start. The worker then exits with 1, or with 2 for a command line it cannot
-run. A detection model (Silero VAD) is `unsupported`: the worker serves synthesis and recognition models. A request
+run. A detection or diarization model is `unsupported`: the worker serves synthesis, recognition and enhancement models. A request
 option flag the model does not take is `unsupported`, and a value out of its range `out_of_range`, each naming the
 option.
 
@@ -56,8 +57,9 @@ not raise it.
 | `type` | Members | Task | Answer |
 |---|---|---|---|
 | `synthesize` | `id`, `text`, option members | synthesis | `progress` and `chunk`s, then one terminal message |
-| `chunk` | `id`, `seq`, `pcm` | recognition | none of its own; it adds audio to request `id` |
+| `chunk` | `id`, `seq`, `pcm` | recognition, enhancement | none of its own; it adds audio to request `id` |
 | `transcribe` | `id`, `sample_rate`, option members | recognition | `progress`, then one terminal message |
+| `enhance` | `id`, `sample_rate`, option members | enhancement | `progress` and `chunk`s, then one terminal message |
 | `add_voice` | `id`, `name`, `path` | synthesis models that take voice files | one terminal message |
 | `info` | `id` | any | one terminal message, at once |
 | `count_tokens` | `id`, `text` | synthesis | one terminal message, at once |
@@ -65,10 +67,12 @@ not raise it.
 
 - `id` is a non-empty string, unique among the requests that have not had their terminal message.
 - A recognition request is its `chunk` lines, `seq` 0, 1, 2 … in order, then its `transcribe` line, which makes it
-  complete. The chunks of several requests may interleave. `sample_rate` is the rate of the chunks' audio, any rate; the
-  library resamples it.
+  complete, and an enhancement request its `chunk` lines, then its `enhance` line. The chunks of several requests may
+  interleave. `sample_rate` is the rate of the chunks' audio: any rate for a recognition, which the library resamples,
+  and a rate the model takes for an enhancement (8000 to 48000 Hz for RE-USE), unless its `bwe` resamples it.
 - `pcm`, in both directions, is base64 of 16-bit little-endian mono samples. Audio from the worker is at the model's
-  `sample_rate`, each sample `round(clamp(x, −1, 1) × 32767)`. Audio to the worker is read as `x / 32768`.
+  `sample_rate`, or for an enhancement at the rate it was enhanced at, the request's `sample_rate` or its `bwe`, each
+  sample `round(clamp(x, −1, 1) × 32767)`. Audio to the worker is read as `x / 32768`.
 - `path` of `add_voice` is a voice file, or a WAVE file for a model whose `voice_recordings` is true (Irodori-TTS);
   Drama 3 takes a voice file alone ([models.md](models.md#voices)).
 - `info` gives the voices added so far: one sent before an `add_voice` has had its `end` may not list that voice yet.
@@ -77,12 +81,12 @@ not raise it.
 - `cancel` of a request that is collecting chunks or waiting ends it with `cancelled` at once. A running request stops at
   the next point where its work can stop and ends with `cancelled`; `add_voice` cannot be stopped once it runs. A cancel
   of an id that no request in flight has is ignored.
-- Once a recognition request has had its `error` or `cancelled` while it collected chunks, its later `chunk` lines are
-  dropped up to and including its `transcribe` line, which frees its id, or until a chunk 0 under its id starts a new
-  request. A caller that cancels need not send the `transcribe`.
+- Once a request has had its `error` or `cancelled` while it collected chunks, its later `chunk` lines are dropped up to
+  and including its `transcribe` or `enhance` line, which frees its id, or until a chunk 0 under its id starts a new
+  request. A caller that cancels need not send the `transcribe` or `enhance`.
 
 When stdin closes, the worker answers the requests it has, answers each request still collecting chunks with an `error`,
-since no `transcribe` can follow, and exits with 0.
+since no `transcribe` or `enhance` can follow, and exits with 0.
 
 ## Answers
 
@@ -107,6 +111,8 @@ out {"type":"cancelled","id":"a"}
   order of the audio, where there are any (Qwen3-ASR), `segments` and `tokens` when the request set `timestamps`, and
   `segments` with each one's `speaker`, a number from 0 or null, when it set `speakers`. Where the model cannot time its
   text (Nemotron 3.5 Transcribe), it has `untimed`, why, and neither.
+- `end` of an enhancement has `samples` (the number sent in its chunks, as many as its audio has at the rate it was
+  enhanced at) and `stop` (`complete`).
 - `end` of `info` has `model`, `end` of `count_tokens` has `tokens`, and `end` of `add_voice` has nothing more.
 - `error` has `code` (an error category, [c-api.md](c-api.md#errors)), `option` (the input it concerns: an option's
   name, `text`, `audio`, `id`, `type`, `seq`, `pcm`, `name`, `path`, `sample_rate` or another member's name, or null)
@@ -117,8 +123,9 @@ out {"type":"cancelled","id":"a"}
   with reazonspeech-nemo-v2 in F16 on an Apple M5).
 - A line that names no request it could belong to (not a JSON object, no string `id`, a `cancel` with a member it does
   not have, or a line that starts a request under an `id` already in flight) gets an `error` without `id`.
-- A request of the other task is `unsupported` with the option `type`: a `synthesize` to a recognition model, and a
-  `chunk` or `transcribe` to a synthesis model, whose later lines are dropped. A member the type does not have is
+- A request of another task is `unsupported` with the option `type`: a `synthesize` to a recognition or enhancement
+  model, a `chunk` to a synthesis model, whose later lines are dropped, a `transcribe` to an enhancement model and an
+  `enhance` to a recognition model. A member the type does not have is
   `invalid_argument` with that member as `option`. Option values are checked by the library's setters when the request
   runs, so their errors are the C API's.
 
@@ -134,6 +141,9 @@ out {"type":"cancelled","id":"a"}
   a request should be one utterance. A cancel takes effect before or after the encoder, or during the decoding.
 - **Qwen3-ASR** recognizes up to 1200 s at once, and longer audio in parts. A cancel takes effect within a fraction of a
   second.
+- **RE-USE** enhances a request's audio in chunks of `chunk_size_in_seconds` (5 s) that start every
+  `hop_length_portion` of a chunk (0.5), and sends each part of it once the chunk after it is done, the rest after the
+  last chunk. A cancel takes effect at the next chunk.
 
 ## A session
 

@@ -23,27 +23,31 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   (`src/engines/<family>-engine.cpp`). An engine declares in one table the request options its family takes, with their
   defaults and ranges read from the model file, and turns a request checked against that table into the family's; the
   setters, the model information and its JSON read the table and nothing else. One table in `src/api/speech.cpp` lists
-  the families: their task (synthesis, recognition or detection), the layout their reader takes, which names the
+  the families: their task (synthesis, recognition, detection, diarization or enhancement), the layout their reader takes, which names the
   `general.architecture` of their files, their engine and, for a family that takes voice files, how it makes one.
   `speech_model_load()` and `speech_model_info_open()` choose the family from the table, and adding a family is adding
   its line.
 - `src/families/<family>/` holds the code of one architecture, whichever weights it is given: `qwen3-tts/`
   runs Qwen3-TTS 0.6B and 1.7B. A family reads its model's one GGUF file, its codec included, and turns text into
-  audio, or audio into text or into the regions where someone speaks; it knows nothing of the C API, the worker protocol or the command line. Its
+  audio, or audio into text, into the regions where someone speaks, into who speaks where or into the same audio
+  enhanced; it knows nothing of the C API, the worker protocol or the command line. Its
   `layout.cpp` says what its reader takes: the architecture, the layout version, every key with its type, and the
   tensors the keys call for.
 - `src/common/` holds what two families use in the same role. Code moves there when a second family needs
   it, not before, and never as a framework for families that do not exist yet.
 - `tools/` holds `speech`, the one executable for users, with a subcommand per program: `tts`,
-  `asr`, `vad`, `voice`, `info`, `devices`, `quantize` and `update` in `tools/cli/` (with `main.cpp`, which dispatches
+  `asr`, `vad`, `diarize`, `enhance`, `voice`, `info`, `devices`, `quantize` and `update` in `tools/cli/` (with
+  `main.cpp`, which dispatches
   them and prints the notice of a newer release on a terminal), `worker` in
   `tools/worker/` and `serve` in `tools/server/`, and what they share in `tools/common/`: the one parser of every
   command line, which makes a flag of each option of the C API's vocabulary, the JSON reader, and the request options
   read from text or JSON and set through the library's setters, transcription by regions, which `asr --vad` and
   `serve` share, the speakers within a region or an utterance (`speakers.cpp`), which `asr --diarize` and `serve`
-  share, the synthesis of a text a sentence at a time for a model whose request speaks a short time, which
+  share, the enhancement of a recording passed as it settles or gathered whole for a recognition (`enhancement.cpp`),
+  which `enhance`, `asr --enhance`, the worker and `serve` share, the synthesis of a text a sentence at a time for a model whose request speaks a short time, which
   `tts` and `serve` share (`sentences.cpp`), the assembly of utterances from audio that arrives while someone speaks
-  (`utterances.cpp`), which `asr -`, `asr --live` and the server's Realtime sessions run, and OpenAI's Realtime server
+  (`utterances.cpp`), each enhanced whole before its last reading where asked, which `asr -`, `asr --live` and the
+  server's Realtime sessions run, and OpenAI's Realtime server
   events (`realtime-events.cpp`), which they all write. Every subcommand reaches the models only through the
   C API. `tools/catalog/` names models: the catalog of the release (`catalog.json`, which `update_catalog.py` writes
   from Hugging Face and the build compiles in), the cache folder, and the fetching of a named model with the system's
@@ -57,8 +61,10 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   family's in `checks/<family>/` and those of `src/common/` in `checks/common/`, with the headers they share at the top
   of `checks/`, and, in `checks/api/`, `speech-api-check`, which runs the C API through the shared library with a
   synthesis model, Irodori-TTS's own rules and voice files in `speech-api-irodori.c`, with `transcribe`, with a
-  recognition model (`speech-api-recognition.c`), and with `detect`, with a detection model (`speech-api-detection.c`,
-  and detections of audio given a piece at a time in `speech-api-detection-stream.c`), what they share in
+  recognition model (`speech-api-recognition.c`), with `detect`, with a detection model (`speech-api-detection.c`,
+  and detections of audio given a piece at a time in `speech-api-detection-stream.c`), with `diarize`, with a
+  diarization model (`speech-api-diarization.c`), and with `enhance`, with an enhancement model
+  (`speech-api-enhancement.c`), what they share in
   `speech-api-common.c` and what differs by the operating system in `speech-api-platform.c`. Checks reach into `src/`
   for the stage they check; they are built but not released. `checks/run.py` runs the stage checks of the families and
   devices it is given, with the model files and the dumps it finds, in the order data flows, one line per check.
@@ -75,23 +81,27 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   request (speed, latency, memory and accuracy) across speech.cpp's builds and other runtimes, and tries a model in its
   official implementation and the runtimes that already run it before speech.cpp takes it up, so any other comparison
   of builds or of runtimes goes there and not into `measure/`.
-- `tools/server/` holds `speech serve`, which serves a synthesis, a recognition, a detection and a diarization model
-  over HTTP with OpenAI's audio API (`POST /v1/audio/speech`, `POST /v1/audio/transcriptions`, `GET /v1/models`,
-  `GET /health`) and OpenAI's Realtime transcription over a WebSocket at `/v1/realtime`, for programs that speak HTTP. Like the worker
-  it reaches the models only through the C API; `openai-api.cpp` reads OpenAI's requests and writes its stream events,
-  `audio-speech.cpp` serves `/v1/audio/speech` as it streams,
+- `tools/server/` holds `speech serve`, which serves a synthesis, a recognition, a detection, a diarization and an
+  enhancement model over HTTP with OpenAI's audio API (`POST /v1/audio/speech`, `POST /v1/audio/transcriptions`,
+  `GET /v1/models`, `GET /health`), speech.cpp's own `POST /v1/audio/enhancements`, and OpenAI's Realtime transcription
+  over a WebSocket at `/v1/realtime`, for programs that speak HTTP. Like the worker it reaches the models only through
+  the C API; `openai-api.cpp` reads OpenAI's requests, and the enhancement request in a transcription's form, and writes
+  its stream events, `audio-speech.cpp` serves `/v1/audio/speech` and `audio-enhancements.cpp` `/v1/audio/enhancements`,
+  both streaming their audio through `audio-stream.cpp`,
   `tools/common/openai-error.cpp` OpenAI's error object, mapped from the library's categories alone,
   `tools/common/realtime-session.cpp` a Realtime session, with commits or `server_vad`, whose messages `realtime.cpp`
-  carries over the WebSocket, giving it the recognition, detection and diarization models held,
+  carries over the WebSocket, giving it the recognition, detection, diarization and enhancement models held,
   `jobs.h` runs one request at a time in arrival order and cancels the request of a client that goes away, and
   `served-models.cpp` holds one model of each task and replaces it once its requests have ended. `page/` is the page
   of `speech serve --open`, plain HTML, CSS and JavaScript modules compiled into `speech`, which `page.cpp` serves
   with the endpoints that fetch and load models; `access.cpp` guards them with the Host and the Origin.
 - The smoke scripts in `checks/smoke/` drive each entry point as its caller does and fail on a defect:
-  `worker_smoke.py` and `worker_recognition_smoke.py` the worker protocol through `worker_client.py`, which checks
-  every line and one terminal message per request, `server_smoke.py` every HTTP endpoint and the mapping of errors,
-  `server_realtime_smoke.py` the Realtime sessions of `/v1/realtime`, `server_diarization_smoke.py` the speakers of
-  `/v1/realtime` and of `diarized_json` and `server_page_smoke.py` the page's endpoints and every guard, all through
+  `worker_smoke.py`, `worker_recognition_smoke.py` and `worker_enhancement_smoke.py` the worker protocol through
+  `worker_client.py`, which checks every line and one terminal message per request, `server_smoke.py` every HTTP
+  endpoint and the mapping of errors, `server_realtime_smoke.py` the Realtime sessions of `/v1/realtime`,
+  `server_diarization_smoke.py` the speakers of `/v1/realtime` and of `diarized_json`, `server_enhancement_smoke.py`
+  `/v1/audio/enhancements` and `noise_reduction` in transcriptions and sessions, and `server_page_smoke.py` the page's
+  endpoints and every guard, all through
   `server_client.py`, which stops the
   server however the script ends, `server_page_browser_smoke.mjs` the page itself in a headless Chrome, as a person uses
   it, `server_openai_smoke.py` the server through the official openai-python client,
@@ -217,9 +227,11 @@ comment.
   committing code, a family's stage checks with `python3 checks/run.py <family> --devices cpu,gpu`. A change to the C
   API or the worker also runs `speech-api-check` and
   `checks/smoke/worker_smoke.py` for each synthesis family, and `speech-api-check transcribe` and
-  `checks/smoke/worker_recognition_smoke.py` for both recognition families, and `speech-api-check detect` with Silero
-  VAD; a change to the server runs `checks/smoke/server_smoke.py`, `checks/smoke/server_realtime_smoke.py`,
-  `checks/smoke/server_diarization_smoke.py` and `checks/smoke/server_page_smoke.py`, one to the page `checks/smoke/server_page_browser_smoke.mjs`, one to the command
+  `checks/smoke/worker_recognition_smoke.py` for both recognition families, `speech-api-check detect` with Silero
+  VAD, and `speech-api-check enhance` and
+  `checks/smoke/worker_enhancement_smoke.py` with RE-USE; a change to the server runs `checks/smoke/server_smoke.py`,
+  `checks/smoke/server_realtime_smoke.py`, `checks/smoke/server_diarization_smoke.py`,
+  `checks/smoke/server_enhancement_smoke.py` and `checks/smoke/server_page_smoke.py`, one to the page `checks/smoke/server_page_browser_smoke.mjs`, one to the command
   line or the parser `checks/smoke/speech_cli_smoke.py`, with a model of each family, and one to `tools/catalog/`
   `checks/smoke/models_smoke.py`.
 - Never commit on main. Every change reaches main through a pull request, one coherent unit each: a

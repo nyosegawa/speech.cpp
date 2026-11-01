@@ -77,6 +77,7 @@ bool fits(const CatalogModel & m, ModelKind kind) {
         case ModelKind::Recognition: return m.task == "recognition";
         case ModelKind::Detection: return m.task == "detection";
         case ModelKind::Diarization: return m.task == "diarization";
+        case ModelKind::Enhancement: return m.task == "enhancement";
         case ModelKind::VoiceFiles: return m.voice_files;
         default: return true;
     }
@@ -91,7 +92,7 @@ std::string joined(const std::vector<std::string> & items, const char * separato
 /** The catalog's names, each task's together: "a, b (synthesis); c (recognition)", a task without models left out. */
 std::string names_by_task() {
     std::string out;
-    for (const char * task : {"synthesis", "recognition", "detection", "diarization"}) {
+    for (const char * task : {"synthesis", "recognition", "detection", "diarization", "enhancement"}) {
         std::vector<std::string> names;
         for (const CatalogModel & m : catalog()) {
             if (m.task == task) names.push_back(m.name);
@@ -156,9 +157,10 @@ std::string no_model_message(const std::string & usage, ModelKind kind) {
     std::string out = "the model is missing: speech " + usage +
                       "\nMODEL is a model file (.gguf) or the name of one in `speech models`, which is fetched the first time it is used.\n";
     std::vector<const CatalogModel *> listed;
-    // A subcommand of speech detection or diarization lists every model of its task, which takes no language, and
-    // `speech voice` every model that takes voice files, whatever the language; the others list the models to start with.
-    const bool every = kind == ModelKind::VoiceFiles || kind == ModelKind::Detection || kind == ModelKind::Diarization;
+    // A subcommand of speech detection, diarization or enhancement lists every model of its task, which takes no language,
+    // and `speech voice` every model that takes voice files, whatever the language; the others list the models to start
+    // with.
+    const bool every = kind == ModelKind::VoiceFiles || kind == ModelKind::Detection || kind == ModelKind::Diarization || kind == ModelKind::Enhancement;
     for (const CatalogModel & m : catalog()) {
         if (fits(m, kind) && (every || !m.start.empty())) listed.push_back(&m);
     }
@@ -166,6 +168,7 @@ std::string no_model_message(const std::string & usage, ModelKind kind) {
     out += kind == ModelKind::VoiceFiles    ? "The models that take voice files:\n"
            : kind == ModelKind::Detection   ? "The models that detect speech:\n"
            : kind == ModelKind::Diarization ? "The models that diarize speakers:\n"
+           : kind == ModelKind::Enhancement ? "The models that enhance speech:\n"
                                             : "No model is chosen for you; the one to start with depends on the language:\n";
     size_t width = 0;
     for (const CatalogModel * m : listed) width = std::max(width, m->name.size());

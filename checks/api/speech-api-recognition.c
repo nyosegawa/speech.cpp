@@ -440,6 +440,10 @@ static int check_refusals(speech_model * model, const char * model_path, const f
     speech_diarization * diarization = NULL;
     ok &= expect(speech_diarization_start(r, rate, &diarization), SPEECH_ERROR_UNSUPPORTED, NULL, "a diarization of a recognition model") &&
           diarization == NULL;
+    ok &= expect(speech_enhance(r, ignore_audio, NULL), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_enhance() of a recognition model");
+    speech_enhancement * enhancement = NULL;
+    ok &= expect(speech_enhancement_start(r, rate, ignore_audio, NULL, &enhancement), SPEECH_ERROR_UNSUPPORTED, NULL, "an enhancement of a recognition model") &&
+          enhancement == NULL;
     speech_request_free(r);
     speech_model_info * info = NULL;
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");

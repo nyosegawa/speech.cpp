@@ -15,7 +15,7 @@
  *
  * With a recognition model (transcribe), speech-api-recognition.c, which takes F32 or F16 weights only, with a
  * detection model (detect), speech-api-detection.c and speech-api-detection-stream.c, and with a diarization model
- * (diarize), speech-api-diarization.c.
+ * (diarize), speech-api-diarization.c, and with an enhancement model (enhance), speech-api-enhancement.c.
  *
  * With --make-drama3-voice, Drama 3's voice files of a recording and its transcript, of them put together as two
  * speakers, and the ones refused (speech-api-drama3.c), then refuses the recording added alone and speaks both voices.
@@ -26,6 +26,7 @@
  *        speech-api-check transcribe <model.gguf> <dump folder>... [--device NAME]
  *        speech-api-check detect <model.gguf> <dump folder>... [--device NAME]
  *        speech-api-check diarize <model.gguf> <input folder>... [--device NAME]
+ *        speech-api-check enhance <model.gguf> <dump folder>... [--device NAME]
  */
 
 #include <math.h>
@@ -507,6 +508,10 @@ static int check_model(speech_model * model, const char * model_path, const char
     speech_diarization * diarization = NULL;
     ok &= expect(speech_diarization_start(r, rate, &diarization), SPEECH_ERROR_UNSUPPORTED, NULL, "a diarization of a synthesis model") &&
           diarization == NULL;
+    ok &= expect(speech_enhance(r, collect, &audio), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_enhance() of a synthesis model");
+    speech_enhancement * enhancement = NULL;
+    ok &= expect(speech_enhancement_start(r, rate, collect, &audio, &enhancement), SPEECH_ERROR_UNSUPPORTED, NULL, "an enhancement of a synthesis model") &&
+          enhancement == NULL;
     ok &= expect(speak(r, &audio, NULL, NULL), SPEECH_ERROR_INVALID_ARGUMENT, "text", "a request without a text");
     // A request refused before its work is fixed and run again; one that has done its work runs once.
     r = new_request(model, "一回だけです。", NULL, 14);
@@ -539,23 +544,25 @@ int main(int argc, char ** argv) {
     argv = utf8_argv(&argc);
 #endif
     const int recognition = argc > 1 && !strcmp(argv[1], "transcribe"), detection = argc > 1 && !strcmp(argv[1], "detect");
-    const int diarization = argc > 1 && !strcmp(argv[1], "diarize");
+    const int diarization = argc > 1 && !strcmp(argv[1], "diarize"), enhancement = argc > 1 && !strcmp(argv[1], "enhance");
     if (argc < 3) {
         fprintf(stderr,
                 "usage: %s <model.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]... "
                 "[--make-voice <reference.wav> <voice.gguf>] [--make-drama3-voice <reference.wav> <transcript> <voice.gguf>]\n"
                 "       %s transcribe <model.gguf> <dump folder>... [--device NAME]\n"
                 "       %s detect <model.gguf> <dump folder>... [--device NAME]\n"
-                "       %s diarize <model.gguf> <input folder>... [--device NAME]\n",
-                argv[0], argv[0], argv[0], argv[0]);
+                "       %s diarize <model.gguf> <input folder>... [--device NAME]\n"
+                "       %s enhance <model.gguf> <dump folder>... [--device NAME]\n",
+                argv[0], argv[0], argv[0], argv[0], argv[0]);
         return 2;
     }
     speech_log_set(on_log, NULL);
-    const char * checked = argv[recognition || detection || diarization ? 2 : 1];
+    const char * checked = argv[recognition || detection || diarization || enhancement ? 2 : 1];
     if (check_library() != 0 || check_load_refusals(checked) != 0 || check_quantize_refusals(checked) != 0) return 1;
     if (recognition) return check_recognition(argc - 2, argv + 2);
     if (detection) return check_detection(argc - 2, argv + 2);
     if (diarization) return check_diarization(argc - 2, argv + 2);
+    if (enhancement) return check_enhancement(argc - 2, argv + 2);
     const char * model_path = argv[1];
 
     speech_load_params * params = NULL;

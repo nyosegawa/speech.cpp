@@ -166,6 +166,11 @@ static int check_refusals(speech_model * model, const char * model_path, const f
     ok &= expect(speech_detect(r), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_detect() of a diarization model");
     speech_detection * detection = NULL;
     ok &= expect(speech_detection_start(r, rate, &detection), SPEECH_ERROR_UNSUPPORTED, NULL, "a detection of a diarization model") && detection == NULL;
+    ok &= expect(speech_enhance(r, ignore_audio, NULL), SPEECH_ERROR_UNSUPPORTED, NULL, "speech_enhance() of a diarization model");
+    speech_enhancement * enhancement = NULL;
+    ok &= expect(speech_enhancement_start(r, rate, ignore_audio, NULL, &enhancement), SPEECH_ERROR_UNSUPPORTED, NULL,
+                 "an enhancement of a diarization model") &&
+          enhancement == NULL;
     ok &= expect(speech_diarize(r), SPEECH_ERROR_INVALID_ARGUMENT, "audio", "a diarization without audio");
     speech_diarization * diarization = NULL;
     ok &= expect(speech_diarization_start(r, 0, &diarization), SPEECH_ERROR_INVALID_ARGUMENT, "audio", "a diarization at no rate") && diarization == NULL;

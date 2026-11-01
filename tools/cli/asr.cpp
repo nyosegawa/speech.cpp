@@ -9,6 +9,7 @@
 #include "asr-stream.h"
 #include "catalog.h"
 #include "commands.h"
+#include "enhancement.h"
 #include "fetch.h"
 #include "json.h"
 #include "regions.h"
@@ -20,7 +21,8 @@
 // given, as text or as one JSON object per file, and reports on stderr the load time and, for each file, its seconds
 // of audio, the time to its text and the RTFx, the seconds of audio over the seconds they took. With --vad it
 // transcribes each file by the regions where a detection model finds that someone speaks, and PCM from stdin (-) or the
-// microphone (--live) region by region as the audio arrives (asr-stream.h).
+// microphone (--live) region by region as the audio arrives (asr-stream.h). With --enhance an enhancement model enhances
+// each file whole, or each utterance once it has ended, before it is recognized.
 
 namespace {
 
@@ -53,6 +55,44 @@ struct Diarizer {
     Model model{nullptr, speech_model_free};
     std::vector<RequestOption> options;
 };
+
+/** The enhancement model of --enhance, and the request options that are its own. */
+struct Enhancer {
+    Model model{nullptr, speech_model_free};
+    std::vector<RequestOption> options;
+};
+
+/** The file of the enhancement model --enhance names, fetched if it is not there yet; none without --enhance. */
+std::optional<std::string> enhancement_file(const CommandLine & line) {
+    const std::optional<std::string> argument = line.value("--enhance");
+    if (!argument) return std::nullopt;
+    const std::string path = model_file(*argument);
+    const speech_task task = speech_model_info_task(file_info(path).get());
+    if (task != SPEECH_TASK_ENHANCEMENT) {
+        throw UsageError("--enhance takes a model of speech enhancement, and " + *argument + " is a speech " + task_name(task) + " model");
+    }
+    return path;
+}
+
+/**
+ * The enhancement model of `path`, on the recognizer's device, and the options that are its own: those it takes and none
+ * of `others`, the other models' files, takes, which leave `options`.
+ */
+std::optional<Enhancer> enhancer_of(const CommandLine & line, const std::optional<std::string> & path,
+                                    const std::vector<const speech_model_info *> & others, std::vector<RequestOption> & options) {
+    if (!path) return std::nullopt;
+    Enhancer e;
+    e.model = load_model(*path, line.loading(false));
+    const ModelInfo info = model_info(e.model.get());
+    std::vector<RequestOption> rest;
+    for (const RequestOption & o : options) {
+        bool own = speech_model_info_takes(info.get(), o.option);
+        for (const speech_model_info * other : others) own = own && !(other && speech_model_info_takes(other, o.option));
+        (own ? e.options : rest).push_back(o);
+    }
+    options = rest;
+    return e;
+}
 
 /** The file of the diarization model --diarize names, fetched if it is not there yet; none without --diarize. */
 std::optional<std::string> diarization_file(const CommandLine & line) {
@@ -175,9 +215,11 @@ int run_asr(const CommandLine & line, FILE * out) {
     require_options(path, line);
     const std::optional<std::string> detector = detection_file(line);
     const std::optional<std::string> diarizer_path = diarization_file(line);
+    const std::optional<std::string> enhancer_path = enhancement_file(line);
     const auto t0 = Clock::now();
     terminal::Status loading("Loading " + argument_label(line.args[0]) + (detector ? " and " + argument_label(*line.value("--vad")) : "") +
-                             (diarizer_path ? " and " + argument_label(*line.value("--diarize")) : ""));
+                             (diarizer_path ? " and " + argument_label(*line.value("--diarize")) : "") +
+                             (enhancer_path ? " and " + argument_label(*line.value("--enhance")) : ""));
     const Model model = load_model(path, line.loading(false));
     const ModelInfo info = model_info(model.get());
     const speech_model_info * m = info.get();
@@ -186,13 +228,17 @@ int run_asr(const CommandLine & line, FILE * out) {
     // are taken from the rest before the detection model's.
     const ModelInfo diarizing_file = diarizer_path ? file_info(*diarizer_path) : ModelInfo(nullptr, speech_model_info_free);
     const ModelInfo detecting_file = detector ? file_info(*detector) : ModelInfo(nullptr, speech_model_info_free);
+    // The enhancement model's options are those none of the others takes.
+    const std::optional<Enhancer> enhancer = enhancer_of(line, enhancer_path, {m, detecting_file.get(), diarizing_file.get()}, options);
     const std::optional<Diarizer> diarizer = diarizer_of(line, diarizer_path, m, detecting_file.get(), options);
     const std::optional<Detection> detection = detection_of(line, detector, m, options);
     const ModelInfo detecting = detection ? model_info(detection->model.get()) : ModelInfo(nullptr, speech_model_info_free);
     const ModelInfo diarizing = diarizer ? model_info(diarizer->model.get()) : ModelInfo(nullptr, speech_model_info_free);
+    const ModelInfo enhancing = enhancer ? model_info(enhancer->model.get()) : ModelInfo(nullptr, speech_model_info_free);
     std::vector<const speech_model_info *> loaded{m};
     if (detecting) loaded.push_back(detecting.get());
     if (diarizing) loaded.push_back(diarizing.get());
+    if (enhancing) loaded.push_back(enhancing.get());
     loading.done(loaded_line(loaded, seconds_since(t0)));
     if (line.has("-v")) {
         std::string languages;
@@ -201,7 +247,8 @@ int run_asr(const CommandLine & line, FILE * out) {
     }
     if (live || piped) {
         return transcribe_stream(line, out, model.get(), options, detection->model.get(), detection->options, diarizer ? diarizer->model.get() : nullptr,
-                                 diarizer ? diarizer->options : std::vector<RequestOption>(), format == "json");
+                                 diarizer ? diarizer->options : std::vector<RequestOption>(), enhancer ? enhancer->model.get() : nullptr,
+                                 enhancer ? enhancer->options : std::vector<RequestOption>(), format == "json");
     }
     const bool timestamps = timestamps_in_effect(m, options), with_speakers = in_effect(m, options, SPEECH_OPT_SPEAKERS);
 
@@ -221,21 +268,28 @@ int run_asr(const CommandLine & line, FILE * out) {
             const terminal::Status status("Transcribing " + path);
             try {
                 const Wav wav = read_audio(path);
-                const std::vector<float> samples = wav.mono();
-                audio = (double) samples.size() / wav.sample_rate;
+                std::vector<float> samples = wav.mono();
+                int rate = wav.sample_rate;
+                audio = (double) samples.size() / rate;
                 Cancellation never;
+                // The file is enhanced whole, and its regions are found in the enhanced audio.
+                if (enhancer) {
+                    Enhanced enhanced = *enhance_whole(enhancer->model.get(), samples, rate, enhancer->options, never);
+                    samples = std::move(enhanced.samples);
+                    rate = enhanced.rate;
+                }
                 if (detection) {
-                    const Request request = detection_request(detection->model.get(), samples, wav.sample_rate, detection->options);
+                    const Request request = detection_request(detection->model.get(), samples, rate, detection->options);
                     found = *detect_regions(request.get(), never);
                     regions = found.size();
-                    transcript = *transcribe_regions(model.get(), samples, wav.sample_rate, found, options, timestamps, never, &parts);
+                    transcript = *transcribe_regions(model.get(), samples, rate, found, options, timestamps, never, &parts);
                     if (diarizer) {
-                        const Request diarization = diarization_request(diarizer->model.get(), samples, wav.sample_rate, diarizer->options);
+                        const Request diarization = diarization_request(diarizer->model.get(), samples, rate, diarizer->options);
                         speakers = *diarize_segments(diarization.get(), never);
                     }
                 } else {
                     const Request request = new_request(model.get());
-                    check(speech_request_set_audio(request.get(), samples.data(), samples.size(), wav.sample_rate));
+                    check(speech_request_set_audio(request.get(), samples.data(), samples.size(), rate));
                     apply_options(request.get(), options);
                     check(speech_transcribe(request.get()));
                     transcript = transcript_of(speech_request_result(request.get()), timestamps, with_speakers);
@@ -316,12 +370,17 @@ Command asr_command() {
         "events, one per line: input_audio_buffer.speech_started, .speech_stopped and .committed, and\n"
         "conversation.item.input_audio_transcription.delta, .completed and .failed. With --diarize, in its low_latency\n"
         "mode unless --streaming-mode says otherwise, each line of text begins with its main speaker and a tab, and each\n"
-        ".completed carries \"speakers\" once the diarization has settled its utterance.";
+        ".completed carries \"speakers\" once the diarization has settled its utterance.\n"
+        "With --enhance, an enhancement model removes noise before the recognition: each file whole, before --vad finds\n"
+        "its regions, and with - or --live each utterance whole once it has ended, while the detection and the text shown\n"
+        "as it is said hear the audio as it arrives. It runs on the device of MODEL; its options are those only it takes,\n"
+        "such as --chunk-size-in-seconds. Enhancement can help on noisy audio and hurt on clean audio: try both.";
     c.flags = {
         {"--format", "text|json", false, "text (the default) or one JSON object per file, or per event, and line"},
         {"--vad", "MODEL", false, "transcribe by the regions where this detection model finds speech"},
         {"--live", "", false, "transcribe the default microphone until Ctrl-C, with --vad"},
         {"--diarize", "MODEL", false, "give each region the speakers this diarization model finds, with --vad"},
+        {"--enhance", "MODEL", false, "remove noise with this enhancement model before the recognition"},
         {"--rate", "HZ", false, "the rate of the PCM that - reads from stdin, 16000 unless given"},
         device_flag("auto (the first GPU, or the CPU without one), gpu, cpu or a name `speech devices` lists; for MODEL"),
         threads_flag(),

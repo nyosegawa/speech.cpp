@@ -7,10 +7,21 @@
 
 #include "base64.h"
 #include "json.h"
+#include "library.h"
 
 namespace {
 
-const char * const kTypes = "synthesize, chunk, transcribe, add_voice, info, count_tokens or cancel";
+const char * const kTypes = "synthesize, chunk, transcribe, enhance, add_voice, info, count_tokens or cancel";
+
+/** The requests a model of `task` takes, for a message that refuses another. */
+std::string requests_of(speech_task task) {
+    switch (task) {
+        case SPEECH_TASK_SYNTHESIS: return "synthesize";
+        case SPEECH_TASK_RECOGNITION: return "chunk and transcribe";
+        case SPEECH_TASK_ENHANCEMENT: return "chunk and enhance";
+        default: return "none";
+    }
+}
 
 std::string joined(const std::vector<std::string> & names) {
     std::string out;
@@ -108,10 +119,12 @@ void Inbox::finish(const Job & job, const std::string & line) {
 
 void Inbox::close_collecting() {
     std::lock_guard<std::mutex> lock(mutex_);
+    const bool enhancement = task_ == SPEECH_TASK_ENHANCEMENT;
     for (auto it = pending_.begin(); it != pending_.end();) {
         if (it->second.state == Pending::State::Collecting) {
             reply_error(&it->first, speech_status_name(SPEECH_ERROR_INVALID_ARGUMENT), "",
-                        "stdin closed before the request's transcribe line, so its audio was not recognized");
+                        enhancement ? "stdin closed before the request's enhance line, so its audio was not enhanced"
+                                    : "stdin closed before the request's transcribe line, so its audio was not recognized");
             it = pending_.erase(it);
         } else {
             ++it;
@@ -215,7 +228,9 @@ void Inbox::take_line(const std::string & line) {
     } else if (t == "chunk") {
         chunk(id, message);
     } else if (t == "transcribe") {
-        transcribe(id, message);
+        end_chunks(Job::Kind::Transcribe, id, message);
+    } else if (t == "enhance") {
+        end_chunks(Job::Kind::Enhance, id, message);
     } else if (t == "synthesize") {
         request(Job::Kind::Synthesize, t, id, message);
     } else if (t == "add_voice") {
@@ -252,7 +267,8 @@ void Inbox::request(Job::Kind kind, const std::string & type, const std::string 
     }
     if (kind == Job::Kind::Synthesize && task_ != SPEECH_TASK_SYNTHESIS) {
         reply_error(&id, speech_status_name(SPEECH_ERROR_UNSUPPORTED), "type",
-                    model_name_ + " is a model of speech recognition, which takes chunk and transcribe; synthesize needs a synthesis model");
+                    model_name_ + " is a model of speech " + task_name(task_) + ", which takes " + requests_of(task_) +
+                        "; synthesize needs a synthesis model");
         return;
     }
     Job job;
@@ -296,13 +312,14 @@ void Inbox::chunk(const std::string & id, const JsonValue & message) {
     }
     if (in_flight(id) && pending_[id].state != Pending::State::Collecting) {
         reply_error(nullptr, speech_status_name(SPEECH_ERROR_INVALID_ARGUMENT), "id",
-                    "the request " + json_string(id) + " has had its transcribe, or is not a recognition request; send a request's chunks before "
-                    "its transcribe, under an id that no other request in flight has");
+                    "the request " + json_string(id) + " has had its transcribe or enhance, or takes no chunks; send a request's chunks before "
+                    "its transcribe or enhance, under an id that no other request in flight has");
         return;
     }
-    if (!in_flight(id) && task_ != SPEECH_TASK_RECOGNITION) {
+    if (!in_flight(id) && task_ != SPEECH_TASK_RECOGNITION && task_ != SPEECH_TASK_ENHANCEMENT) {
         reply_error(&id, speech_status_name(SPEECH_ERROR_UNSUPPORTED), "type",
-                    model_name_ + " is a model of speech synthesis, which takes synthesize; chunk and transcribe need a recognition model");
+                    model_name_ + " is a model of speech " + task_name(task_) + ", which takes " + requests_of(task_) +
+                        "; chunk needs a recognition or enhancement model");
         dropping_.insert(id);
         return;
     }
@@ -345,22 +362,27 @@ void Inbox::chunk(const std::string & id, const JsonValue & message) {
     p.next_seq++;
 }
 
-void Inbox::transcribe(const std::string & id, const JsonValue & message) {
+void Inbox::end_chunks(Job::Kind kind, const std::string & id, const JsonValue & message) {
     const std::string invalid = speech_status_name(SPEECH_ERROR_INVALID_ARGUMENT);
+    const bool enhance = kind == Job::Kind::Enhance;
+    const std::string type = enhance ? "enhance" : "transcribe";
     if (dropping_.erase(id)) return;
     if (in_flight(id) && pending_[id].state != Pending::State::Collecting) {
-        reply_error(nullptr, invalid, "id", "a request under the id " + json_string(id) + " has not had its answer; give the transcribe "
-                                            "the id of the chunks it ends, or an id that no request in flight has");
+        reply_error(nullptr, invalid, "id", "a request under the id " + json_string(id) + " has not had its answer; give the " + type +
+                                                " the id of the chunks it ends, or an id that no request in flight has");
         return;
     }
-    if (!in_flight(id) && task_ != SPEECH_TASK_RECOGNITION) {
+    if (task_ != (enhance ? SPEECH_TASK_ENHANCEMENT : SPEECH_TASK_RECOGNITION)) {
+        // The chunks before it, which a model of the other task that takes chunks has gathered, end with the request.
+        pending_.erase(id);
         reply_error(&id, speech_status_name(SPEECH_ERROR_UNSUPPORTED), "type",
-                    model_name_ + " is a model of speech synthesis, which takes synthesize; chunk and transcribe need a recognition model");
+                    model_name_ + " is a model of speech " + task_name(task_) + ", which takes " + requests_of(task_) + "; " + type + " needs " +
+                        (enhance ? "an enhancement model" : "a recognition model"));
         return;
     }
     Pending & p = in_flight(id) ? pending_[id] : open(id, Pending::State::Collecting);
     Job job;
-    job.kind = Job::Kind::Transcribe;
+    job.kind = kind;
     job.id = id;
     std::string option, problem;
     int64_t rate = 0;

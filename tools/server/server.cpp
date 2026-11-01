@@ -21,6 +21,7 @@
 #include "terminal.h"
 
 #include "access.h"
+#include "audio-enhancements.h"
 #include "audio-speech.h"
 #include "page.h"
 #include "realtime.h"
@@ -29,7 +30,8 @@
 // speech serve: serves a model of each task over HTTP with OpenAI's audio API, so that a program that speaks HTTP (a web
 // app, Python with requests, curl) can use speech.cpp without starting the worker: the synthesis model answers
 // POST /v1/audio/speech and the recognition model POST /v1/audio/transcriptions, which with chunking_strategy recognizes
-// the regions where the detection model finds that someone speaks; GET /v1/models gives the models with their
+// the regions where the detection model finds that someone speaks, and the enhancement model speech.cpp's own
+// POST /v1/audio/enhancements (audio-enhancements.h); GET /v1/models gives the models with their
 // information, and GET /health says the server is up, which it is once the models given are loaded. A WebSocket at
 // /v1/realtime carries OpenAI's Realtime transcription session (realtime.h). A failure of
 // the library becomes OpenAI's error object by its category alone (openai::library_error()). A model serves one request
@@ -50,20 +52,13 @@ const char * use_of(speech_task task) {
         case SPEECH_TASK_RECOGNITION: return "/v1/audio/transcriptions";
         case SPEECH_TASK_DETECTION: return "chunking_strategy of /v1/audio/transcriptions and server_vad of /v1/realtime";
         case SPEECH_TASK_DIARIZATION: return "diarized_json of /v1/audio/transcriptions and diarization of /v1/realtime";
+        case SPEECH_TASK_ENHANCEMENT: return "/v1/audio/enhancements";
     }
     throw std::logic_error("a task speech.h does not have");
 }
 
-/** The task of the other of the two endpoints that take a model. */
-speech_task other_task(speech_task task) {
-    switch (task) {
-        case SPEECH_TASK_SYNTHESIS: return SPEECH_TASK_RECOGNITION;
-        case SPEECH_TASK_RECOGNITION: return SPEECH_TASK_SYNTHESIS;
-        case SPEECH_TASK_DETECTION:
-        case SPEECH_TASK_DIARIZATION: break;
-    }
-    throw std::logic_error("no endpoint takes a model of speech detection or diarization");
-}
+/** The tasks of the endpoints that take a model, the synthesis and recognition models first, which a 404 names besides the one it lacks. */
+constexpr speech_task kEndpointTasks[] = {SPEECH_TASK_SYNTHESIS, SPEECH_TASK_RECOGNITION, SPEECH_TASK_ENHANCEMENT};
 
 /** OpenAI's model object, with the release of speech.cpp and the model's information. */
 std::string model_json(const Served & served) {
@@ -119,6 +114,9 @@ public:
         http.Post("/v1/audio/transcriptions", [this](const httplib::Request & req, httplib::Response & res) {
             if (auto served = held(SPEECH_TASK_RECOGNITION, req, res)) transcription(std::move(served), req, res);
         });
+        http.Post("/v1/audio/enhancements", [this](const httplib::Request & req, httplib::Response & res) {
+            if (auto served = held(SPEECH_TASK_ENHANCEMENT, req, res)) answer_enhancement(std::move(served), req, res);
+        });
     }
 
 private:
@@ -140,11 +138,14 @@ private:
             return nullptr;
         }
         std::string message = "This server holds no " + task + " model, which " + req.path + " is for";
-        const speech_task other = other_task(wanted);
-        if (const auto served = models_.of(other)) {
-            message += "; it holds " + std::string(speech_model_info_name(served->info().get())) + ", a speech " + task_name(other) +
-                       " model, which " + use_of(other) + " is for";
+        std::string holds;
+        for (const speech_task other : kEndpointTasks) {
+            const auto served = other == wanted ? nullptr : models_.of(other);
+            if (!served) continue;
+            holds += std::string(holds.empty() ? "; it holds " : " and ") + speech_model_info_name(served->info().get()) + ", a speech " +
+                     task_name(other) + " model, which " + use_of(other) + " is for";
         }
+        message += holds;
         send_error(res, {404, message + ". Give speech serve a " + task + " model" + (access_.loopback() ? ", or pick one on its page." : "."), "", ""});
         return nullptr;
     }
@@ -232,6 +233,22 @@ private:
                 const std::string member = server_vad_member(e.option());
                 if (!member.empty()) error.param = "chunking_strategy[" + member + "]";
                 send_error(res, error);
+                return;
+            }
+        }
+        if (asked.enhance) {
+            job->enhancer = needed(SPEECH_TASK_ENHANCEMENT, "noise_reduction",
+                                   {400, "noise_reduction enhances the file with a speech enhancement model, and this server holds none. Give speech "
+                                         "serve one beside the recognition model, as in speech serve " + recognizer + " re-use, or leave noise_reduction "
+                                         "out.",
+                                    "noise_reduction", "unsupported_value"},
+                                   res);
+            if (!job->enhancer) return;
+            try {
+                job->enhancement = enhancement_request(job->enhancer->get(), asked.samples, asked.sample_rate, job->enhancer->defaults());
+                job->enhanced_rate = enhanced_rate(job->enhancer->info().get(), asked.sample_rate, job->enhancer->defaults());
+            } catch (const Failure & e) {
+                send_error(res, openai::library_error(e));
                 return;
             }
         }
@@ -447,13 +464,14 @@ int run_serve(const CommandLine & line, FILE *) {
 Command serve_command() {
     Command c;
     c.name = "serve";
-    c.usage = "serve [MODEL [MODEL [MODEL [MODEL]]]] [options]";
+    c.usage = "serve [MODEL...] [options]";
     c.summary = "serve models over HTTP with OpenAI's audio API, and a page to try them";
     c.description =
-        "Loads each MODEL, a synthesis model, a recognition model, a detection model and a diarization model at most,\n"
-        "warmed up unless --no-warmup, adds the voices of --add-voice to the synthesis model, and serves them over HTTP:\n"
-        "POST /v1/audio/speech, POST /v1/audio/transcriptions, which with chunking_strategy recognizes the regions where\n"
-        "the detection model finds speech and with response_format diarized_json gives each its speakers, GET /v1/models,\n"
+        "Loads each MODEL, one model of each task at most (synthesis, recognition, detection, diarization and\n"
+        "enhancement), warmed up unless --no-warmup, adds the voices of --add-voice to the synthesis model, and serves\n"
+        "them over HTTP: POST /v1/audio/speech, POST /v1/audio/transcriptions, which with chunking_strategy recognizes the\n"
+        "regions where the detection model finds speech and with response_format diarized_json gives each its speakers,\n"
+        "POST /v1/audio/enhancements, speech.cpp's own, which enhances a WAV file, GET /v1/models,\n"
         "GET /health, and OpenAI's Realtime transcription over a WebSocket at /v1/realtime, which transcribes each buffer\n"
         "the client commits, or with server_vad each region of the detection model, and the text agreed so far while it\n"
         "is said, and with session.audio.input.diarization gives each utterance its speakers. It has no authentication\n"
@@ -476,7 +494,7 @@ Command serve_command() {
     c.request_options = true;
     c.task_options = true;
     c.model = ModelKind::Any;
-    c.max_args = 4;
+    c.max_args = 5;
     c.run = run_serve;
     c.release_notice = ReleaseNotice::AtStart;
     return c;

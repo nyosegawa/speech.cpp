@@ -257,7 +257,7 @@ for event, code, param, what in (
         (session({"model": name, "keywords_guard": "yes"}), "invalid_type", "session.audio.input.transcription.keywords_guard",
          "a keywords_guard that is no boolean"),
         ({"type": "session.update", "session": {"type": "transcription", "audio": {"input": {"noise_reduction": {"type": "near_field"}}}}},
-         "unsupported_parameter", "session.audio.input.noise_reduction", "noise reduction"),
+         "unsupported_value", "session.audio.input.noise_reduction", "noise reduction without an enhancement model"),
         ({"type": "session.update", "session": {"type": "transcription", "audio": {"input": {"format": {"type": "audio/pcmu"}}}}},
          "unsupported_value", "session.audio.input.format.type", "G.711"),
         ({"type": "session.update", "session": {"type": "transcription", "audio": {"input": {"format": {"type": "audio/pcm", "rate": 16000}}}}},

@@ -55,6 +55,7 @@ const JsonValue * given(const JsonValue & object, const char * name) {
 
 const char * const kTurns = "session.audio.input.turn_detection";
 const char * const kDiarization = "session.audio.input.diarization";
+const char * const kNoiseReduction = "session.audio.input.noise_reduction";
 
 /** The diarization options of a diarization that is not null: its members, each named as a request option. */
 std::vector<RequestOption> diarization_options(const JsonValue & diarization) {
@@ -114,7 +115,24 @@ bool same(const std::vector<RequestOption> & a, const std::vector<RequestOption>
 
 /** Whether two configurations ask their recognitions alike: neither transcribes, or both do with one model and options. */
 bool same(const std::optional<utterances::Asked> & a, const std::optional<utterances::Asked> & b) {
-    return a.has_value() == b.has_value() && (!a || (a->model == b->model && same(a->options, b->options)));
+    return a.has_value() == b.has_value() && (!a || (a->model == b->model && same(a->options, b->options) && a->enhance == b->enhance));
+}
+
+/**
+ * The type of a noise_reduction that is not null, near_field or far_field, which both run the enhancement model the host
+ * holds.
+ */
+std::string noise_reduction(const JsonValue & reduction) {
+    object_at(reduction, kNoiseReduction);
+    const std::string at = kNoiseReduction;
+    only(reduction, at, {"type"});
+    const JsonValue * type = reduction.member("type");
+    if (!type) throw refusal("missing_required_parameter", at + ".type", "noise_reduction needs its type; give \"near_field\" or \"far_field\".");
+    const std::string & kind = string_at(*type, at + ".type");
+    if (kind != "near_field" && kind != "far_field") {
+        throw refusal("invalid_value", at + ".type", "The noise reduction " + json_string(kind) + " is not one of \"near_field\" and \"far_field\".");
+    }
+    return kind;
 }
 
 /**
@@ -173,7 +191,7 @@ std::vector<RequestOption> Session::Config::options() const {
 
 std::optional<utterances::Asked> Session::Config::asked() const {
     if (!transcribe) return std::nullopt;
-    return utterances::Asked{model.value_or(""), options()};
+    return utterances::Asked{model.value_or(""), options(), noise_reduction.has_value()};
 }
 
 std::unique_ptr<utterances::Reservation> Session::Reader::reserve(const utterances::Asked & asked) {
@@ -181,16 +199,25 @@ std::unique_ptr<utterances::Reservation> Session::Reader::reserve(const utteranc
 }
 
 std::optional<Transcript> Session::Reader::transcribe(utterances::Reservation & reservation, const utterances::Asked & asked,
-                                                      std::vector<float> samples, int, Cancellation & cancellation, uint64_t utterance,
+                                                      std::vector<float> samples, int rate, Cancellation & cancellation, uint64_t utterance,
                                                       bool provisional, const std::string & draft) {
     // A reading of an utterance that is not yet announced, which the detection may still drop, takes no item.
-    return models_.transcribe(reservation, std::move(samples), asked.options, cancellation, provisional ? "" : events_.item(utterance), provisional,
+    return models_.transcribe(reservation, std::move(samples), rate, asked.options, cancellation, provisional ? "" : events_.item(utterance), provisional,
                               draft);
 }
 
+std::unique_ptr<utterances::Reservation> Session::Cleaner::reserve() {
+    return models_.reserve_enhancement();
+}
+
+std::optional<std::pair<std::vector<float>, int>> Session::Cleaner::enhance(utterances::Reservation & reservation, std::vector<float> samples, int rate,
+                                                                             Cancellation & cancellation) {
+    return models_.enhance(reservation, std::move(samples), rate, cancellation);
+}
+
 Session::Session(Models & models, std::function<void(const std::string &)> send, size_t limit, const std::string & model)
-    : models_(models), events_(std::move(send)), reader_(models_, events_), limit_(limit),
-      assembly_(reader_, kRate, [this](const utterances::Event & e) { events_.utterance(e); }) {
+    : models_(models), events_(std::move(send)), reader_(models_, events_), cleaner_(models_), limit_(limit),
+      assembly_(reader_, kRate, [this](const utterances::Event & e) { events_.utterance(e); }, &cleaner_) {
     if (!model.empty()) config_.model = model;
     assembly_.ask(config_.asked());
     watcher_ = std::thread([this] { watch(); });
@@ -243,7 +270,8 @@ std::string Session::session_json() {
     const std::string diarization = config_.diarization ? options_json(*config_.diarization) : "null";
     return "{\"type\":\"transcription\",\"id\":\"" + events_.session_id() + "\",\"object\":\"realtime.transcription_session\",\"audio\":{\"input\":{\"format\":"
            "{\"type\":\"audio/pcm\",\"rate\":" + std::to_string(kRate) + "},\"transcription\":" + transcription +
-           ",\"noise_reduction\":null,\"turn_detection\":" + turns + ",\"diarization\":" + diarization + "}},\"include\":null}";
+           ",\"noise_reduction\":" + (config_.noise_reduction ? "{\"type\":" + json_string(*config_.noise_reduction) + "}" : std::string("null")) +
+           ",\"turn_detection\":" + turns + ",\"diarization\":" + diarization + "}},\"include\":null}";
 }
 
 void Session::tick() {
@@ -409,9 +437,13 @@ void Session::update(const JsonValue & event) {
                 }
             }
         }
-        if (given(*input, "noise_reduction")) {
-            throw refusal("unsupported_parameter", "session.audio.input.noise_reduction",
-                          "Noise reduction is not supported; give session.audio.input.noise_reduction null or leave it out.");
+        if (const JsonValue * reduction = input->member("noise_reduction")) {
+            next.noise_reduction = reduction->kind == JsonValue::Kind::Null ? std::nullopt : std::optional<std::string>(noise_reduction(*reduction));
+            if (next.noise_reduction && !models_.enhances()) {
+                throw refusal("unsupported_value", kNoiseReduction,
+                              "Noise reduction runs a speech enhancement model, and this server holds none. Give speech serve one beside the "
+                              "other models, as in speech serve qwen3-asr-0.6b silero-vad re-use, or give noise_reduction null.");
+            }
         }
         if (const JsonValue * turns = input->member("turn_detection")) {
             next.turns = turns->kind == JsonValue::Kind::Null ? std::nullopt : std::optional<std::vector<RequestOption>>(server_vad(*turns));

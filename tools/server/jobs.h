@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "cancellation.h"
+#include "enhancement.h"
 #include "library.h"
 #include "log.h"
 #include "regions.h"
@@ -135,9 +136,14 @@ struct Job {
 /**
  * One request's recognition, whose result the HTTP handler reads from the request once it is done; or with
  * chunking_strategy, a recognition of each region the detection request finds, joined, and with diarized_json the
- * diarization of the whole audio after it.
+ * diarization of the whole audio after it. With noise_reduction, the enhancement of the whole audio runs first, and every
+ * request after it takes the enhanced audio.
  */
 struct TranscriptionJob : Job {
+    /** With noise_reduction: the enhancement model, kept as `served` is, its request set up with the audio, and its rate out. */
+    std::shared_ptr<Served> enhancer;
+    Request enhancement{nullptr, speech_request_free};
+    int enhanced_rate = 0;
     /** The length of the audio in seconds and its rate, for the log and verbose_json. */
     double duration = 0;
     int sample_rate = 0;
@@ -268,6 +274,16 @@ inline void transcribe(const std::shared_ptr<TranscriptionJob> & job, Turns & tu
     char name[256];
     std::snprintf(name, sizeof name, "%.2f s of audio at %d Hz", job->duration, job->sample_rate);
     run_in_turn(*job, turns, ticket, name, [&] {
+        if (job->enhancement) {
+            std::optional<Enhanced> enhanced = gather_enhanced(job->enhancement.get(), job->enhanced_rate, job->cancellation);
+            if (!enhanced) return SPEECH_CANCELLED;
+            job->enhancement.reset();
+            for (speech_request * r : {job->request.get(), job->detection.get(), job->diarization.get()}) {
+                if (r) check(speech_request_set_audio(r, enhanced->samples.data(), enhanced->samples.size(), enhanced->rate));
+            }
+            if (job->detection) job->samples = std::move(enhanced->samples);
+            job->sample_rate = enhanced->rate;
+        }
         if (!job->detection) {
             speech_request * r = job->request.get();
             const speech_status s = check(job->cancellation.run(r, [&] { return speech_transcribe(r); }));

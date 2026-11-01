@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-#include "jobs.h"
+#include "audio-stream.h"
 #include "openai-api.h"
 #include "sentences.h"
 
@@ -22,57 +22,21 @@ namespace {
 using openai::ApiError;
 using openai::send_error;
 
-/** The audio of a request as the worker sends it: 16-bit little-endian samples, clamped to [-1, 1] and rounded. */
-void append_pcm(std::string & out, const float * s, size_t n) {
-    for (size_t i = 0; i < n; i++) {
-        const int16_t v = (int16_t) std::lround(std::max(-1.0f, std::min(1.0f, s[i])) * 32767.0f);
-        out += (char) (v & 0xFF);
-        out += (char) ((uint16_t) v >> 8);
-    }
-}
-
 /** One speech, which hands its audio to the HTTP handler as it is made. */
-struct SpeechJob : Job {
-    /** The model's sample rate, which the log gives the length in. */
-    int sample_rate = 0;
+struct SpeechJob : AudioJob {
     /** The text and the options, the seed among them, which the handler has had the library check. */
     std::string text;
     std::vector<RequestOption> options;
-    /** The PCM made and not yet sent. */
-    std::string pending;
-    /** A callback has been called, so the library has accepted a request and its work has begun. */
-    bool accepted = false;
-    uint64_t samples = 0;
     int64_t seed = -1;
     speech_stop stop = SPEECH_STOP_COMPLETE;
     size_t requests = 0;
-    Clock::time_point first_audio;
 };
-
-int on_audio(const float * s, size_t n, void * user_data) {
-    SpeechJob & job = *static_cast<SpeechJob *>(user_data);
-    std::lock_guard<std::mutex> lock(job.mutex);
-    job.accepted = true;
-    if (job.samples == 0) job.first_audio = Clock::now();
-    append_pcm(job.pending, s, n);
-    job.samples += n;
-    job.changed.notify_all();
-    return 0;
-}
-
-/** The library reports progress once it has checked a request, so a request that reports any is accepted. */
-int on_progress(double, void * user_data) {
-    SpeechJob & job = *static_cast<SpeechJob *>(user_data);
-    std::lock_guard<std::mutex> lock(job.mutex);
-    job.accepted = true;
-    job.changed.notify_all();
-    return 0;
-}
 
 void synthesize(const std::shared_ptr<SpeechJob> & job, Turns & turns, uint64_t ticket, const std::string & name) {
     run_in_turn(*job, turns, ticket, name, [&] {
         const std::optional<Spoken> spoken =
-            speak_text(job->served->get(), job->text, job->options, Split::Sentences, on_audio, on_progress, job.get(), job->cancellation);
+            speak_text(job->served->get(), job->text, job->options, Split::Sentences, on_job_audio, on_job_progress, static_cast<AudioJob *>(job.get()),
+                       job->cancellation);
         if (!spoken) return SPEECH_CANCELLED;
         std::lock_guard<std::mutex> lock(job->mutex);
         job->seed = spoken->seed;
@@ -88,78 +52,10 @@ void synthesize(const std::shared_ptr<SpeechJob> & job, Turns & turns, uint64_t 
     });
 }
 
-std::string wav_header(size_t data_bytes, int sample_rate) {
-    std::string h;
-    auto u32 = [&](uint32_t v) { for (int i = 0; i < 4; i++) h += (char) ((v >> (8 * i)) & 0xFF); };
-    auto u16 = [&](uint16_t v) { h += (char) (v & 0xFF); h += (char) (v >> 8); };
-    h += "RIFF";
-    u32((uint32_t) (36 + data_bytes));
-    h += "WAVEfmt ";
-    u32(16);
-    u16(1);
-    u16(1);
-    u32((uint32_t) sample_rate);
-    u32((uint32_t) sample_rate * 2);
-    u16(2);
-    u16(16);
-    h += "data";
-    u32((uint32_t) data_bytes);
-    return h;
-}
-
 /** A seed from 0 to 2^53 - 1, the range the library draws from, for a request that sets none. */
 int64_t draw_seed() {
     std::random_device device;
     return (int64_t) (((uint64_t) device() << 32 | device()) & ((1ull << 53) - 1));
-}
-
-/**
- * Sends the audio as it is made. A failure after the stream has begun ends a pcm stream without its last chunk,
- * which the client reads as a broken transfer, and an SSE stream with an error event.
- */
-bool stream(SpeechJob & job, bool sse, httplib::DataSink & sink) {
-    std::unique_lock<std::mutex> lock(job.mutex);
-    for (;;) {
-        if (!job.pending.empty()) {
-            std::string pcm;
-            pcm.swap(job.pending);
-            lock.unlock();
-            const std::string out = sse ? openai::sse_delta(pcm) : pcm;
-            // A write to a socket the client has closed succeeds once more before it fails, so a client that went
-            // away is noticed a chunk earlier by looking first.
-            if (!sink.is_writable() || !sink.write(out.data(), out.size())) {
-                job.abandon();
-                return false;
-            }
-            lock.lock();
-            continue;
-        }
-        if (job.finished) break;
-        if (job.changed.wait_for(lock, POLL) == std::cv_status::timeout && !job.finished && job.pending.empty()) {
-            lock.unlock();
-            if (!sink.is_writable()) {
-                job.abandon();
-                return false;
-            }
-            lock.lock();
-        }
-    }
-    const speech_status status = job.status;
-    const std::optional<Failure> failure = job.failure;
-    const int64_t seed = job.seed;
-    const uint64_t samples = job.samples;
-    const speech_stop stop = job.stop;
-    lock.unlock();
-    if (status != SPEECH_OK && !sse) return false;
-    if (sse) {
-        std::string out;
-        if (status == SPEECH_OK) out = openai::sse_done(seed, samples, speech_stop_name(stop));
-        else if (failure) out = openai::sse_error(openai::library_error(*failure));
-        else return false;
-        if (!sink.write(out.data(), out.size())) return false;
-    }
-    sink.done();
-    return true;
 }
 
 }  // namespace
@@ -230,8 +126,17 @@ void answer_speech(std::shared_ptr<Served> served, const httplib::Request & req,
     }
     const bool sse = asked.sse;
     if (sse) res.set_header("Cache-Control", "no-cache");
+    // An SSE stream ends with its done event, or with an error event for a failure after it has begun.
+    const auto frame = [sse](const std::string & pcm) { return sse ? openai::sse_delta(pcm) : pcm; };
+    const auto ending = [job, sse]() -> std::string {
+        if (!sse) return "";
+        std::lock_guard<std::mutex> lock(job->mutex);
+        if (job->status == SPEECH_OK) return openai::sse_done(job->seed, job->samples, speech_stop_name(job->stop));
+        if (job->failure) return openai::sse_error(openai::library_error(*job->failure));
+        return "";
+    };
     res.set_chunked_content_provider(
-        sse ? "text/event-stream" : "audio/pcm", [job, sse](size_t, httplib::DataSink & sink) { return stream(*job, sse, sink); },
+        sse ? "text/event-stream" : "audio/pcm", [job, frame, ending](size_t, httplib::DataSink & sink) { return stream_audio(*job, sink, frame, ending); },
         [job](bool success) {
             if (!success) job->abandon();
         });

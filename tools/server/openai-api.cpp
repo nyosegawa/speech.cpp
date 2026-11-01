@@ -140,6 +140,25 @@ SpeechRequest read_speech_request(const std::string & body, const std::string & 
     return r;
 }
 
+namespace {
+
+/** The WAV file of a form's "file"; anything else throws an ApiError naming the file. */
+Wav form_wav(const FormPart & file) {
+    const std::string & bytes = file.content;
+    if (bytes.size() < 12 || bytes.compare(0, 4, "RIFF") != 0 || bytes.compare(8, 4, "WAVE") != 0) {
+        throw ApiError{400, "The file " + json_string(file.filename) + " is not a WAV file. speech.cpp reads WAV alone (16-, 24- or 32-bit PCM or "
+                       "32-bit float); convert the audio first, for example with ffmpeg -i in.mp3 out.wav.",
+                       "file", "unsupported_value"};
+    }
+    try {
+        return parse_wav(bytes, file.filename);
+    } catch (const Error & e) {
+        throw ApiError{400, std::string("The file cannot be read: ") + e.what() + ".", "file", "invalid_value"};
+    }
+}
+
+}  // namespace
+
 TranscriptionRequest read_transcription_request(bool multipart, const std::vector<FormPart> & parts, const std::string & model_name,
                                                 bool gives_times, bool tells_speakers, const std::vector<RequestOption> & defaults) {
     if (!multipart) {
@@ -147,7 +166,7 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
                        "", ""};
     }
     std::vector<std::string> known = {"file", "model", "language", "prompt", "response_format", "decoding",
-                                      "keywords_alpha", "keywords_guard", "chunking_strategy", "chunking_strategy[type]"};
+                                      "keywords_alpha", "keywords_guard", "noise_reduction", "chunking_strategy", "chunking_strategy[type]"};
     for (const VadMember & m : kServerVad) known.push_back(std::string("chunking_strategy[") + m.name + "]");
     std::string listed;
     for (const std::string & name : known) listed += name + ", ";
@@ -215,6 +234,14 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
                        "chunking_strategy \"auto\" with it.",
                        "chunking_strategy", "missing_required_parameter"};
     }
+    // speech.cpp's own field under the name of the Realtime session's, whose two types both run the enhancement model held.
+    if (const FormPart * reduction = field("noise_reduction")) {
+        if (reduction->content != "near_field" && reduction->content != "far_field") {
+            throw ApiError{400, "noise_reduction is " + json_string(reduction->content) + "; give \"near_field\" or \"far_field\", or leave it out.",
+                           "noise_reduction", "invalid_value"};
+        }
+        r.enhance = true;
+    }
     if (language) r.options.push_back({SPEECH_OPT_LANGUAGE, language->content});
     if (prompt) r.options.push_back({SPEECH_OPT_PROMPT, prompt->content});
     if (decoding) r.options.push_back({SPEECH_OPT_DECODING, decoding->content});
@@ -241,19 +268,55 @@ TranscriptionRequest read_transcription_request(bool multipart, const std::vecto
     });
     r.timestamps = r.format == "verbose_json" && ((gives_times && !with_keywords) || !granularities.empty());
     if (r.timestamps) r.options.push_back({SPEECH_OPT_TIMESTAMPS, true});
-    const std::string & bytes = file->content;
-    if (bytes.size() < 12 || bytes.compare(0, 4, "RIFF") != 0 || bytes.compare(8, 4, "WAVE") != 0) {
-        throw ApiError{400, "The file " + json_string(file->filename) + " is not a WAV file. speech.cpp reads WAV alone (16-, 24- or 32-bit PCM or "
-                       "32-bit float); convert the audio first, for example with ffmpeg -i in.mp3 out.wav.",
-                       "file", "unsupported_value"};
+    const Wav wav = form_wav(*file);
+    r.samples = wav.mono();
+    r.sample_rate = wav.sample_rate;
+    return r;
+}
+
+EnhancementRequest read_enhancement_request(bool multipart, const std::vector<FormPart> & parts, const std::string & model_name) {
+    if (!multipart) {
+        throw ApiError{400, "The body is not multipart/form-data. Send the audio as the form's \"file\", as for /v1/audio/transcriptions.", "", ""};
     }
-    try {
-        const Wav wav = parse_wav(bytes, file->filename);
-        r.samples = wav.mono();
-        r.sample_rate = wav.sample_rate;
-    } catch (const Error & e) {
-        throw ApiError{400, std::string("The file cannot be read: ") + e.what() + ".", "file", "invalid_value"};
+    std::map<std::string, const FormPart *> given;
+    for (const FormPart & part : parts) {
+        speech_option o;
+        if (part.name != "file" && part.name != "model" && part.name != "response_format" && !option_named(part.name, o)) {
+            throw unknown_member(part.name, "file, model, response_format and the options " + option_names());
+        }
+        if (given.count(part.name)) throw ApiError{400, "\"" + part.name + "\" is given twice; give it once.", part.name, "invalid_value"};
+        given[part.name] = &part;
     }
+    EnhancementRequest r;
+    for (const auto & [name, part] : given) {
+        if (name == "file") continue;
+        if (name == "model") {
+            if (part->content != model_name) throw not_served(part->content, model_name);
+            continue;
+        }
+        if (name == "response_format") {
+            r.format = part->content;
+            if (r.format != "wav" && r.format != "pcm") {
+                throw ApiError{400, "The response_format " + json_string(r.format) + " is not supported; speech.cpp answers with \"wav\" or \"pcm\".",
+                               "response_format", "unsupported_value"};
+            }
+            continue;
+        }
+        // An option's field reads as the command line reads its flag's value.
+        speech_option option;
+        option_named(name, option);
+        try {
+            r.options.push_back({option, option_from_text(option, part->content)});
+        } catch (const std::invalid_argument & e) {
+            throw ApiError{400, e.what(), name, "invalid_type"};
+        }
+    }
+    const auto file = given.find("file");
+    if (file == given.end()) throw ApiError{400, "The request has no \"file\"; it is required.", "file", "missing_required_parameter"};
+    if (!file->second->file) throw ApiError{400, "\"file\" is a field; send it as a file, with a filename.", "file", "invalid_type"};
+    const Wav wav = form_wav(*file->second);
+    r.samples = wav.mono();
+    r.sample_rate = wav.sample_rate;
     return r;
 }
 

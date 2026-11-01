@@ -114,6 +114,12 @@ int check_recognition(int argc, char ** argv);
  */
 int check_diarization(int argc, char ** argv);
 
+/**
+ * The checks of an enhancement model: `argv` is <model.gguf> <dump folder of reference/semamba/dump.py>... [--device
+ * NAME]. Returns the exit status.
+ */
+int check_enhancement(int argc, char ** argv);
+
 /** The sentence a synthesis model speaks in most checks. */
 #define SENTENCE "明日の東京は晴れで、最高気温は二十四度の予報です。"
 

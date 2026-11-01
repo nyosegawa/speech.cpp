@@ -22,6 +22,7 @@
 #include <unistd.h>
 #endif
 
+#include "enhancement.h"
 #include "microphone.h"
 #include "realtime-events.h"
 #include "regions.h"
@@ -109,6 +110,25 @@ private:
     std::mutex mutex_;
     std::map<uint64_t, double> took_;
     size_t readings_ = 0;
+};
+
+/** Enhances each utterance on the command line's enhancement model, which serves the assembly alone. */
+class ModelEnhancer : public utterances::Enhancer {
+public:
+    ModelEnhancer(speech_model * model, std::vector<RequestOption> options) : model_(model), options_(std::move(options)) {}
+
+    std::unique_ptr<utterances::Reservation> reserve() override { return std::make_unique<utterances::Reservation>(); }
+
+    std::optional<std::pair<std::vector<float>, int>> enhance(utterances::Reservation &, std::vector<float> samples, int rate,
+                                                               Cancellation & cancellation) override {
+        std::optional<Enhanced> enhanced = enhance_whole(model_, samples, rate, options_, cancellation);
+        if (!enhanced) return std::nullopt;
+        return std::make_pair(std::move(enhanced->samples), enhanced->rate);
+    }
+
+private:
+    speech_model * model_;
+    std::vector<RequestOption> options_;
 };
 
 /**
@@ -206,7 +226,8 @@ private:
 
 int transcribe_stream(const CommandLine & line, FILE * out, speech_model * recognizer, const std::vector<RequestOption> & options,
                       speech_model * detector, const std::vector<RequestOption> & detection, speech_model * diarizer,
-                      const std::vector<RequestOption> & diarization, bool json) {
+                      const std::vector<RequestOption> & diarization, speech_model * enhancer, const std::vector<RequestOption> & enhancement,
+                      bool json) {
     // The recognition's options are refused before any audio, as a file's are, where they would otherwise wait for the
     // first utterance, which silence never brings.
     check_recognition(recognizer, options);
@@ -217,6 +238,12 @@ int transcribe_stream(const CommandLine & line, FILE * out, speech_model * recog
     const bool verbose = line.has("-v");
 
     ModelRecognizer recognition(recognizer);
+    std::optional<ModelEnhancer> enhancing;
+    if (enhancer) {
+        // The enhancement's options are refused before any audio too.
+        apply_options(enhancement_request(enhancer, std::vector<float>(1, 0.0f), 16000, {}).get(), enhancement);
+        enhancing.emplace(enhancer, enhancement);
+    }
     TextOutput text(out);
     realtime::Events events([out](const std::string & event) {
         std::fprintf(out, "%s\n", event.c_str());
@@ -249,8 +276,8 @@ int transcribe_stream(const CommandLine & line, FILE * out, speech_model * recog
                          recognition.took(e.utterance), e.transcript.stop == SPEECH_STOP_MODEL_LIMIT ? ", stopped at the most the model writes" : "");
         }
         times.erase(e.utterance);
-    });
-    assembly.ask(utterances::Asked{"", options});
+    }, enhancing ? &*enhancing : nullptr);
+    assembly.ask(utterances::Asked{"", options, enhancer != nullptr});
     assembly.detect(std::make_unique<utterances::Detection>(detector, nullptr, detection, rate));
     if (diarizer) assembly.diarize(std::make_unique<Diarization>(diarizer, nullptr, diarization, rate));
 

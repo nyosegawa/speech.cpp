@@ -8,6 +8,7 @@ This page lists the subcommands of `speech` and their options. `speech <subcomma
 | [`speech asr`](#speech-asr) | writes the text of WAVE files, or of the microphone as someone speaks |
 | [`speech vad`](#speech-vad) | writes where someone speaks in WAVE files |
 | [`speech diarize`](#speech-diarize) | writes who speaks where in WAVE files |
+| [`speech enhance`](#speech-enhance) | removes noise and other degradations from WAVE files, or from audio on stdin |
 | [`speech voice`](#speech-voice) | makes a voice file for Irodori-TTS or Drama 3 from reference recordings |
 | [`speech info`](#speech-info) | prints what a model file says of its model, without loading it |
 | [`speech devices`](#speech-devices) | lists the devices a model can run on |
@@ -56,6 +57,10 @@ speech vad silero-vad --split regions/ meeting.wav       # regions/meeting-01.wa
 # Who speaks where in a recording, as RTTM
 speech diarize nemotron-3-diarization --format rttm meeting.wav > meeting.rttm
 
+# A noisy recording cleaned, and the text of a recording made in a crowd, cleaned before it is recognized
+speech enhance re-use -o clean.wav street.wav
+speech asr qwen3-asr-1.7b --enhance re-use street.wav
+
 # What a model file holds, without loading it
 speech info irodori-tts-mf
 ```
@@ -66,7 +71,7 @@ speech info irodori-tts-mf
   fetched the first time it is used ([models.md](models.md)).
 - **`--device NAME`** is `auto` (the default: the first GPU, or the CPU on a machine without one), `gpu`, `cpu`, or a
   name that `speech devices` lists. **`--threads N`** is the CPU's threads; by default the machine's performance cores.
-- **Request options.** `speech tts`, `speech asr`, `speech vad` and `speech diarize` take every option of the C API's
+- **Request options.** `speech tts`, `speech asr`, `speech vad`, `speech diarize` and `speech enhance` take every option of the C API's
   vocabulary as a flag of its name in kebab-case: `duration_scale` is `--duration-scale` ([c-api.md](c-api.md#options)).
   The model refuses an option it does not take, as the C API does: Qwen3-TTS answers `--speed 1.5` with
   `speech: unsupported (speed): ...`.
@@ -132,6 +137,7 @@ speech asr MODEL [options] AUDIO.wav...|-|--live
   --vad MODEL              transcribe by the regions where this detection model finds speech
   --live                   transcribe the default microphone until Ctrl-C, with --vad
   --diarize MODEL          give each region the speakers this diarization model finds, with --vad
+  --enhance MODEL          remove noise with this enhancement model before the recognition
   --rate HZ                the rate of the PCM that - reads from stdin, 16000 unless given
   --device NAME --threads N
   -v                       also report the release, the sample rate and the model's languages, and each utterance
@@ -192,6 +198,15 @@ the device of the recognition model. It finds who speaks when in each file whole
 Speakers are numbered from 0 in the order they first speak in the file. The diarization takes the flags of
 `speech diarize`, such as `--streaming-mode` and `--onset`, which neither of the other models takes.
 
+### Enhancing before the recognition
+
+`--enhance MODEL` names an enhancement model ([models/semamba.md](models/semamba.md)), which runs on the device of the
+recognition model and takes the flags of `speech enhance` that no other model takes, such as `--chunk-size-in-seconds`.
+Each file is enhanced whole, and with `--vad` its regions are found in the enhanced audio. With `-` and `--live`, each
+utterance is enhanced whole once its region has ended, before its final text, while the detection and the text shown as
+it is said hear the audio as it arrives. Enhancement is off unless `--enhance` is given: it can help a recognizer on
+audio recorded in a crowd or on a street and hurt it on audio that is already clean, so compare both on your own audio.
+
 ### Transcribing as someone speaks
 
 With `--vad`, `--live` transcribes the default microphone until Ctrl-C, and `-` reads 16-bit little-endian mono PCM from
@@ -219,6 +234,8 @@ speech asr qwen3-asr-0.6b --vad silero-vad --live --format json > events.jsonl
   says otherwise, and each utterance waits until it has settled the utterance's audio: in `text` its line begins with
   the number of its main speaker and a tab, and in `json` its `completed` carries `"speakers"`, labeled and in
   milliseconds as on `/v1/realtime` ([server.md](server.md#speakers-of-a-session)).
+- With `--enhance`, each utterance is enhanced whole once it has ended, which adds the enhancement's time to its final
+  text, and the regions are those of the audio as it arrived.
 - `--timestamps` is refused: the times of an utterance are in its events.
 - Utterances wait for their recognition while the recognizer is behind, up to 13.1 million samples (13.6 min at 16 kHz).
   Past that, `-` reads stdin no faster than the recognition goes, and `--live` ends with `out_of_memory`. Options that
@@ -273,6 +290,32 @@ speech diarize MODEL [options] AUDIO.wav...
   without its folder and extension as its id, which DER's scorers read.
 - stderr reports the load time and, for each file, its seconds of audio, the time to its segments, the RTFx, and the
   number of segments and speakers.
+
+## speech enhance
+
+```
+speech enhance MODEL -o FILE|DIR|- [options] AUDIO.wav...|-
+  -o FILE|DIR              the WAVE file to write, a folder for several, or - for stdout
+  --rate HZ                the rate of the PCM that - reads from stdin, 16000 unless given
+  --device NAME --threads N
+  -v                       also report the release
+  --chunk-size-in-seconds S --hop-length-portion P --bwe HZ ... every request option
+```
+
+- Enhances each WAVE file with an enhancement model ([models/semamba.md](models/semamba.md)), removing noise,
+  reverberation and other degradations, and writes it as a 16-bit mono WAVE at the rate it was enhanced at: the file's
+  own, or `--bwe`'s. It reads the files as `speech asr` does.
+- One file goes to the file `-o` names, or to stdout with `-o -`; several go to the folder `-o` names, made if it is not
+  there, each as its own name with `.wav`. Two inputs of one name, and an output that is one of the inputs, are refused
+  before anything is written. A run that fails removes the file it was writing.
+- The WAVE is written as the audio comes: the model takes the audio in chunks of `--chunk-size-in-seconds` (5 s for
+  RE-USE) that start every `--hop-length-portion` of a chunk (0.5), and each part of the audio is final once the chunk
+  after it is done. A chunk at least as long as a file enhances it whole.
+- `-` reads 16-bit little-endian mono PCM at `--rate` from stdin until it ends, and writes each part of the WAVE as it
+  settles, a chunk and a hop after its audio arrives; the samples are those of the same audio as a file.
+- `--bwe HZ` resamples the audio to that rate before it is enhanced, within the model's rates (8000 to 48000 Hz for
+  RE-USE); a rate above the file's lets the model fill in the band the file lacks.
+- stderr reports the load time and, for each file, its seconds of audio, the time they took and the RTFx.
 
 ## speech voice
 
@@ -458,19 +501,21 @@ failure.
 ## speech serve and speech worker
 
 ```
-speech serve [MODEL [MODEL [MODEL]]] [--open] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
+speech serve [MODEL...] [--open] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
              [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup] [request options]
 speech worker MODEL [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup] [request options]
 ```
 
-[server.md](server.md) and [worker.md](worker.md) describe them. `speech serve` takes a detection model beside a
-synthesis and a recognition model, for transcriptions by regions; the worker takes none.
+[server.md](server.md) and [worker.md](worker.md) describe them. `speech serve` takes one model of each task: a
+synthesis, a recognition, a detection, a diarization and an enhancement model. The worker serves a synthesis, a
+recognition or an enhancement model.
 
 A request option given as a flag is the default of every request that does not set it, in place of the model's own:
 `speech serve irodori-tts-mf --steps 8` samples in 8 steps unless a request sets `steps`. A request's own value wins,
 and an option no model given takes, or a value out of its range, stops the program before it serves.
 
-`speech serve` gives a flag to every model given that takes the option. After `tts.`, `asr.` or `vad.` it gives it to
-the synthesis, recognition or detection model alone, and wins over the same flag without one:
+`speech serve` gives a flag to every model given that takes the option. After `tts.`, `asr.`, `vad.`, `diarize.` or
+`enhance.` it gives it to the synthesis, recognition, detection, diarization or enhancement model alone, and wins over the
+same flag without one:
 `speech serve qwen3-tts-0.6b qwen3-asr-0.6b --language ja --asr.language auto`. The worker's `ready` and the server's
 `/v1/models` list the defaults given.

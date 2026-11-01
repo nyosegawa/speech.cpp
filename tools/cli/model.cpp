@@ -256,7 +256,14 @@ void print_info(const speech_model_info * m, bool meta, FILE * out) {
     row("source", std::string(repository) + " at " + revision);
     row("weight type", speech_model_info_weight_type(m));
     row("architecture", std::string(speech_model_info_architecture(m)) + ", layout " + std::to_string(speech_model_info_layout(m)));
-    row("task", std::string(task_name(speech_model_info_task(m))) + " at " + std::to_string(speech_model_info_sample_rate(m)) + " Hz" +
+    std::string rate = std::to_string(speech_model_info_sample_rate(m)) + " Hz";
+    // An enhancement model has no rate of its own: it enhances audio at the audio's rate, within the range of bwe.
+    double lowest = 0, highest = 0;
+    int exclusive = 0;
+    if (speech_model_info_sample_rate(m) == 0 && speech_model_info_option_range(m, SPEECH_OPT_BWE, &lowest, &highest, &exclusive) == SPEECH_OK) {
+        rate = "the audio's own rate, from " + std::to_string((int) lowest) + " to " + std::to_string((int) highest) + " Hz";
+    }
+    row("task", std::string(task_name(speech_model_info_task(m))) + " at " + rate +
                     (synthesis ? speech_model_info_incremental(m) ? ", passing audio while it makes the rest" : ", making the whole speech before its audio" : ""));
     const size_t languages = speech_model_info_language_count(m);
     row("languages", languages ? list(languages, [&](size_t i) { return std::string(speech_model_info_language(m, i)); }) : "none");

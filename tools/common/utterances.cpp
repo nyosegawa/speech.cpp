@@ -91,8 +91,8 @@ std::optional<std::pair<double, bool>> Detection::speaking() const {
     return std::make_pair(start, kept != 0);
 }
 
-Assembly::Assembly(Recognizer & recognizer, int rate, std::function<void(const Event &)> emit)
-    : recognizer_(recognizer), rate_(rate), emit_(std::move(emit)) {
+Assembly::Assembly(Recognizer & recognizer, int rate, std::function<void(const Event &)> emit, Enhancer * enhancer)
+    : recognizer_(recognizer), enhancer_(enhancer), rate_(rate), emit_(std::move(emit)) {
     worker_ = std::thread([this] { work(); });
 }
 
@@ -311,8 +311,13 @@ void Assembly::commit_samples(uint64_t number, uint64_t first, uint64_t last) {
             f.draft = current_->last_reading;
         }
         f.asked = *asked_;
-        // The recognition takes its place as the utterance is committed, so that it runs before what comes later.
+        // The recognition takes its place as the utterance is committed, so that it runs before what comes later, and its
+        // enhancement, which runs before it, takes its own first.
         try {
+            if (f.asked.enhance) {
+                if (!enhancer_) throw std::logic_error("an assembly without an enhancer asked to enhance its utterances");
+                f.enhancement = enhancer_->reserve();
+            }
             f.reservation = recognizer_.reserve(f.asked);
             f.samples.assign(audio_.begin() + (long) (first - buffer_), audio_.begin() + (long) (last - buffer_));
             f.length = f.samples.size();
@@ -406,8 +411,14 @@ void Assembly::work() {
             e.utterance = f.number;
             try {
                 if (f.refused) std::rethrow_exception(f.refused);
-                std::optional<Transcript> t =
-                    recognizer_.transcribe(*f.reservation, f.asked, std::move(f.samples), rate_, *cancellation, f.number, false, f.draft);
+                std::optional<std::pair<std::vector<float>, int>> audio(std::make_pair(std::move(f.samples), rate_));
+                if (f.enhancement) {
+                    audio = enhancer_->enhance(*f.enhancement, std::move(audio->first), rate_, *cancellation);
+                    // The enhancement's place passes as soon as it has ended.
+                    f.enhancement.reset();
+                }
+                std::optional<Transcript> t;
+                if (audio) t = recognizer_.transcribe(*f.reservation, f.asked, std::move(audio->first), audio->second, *cancellation, f.number, false, f.draft);
                 if (t) {
                     e.kind = Event::Kind::Completed;
                     e.transcript = std::move(*t);
@@ -417,7 +428,8 @@ void Assembly::work() {
                 e.kind = Event::Kind::Failed;
                 e.failure = std::current_exception();
             }
-            // The place passes as soon as the recognition has ended.
+            // The places pass as soon as the recognition has ended.
+            f.enhancement.reset();
             f.reservation.reset();
             lock.lock();
             final_.reset();

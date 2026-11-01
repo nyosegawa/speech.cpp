@@ -28,6 +28,9 @@
 // sends its own. A member or a value speech.cpp does not take is answered with an error event rather than ignored.
 // speech.cpp's own member session.audio.input.diarization, null by default or an object of the diarization model's
 // request options, diarizes the session's audio, and each completion then carries the speakers within its utterance.
+// OpenAI's session.audio.input.noise_reduction, null by default or near_field or far_field, which both run the host's
+// enhancement model, enhances each utterance whole before its recognition; the detection and the deltas hear the audio
+// as it arrives.
 
 namespace realtime {
 
@@ -49,13 +52,13 @@ public:
      */
     virtual std::unique_ptr<utterances::Reservation> reserve(const std::string & model) = 0;
     /**
-     * Recognizes `samples` at kRate in `reservation`'s turn on its model, with `options`, and returns the recognition, or
+     * Recognizes `samples` at `rate`, kRate unless an enhancement gave them another, in `reservation`'s turn on its model, with `options`, and returns the recognition, or
      * nothing once `cancellation` stops it; an option the model does not take throws the library's Failure. It lets the
      * samples go once the library's request has copied them. `item` names the item for a log, `provisional` says
      * whether the samples are the beginning of an utterance under way, read for its deltas, and `draft` is the text the
      * utterance's last reading gave, or "", which it sets as the option draft where the model takes it.
      */
-    virtual std::optional<Transcript> transcribe(utterances::Reservation & reservation, std::vector<float> samples,
+    virtual std::optional<Transcript> transcribe(utterances::Reservation & reservation, std::vector<float> samples, int rate,
                                                  const std::vector<RequestOption> & options, Cancellation & cancellation,
                                                  const std::string & item, bool provisional, const std::string & draft) = 0;
     /**
@@ -74,6 +77,19 @@ public:
     virtual std::unique_ptr<Diarization> diarize(const std::vector<RequestOption> & options) = 0;
     /** The defaults the diarization model held was given on the command line, which a session's options come after. */
     virtual std::vector<RequestOption> diarization_defaults() = 0;
+    /** Whether the host holds an enhancement model, which noise_reduction runs. */
+    virtual bool enhances() = 0;
+    /**
+     * Takes a place on the enhancement model held, for an enhancement accepted now, as reserve() takes one on the
+     * recognition model; none held throws an ApiError.
+     */
+    virtual std::unique_ptr<utterances::Reservation> reserve_enhancement() = 0;
+    /**
+     * Enhances a whole utterance's `samples` at `rate` in `reservation`'s turn on its model, with the model's defaults,
+     * and returns the samples with their rate, or nothing once `cancellation` stops it.
+     */
+    virtual std::optional<std::pair<std::vector<float>, int>> enhance(utterances::Reservation & reservation, std::vector<float> samples, int rate,
+                                                                       Cancellation & cancellation) = 0;
 };
 
 class Session {
@@ -112,6 +128,8 @@ private:
         std::optional<std::vector<RequestOption>> turns;
         /** With diarization, the diarization options of the members given; nothing for null, the default. */
         std::optional<std::vector<RequestOption>> diarization;
+        /** With noise_reduction, its type; nothing for null, the default. */
+        std::optional<std::string> noise_reduction;
 
         std::vector<RequestOption> options() const;
         std::optional<utterances::Asked> asked() const;
@@ -129,6 +147,18 @@ private:
     private:
         Models & models_;
         Events & events_;
+    };
+
+    /** The assembly's enhancer: the host's enhancement model. */
+    class Cleaner : public utterances::Enhancer {
+    public:
+        explicit Cleaner(Models & models) : models_(models) {}
+        std::unique_ptr<utterances::Reservation> reserve() override;
+        std::optional<std::pair<std::vector<float>, int>> enhance(utterances::Reservation & reservation, std::vector<float> samples, int rate,
+                                                                   Cancellation & cancellation) override;
+
+    private:
+        Models & models_;
     };
 
     void update(const JsonValue & event);
@@ -151,6 +181,7 @@ private:
     Models & models_;
     Events events_;
     Reader reader_;
+    Cleaner cleaner_;
     Config config_;
     const size_t limit_;
     /** Whether the session has said that turn detection waits for a detection model the host does not hold. */

@@ -66,7 +66,7 @@ std::shared_ptr<Served> ServedModels::of(speech_task task) const {
 std::vector<std::shared_ptr<Served>> ServedModels::all() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::shared_ptr<Served>> out;
-    for (const Place * p : {&synthesis_, &recognition_, &detection_, &diarization_}) {
+    for (const Place * p : {&synthesis_, &recognition_, &detection_, &diarization_, &enhancement_}) {
         if (p->model) out.push_back(p->model);
     }
     return out;

@@ -144,7 +144,7 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
   (below).
 - **Quantizing.** `speech_quantize()` writes a model file of F32 weights in F16, Q8_0, Q6_K, Q5_K, Q4_K or IQ4_NL, on
   the CPU, as `speech quantize` does ([cli.md](cli.md#speech-quantize)). Nemotron 3.5 Transcribe takes F16, Q8_0 and
-  IQ4_NL, and every other model every type but IQ4_NL. Silero VAD's file is F32 alone, and is refused.
+  IQ4_NL, and every other model every type but IQ4_NL. The files of Silero VAD and RE-USE are F32 alone, and are refused.
 - **Voices.** `speech_voice_add()` adds a voice to a loaded model from a voice file, or from a reference WAVE file at any
   rate where `speech_model_info_voice_recordings()` says so. `speech_voice_make()` writes a voice file from a reference,
   reading only the codec from the model file. `speech_voice_make_from()` writes one from the parameters
@@ -158,8 +158,9 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
 - **Requests.** `speech_request_new()` makes a request for one model. It takes a text (`speech_request_set_text()`) or
   audio (`speech_request_set_audio()`), and options through the setter of each option's type. `speech_synthesize()`
   passes the audio to its callback as it is made, `speech_transcribe()` recognizes the whole audio at once,
-  `speech_detect()` finds where someone speaks in it, and `speech_diarize()` who speaks where. A model does one task, and
-  the calls of the others are `unsupported`.
+  `speech_detect()` finds where someone speaks in it, `speech_diarize()` who speaks where, and `speech_enhance()` passes
+  the audio with its noise and other degradations removed to its callback as each part of it settles. A model does one
+  task, and the calls of the others are `unsupported`.
   `speech_request_set_progress()` gives a callback that hears how far a request has come while it passes no audio.
   `speech_request_cancel()` stops a request, from any thread, at the next audio, step or stage; a request cancelled
   before it runs returns at once. Either returns `SPEECH_CANCELLED`.
@@ -171,8 +172,12 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
   `speech_diarization_end()` do the same with a diarization model, and `speech_diarization_segment_count()`,
   `speech_diarization_segment()`, `speech_diarization_settled()` and `speech_diarization_speaking()` read what it has
   found so far ([below](#diarizations)).
+- **Enhancements of audio that arrives.** `speech_enhancement_start()` starts an enhancement with a request's options,
+  the rate of the audio to come and the callback that takes the enhanced audio; `speech_enhancement_push()` gives it
+  samples and `speech_enhancement_end()` ends the audio ([below](#enhancements)).
 - **Results.** `speech_request_result()` gives what a request that returned `SPEECH_OK` or `SPEECH_CANCELLED` did: why it
-  stopped (`complete`, `max_seconds`, `model_limit` or `cancelled`), the seed of a synthesis, the samples it passed, and
+  stopped (`complete`, `max_seconds`, `model_limit` or `cancelled`), the seed of a synthesis, the samples a synthesis or
+  an enhancement passed, and
   the regions of a detection as its segments, each with an empty text and no result text, the segments of a
   diarization the same way with each one's speaker (`speech_result_segment_speaker()`), the text of a recognition with
   its segments and tokens when the request set `timestamps`, its segments with their speakers when it set `speakers`,
@@ -192,7 +197,10 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
   runs once.
 - Audio may be at any common rate. The library resamples a recording to recognize, to detect speech in or to diarize,
   and a reference recording of a voice, to the model's rate (`speech_model_info_sample_rate()`); the audio it makes is at
-  the model's rate.
+  the model's rate. An enhancement model has the rate 0: it enhances audio at the audio's own rate, within the range of
+  its option `bwe` (8000 to 48000 Hz for RE-USE), or resampled to `bwe` where the request sets it, and passes it at that
+  rate. Audio at a rate outside the range without `bwe`, or shorter than the model's STFT (20 ms for RE-USE), is
+  `out_of_range`, option `audio`.
 - Text is normalized as each model's official code normalizes it, so Japanese copied from a macOS file name gets the
   same tokens as typed text.
 - A text longer than `speech_model_info_max_text_tokens()` is `out_of_range`, option `text`.
@@ -272,6 +280,34 @@ speech_diarization_free(diarization);
   takes `offline`. `speech_model_info_speakers()` gives the most speakers the model tells apart.
 - **Any rate, refusals and threads** are as for detections.
 
+## Enhancements
+
+An enhancement passes the audio of an enhancement model, such as RE-USE, as audio that arrives a piece at a time
+settles: a program that records or receives audio writes or plays the enhanced audio while more arrives.
+
+```c
+speech_request * request = NULL;
+speech_enhancement * enhancement = NULL;
+if (check(speech_request_new(model, &request)) &&
+    check(speech_request_set_float(request, SPEECH_OPT_CHUNK_SIZE_IN_SECONDS, 2.0)) &&
+    check(speech_enhancement_start(request, 48000, on_audio, &out, &enhancement))) {
+    speech_request_free(request);  /* the enhancement keeps the options */
+    while (/* more audio */) check(speech_enhancement_push(enhancement, samples, n_samples));
+    check(speech_enhancement_end(enhancement));  /* and passes the rest */
+}
+speech_enhancement_free(enhancement);
+```
+
+- **The samples are `speech_enhance()`'s.** The audio passed is what `speech_enhance()` passes for the whole audio with
+  the same options, bit for bit, however it was cut into pieces.
+- **When audio is passed.** The model computes a chunk of `chunk_size_in_seconds` once its audio has arrived, and a
+  sample is passed once the chunk that starts after it is done: between a chunk and a chunk and a hop after it arrives,
+  6 to 7.5 s with RE-USE's defaults of 5 s and 0.5. The last chunk, which ends with the audio, is computed at the end. A
+  shorter chunk passes the audio sooner and hears less of it at once.
+- The request's options and the rate are checked at the start; a request with audio of its own is `invalid_argument`,
+  option `audio`. Audio too short for the model's STFT is refused at the end. A push or the end returns
+  `SPEECH_CANCELLED` once the callback asks to stop, and the enhancement then takes no more audio.
+
 ## Errors
 
 A function that can fail returns a `speech_status`, negative for an error, whose category says what kind of failure it
@@ -324,7 +360,7 @@ Each model takes some of them, with ranges and defaults from its file, and `spee
 | Option | Type | Neutral | Taken by |
 |---|---|---|---|
 | `voice` | string | none | [Qwen3-TTS](models/qwen3-tts.md#options), [Irodori-TTS](models/irodori-tts.md#options), [Drama 3](models/drama3.md#options); required |
-| `language` | string | `auto` | every model but Silero VAD and Sortformer, which take `auto` alone |
+| `language` | string | `auto` | every model but Silero VAD, Sortformer and RE-USE, which take `auto` alone |
 | `seed` | int | none | Qwen3-TTS, Irodori-TTS, Drama 3 |
 | `speed`, `seconds`, `duration_scale`, `steps` | float, float, float, int | 1, none, 1, none | Irodori-TTS |
 | `max_seconds` | float | none | Qwen3-TTS, Drama 3 (each chunk of a long text) |
@@ -344,6 +380,7 @@ Each model takes some of them, with ranges and defaults from its file, and `spee
 | `onset`, `offset`, `pad_onset`, `pad_offset`, `min_duration_on`, `min_duration_off` | float | none | [Sortformer](models/sortformer.md#options) |
 | `speakers` | bool | false | [Nemotron 3.5 Transcribe](models/nemotron-transcribe.md#options) |
 | `keywords`, `keywords_alpha`, `keywords_guard` | string, float, bool | `""` for `keywords` | [Haas](models/fastconformer.md#a-custom-vocabulary-haas) |
+| `chunk_size_in_seconds`, `hop_length_portion`, `bwe` | float, float, int | none | [RE-USE](models/semamba.md#options) |
 
 - A value at an option's neutral value is accepted by every model. Any other value of an option a model does not take is
   `unsupported`. An option whose neutral value is "none" has none.
@@ -402,9 +439,10 @@ loaded on Metal, with two of its nine voices and four of its options shown:
   converted from and the revision. `weight_type` is the type that holds most of the weights: `F32`, `F16`, `Q8_0`,
   `Q6_K`, `Q5_K`, `Q4_K` or `IQ4_NL`.
 - `architecture` is the family: `qwen3-tts`, `irodori-tts`, `drama3`, `fastconformer`, `qwen3-asr`,
-  `nemotron-transcribe`, `silero-vad` or `sortformer`. `layout` is the version of the family's file layout. `task` is `synthesis`, `recognition`, `detection` or
-  `diarization`; a detection or diarization model's `languages` is empty, and a diarization model's `speakers` follows
-  `max_text_tokens`'s place, the most speakers it tells apart.
+  `nemotron-transcribe`, `silero-vad`, `sortformer` or `semamba`. `layout` is the version of the family's file layout.
+  `task` is `synthesis`, `recognition`, `detection`, `diarization` or `enhancement`; a detection, diarization or
+  enhancement model's `languages` is empty, an enhancement model's `sample_rate` is 0, and a diarization model's
+  `speakers` follows `max_text_tokens`'s place, the most speakers it tells apart.
 - `incremental` is true for a model that passes audio while it still makes the rest (Qwen3-TTS, Drama 3), so that its first
   audio does not wait on the length of the text, and false for one that makes a request's whole speech before it decodes
   it (Irodori-TTS).

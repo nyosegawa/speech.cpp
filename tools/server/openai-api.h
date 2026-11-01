@@ -17,7 +17,8 @@ struct Response;
 }
 
 // OpenAI's audio API as speech.cpp reads and writes it: the create speech request, the create transcription request,
-// its errors as HTTP answers, and the events of an SSE stream. The shapes follow
+// its errors as HTTP answers, and the events of an SSE stream; and speech.cpp's own enhancement request, which takes a
+// create transcription's form. The shapes follow
 // OpenAI's API reference, components CreateSpeechRequest, CreateTranscriptionRequest, CreateTranscriptionResponseJson,
 // CreateTranscriptionResponseVerboseJson, TranscriptionSegment, Error, SpeechAudioDeltaEvent and SpeechAudioDoneEvent
 // and the path /audio/transcriptions of github.com/openai/openai-openapi at commit 31af4fc (2026-10-05), and its
@@ -65,6 +66,8 @@ struct TranscriptionRequest {
     bool timestamps = false, segments = true, words = false;
     /** Whether the options set speakers, for diarized_json of a model that tells who speaks. */
     bool speakers = false;
+    /** Whether noise_reduction asks for the file to be enhanced whole before its regions and its recognition. */
+    bool enhance = false;
     /**
      * With chunking_strategy, the members of server_vad it gives as detection options, which region_options() completes
      * with the detection model's defaults; without it, nothing.
@@ -75,7 +78,8 @@ struct TranscriptionRequest {
 /**
  * Reads a create transcription request from the parts of its form: "file", a WAV file, its channels averaged;
  * "model"; "language"; "prompt", the option prompt; "response_format"; "decoding", the option decoding, speech.cpp's
- * own; "keywords[]", each a line of the option keywords; "keywords_alpha" and "keywords_guard", speech.cpp's own;
+ * own; "keywords[]", each a line of the option keywords; "keywords_alpha" and "keywords_guard", speech.cpp's own; "noise_reduction", near_field or far_field, speech.cpp's own under the
+ * name of the Realtime session's member;
  * "chunking_strategy", "auto" or the members of server_vad, which diarized_json needs unless the model
  * `tells_speakers` itself, as one that takes the option speakers does, and which such a model's diarized_json refuses;
  * and "timestamp_granularities[]", "segment" or "word", with verbose_json. verbose_json sets the option timestamps for a
@@ -87,6 +91,25 @@ struct TranscriptionRequest {
  */
 TranscriptionRequest read_transcription_request(bool multipart, const std::vector<FormPart> & parts, const std::string & model_name,
                                                 bool gives_times, bool tells_speakers, const std::vector<RequestOption> & defaults);
+
+/** An enhancement request, speech.cpp's own POST /v1/audio/enhancements, as read from its form, with the file's audio decoded. */
+struct EnhancementRequest {
+    std::vector<float> samples;
+    int sample_rate = 0;
+    /** "wav" or "pcm". */
+    std::string format = "wav";
+    /** The options of the vocabulary that the form sets, by their names. */
+    std::vector<RequestOption> options;
+};
+
+/**
+ * Reads an enhancement request from the parts of its form, which takes a create transcription's shape: "file", a WAV
+ * file, its channels averaged; "model"; "response_format", "wav" (the default) or "pcm"; and every option of the
+ * vocabulary by its name, its value read as the command line reads a flag's. A member it does not have is refused, and
+ * so is one given twice. Anything it cannot read throws an ApiError; the values of the options are checked by the
+ * library's setters.
+ */
+EnhancementRequest read_enhancement_request(bool multipart, const std::vector<FormPart> & parts, const std::string & model_name);
 
 /** A library failure of a create transcription request as OpenAI's error (library_error()), the option keywords named by its field, keywords[]. */
 ApiError transcription_error(const Failure & failure);

@@ -74,7 +74,7 @@ int check_library(void) {
                                      "decode_on_cpu", "draft", "experts_on_cpu", "streaming_mode", "spkcache_len", "fifo_len",
                                      "chunk_len", "chunk_right_context", "spkcache_update_period", "onset", "offset", "pad_onset",
                                      "pad_offset", "min_duration_on", "min_duration_off", "speakers", "keywords", "keywords_alpha",
-                                     "keywords_guard"};
+                                     "keywords_guard", "chunk_size_in_seconds", "hop_length_portion", "bwe"};
     if (speech_option_count() != sizeof options / sizeof options[0]) {
         fprintf(stderr, "FAIL: the library knows %zu options\n", speech_option_count());
         return 1;
@@ -136,8 +136,8 @@ int check_quantize_refusals(const char * model_path) {
     speech_model_info * info = NULL;
     if (speech_model_info_open(model_path, &info) != SPEECH_OK) return fail("speech_model_info_open");
     const int f32 = !strcmp(speech_model_info_weight_type(info), "F32");
-    // Silero VAD's layout keeps every tensor in F32, of which no file of another type is made.
-    const int detection = speech_model_info_task(info) == SPEECH_TASK_DETECTION;
+    // The layouts of Silero VAD and of SEMamba keep every tensor in F32, of which no file of another type is made.
+    const int detection = speech_model_info_task(info) == SPEECH_TASK_DETECTION || speech_model_info_task(info) == SPEECH_TASK_ENHANCEMENT;
     // Nemotron 3.5 Transcribe alone takes IQ4_NL, and no K-quant.
     const char * untaken = !strcmp(speech_model_info_architecture(info), "nemotron-transcribe") ? "q4_k" : "iq4_nl";
     speech_model_info_free(info);

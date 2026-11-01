@@ -11,6 +11,7 @@
 #include "base64.h"
 #include "cancellation.h"
 #include "commands.h"
+#include "enhancement.h"
 #include "fetch.h"
 #include "inbox.h"
 #include "json.h"
@@ -83,7 +84,7 @@ int on_progress(double done, void * user_data) {
     return 0;
 }
 
-/** The audio of transcribe as the library takes it: 16-bit samples scaled as a 16-bit WAVE file is read. */
+/** The audio of transcribe and enhance as the library takes it: 16-bit samples scaled as a 16-bit WAVE file is read. */
 std::vector<float> samples_of(const Job & job) {
     std::vector<float> out(job.pcm.size());
     for (size_t i = 0; i < out.size(); i++) out[i] = (float) job.pcm[i] / 32768.0f;
@@ -138,6 +139,29 @@ void recognize(Inbox & inbox, Protocol & protocol, speech_model * model, const s
     inbox.finish(job, terminal);
 }
 
+/** Enhances the job's audio as one request of the library, passing the enhanced audio in chunks as it comes. */
+void enhance(Inbox & inbox, Protocol & protocol, speech_model * model, const Job & job) {
+    Cancellation cancellation;
+    if (!inbox.start(job, &cancellation)) return;
+    Running running{protocol, job.id, Clock::now()};
+    std::string terminal;
+    try {
+        const std::vector<float> samples = samples_of(job);
+        const Request request = enhancement_request(model, samples, job.sample_rate, job.options);
+        check(speech_request_set_progress(request.get(), on_progress, &running));
+        const std::optional<uint64_t> passed = enhance_audio(request.get(), on_audio, &running, cancellation);
+        if (!passed) {
+            terminal = cancelled_line(job.id);
+        } else {
+            terminal = "{\"type\":\"end\",\"id\":" + json_string(job.id) + ",\"samples\":" + std::to_string(*passed) + ",\"stop\":\"" +
+                       speech_stop_name(speech_result_stop(speech_request_result(request.get()))) + "\"}";
+        }
+    } catch (const std::exception & e) {
+        terminal = error_line(job.id, e);
+    }
+    inbox.finish(job, terminal);
+}
+
 /** Runs add_voice, which a cancel no longer stops once it runs. */
 void add_voice(Inbox & inbox, speech_model * model, const Job & job) {
     if (!inbox.start(job, nullptr)) return;
@@ -176,7 +200,7 @@ int run_worker(const CommandLine & line, FILE * out) {
     current = &protocol;
     const std::string path = model_file(line.args[0]);
     const Loading loading = line.loading(true);
-    // The protocol has the messages of synthesis and recognition alone.
+    // The protocol has the messages of synthesis, recognition and enhancement alone.
     const speech_task task = speech_model_info_task(file_info(path).get());
     if (task == SPEECH_TASK_DETECTION) {
         throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "",
@@ -213,6 +237,7 @@ int run_worker(const CommandLine & line, FILE * out) {
         switch (job.kind) {
             case Job::Kind::Synthesize: synthesize(inbox, protocol, model.get(), job); break;
             case Job::Kind::Transcribe: recognize(inbox, protocol, model.get(), m, job); break;
+            case Job::Kind::Enhance: enhance(inbox, protocol, model.get(), job); break;
             default: add_voice(inbox, model.get(), job); break;
         }
     }

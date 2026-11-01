@@ -24,7 +24,10 @@ struct TaskOption {
     RequestOption option;
 };
 
-/** The prefix of a task's options on the command line, the name of its subcommand: "tts", "asr", "vad" or "diarize". */
+/**
+ * The prefix of a task's options on the command line, the name of its subcommand: "tts", "asr", "vad", "diarize" or
+ * "enhance".
+ */
 const char * task_prefix(speech_task task);
 
 /** A flag of a subcommand other than a request option. */
@@ -53,7 +56,10 @@ struct Command {
     std::vector<Flag> flags;
     /** Whether every request option of the vocabulary is a flag of the subcommand. */
     bool request_options = false;
-    /** Whether a request option's flag also takes a task's prefix, --tts., --asr., --vad. or --diarize., for that task's model. */
+    /**
+     * Whether a request option's flag also takes a task's prefix, --tts., --asr., --vad., --diarize. or --enhance., for that
+     * task's model.
+     */
     bool task_options = false;
     /**
      * For a subcommand whose first argument is MODEL, the models that fit it: a command line without one is told what
