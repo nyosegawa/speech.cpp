@@ -77,9 +77,8 @@ int main(int argc, char ** argv) {
                         Graph g;
                         const std::vector<float> in = b == 0 ? encoded.f32 : std::vector<float>(blocks.f32.begin() + (b - 1) * size, blocks.f32.begin() + b * size);
                         ggml_context * ctx = g.ctx();
-                        const auto over_frames = net.sequences(g, t, f), over_bins = net.sequences(g, f, t);
                         ggml_tensor * x = ggml_cont(ctx, ggml_permute(ctx, g.input(in, f, t, h), 2, 1, 0, 3));
-                        x = ggml_cont(ctx, ggml_permute(ctx, net.block(ctx, b, x, over_frames, over_bins), 2, 1, 0, 3));
+                        x = ggml_cont(ctx, ggml_permute(ctx, net.block(ctx, b, x), 2, 1, 0, 3));
                         keep_worst(worst, compare(run(g, x, backend, allocr), std::vector<float>(blocks.f32.begin() + b * size, blocks.f32.begin() + (b + 1) * size)));
                     }
                     print_diff("  each block, the worst", worst);
@@ -88,8 +87,7 @@ int main(int argc, char ** argv) {
                         const Npy in = read(first, (std::string(part) + "_in").c_str()), out = read(first, (std::string(part) + "_out").c_str());
                         Graph g;
                         const int64_t length = in.shape[1], count = in.shape[0];
-                        const auto s = net.sequences(g, length, count);
-                        const Diff d = compare(run(g, net.bidirectional(g.ctx(), std::string("blk.0.") + part, g.input(in.f32, h, length, count), s), backend, allocr), out.f32);
+                        const Diff d = compare(run(g, net.bidirectional(g.ctx(), std::string("blk.0.") + part, g.input(in.f32, h, length, count)), backend, allocr), out.f32);
                         print_diff(std::string("  block 0's Mamba over ") + (std::string(part) == "time" ? "time" : "frequency"), d);
                         ok = ok && d.snr_db > kStage;
                     }

@@ -480,6 +480,11 @@ target_link_libraries(qwen3-tts-timing PRIVATE qwen3tts)
 add_executable(irodori-tts-timing measure/irodori-tts-timing.cpp)
 target_link_libraries(irodori-tts-timing PRIVATE irodoritts)
 
+# Times the stages of an enhancement on a chunk of noise.
+add_executable(semamba-timing measure/semamba-timing.cpp)
+target_include_directories(semamba-timing PRIVATE checks)
+target_link_libraries(semamba-timing PRIVATE semamba)
+
 # Silero VAD's stages and regions against the dumps of reference/silero-vad/dump.py, read with the JSON reader of `speech`.
 add_executable(silero-vad-check checks/silero-vad/silero-vad-check.cpp tools/common/json-reader.cpp)
 target_include_directories(silero-vad-check PRIVATE checks tools/common)

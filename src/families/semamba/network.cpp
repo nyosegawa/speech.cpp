@@ -9,10 +9,6 @@ namespace semamba {
 Network::Network(const ModelFile & m)
     : m_(m),
       hidden_((int) m.width("enc.in.conv.weight", 3)),
-      inner_((int) m.width("blk.0.time.fw.in_proj.weight", 1) / 2),
-      state_((int) m.width("blk.0.time.fw.A_log", 0)),
-      width_((int) m.width("blk.0.time.fw.conv1d.weight", 0)),
-      rank_((int) m.width("blk.0.time.fw.dt_proj.weight", 0)),
       depth_(m.count("semamba.dense_depth")),
       frame_stride_(m.size("semamba.frame_stride")),
       bin_stride_(m.size("semamba.bin_stride")),
@@ -20,18 +16,6 @@ Network::Network(const ModelFile & m)
       padding_((int) m.u32("semamba.input_padding")),
       instance_eps_(m.f32("semamba.instance_norm_eps")),
       layer_eps_(m.f32("semamba.layer_norm_eps")) {}
-
-Network::Sequences Network::sequences(Graph & g, int64_t length, int64_t count) const {
-    std::vector<int32_t> reverse((size_t) (length * count));
-    for (int64_t b = 0; b < count; b++) {
-        for (int64_t l = 0; l < length; l++) reverse[(size_t) (b * length + l)] = (int32_t) (b * length + length - 1 - l);
-    }
-    // Every sequence starts from the same zero state, which the scan reads and does not write: one slot for all.
-    return {length, count, g.input(reverse, length * count),
-            g.input(std::vector<float>((size_t) ((width_ - 1) * inner_ * count), 0.0f), width_ - 1, inner_, count),
-            g.input(std::vector<float>((size_t) (state_ * inner_), 0.0f), state_, 1, inner_, 1),
-            g.input(std::vector<int32_t>((size_t) count, 0), count)};
-}
 
 ggml_tensor * Network::conv(ggml_context * ctx, const std::string & name, ggml_tensor * x, int s0, int s1, int p0, int p1, int d1) const {
     ggml_tensor * k = w(name + ".weight");
@@ -71,51 +55,29 @@ ggml_tensor * Network::encode(ggml_context * ctx, ggml_tensor * input) const {
     return norm_prelu(ctx, "enc.out", conv(ctx, "enc.out.conv", x, bin_stride_, frame_stride_, 0, 0, 1));
 }
 
-ggml_tensor * Network::flip(ggml_context * ctx, ggml_tensor * x, const Sequences & s) const {
-    ggml_tensor * rows = ggml_get_rows(ctx, ggml_reshape_2d(ctx, x, x->ne[0], s.length * s.count), s.reverse);
-    return ggml_reshape_3d(ctx, rows, x->ne[0], s.length, s.count);
-}
-
-ggml_tensor * Network::mamba(ggml_context * ctx, const std::string & prefix, ggml_tensor * x, const Sequences & s) const {
-    const int64_t length = s.length, count = s.count;
+ggml_tensor * Network::mamba(ggml_context * ctx, const std::string & prefix, ggml_tensor * x, bool reverse) const {
     ggml_tensor * xz = mul_mat(ctx, w(prefix + ".in_proj.weight"), x);
-    ggml_tensor * xi = ggml_view_3d(ctx, xz, inner_, length, count, xz->nb[1], xz->nb[2], 0);
-    ggml_tensor * z = ggml_view_3d(ctx, xz, inner_, length, count, xz->nb[1], xz->nb[2], (size_t) inner_ * ggml_element_size(xz));
-    // The causal depthwise convolution over each sequence's steps, from zeros before the first.
-    ggml_tensor * conv_x = ggml_concat(ctx, s.history, ggml_transpose(ctx, xi), 0);
-    ggml_tensor * xc = ggml_ssm_conv(ctx, conv_x, w(prefix + ".conv1d.weight"));
-    xc = ggml_silu(ctx, ggml_add(ctx, xc, w(prefix + ".conv1d.bias")));
-    // x_proj gives each step's dt before dt_proj, then B and C.
-    ggml_tensor * db = mul_mat(ctx, w(prefix + ".x_proj.weight"), xc);
-    const size_t f = ggml_element_size(db);
-    ggml_tensor * dt = ggml_view_3d(ctx, db, rank_, length, count, db->nb[1], db->nb[2], 0);
-    ggml_tensor * b = ggml_view_4d(ctx, db, state_, 1, length, count, (size_t) state_ * f, db->nb[1], db->nb[2], (size_t) rank_ * f);
-    ggml_tensor * c = ggml_view_4d(ctx, db, state_, 1, length, count, (size_t) state_ * f, db->nb[1], db->nb[2], (size_t) (rank_ + state_) * f);
-    // The scan adds dt_proj's bias through its softplus, as selective_scan's delta_bias does.
-    dt = ggml_add(ctx, mul_mat(ctx, w(prefix + ".dt_proj.weight"), dt), w(prefix + ".dt_proj.bias"));
     ggml_tensor * a = ggml_neg(ctx, ggml_exp(ctx, w(prefix + ".A_log")));
-    ggml_tensor * scan = ggml_ssm_scan(ctx, s.state, ggml_reshape_4d(ctx, xc, 1, inner_, length, count), dt, a, b, c, s.slots, 1);
-    ggml_tensor * y = ggml_view_3d(ctx, scan, inner_, length, count, (size_t) inner_ * f, (size_t) (inner_ * length) * f, 0);
-    y = ggml_add(ctx, y, ggml_mul(ctx, xc, w(prefix + ".D")));
-    y = ggml_swiglu_split(ctx, ggml_cont(ctx, z), y);
+    ggml_tensor * y = ggml_mamba1(ctx, xz, w(prefix + ".conv1d.weight"), w(prefix + ".conv1d.bias"), w(prefix + ".x_proj.weight"),
+                                  w(prefix + ".dt_proj.weight"), w(prefix + ".dt_proj.bias"), a, w(prefix + ".D"), reverse);
     return mul_mat(ctx, w(prefix + ".out_proj.weight"), y);
 }
 
-ggml_tensor * Network::bidirectional(ggml_context * ctx, const std::string & prefix, ggml_tensor * x, const Sequences & s) const {
-    ggml_tensor * forward = ggml_add(ctx, mamba(ctx, prefix + ".fw", x, s), x);
-    // flip(Mamba(flip(x)) + flip(x)) is flip(Mamba(flip(x))) + x, the flip being a permutation.
-    ggml_tensor * backward = ggml_add(ctx, flip(ctx, mamba(ctx, prefix + ".bw", flip(ctx, x, s), s), s), x);
+ggml_tensor * Network::bidirectional(ggml_context * ctx, const std::string & prefix, ggml_tensor * x) const {
+    ggml_tensor * forward = ggml_add(ctx, mamba(ctx, prefix + ".fw", x, false), x);
+    ggml_tensor * backward = ggml_add(ctx, mamba(ctx, prefix + ".bw", x, true), x);
     ggml_tensor * y = mul_mat(ctx, w(prefix + ".proj.weight"), ggml_concat(ctx, forward, backward, 0));
     y = ggml_add(ctx, y, w(prefix + ".proj.bias"));
     return ggml_add(ctx, ggml_mul(ctx, ggml_norm(ctx, y, layer_eps_), w(prefix + ".norm.weight")), w(prefix + ".norm.bias"));
 }
 
-ggml_tensor * Network::block(ggml_context * ctx, int b, ggml_tensor * x, const Sequences & over_frames, const Sequences & over_bins) const {
+ggml_tensor * Network::block(ggml_context * ctx, int b, ggml_tensor * x) const {
     const std::string name = "blk." + std::to_string(b);
-    x = ggml_add(ctx, bidirectional(ctx, name + ".time", x, over_frames), x);
-    x = ggml_cont(ctx, ggml_permute(ctx, x, 0, 2, 1, 3));
-    x = ggml_add(ctx, bidirectional(ctx, name + ".freq", x, over_bins), x);
-    return ggml_cont(ctx, ggml_permute(ctx, x, 0, 2, 1, 3));
+    // The products and additions read the transposed views as they are, which saves copying the activations twice a block.
+    x = ggml_add(ctx, bidirectional(ctx, name + ".time", x), x);
+    x = ggml_permute(ctx, x, 0, 2, 1, 3);
+    x = ggml_add(ctx, bidirectional(ctx, name + ".freq", x), x);
+    return ggml_permute(ctx, x, 0, 2, 1, 3);
 }
 
 ggml_tensor * Network::up(ggml_context * ctx, const std::string & name, ggml_tensor * x, int r) const {
@@ -148,12 +110,10 @@ Network::Outputs Network::forward(Graph & g, const std::vector<float> & magnitud
     ggml_tensor * x = encode(ctx, g.input(input, bins, frames, 2));
     Outputs out{};
     out.encoded = x;
-    const int64_t f = x->ne[0], t = x->ne[1];
-    const Sequences over_frames = sequences(g, t, f), over_bins = sequences(g, f, t);
     // The blocks run on [hidden, frames', bins'].
     ggml_tensor * h = ggml_cont(ctx, ggml_permute(ctx, x, 2, 1, 0, 3));
     for (int b = 0; b < blocks_; b++) {
-        h = block(ctx, b, h, over_frames, over_bins);
+        h = block(ctx, b, h);
         if (keep_blocks) out.blocks.push_back(ggml_cont(ctx, ggml_permute(ctx, h, 2, 1, 0, 3)));
     }
     x = ggml_cont(ctx, ggml_permute(ctx, h, 2, 1, 0, 3));

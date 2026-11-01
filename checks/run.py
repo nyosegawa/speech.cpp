@@ -11,8 +11,8 @@ GPU once with each attention. A check whose dumps or inputs are missing is skipp
 A check that exits with 2 refused its arguments, as a check refuses weights it cannot judge; that is reported apart and
 does not fail the run. Any other exit but 0 fails it. Each check's whole output goes to a log of its own in --logs.
 
-families: qwen3-tts, irodori-tts, drama3, qwen3-asr, nemotron-transcribe, fastconformer, silero-vad, sortformer, common (the checks that take no
-model), all
+families: qwen3-tts, irodori-tts, drama3, qwen3-asr, nemotron-transcribe, fastconformer, silero-vad, sortformer, semamba, common (the checks
+that take no model), all
 
 usage: python3 checks/run.py <family>... [--build DIR] [--devices cpu,gpu] [--types F32] [--models PATH...]
                              [--reference DIR] [--references DIR] [--decoder-text FILE] [--only CHECK...]
@@ -30,7 +30,8 @@ import tempfile
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FAMILIES = ["qwen3-tts", "irodori-tts", "drama3", "qwen3-asr", "nemotron-transcribe", "fastconformer", "silero-vad", "sortformer", "common"]
+FAMILIES = ["qwen3-tts", "irodori-tts", "drama3", "qwen3-asr", "nemotron-transcribe", "fastconformer", "silero-vad", "sortformer", "semamba",
+            "common"]
 # general.file_type's values of the weight types speech.cpp writes, as weight_types() of src/common/storage.cpp lists
 # them; a script cannot read that table.
 FILE_TYPES = {0: "F32", 1: "F16", 7: "Q8_0", 18: "Q6_K", 16: "Q5_K", 14: "Q4_K", 25: "IQ4_NL"}
@@ -416,6 +417,18 @@ def sortformer(model, devices, ctx):
     return runs
 
 
+def semamba(model, devices, ctx):
+    out = os.path.join(ctx.reference, "semamba", "out")
+    absent = named_dumps("semamba", model, out)
+    if absent:
+        return [absent]
+    # The STFT, the decoding and the inverse STFT run on the host.
+    runs = [Run("semamba-stft-check", [model.path, out], None, model.label())]
+    for device in devices:
+        runs += [runs_on(device, f"semamba-{stage}-check", model, [out]) for stage in ("network", "enhance")]
+    return runs
+
+
 def common(ctx):
     runs = [Run("fft-check", [], None, "")]
     resample = os.path.join(ctx.reference, "resample", "out")
@@ -427,7 +440,7 @@ def common(ctx):
 
 
 PLANS = {"qwen3-tts": qwen3_tts, "irodori-tts": irodori_tts, "drama3": drama3, "qwen3-asr": qwen3_asr, "nemotron-transcribe": nemotron_transcribe,
-         "fastconformer": fastconformer, "silero-vad": silero_vad, "sortformer": sortformer}
+         "fastconformer": fastconformer, "silero-vad": silero_vad, "sortformer": sortformer, "semamba": semamba}
 
 
 def executable(build, check):

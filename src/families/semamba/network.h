@@ -19,34 +19,18 @@ class Network {
 public:
     explicit Network(const ModelFile & m);
 
-    /** The inputs one graph's sequences of `length` steps and `count` sequences take: their flip and their zero states. */
-    struct Sequences {
-        int64_t length, count;
-        /** For each step of each sequence, the row of the same sequence `length` - 1 - step: [length * count]. */
-        ggml_tensor * reverse;
-        /** The convolution's zero history, [d_conv - 1, d_inner, count], and the scan's zero state and its slot. */
-        ggml_tensor * history;
-        ggml_tensor * state;
-        ggml_tensor * slots;
-    };
-
-    /** The inputs of sequences of `length` steps and `count` sequences in `g`. */
-    Sequences sequences(Graph & g, int64_t length, int64_t count) const;
-
     /** The encoder's output for the magnitude and phase [bins, frames, 2], [bins', frames', hidden]. */
     ggml_tensor * encode(ggml_context * ctx, ggml_tensor * input) const;
 
     /**
-     * The bidirectional Mamba named `prefix` ("blk.0.time") on [hidden, length, count]: Mamba forward and over the flipped
-     * sequences, each with its input added, joined, projected and normalized, as MambaBlock.forward() computes.
+     * The bidirectional Mamba named `prefix` ("blk.0.time") on [hidden, length, count]: Mamba forward and backward over each
+     * sequence, each with its input added, joined, projected and normalized, as MambaBlock.forward() computes it on the
+     * flipped sequences, of which the backward Mamba's steps running from the last are the same.
      */
-    ggml_tensor * bidirectional(ggml_context * ctx, const std::string & prefix, ggml_tensor * x, const Sequences & s) const;
+    ggml_tensor * bidirectional(ggml_context * ctx, const std::string & prefix, ggml_tensor * x) const;
 
-    /**
-     * TFMamba block `b` on [hidden, frames', bins']: over time and then over frequency, each with its input added. `over_bins`
-     * are the sequences over frequency, `over_frames` over time.
-     */
-    ggml_tensor * block(ggml_context * ctx, int b, ggml_tensor * x, const Sequences & over_frames, const Sequences & over_bins) const;
+    /** TFMamba block `b` on [hidden, frames', bins']: over time and then over frequency, each with its input added. */
+    ggml_tensor * block(ggml_context * ctx, int b, ggml_tensor * x) const;
 
     /** A decoder ("mag" or "pha") on the blocks' output [bins', frames', hidden], before its last convolution. */
     ggml_tensor * decode(ggml_context * ctx, const std::string & decoder, ggml_tensor * x) const;
@@ -84,13 +68,11 @@ private:
     ggml_tensor * dense(ggml_context * ctx, const std::string & name, ggml_tensor * x) const;
     /** An SPConvTranspose2d along the bins with its norm and PReLU: `r` times the bins of [bins, frames, hidden]. */
     ggml_tensor * up(ggml_context * ctx, const std::string & name, ggml_tensor * x, int r) const;
-    /** One direction's Mamba-1 on [hidden, length, count]. */
-    ggml_tensor * mamba(ggml_context * ctx, const std::string & prefix, ggml_tensor * x, const Sequences & s) const;
-    /** [hidden, length, count] with each sequence's steps in reverse. */
-    ggml_tensor * flip(ggml_context * ctx, ggml_tensor * x, const Sequences & s) const;
+    /** One direction's Mamba-1 on [hidden, length, count], its steps from the last with `reverse`. */
+    ggml_tensor * mamba(ggml_context * ctx, const std::string & prefix, ggml_tensor * x, bool reverse) const;
 
     const ModelFile & m_;
-    int hidden_, inner_, state_, width_, rank_;
+    int hidden_;
     int depth_, frame_stride_, bin_stride_, blocks_, padding_;
     float instance_eps_, layer_eps_;
 };

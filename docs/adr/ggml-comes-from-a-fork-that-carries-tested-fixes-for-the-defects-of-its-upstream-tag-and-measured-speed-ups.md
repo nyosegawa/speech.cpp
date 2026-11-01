@@ -3,8 +3,8 @@
 ## Context
 
 speech.cpp builds ggml from a git submodule. ggml-org/ggml v0.27.0 (2026-10-15) gives speech.cpp's models wrong
-results on two supported platforms, in five places, each shown by test-backend-ops cases that fail on the tag on an
-Apple M5 or an RTX 2080 (2026-10-17):
+results on two supported platforms, in the places below, each shown by test-backend-ops cases, or a test of its own,
+that fail on the tag on an Apple M5, an RTX 2080 or MoltenVK:
 
 - **Metal's tensor API.** On the M5, M6, A19 and A20, Metal runs matrix products through Metal 4's tensor API by
   default, on the matrix units those chips have. ggml's `kernel_mul_mm` for it reads the activations in float and asks
@@ -74,8 +74,6 @@ Apple M5 or an RTX 2080 (2026-10-17):
   outside a descriptor's range, as the RTX 2080's does by its robust buffer access, hid it; MoltenVK writes them.
   RE-USE normalizes 40411 rows at 16 kHz, and the encoders of FastConformer and Qwen3-ASR normalize their frames past
   512 rows on audio longer than about 41 s.
-- **Mamba-1's scan on Vulkan.** Vulkan takes SSM_SCAN in Mamba-2's form alone, so a backend asked for RE-USE's
-  bidirectional Mamba-1 cannot compute it.
 
 ggml reads no setting that avoids the first two through its API, only environment variables: `GGML_METAL_TENSOR_DISABLE`,
 which it reads only while it lists its devices, so that a library sets it in its host's process, unsafely while another
@@ -101,6 +99,13 @@ as reshapes. And ggml's argmax reads a row with one threadgroup of at most 256 t
 and with one subgroup, 32 threads on NVIDIA, on Vulkan: an argmax over Qwen3's 151,936 tokens took 59 µs on an Apple M5
 and 190 µs on an RTX 2080 (2026-10-15), longer than the head's product that made the logits on the RTX 2080, so that
 picking Qwen3-ASR's tokens on the device was slower than reading the logits back.
+
+RE-USE, a SEMamba network, runs 120 Mamba-1 layers and 22 convolutions of up to 256 channels on each chunk of 5 s.
+ggml writes Mamba-1 as SSM_CONV, products, softplus, SSM_SCAN and a gate, which pass every step's activations through
+memory; Metal's SSM_SCAN of Mamba-1 gives a threadgroup to each row and synchronizes at every token, and Vulkan takes
+SSM_SCAN in Mamba-2's form alone, so that it cannot compute RE-USE at all. Metal's CONV_2D computes each output with
+one thread's loop over its inputs. On an Apple M5 (2026-11-01), RE-USE in F32 enhanced 10.44 s of noisy 16 kHz speech
+in 32.0 s on Metal; with MAMBA1 in 15.1 s, and with the convolution below as well in 3.70 s.
 
 ## Decision
 
@@ -137,9 +142,14 @@ picking Qwen3-ASR's tokens on the device was slower than reading the logits back
   path's 0.84 to 0.92 times and Vulkan's through MoltenVK 1.07 to 1.22 times.
 - **Vulkan bounds the rows of NORM, L2_NORM, SUM_ROWS, MEAN, CUMSUM and RMS_NORM_BACK by the tensor's rows**, as
   SOFT_MAX and ARGMAX already did.
-- **Vulkan computes SSM_SCAN of Mamba-1**, whose decay has a value for each state element, with d_state 16, one
-  invocation to each row of each sequence; **Metal computes it the same way**, one thread to a row, where its shared
-  kernel gave a threadgroup to each row and synchronized at every token.
+- **Mamba-1 is one operation of the fork's, `GGML_OP_MAMBA1`** (`ggml_mamba1()`), on the CPU, Metal and Vulkan: from
+  the input projection's output to the gated output before the output projection, as mamba-ssm's `causal_conv1d` and
+  `selective_scan` compute it, each sequence from zero history and state and its steps from the last with `reverse`.
+  A thread keeps one channel's convolution history and states through every step, and a sequence's channels meet only
+  to sum x_proj, eight steps at a time on Metal and Vulkan.
+- **Metal runs CONV_2D of an F32 kernel into a contiguous output as an implicit matrix product**, gathering the input's
+  patches tile by tile, on the matrix units through the tensor API, or in simdgroup matrices before the M5, both
+  operands staged in float.
 - **Metal and Vulkan fuse Snake with the channels along `ne[0]`** as they fuse it with the channels along `ne[1]`.
 - **Metal divides the 4-bit scales by 16 in float**, as it already did for Q5_K.
 - **ggml's allocator plans a graph again when its nodes read other tensors than the planned graph's**: the plan records
@@ -169,8 +179,8 @@ picking Qwen3-ASR's tokens on the device was slower than reading the logits back
   | a depthwise convolution of one position per channel takes the kernel's layout | `test-backend-ops -o CONV_2D_DW`: inputs [1, 1, 64] by 3x3 and [1, 1, 1024] by 9x9 with a channel-fastest kernel, in F32 and F16, on Metal and Vulkan | the tag passes those cases |
   | F32 products in float on Metal and Vulkan | `test-backend-ops -o MUL_MAT`: F32 by F32 with values of 6.6e4 to 7.2e4 in the activations (128 to 64 at 151*81 and 251*161 positions, 129x77x1000, 1024x192x288) and in the matrix (129x77x1000), on Metal with and without the tensor API and on Vulkan | the tag passes those cases |
   | Vulkan's row-wise operations bounded | `test-backend-ops` NORM, RMS_NORM_BACK, L2_NORM, SUM_ROWS, MEAN and CUMSUM of rows of 64 with 513 rows, 513 over three dimensions and 40411, on Vulkan under a driver that writes outside a descriptor's range, such as MoltenVK | the tag passes those cases |
-  | Mamba-1's scan on Vulkan | `test-backend-ops -o SSM_SCAN`: Mamba-1 with d_inner 256 at 251 tokens of 161 and 481 sequences, 161 and 481 tokens of 251, and 100 rows of 3 short sequences, on Vulkan | the tag computes those cases on Vulkan |
-  | Mamba-1's scan a thread to a row on Metal (speed-up) | the same cases on Metal | the tag's Metal kernel of Mamba-1 is as fast |
+  | Mamba-1 as one operation (speed-up) | `test-backend-ops -o MAMBA1`: d_inner 256 at 251 tokens of 161 and 481 sequences and 161 and 481 tokens of 251, each way, sequences of 1 and 5 steps, and d_inner 128 and 512 on Metal, on Metal and Vulkan | the tag has an operation of Mamba-1 that SEMamba's graph can take, as fast on Metal and Vulkan |
+  | Metal's F32 CONV_2D as an implicit matrix product (speed-up) | `test-backend-ops -o CONV_2D`: every case of an F32 kernel, among them SEMamba's convolutions on 2 s of 16 kHz audio, on Metal with and without the tensor API | the tag's Metal CONV_2D of an F32 kernel is as fast |
   | Vulkan's coopmat2 products keep robust buffer access | no `test-backend-ops` case; Irodori-TTS v4 Large Q8_0 speaking the twenty sentences of speech-bench's `prompts/speak-ja-JP.json` in a loop on an RTX 5090 with NVIDIA's Windows driver 616.92 or 617.42 and the pipelines without robustness, which faults within thirty runs | NVIDIA's Windows driver runs that loop thirty times without a fault with the pipelines without robustness, or the tag keeps robustness on them |
 
   Between tags, a fix found later is a commit of its own on top, with its cases. Moving ggml to a newer tag starts the
@@ -205,6 +215,9 @@ The alternatives were turned down:
   `GGML_PREC_F32`. Half loses the values past 65504 and 13 bits of every operand's mantissa, which any model's
   activations can meet, and speech.cpp asks every product for `GGML_PREC_F32`.
 - RE-USE's activations scaled down before its projection in speech.cpp. The defect would stay for every other graph.
+- Mamba-1 written with ggml's operations, with an SSM_SCAN of Mamba-1 on Vulkan and a faster one on Metal. The
+  operations would still pass every step's activations through memory between them, and the backward direction would
+  need its sequences flipped before and after.
 
 ## Consequences
 
@@ -213,4 +226,5 @@ checks' errors as any change of that order does: a build of the simdgroup kernel
 apart moves them as far, in both directions. The library does not touch the environment. A ggml update runs the cases
 on the M5 and on the Windows machine's Vulkan GPU, from the Windows build of CI with checks, before the submodule
 moves. A speed-up changes the results of the graphs it covers on Metal
-and Vulkan by rounding alone, and the CPU's not at all.
+and Vulkan by rounding alone, and the CPU's not at all, but for an operation of the fork's, whose CPU kernel is its
+reference.
