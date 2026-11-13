@@ -128,6 +128,9 @@ struct Codec::Net {
             ? ggml_concat(ctx(), held, ggml_cont(ctx(), ggml_view_3d(ctx(), tails, out, s, frames - 1, tails->nb[1], tails->nb[2], 0)), 2)
             : held;
         ggml_tensor * y = ggml_reshape_2d(ctx(), ggml_add(ctx(), ggml_cont(ctx(), own), before), out, s * frames);
+        // The copy of this call's last taps does not depend on the sum that reads the state, so the sum goes into the
+        // graph first; otherwise the graph would run the copy first and the sum would read the new state.
+        g.expand(y);
         g.copy(ggml_cont(ctx(), ggml_view_3d(ctx(), tails, out, s, 1, tails->nb[1], tails->nb[2], (frames - 1) * tails->nb[2])), state);
         return ggml_add(ctx(), y, m.tensor(name + ".bias"));
     }
