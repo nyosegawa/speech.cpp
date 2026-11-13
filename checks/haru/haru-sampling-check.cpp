@@ -57,7 +57,8 @@ int main(int argc, char ** argv) {
 
     const Npy logits = read_npy((cases / "logits.npy").u8string());
     const size_t rows = (size_t) logits.shape[0], vocab = (size_t) logits.shape[1];
-    for (const char * name : {"file", "top-p", "cold-top-k-1", "wide"}) {
+    const TextIds text_ids = file_text_ids(model);
+    for (const char * name : {"file", "top-p", "cold-top-k-1", "wide", "must-speak"}) {
         const JsonValue meta = read_json(cases / name / "meta.json");
         Sampling s;
         s.temperature = (float) number(meta, "temperature");
@@ -74,8 +75,12 @@ int main(int argc, char ** argv) {
         const size_t k = (size_t) ids.shape[1];
         size_t same_ids = 0, same_sets = 0;
         double worst = 0;
+        const JsonValue * must = meta.member("must_speak");
         for (size_t r = 0; r < rows; r++) {
-            const std::vector<float> row(logits.f32.begin() + (std::ptrdiff_t) (r * vocab), logits.f32.begin() + (std::ptrdiff_t) ((r + 1) * vocab));
+            std::vector<float> row(logits.f32.begin() + (std::ptrdiff_t) (r * vocab), logits.f32.begin() + (std::ptrdiff_t) ((r + 1) * vocab));
+            if (must && must->boolean) {
+                for (int32_t t : {text_ids.pad, text_ids.eop, text_ids.eos}) row[(size_t) t] = -INFINITY;
+            }
             const Candidates c = candidates(row, s);
             if (c.tokens.size() != k) continue;
             // torch.topk() orders tokens of equal logits, after the division by the temperature, as it pleases, which
@@ -97,7 +102,6 @@ int main(int argc, char ** argv) {
     }
 
     const DryConfig dry_config = file_dry(model);
-    const TextIds text_ids = file_text_ids(model);
     const std::vector<int32_t> silent = {text_ids.pad, text_ids.eop, text_ids.eos};
     std::ifstream lines(cases / "dry.jsonl");
     std::string line;
@@ -130,11 +134,14 @@ int main(int argc, char ** argv) {
     const Npy sampled = read_npy((dump / "sampled_logits.npy").u8string());
     const Npy tokens = read_npy((dump / "tokens.npy").u8string());
     const size_t frames = (size_t) raw.shape[0];
+    // A conversation the model opens bans the silent tokens on its first frame.
+    const JsonValue dump_meta = read_json(dump / "meta.json");
+    const bool speak_first = dump_meta.member("speak_first")->boolean;
     Dry dry(dry_config, silent);
     size_t same_frames = 0;
     for (size_t f = 0; f < frames; f++) {
         std::vector<float> row(raw.f32.begin() + (std::ptrdiff_t) (f * vocab), raw.f32.begin() + (std::ptrdiff_t) ((f + 1) * vocab));
-        shape_logits(row, dry, &silent_logits.f32[f * 2], text_ids, 0.0f, false);
+        shape_logits(row, dry, &silent_logits.f32[f * 2], text_ids, 0.0f, speak_first && f == 0);
         same_frames += std::equal(row.begin(), row.end(), sampled.f32.begin() + (std::ptrdiff_t) (f * vocab));
         dry.update(tokens.i32[f]);
     }
@@ -145,8 +152,7 @@ int main(int argc, char ** argv) {
     qwen2_pattern(model.str("haru.tokenizer.pre_tokenizer"), &pattern);
     const Qwen2Tokenizer tokenizer(model, "haru.tokenizer", pattern);
     StreamDetokenizer detokenizer(tokenizer, {text_ids.pad, text_ids.eop});
-    const JsonValue meta = read_json(dump / "meta.json");
-    const JsonValue & text = *meta.member("text");
+    const JsonValue & text = *dump_meta.member("text");
     size_t same_text = 0;
     for (size_t f = 0; f < frames; f++) {
         const std::string got = detokenizer.push(tokens.i32[f]);

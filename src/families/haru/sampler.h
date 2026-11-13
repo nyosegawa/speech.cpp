@@ -25,8 +25,9 @@ Sampling file_sampling(const ModelFile & m);
  * The tokens sample_token() draws from and their weights: the logits divided by the temperature, the top_k largest by
  * falling logit (every token where top_k is 0 or the vocabulary or more), and the softmax of those in float32, of which,
  * where top_p is below 1, each token whose probability accumulated before it reaches top_p weighs 0. The first token
- * always stays. A temperature of 0 or less gives the largest logit alone. A logit that is not a finite number throws an
- * Error of the device, and a temperature that takes the largest logit beyond a float temperature_overflow().
+ * always stays. A temperature of 0 or less gives the largest logit alone. A logit of minus infinity, a token the session
+ * bans, gets no chance; NaN or plus infinity throws an Error of the device, and a temperature that takes a finite logit
+ * beyond a float temperature_overflow().
  */
 Candidates candidates(const std::vector<float> & logits, const Sampling & s);
 

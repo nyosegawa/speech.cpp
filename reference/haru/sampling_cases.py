@@ -4,7 +4,8 @@ and on token sequences made for the purpose, and saves what each computes for ha
 usage: uv run python sampling_cases.py <dump dir> <out dir>
 
 Writes under <out dir>:
-  <case>/meta.json          the settings: temperature, top_k and top_p
+  <case>/meta.json          the settings: temperature, top_k and top_p, and "must_speak" for a case whose rows have the
+                            logits of PAD, EOP and EOS at minus infinity, as the session bans them
   <case>/ids.npy            the tokens each draw takes from, in sample_token()'s order, [rows, candidates]
   <case>/probabilities.npy  the probability of each, 0 where top_p drops it, [rows, candidates]
   logits.npy                the dump's sampled_logits, the logits each draw takes, [rows, vocab]
@@ -14,7 +15,7 @@ Writes under <out dir>:
 sample_token() draws with torch.multinomial(), which nothing outside torch reproduces, so the draws themselves are not
 compared: the probabilities are the tensor it hands torch.multinomial(), with the ids its torch.topk() or torch.sort()
 gave. The settings are the official defaults, which the model file holds, and others that take each branch: a top_p
-below 1, a lower temperature with a top_k of 1, and a wide top_k. The DRY sequences are the dump's tokens and draws from a
+below 1, a lower temperature with a top_k of 1, a wide top_k, and the defaults with the silent tokens banned. The DRY sequences are the dump's tokens and draws from a
 few tokens, with the silent ones among them, long enough to pass DRY's lookback.
 """
 
@@ -43,6 +44,7 @@ CASES = {
     "top-p": {"temperature": 0.7, "top_k": 25, "top_p": 0.5},
     "cold-top-k-1": {"temperature": 0.3, "top_k": 1, "top_p": 1.0},
     "wide": {"temperature": 1.2, "top_k": 1000, "top_p": 0.9},
+    "must-speak": {"temperature": defaults.temperature, "top_k": defaults.top_k, "top_p": defaults.top_p, "must_speak": True},
 }
 
 
@@ -72,10 +74,15 @@ def draw(row, settings):
 
 
 np.save(os.path.join(out_dir, "logits.npy"), logits.astype(np.float32))
+# The session's bans while the model must speak, which a case's "must_speak" puts on every row.
+banned = [config.pad_token_id, config.eop_token_id, config.eos_token_id]
 for name, settings in CASES.items():
     folder = os.path.join(out_dir, name)
     os.makedirs(folder, exist_ok=True)
-    rows = [draw(row, settings) for row in logits]
+    source = logits.copy()
+    if settings.get("must_speak"):
+        source[:, banned] = -np.inf
+    rows = [draw(row, settings) for row in source]
     np.save(os.path.join(folder, "ids.npy"), np.stack([r[0] for r in rows]))
     np.save(os.path.join(folder, "probabilities.npy"), np.stack([r[1] for r in rows]))
     with open(os.path.join(folder, "meta.json"), "w", encoding="utf-8") as f:

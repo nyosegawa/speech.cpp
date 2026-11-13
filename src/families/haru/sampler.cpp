@@ -16,8 +16,10 @@ Sampling file_sampling(const ModelFile & m) {
 }
 
 Candidates candidates(const std::vector<float> & logits, const Sampling & s) {
+    // Minus infinity is a token the session bans, which the softmax gives no chance; NaN and plus infinity can only
+    // come from the device.
     for (float l : logits) {
-        if (!std::isfinite(l)) throw Error(Fault::Device, "the model computed a logit that is not a finite number; run it on another device");
+        if (std::isnan(l) || l == INFINITY) throw Error(Fault::Device, "the model computed a logit that is not a number; run it on another device");
     }
     const int64_t v = (int64_t) logits.size();
     Candidates c;
@@ -29,7 +31,7 @@ Candidates candidates(const std::vector<float> & logits, const Sampling & s) {
     std::vector<float> scaled(logits.size());
     for (size_t i = 0; i < logits.size(); i++) {
         scaled[i] = logits[i] / s.temperature;
-        if (!std::isfinite(scaled[i])) throw temperature_overflow(s.temperature);
+        if (std::isfinite(logits[i]) && !std::isfinite(scaled[i])) throw temperature_overflow(s.temperature);
     }
     const int64_t k = s.top_k > 0 && s.top_k < v ? s.top_k : v;
     std::vector<int32_t> order((size_t) v);
