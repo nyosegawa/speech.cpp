@@ -171,7 +171,7 @@ int main(int argc, char ** argv) {
         for (int64_t r = rows; r < total; r++) {
             const std::vector<float> y = text.run(rows_of(x, h, r, 1), 1, &step);
             out.insert(out.end(), y.begin(), y.end());
-            for (auto [all, one] : {std::pair{&stages.mixer, &step.mixer}, {&stages.router, &step.router}, {&stages.moe, &step.moe},
+            for (auto [all, one] : {std::pair{&stages.mixer, &step.mixer}, {&stages.router, &step.router}, {&stages.ffn, &step.ffn},
                                     {&stages.layers, &step.layers}}) {
                 (*all)[0].insert((*all)[0].end(), (*one)[0].begin(), (*one)[0].end());
             }
@@ -183,7 +183,7 @@ int main(int argc, char ** argv) {
         const std::vector<bool> tied = tied_rows(stages.router[0], official_router, total, experts, used);
         const int64_t ties = std::count(tied.begin(), tied.end(), true);
         tied_count += ties;
-        moe.keep(compare(without(stages.moe[0], h, tied), without(rows_of(moes.f32, total * h, l, 1), h, tied)), l);
+        moe.keep(compare(without(stages.ffn[0], h, tied), without(rows_of(moes.f32, total * h, l, 1), h, tied)), l);
         const Diff dl = compare(without(stages.layers[0], h, tied), without(rows_of(layers_out.f32, total * h, l, 1), h, tied));
         layer.keep(dl, l);
         std::printf("layer %2d (%s): %.1f dB, %lld tied rows, %.1f s so far\n", l, text.attention(l) ? "attention" : "Gated DeltaNet",

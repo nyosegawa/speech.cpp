@@ -5,29 +5,24 @@
 #include <string>
 #include <vector>
 
-#include "keys-values.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 #include "graph.h"
 #include "model-file.h"
+#include "qwen35-decoder.h"
 
 namespace drama3 {
 
 /**
- * What the layers of a run computed on the way, by layer, each [width, rows] with the channel fastest: the attention's
- * or the Gated DeltaNet's output, the router's logits, the experts' output with the shared expert's, and the layer's
- * output.
+ * What the layers of a run computed on the way, by layer: the attention's or the Gated DeltaNet's output, the router's
+ * logits, the experts' output with the shared expert's, and the layer's output.
  */
-struct TextModelStages {
-    std::vector<std::vector<float>> mixer, router, moe, layers;
-};
+using TextModelStages = Qwen35Stages;
 
 /**
- * Drama 3's text model, a Qwen3.5-MoE backbone, or a run of its layers: in each, RMSNorm and a Gated DeltaNet or gated
- * attention, then RMSNorm and 256 experts of which the router takes 8, with a shared expert whose sigmoid gate scales
- * it; after the last, RMSNorm and the head of the main token's logits. It runs one sequence at a time and keeps, for
- * each attention layer, the keys and values of its rows, and for each Gated DeltaNet layer its recurrent state and the
- * inputs of its convolution's last rows.
+ * Drama 3's text model, a Qwen3.5-MoE backbone, or a run of its layers: the layers, 256 experts of which the router takes
+ * 8 with a shared expert, as Qwen35Decoder runs them, with Drama 3's inputs, a frame's main token and the codes the text
+ * model sees, and its head of the main token's logits.
  */
 class TextModel {
 public:
@@ -38,28 +33,25 @@ public:
      * the rest computing on `backend`.
      */
     TextModel(const ModelFile & m, ggml_backend_t backend, int first = 0, int last = -1, ggml_backend_t cpu = nullptr);
-    ~TextModel();
-    TextModel(const TextModel &) = delete;
-    TextModel & operator=(const TextModel &) = delete;
 
-    int hidden() const { return h_; }
+    int hidden() const { return decoder_.hidden(); }
     /** The layers of the model, whichever this one runs. */
-    int layers() const { return (int) types_.size(); }
-    bool attention(int l) const { return types_[(size_t) l]; }
+    int layers() const { return decoder_.layers(); }
+    bool attention(int l) const { return decoder_.attention(l); }
     /** The rows run so far. */
-    int64_t n_past() const { return n_past_; }
+    int64_t n_past() const { return decoder_.n_past(); }
 
     /** Starts a sequence of at most `rows` rows: the attention layers get room for them, and every state starts at 0. */
-    void start(int64_t rows);
+    void start(int64_t rows) { decoder_.start(rows); }
 
     /** Keeps a copy of every Gated DeltaNet layer's state as it stands after n_past() rows, for rewind(). */
-    void keep_states();
+    void keep_states() { decoder_.keep_states(); }
 
     /**
      * Goes back to the row after the first `rows` rows of the sequence, where keep_states() kept the states: the
      * attention layers keep the keys and values of those rows, and the states return to the copy.
      */
-    void rewind(int64_t rows);
+    void rewind(int64_t rows) { decoder_.rewind(rows); }
 
     /**
      * Allocates now the memory of a sequence of `rows` rows whose prompt takes `prompt_rows`, which its largest graphs
@@ -79,7 +71,7 @@ public:
      * Runs `n` rows of input `x`, [hidden, n], after n_past() through the layers, and returns the last layer's output,
      * after the final norm where it is the model's last. `stages`, when given, receives what each layer computed.
      */
-    std::vector<float> run(const std::vector<float> & x, int64_t n, TextModelStages * stages = nullptr);
+    std::vector<float> run(const std::vector<float> & x, int64_t n, TextModelStages * stages = nullptr) { return decoder_.run(x, n, stages); }
 
     /** The head's logits of `hidden`, [hidden] after the final norm, over drama3.output.token_ids. */
     std::vector<float> logits(const std::vector<float> & hidden);
@@ -89,49 +81,18 @@ public:
      * inputs of its convolution's last rows, [width - 1, channels] with the row fastest: what a check compares with the
      * official ones.
      */
-    std::vector<float> delta_state(int l) const;
-    std::vector<float> conv_state(int l) const;
+    std::vector<float> delta_state(int l) const { return decoder_.delta_state(l); }
+    std::vector<float> conv_state(int l) const { return decoder_.conv_state(l); }
 
 private:
-    struct States;
-
-    ggml_tensor * attention_mixer(Graph & g, int l, ggml_tensor * x, int64_t first, ggml_tensor * pos, ggml_tensor * mask);
-    ggml_tensor * delta_mixer(Graph & g, int l, ggml_tensor * x);
     /** The graph of the embeddings of `n` frames, which embed() computes. */
     ggml_tensor * build_embed(Graph & g, const std::vector<int32_t> & frames, int64_t n);
-    /**
-     * The graph of the layers on the rows of `x`, [hidden, rows], after n_past(), and the final norm where the run
-     * ends with the model's last layer; `kept`, when given, receives each layer's mixer, router, experts and output.
-     */
-    ggml_tensor * build_rows(Graph & g, ggml_tensor * x, std::vector<std::vector<ggml_tensor *>> * kept);
-    /** The experts and the shared expert on `x`, and the router's logits in `router`. */
-    ggml_tensor * experts(Graph & g, int l, ggml_tensor * x, ggml_tensor ** router);
 
     ggml_backend_t backend_;
     const ModelFile & m_;
-    ggml_gallocr_t allocr_ = nullptr;
-    /** The scheduler of the layers' graphs over `backend` and the CPU, where the CPU holds some of their tensors. */
-    ggml_backend_sched_t sched_ = nullptr;
-    int first_ = 0, last_ = 0;
-    std::vector<bool> types_;
-    int h_ = 0, heads_ = 0, kv_heads_ = 0, head_dim_ = 0, rotary_dim_ = 0;
-    int key_heads_ = 0, value_heads_ = 0, key_dim_ = 0, value_dim_ = 0, conv_width_ = 0;
-    int experts_ = 0, used_ = 0;
-    bool norm_topk_ = false;
-    float eps_ = 0, rope_theta_ = 0;
-    int codebooks_ = 0, codes_ = 0, seen_ = 0;
+    Qwen35Decoder decoder_;
+    int h_ = 0, codebooks_ = 0, codes_ = 0, seen_ = 0;
     int32_t semantic_begin_ = 0, semantic_end_ = 0;
-    std::unique_ptr<KeysValues> keys_values_;
-    std::unique_ptr<States> states_;
-    /**
-     * The copy keep_states() makes of states_, allocated with them so that the model holds its memory from its load on,
-     * and the rows run when it was made.
-     */
-    std::unique_ptr<States> kept_;
-    int64_t kept_rows_ = -1;
-    /** The index of each layer among the attention layers or the Gated DeltaNet layers of the run. */
-    std::vector<int> slot_;
-    int64_t capacity_ = 0, n_past_ = 0;
 };
 
 }  // namespace drama3

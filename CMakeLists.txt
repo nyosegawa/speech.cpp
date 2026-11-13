@@ -56,6 +56,7 @@ add_library(speechcommon STATIC
     src/common/sentence-segments.cpp
     src/common/log.cpp
     src/common/qwen3-decoder.cpp
+    src/common/qwen35-decoder.cpp
     src/common/qwen2-tokenizer.cpp
     src/common/added-vocabulary.cpp
     src/common/utf8.cpp
@@ -533,6 +534,10 @@ target_include_directories(haru-codec-check PRIVATE checks)
 target_link_libraries(haru-codec-check PRIVATE haru)
 
 # Haru's output and MeanFlow head against the dumps of reference/haru/dump.py.
+add_executable(haru-text-check checks/haru/haru-text-check.cpp)
+target_include_directories(haru-text-check PRIVATE checks)
+target_link_libraries(haru-text-check PRIVATE haru)
+
 add_executable(haru-head-check checks/haru/haru-head-check.cpp tools/common/json-reader.cpp)
 target_include_directories(haru-head-check PRIVATE checks tools/common)
 target_link_libraries(haru-head-check PRIVATE haru)
