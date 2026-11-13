@@ -1,0 +1,19 @@
+[project]
+name = "speech-cpp-haru-reference"
+version = "0"
+description = "Runs the official Haru on the CPU to dump reference tensors, and converts its weights to GGUF"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "haru-speech @ git+https://github.com/higurashi-ai/Haru@7fe6b7665f8bf035998f401f8cb779fbe53f2751#subdirectory=haru",
+  "torch==2.8.0",
+  # The Qwen3.5 text model Haru builds its backbone from; haru-speech asks for 5.16 or later.
+  "transformers==5.19.0",
+  "numpy",
+  "safetensors",
+  "soundfile",
+  "huggingface_hub",
+  "gguf==0.19.0",
+]
+
+[tool.uv]
+package = false

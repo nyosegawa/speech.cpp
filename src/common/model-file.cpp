@@ -555,7 +555,7 @@ ModelIdentity read_identity(const ModelFile & file) {
 
 void check_model_keys(const ModelFile & file, const char * task, const char * language_use) {
     read_identity(file);
-    const std::string file_task = file.one_of("speech.task", {"synthesis", "recognition", "detection", "diarization", "enhancement"});
+    const std::string file_task = file.one_of("speech.task", {"synthesis", "recognition", "detection", "diarization", "enhancement", "dialogue"});
     if (file_task != task) {
         throw file_error(file.path() + " says its speech.task is " + file_task + ", where its family does " + task + "; " + file.remedy());
     }

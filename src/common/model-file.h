@@ -216,7 +216,7 @@ ModelIdentity read_identity(const ModelFile & file);
 /**
  * Reads and checks the keys every model file has: its identity (read_identity()), speech.task, which must be the
  * family's `task`, and speech.sample_rate, but for a model of enhancement, which enhances audio at the rate it is given
- * and whose family reads the rates it takes; and for a task that takes languages, synthesis and recognition,
+ * and whose family reads the rates it takes; and for a task that takes languages, synthesis, recognition and dialogue,
  * general.languages, ISO 639 codes of two or three lowercase letters sorted without repeats, and speech.language_use,
  * which must be the family's `language_use`. A model of detection, of diarization or of enhancement takes no language,
  * and its file has neither key, which its family gives as a `language_use` of nullptr.

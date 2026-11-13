@@ -214,6 +214,14 @@ add_library(drama3 STATIC
 target_include_directories(drama3 PUBLIC src/families)
 target_link_libraries(drama3 PUBLIC speechcommon)
 
+# Haru full-duplex spoken dialogue (higurashi): the family.
+add_library(haru STATIC
+    src/families/haru/layout.cpp
+    src/families/haru/codec.cpp
+)
+target_include_directories(haru PUBLIC src/families)
+target_link_libraries(haru PUBLIC speechcommon)
+
 # The C API, include/speech.h, twice: static for the executables, so that each stays one file, and shared as
 # libspeech for bindings and other programs. On Windows the two would both write speech.lib, the static one as
 # the library and the shared one as its import library, hence speech-static.
@@ -515,6 +523,11 @@ endforeach()
 add_executable(drama3-codec-check checks/drama3/drama3-codec-check.cpp)
 target_include_directories(drama3-codec-check PRIVATE checks)
 target_link_libraries(drama3-codec-check PRIVATE drama3)
+
+# Haru's codec against the dumps of reference/haru/dump.py.
+add_executable(haru-codec-check checks/haru/haru-codec-check.cpp)
+target_include_directories(haru-codec-check PRIVATE checks)
+target_link_libraries(haru-codec-check PRIVATE haru)
 
 # Drama 3's sampler against fish-speech's, on the cases of reference/drama3/sampling_cases.py.
 add_executable(drama3-sampler-check checks/drama3/drama3-sampler-check.cpp tools/common/json-reader.cpp)
