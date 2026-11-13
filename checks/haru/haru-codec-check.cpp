@@ -72,7 +72,8 @@ int main(int argc, char ** argv) {
     // (the silence latent; its stages 111.0 dB and up) and 113.7 dB for the decoder, with windows equal to decoding or
     // encoding at once; on Metal, whose matrix kernel rounds its inputs to half precision, 47.5 dB for the encoder (the
     // user's frames, whose quietest, peaks of 1e-4, lose their signal against the biases it rides on), 64.0 dB for the
-    // decoder and 65.8 dB for windows. The official codec in bfloat16, as the official code runs it, gives 25.4 dB for
+    // decoder and 65.8 dB for windows; on Vulkan on an RTX 2080, 47.4, 63.6 and 64.0 dB, and on its CPU what the M5's
+    // gives. The official codec in bfloat16, as the official code runs it, gives 25.4 dB for
     // the user's means and 39.1 dB for the audio against its float32 dump, and in float16 41.4 and 55.1 dB.
     const bool cpu = ggml_backend_is_cpu(backend);
     const double encoder_db = cpu ? 80 : 40, decoder_db = cpu ? 100 : 55, window_db = cpu ? 100 : 55;
