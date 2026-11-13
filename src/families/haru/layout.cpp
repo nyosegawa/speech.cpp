@@ -158,12 +158,12 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
     const float top_p = m.f32(s + "top_p");
     require(top_p > 0.0f && top_p <= 1.0f, m, "haru.sampling.top_p is not above 0 and at most 1");
     m.f32(s + "eop_bias");
-    m.f32(s + "dry_multiplier");
-    m.f32(s + "dry_base");
+    m.f64(s + "dry_multiplier");
+    m.f64(s + "dry_base");
     m.u32(s + "dry_allowed_length");
     m.u32(s + "dry_lookback");
     m.size(s + "dry_max_match_length");
-    m.f32(s + "dry_max_penalty");
+    m.f64(s + "dry_max_penalty");
 
     m.size(d + "max_frames");
     const float ref_min = m.f32(d + "reference_min_seconds"), ref_max = m.f32(d + "reference_max_seconds");

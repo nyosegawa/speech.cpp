@@ -195,12 +195,14 @@ w.add_float32(s + "temperature", float(defaults.temperature))
 w.add_uint32(s + "top_k", int(defaults.top_k))
 w.add_float32(s + "top_p", float(defaults.top_p))
 w.add_float32(s + "eop_bias", float(defaults.eop_bias))
-w.add_float32(s + "dry_multiplier", float(dry.multiplier))
-w.add_float32(s + "dry_base", float(dry.base))
+# DRY's penalty, min(max_penalty, multiplier x base^(length - allowed_length)), is computed in double by the official
+# code and rounded to float32 where it is subtracted; its constants are kept in double to give the same float.
+w.add_float64(s + "dry_multiplier", float(dry.multiplier))
+w.add_float64(s + "dry_base", float(dry.base))
 w.add_uint32(s + "dry_allowed_length", int(dry.allowed_length))
 w.add_uint32(s + "dry_lookback", int(dry.lookback))
 w.add_uint32(s + "dry_max_match_length", int(dry.max_match_length))
-w.add_float32(s + "dry_max_penalty", float(dry.max_penalty))
+w.add_float64(s + "dry_max_penalty", float(dry.max_penalty))
 
 d = p + "dialogue."
 # DuplexConfig: the most frames a conversation runs (60 minutes) and the most seconds of a voice reference it keeps.

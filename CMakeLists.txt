@@ -218,6 +218,9 @@ target_link_libraries(drama3 PUBLIC speechcommon)
 add_library(haru STATIC
     src/families/haru/layout.cpp
     src/families/haru/codec.cpp
+    src/families/haru/head.cpp
+    src/families/haru/sampler.cpp
+    src/families/haru/detokenizer.cpp
 )
 target_include_directories(haru PUBLIC src/families)
 target_link_libraries(haru PUBLIC speechcommon)
@@ -528,6 +531,16 @@ target_link_libraries(drama3-codec-check PRIVATE drama3)
 add_executable(haru-codec-check checks/haru/haru-codec-check.cpp)
 target_include_directories(haru-codec-check PRIVATE checks)
 target_link_libraries(haru-codec-check PRIVATE haru)
+
+# Haru's output and MeanFlow head against the dumps of reference/haru/dump.py.
+add_executable(haru-head-check checks/haru/haru-head-check.cpp tools/common/json-reader.cpp)
+target_include_directories(haru-head-check PRIVATE checks tools/common)
+target_link_libraries(haru-head-check PRIVATE haru)
+
+# Haru's text sampling against the cases of reference/haru/sampling_cases.py.
+add_executable(haru-sampling-check checks/haru/haru-sampling-check.cpp tools/common/json-reader.cpp)
+target_include_directories(haru-sampling-check PRIVATE checks tools/common)
+target_link_libraries(haru-sampling-check PRIVATE haru)
 
 # Drama 3's sampler against fish-speech's, on the cases of reference/drama3/sampling_cases.py.
 add_executable(drama3-sampler-check checks/drama3/drama3-sampler-check.cpp tools/common/json-reader.cpp)
