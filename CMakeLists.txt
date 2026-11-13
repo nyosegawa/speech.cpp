@@ -222,6 +222,8 @@ add_library(haru STATIC
     src/families/haru/head.cpp
     src/families/haru/sampler.cpp
     src/families/haru/detokenizer.cpp
+    src/families/haru/prompt.cpp
+    src/families/haru/dialogue.cpp
 )
 target_include_directories(haru PUBLIC src/families)
 target_link_libraries(haru PUBLIC speechcommon)
@@ -541,6 +543,16 @@ target_link_libraries(haru-text-check PRIVATE haru)
 add_executable(haru-head-check checks/haru/haru-head-check.cpp tools/common/json-reader.cpp)
 target_include_directories(haru-head-check PRIVATE checks tools/common)
 target_link_libraries(haru-head-check PRIVATE haru)
+
+# Haru's prompt against the cases of reference/haru/prompt_cases.py and the dumps of reference/haru/dump.py.
+add_executable(haru-prompt-check checks/haru/haru-prompt-check.cpp tools/common/json-reader.cpp)
+target_include_directories(haru-prompt-check PRIVATE checks tools/common)
+target_link_libraries(haru-prompt-check PRIVATE haru)
+
+# A whole Haru conversation against a dump of reference/haru/dump.py, its draws replayed.
+add_executable(haru-dialogue-check checks/haru/haru-dialogue-check.cpp tools/common/json-reader.cpp)
+target_include_directories(haru-dialogue-check PRIVATE checks tools/common)
+target_link_libraries(haru-dialogue-check PRIVATE haru)
 
 # Haru's text sampling against the cases of reference/haru/sampling_cases.py.
 add_executable(haru-sampling-check checks/haru/haru-sampling-check.cpp tools/common/json-reader.cpp)

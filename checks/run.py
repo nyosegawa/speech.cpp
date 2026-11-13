@@ -429,12 +429,15 @@ def haru(model, devices, ctx):
                         dumps.append(os.path.join(out, d))
     if not dumps:
         return [missing(check, model.label(), f"dump of {model.name} under {out}") for check in ("haru-codec-check", "haru-text-check", "haru-head-check")]
-    sampling = os.path.join(out, "sampling")
-    # The sampling runs on the host.
+    sampling, prompt = os.path.join(out, "sampling"), os.path.join(out, "prompt")
+    # The sampling and the prompt run on the host.
     runs = [Run("haru-sampling-check", [model.path, sampling, dumps[0]], None, model.label()) if os.path.isdir(sampling)
-            else missing("haru-sampling-check", model.label(), sampling)]
+            else missing("haru-sampling-check", model.label(), sampling),
+            Run("haru-prompt-check", [model.path, prompt] + dumps, None, model.label()) if os.path.isdir(prompt)
+            else missing("haru-prompt-check", model.label(), prompt)]
     for device in devices:
-        runs += [runs_on(device, f"haru-{stage}-check", model, [d], " " + os.path.basename(d)) for stage in ("codec", "text", "head") for d in dumps]
+        runs += [runs_on(device, f"haru-{stage}-check", model, [d], " " + os.path.basename(d))
+                 for stage in ("codec", "text", "head", "dialogue") for d in dumps]
     return runs
 
 
