@@ -9,6 +9,9 @@ namespace haru {
 
 namespace {
 
+/** π, which MSVC's <cmath> does not define as M_PI without _USE_MATH_DEFINES. */
+constexpr double kPi = 3.14159265358979323846;
+
 std::unique_ptr<Qwen2Tokenizer> file_tokenizer(const ModelFile & m) {
     Qwen2Pattern pattern;
     if (!qwen2_pattern(m.str("haru.tokenizer.pre_tokenizer"), &pattern)) {
@@ -23,7 +26,7 @@ void SeededRandomness::normal(float * out, size_t n) {
     for (size_t i = 0; i < n; i += 2) {
         double u1 = 0.0;
         while (u1 <= 0.0) u1 = 1.0 - uniform(rng_);
-        const double u2 = uniform(rng_), radius = std::sqrt(-2.0 * std::log(u1)), angle = 2.0 * M_PI * u2;
+        const double u2 = uniform(rng_), radius = std::sqrt(-2.0 * std::log(u1)), angle = 2.0 * kPi * u2;
         out[i] = (float) (radius * std::cos(angle));
         if (i + 1 < n) out[i + 1] = (float) (radius * std::sin(angle));
     }

@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include <deque>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -79,7 +80,7 @@ int main(int argc, char ** argv) {
     std::printf("backend: %s\n", ggml_backend_name(backend));
     const ModelFile model(args[1], backend, model_layout);
     Dialogue dialogue(model, backend);
-    std::ifstream meta_file(dir + "/meta.json");
+    std::ifstream meta_file(std::filesystem::u8path(dir) / "meta.json");
     const JsonValue meta = parse_json(std::string(std::istreambuf_iterator<char>(meta_file), std::istreambuf_iterator<char>()));
     const int64_t frames = std::stoll(meta.member("frames")->text);
     const int64_t fs = dialogue.frame_samples();
