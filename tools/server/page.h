@@ -29,7 +29,7 @@ private:
     void models(httplib::Response & res) const;
     /** POST /speech/load: fetches a model of the catalog with its progress, then loads it in place of its task's. */
     void load(const httplib::Request & req, httplib::Response & res);
-    /** POST /speech/voices: adds a voice made from a WAVE file to the synthesis model held. */
+    /** POST /speech/voices: adds a voice made from a WAVE file to the synthesis or the dialogue model held. */
     void add_voice(const httplib::Request & req, httplib::Response & res);
 
     ServedModels & models_;

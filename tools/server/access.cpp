@@ -53,7 +53,7 @@ std::optional<openai::ApiError> Access::origin_refusal(const httplib::Request & 
 std::optional<openai::ApiError> Access::host_refusal(const httplib::Request & req) const {
     const std::string host = lower(req.get_header_value("Host"));
     if (std::find(hosts_.begin(), hosts_.end(), host) != hosts_.end()) return std::nullopt;
-    return openai::ApiError{403, "The page and /v1/realtime answer requests for 127.0.0.1, localhost or [::1] at port " + std::to_string(port_) +
+    return openai::ApiError{403, "The page, /v1/realtime and /v1/dialogue answer requests for 127.0.0.1, localhost or [::1] at port " + std::to_string(port_) +
                                      " alone, and this one named the host " + json_string(host) + ". Use the address speech serve printed.",
                             "", "host_not_allowed"};
 }

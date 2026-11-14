@@ -12,12 +12,13 @@ the machines speech.cpp runs on include laptops with 8 GB; Silero VAD takes 1.2 
 
 ## Decision
 
-- **The server holds at most one model of each task: synthesis, recognition and detection.** `speech serve` takes up to
-  three models, one of each task, and `--open` starts it with none. `/v1/audio/speech` uses the synthesis model,
-  `/v1/audio/transcriptions` the recognition model, and with `chunking_strategy` the detection model too, which no
-  endpoint takes alone; `/v1/models` lists the models held in that order. A request to an endpoint without its model is
-  a 404 that says which model the server holds, and one with `chunking_strategy` to a server without a detection model
-  a 400 that says to give it one. No command chooses the detection model: it is given like the others.
+- **The server holds at most one model of each task: synthesis, recognition, detection, diarization, enhancement and
+  dialogue.** `speech serve` takes one model of each task, and `--open` starts it with none. `/v1/audio/speech` uses the
+  synthesis model, `/v1/dialogue` the dialogue model, `/v1/audio/transcriptions` the recognition model, and with
+  `chunking_strategy` the detection model too, which no endpoint takes alone; `/v1/models` lists the models held in that
+  order. A request to an endpoint without its model is a 404 that says which model the server holds, and one with
+  `chunking_strategy` to a server without a detection model a 400 that says to give it one. No command chooses the
+  detection model: it is given like the others.
 - **The page replaces the model of a task by a model of the catalog.** While its file is fetched, the model held keeps
   serving. Then the server lets that model go, waits until the last request on it has ended, and only then loads the new
   one, so that two models of a task never take memory together; meanwhile the endpoint of that task answers a 503
@@ -28,8 +29,9 @@ the machines speech.cpp runs on include laptops with 8 GB; Silero VAD takes 1.2 
 - **Each request keeps the models it runs on** until it has ended and its library requests have been freed, a
   transcription by regions its detection model as well, and each recognition and synthesis model keeps its own queue,
   so a transcription does not wait for a speech; a transcription by regions takes its turn on the recognition model.
-- **`--add-voice` adds to the synthesis model given on the command line**, `--device`, `--threads` and `--no-warmup`
-  apply to every model the server loads, the page's too, and a voice the page adds lasts while its model stays loaded.
+- **`--add-voice` adds to the synthesis and the dialogue model given on the command line**, `--device`, `--threads` and
+  `--no-warmup` apply to every model the server loads, the page's too, and a voice the page adds lasts while its model
+  stays loaded.
 
 The alternatives were turned down:
 

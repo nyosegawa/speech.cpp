@@ -256,9 +256,11 @@ if task == "recognition":
     named.send({"type": "session.update", "session": {"type": "transcription", "audio": {"input": {"transcription": {"model": info["recognition"]["name"]}}}}})
     assert named.event()["type"] == "session.updated"
     # A long transcription keeps the old model busy, so that the new one is loaded only once it ends and the commit below
-    # falls while the new model loads, however fast that load is.
+    # falls while the new model loads, however fast that load is. It stays under the server's 25 MB a request, which
+    # 300 s of a synthesis model at 48 kHz pass (28.8 MB): a refused request leaves the old model idle and the commit
+    # racing the load.
     channels, at = struct.unpack("<HI", wav[22:28])
-    data = wav[44:] * max(1, 300 * at * 2 // len(wav[44:]))
+    data = wav[44:] * max(1, min(300 * at * 2, 24 << 20) // len(wav[44:]))
     long = wav[:4] + struct.pack("<I", 36 + len(data)) + wav[8:40] + struct.pack("<I", len(data)) + data
     busy = threading.Thread(target=lambda: transcribe(long))
     busy.start()

@@ -84,8 +84,9 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   of builds or of runtimes goes there and not into `measure/`.
 - `tools/server/` holds `speech serve`, which serves a synthesis, a recognition, a detection, a diarization and an
   enhancement model over HTTP with OpenAI's audio API (`POST /v1/audio/speech`, `POST /v1/audio/transcriptions`,
-  `GET /v1/models`, `GET /health`), speech.cpp's own `POST /v1/audio/enhancements`, and OpenAI's Realtime transcription
-  over a WebSocket at `/v1/realtime`, for programs that speak HTTP. Like the worker it reaches the models only through
+  `GET /v1/models`, `GET /health`), speech.cpp's own `POST /v1/audio/enhancements`, OpenAI's Realtime transcription
+  over a WebSocket at `/v1/realtime`, and conversations with a dialogue model over speech.cpp's own WebSocket at
+  `/v1/dialogue` (`dialogue.cpp`), for programs that speak HTTP. Like the worker it reaches the models only through
   the C API; `openai-api.cpp` reads OpenAI's requests, and the enhancement request in a transcription's form, and writes
   its stream events, `audio-speech.cpp` serves `/v1/audio/speech` and `audio-enhancements.cpp` `/v1/audio/enhancements`,
   both streaming their audio through `audio-stream.cpp`,
@@ -102,8 +103,8 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   `worker_client.py`, which checks every line and one terminal message per request, `server_smoke.py` every HTTP
   endpoint and the mapping of errors, `server_realtime_smoke.py` the Realtime sessions of `/v1/realtime`,
   `server_diarization_smoke.py` the speakers of `/v1/realtime` and of `diarized_json`, `server_enhancement_smoke.py`
-  `/v1/audio/enhancements` and `noise_reduction` in transcriptions and sessions, and `server_page_smoke.py` the page's
-  endpoints and every guard, all through
+  `/v1/audio/enhancements` and `noise_reduction` in transcriptions and sessions, `server_dialogue_smoke.py` the
+  conversations of `/v1/dialogue`, and `server_page_smoke.py` the page's endpoints and every guard, all through
   `server_client.py`, which stops the
   server however the script ends, `server_page_browser_smoke.mjs` the page itself in a headless Chrome, as a person uses
   it, `server_openai_smoke.py` the server through the official openai-python client,
@@ -234,7 +235,7 @@ comment.
   VAD, `speech-api-check dialogue` and `checks/smoke/worker_dialogue_smoke.py` with Haru, and `speech-api-check enhance` and
   `checks/smoke/worker_enhancement_smoke.py` with RE-USE; a change to the server runs `checks/smoke/server_smoke.py`,
   `checks/smoke/server_realtime_smoke.py`, `checks/smoke/server_diarization_smoke.py`,
-  `checks/smoke/server_enhancement_smoke.py` and `checks/smoke/server_page_smoke.py`, one to the page `checks/smoke/server_page_browser_smoke.mjs`, one to the command
+  `checks/smoke/server_enhancement_smoke.py`, `checks/smoke/server_dialogue_smoke.py` and `checks/smoke/server_page_smoke.py`, one to the page `checks/smoke/server_page_browser_smoke.mjs` (with `--dialogue` and Haru for the talk panel), one to the command
   line or the parser `checks/smoke/speech_cli_smoke.py`, with a model of each family, and one to `tools/catalog/`
   `checks/smoke/models_smoke.py`.
 - Never commit on main. Every change reaches main through a pull request, one coherent unit each: a

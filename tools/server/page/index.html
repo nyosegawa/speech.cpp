@@ -21,6 +21,7 @@
       <button type="button" role="tab" id="tab-speak" aria-controls="speak">Speak</button>
       <button type="button" role="tab" id="tab-transcribe" aria-controls="transcribe">Transcribe</button>
       <button type="button" role="tab" id="tab-live" aria-controls="live">Live</button>
+      <button type="button" role="tab" id="tab-talk" aria-controls="talk">Talk</button>
     </div>
 
     <section class="panel" id="speak" role="tabpanel" aria-labelledby="tab-speak">
@@ -123,6 +124,56 @@
         <p class="error" id="live-error" role="alert" hidden></p>
       </form>
       <div id="live-transcript"></div>
+    </section>
+
+    <section class="panel" id="talk" role="tabpanel" aria-labelledby="tab-talk" hidden>
+      <div class="talk-setup" id="talk-setup">
+        <div class="picker-slot" data-task="dialogue"></div>
+        <form id="talk-form" novalidate hidden>
+          <p class="muted">Talks with a model that listens and speaks at once, through the microphone and the speakers. Use
+            headphones: the model hears what the speakers play.</p>
+          <div class="fields" id="talk-options"></div>
+          <details class="more">
+            <summary>More options</summary>
+            <div class="fields" id="talk-more"></div>
+          </details>
+        </form>
+        <details class="voice-maker" id="talk-voice-maker" hidden>
+          <summary>Make a voice from a recording</summary>
+          <form id="talk-voice-form" novalidate>
+            <p class="muted">Up to a few minutes of one speaker, without music or noise, whose voice you have the right to
+              use. The voice lasts while the model stays loaded.</p>
+            <div class="audio-slot" id="talk-voice-audio"></div>
+            <div class="field">
+              <label for="talk-voice-name">Name of the voice</label>
+              <input id="talk-voice-name" required autocomplete="off" spellcheck="false" aria-describedby="talk-voice-error">
+            </div>
+            <div class="actions">
+              <button type="submit" class="primary" id="talk-voice-add">Add the voice</button>
+              <p class="status" id="talk-voice-status" role="status"></p>
+            </div>
+            <p class="error" id="talk-voice-error" role="alert" hidden></p>
+          </form>
+        </details>
+      </div>
+      <div class="talk-stage" id="talk-stage" hidden>
+        <p class="talk-title"><span class="talk-orb" aria-hidden="true"></span><span class="talk-model-name"></span></p>
+        <div class="talk-lane talk-you">
+          <div class="talk-who"><span class="talk-orb" aria-hidden="true"></span><span>You</span></div>
+          <div class="talk-band"><canvas aria-hidden="true"></canvas></div>
+        </div>
+        <div class="talk-lane talk-model">
+          <div class="talk-who"><span class="talk-orb" aria-hidden="true"></span><span class="talk-model-name"></span></div>
+          <div class="talk-band"><canvas aria-hidden="true"></canvas></div>
+        </div>
+        <div class="talk-text" aria-live="polite"></div>
+      </div>
+      <div class="actions">
+        <button type="button" class="primary" id="talk-start" disabled>Start talking</button>
+        <span class="recording-dot" id="talk-dot" aria-hidden="true" hidden></span>
+        <p class="status" id="talk-status" role="status"></p>
+      </div>
+      <p class="error" id="talk-error" role="alert" hidden></p>
     </section>
   </main>
 
