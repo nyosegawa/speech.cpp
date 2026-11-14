@@ -136,7 +136,8 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
   - a warm-up that runs a short request while the model loads, so that a GPU compiles its kernels before the first
     request. It is off by default; `speech worker` and `speech serve` turn it on.
 - **Model information.** `speech_model_info_open()` reads what a model file says of its model from its metadata, without
-  its weights or a device: its identity, architecture and layout, task and sample rate, languages, voices, whether it
+  its weights or a device: its identity, architecture and layout, task and sample rate, a dialogue model's frame
+  (`speech_model_info_frame_samples()`), languages, voices, whether it
   takes voice files, the codec they must carry and whether a recording alone makes one, the longest text, the options it takes, its sizes, and every metadata
   entry. `speech_model_get_info()` gives the same for a loaded model, with the device, the threads in effect and the
   voices added. `speech_model_info_text_tokens()` counts a text's tokens as a synthesis counts them against the longest
@@ -160,7 +161,8 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
   passes the audio to its callback as it is made, `speech_transcribe()` recognizes the whole audio at once,
   `speech_detect()` finds where someone speaks in it, `speech_diarize()` who speaks where, and `speech_enhance()` passes
   the audio with its noise and other degradations removed to its callback as each part of it settles. A model does one
-  task, and the calls of the others are `unsupported`.
+  task, and the calls of the others are `unsupported`; a dialogue model takes no request of its own, and holds
+  conversations instead (below).
   `speech_request_set_progress()` gives a callback that hears how far a request has come while it passes no audio.
   `speech_request_cancel()` stops a request, from any thread, at the next audio, step or stage; a request cancelled
   before it runs returns at once. Either returns `SPEECH_CANCELLED`.
@@ -175,6 +177,9 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
 - **Enhancements of audio that arrives.** `speech_enhancement_start()` starts an enhancement with a request's options,
   the rate of the audio to come and the callback that takes the enhanced audio; `speech_enhancement_push()` gives it
   samples and `speech_enhancement_end()` ends the audio ([below](#enhancements)).
+- **Conversations.** `speech_dialogue_start()` starts a conversation with a dialogue model, such as Haru, with a
+  request's options, the rate of the audio the model hears and the callback that takes the model's frames;
+  `speech_dialogue_push()` gives it what the model hears and `speech_dialogue_end()` ends it ([below](#conversations)).
 - **Results.** `speech_request_result()` gives what a request that returned `SPEECH_OK` or `SPEECH_CANCELLED` did: why it
   stopped (`complete`, `max_seconds`, `model_limit` or `cancelled`), the seed of a synthesis, the samples a synthesis or
   an enhancement passed, and
@@ -308,6 +313,45 @@ speech_enhancement_free(enhancement);
   option `audio`. Audio too short for the model's STFT is refused at the end. A push or the end returns
   `SPEECH_CANCELLED` once the callback asks to stop, and the enhancement then takes no more audio.
 
+## Conversations
+
+A conversation holds a dialogue model, such as Haru, which listens and speaks at once: the program gives what the model
+hears as it arrives, as from a microphone, and the model gives a frame of its own audio, with the text it began to say in
+it, for each frame of that audio, one frame ahead of it. A program that plays the frames as they come and gives the
+microphone's audio as it comes holds a conversation, the frame's length (133 ms for Haru) the only delay the model adds.
+
+```c
+static int on_frame(const float * samples, size_t n_samples, const char * text, void * user_data) {
+    play(samples, n_samples);  /* 3,200 samples at 24 kHz for Haru, clamped to [-1, 1] */
+    fputs(text, stdout);       /* often empty, a space where the model fell silent */
+    return 0;                  /* nonzero ends the conversation */
+}
+
+speech_request * request = NULL;
+speech_dialogue * dialogue = NULL;
+if (check(speech_request_new(model, &request)) &&
+    check(speech_request_set_string(request, SPEECH_OPT_LANGUAGE, "ja")) &&
+    check(speech_request_set_string(request, SPEECH_OPT_NAME, "ハル")) &&
+    check(speech_request_set_string(request, SPEECH_OPT_VOICE, "me")) &&  /* added with speech_voice_add() */
+    check(speech_dialogue_start(request, 48000, on_frame, NULL, &dialogue))) {  /* runs the prompt, plays frame 0 */
+    speech_request_free(request);  /* the conversation keeps the options */
+    while (/* the microphone gives audio */) check(speech_dialogue_push(dialogue, samples, n_samples));
+    check(speech_dialogue_end(dialogue));
+}
+speech_dialogue_free(dialogue);
+```
+
+- **A frame for each frame heard.** The start runs the prompt and passes the model's first frame. Each push resamples
+  what it is given to the model's rate and passes a frame for each whole frame of it, before it returns; the audio short
+  of a frame waits for the next push, and the end drops it.
+- **Its options.** The request has no audio or text of its own. The character card, the voice, the sampling and the
+  length are options (below); `max_seconds` bounds the frames a conversation gives, and a push past it is
+  `out_of_range` naming `max_seconds`. A conversation holds the memory of its `max_seconds` from its start.
+- **Several at once.** Each conversation holds its own state; several may run on one model, each frame computed while
+  the model is held, as a request is. A conversation is used by one thread at a time.
+- **Its end.** A push or the end returns `SPEECH_CANCELLED` once the callback asks to stop, the start too where it asks
+  at the first frame, and the conversation then takes no more audio.
+
 ## Errors
 
 A function that can fail returns a `speech_status`, negative for an error, whose category says what kind of failure it
@@ -359,18 +403,18 @@ Each model takes some of them, with ranges and defaults from its file, and `spee
 
 | Option | Type | Neutral | Taken by |
 |---|---|---|---|
-| `voice` | string | none | [Qwen3-TTS](models/qwen3-tts.md#options), [Irodori-TTS](models/irodori-tts.md#options), [Drama 3](models/drama3.md#options); required |
+| `voice` | string | none | [Qwen3-TTS](models/qwen3-tts.md#options), [Irodori-TTS](models/irodori-tts.md#options), [Drama 3](models/drama3.md#options); required; Haru, a voice added from a recording or a voice file |
 | `language` | string | `auto` | every model but Silero VAD, Sortformer and RE-USE, which take `auto` alone |
-| `seed` | int | none | Qwen3-TTS, Irodori-TTS, Drama 3 |
+| `seed` | int | none | Qwen3-TTS, Irodori-TTS, Drama 3, Haru |
 | `speed`, `seconds`, `duration_scale`, `steps` | float, float, float, int | 1, none, 1, none | Irodori-TTS |
-| `max_seconds` | float | none | Qwen3-TTS, Drama 3 (each chunk of a long text) |
+| `max_seconds` | float | none | Qwen3-TTS, Drama 3 (each chunk of a long text), Haru (a conversation) |
 | `timestamps` | bool | false | [FastConformer](models/fastconformer.md#options), [Nemotron 3.5 Transcribe](models/nemotron-transcribe.md#options) |
 | `prompt` | string | `""` | [Qwen3-ASR](models/qwen3-asr.md#options), [Nemotron 3.5 Transcribe](models/nemotron-transcribe.md#options) |
 | `draft` | string | `""` | [Qwen3-ASR](models/qwen3-asr.md#options) |
 | `decoding` | string | none | reazonspeech-nemo-v2 |
 | `decode_on_cpu` | bool | none | FastConformer |
 | `experts_on_cpu` | bool | true | [Drama 3](models/drama3.md#devices-and-memory), [Nemotron 3.5 Transcribe](models/nemotron-transcribe.md#devices-and-memory) |
-| `do_sample`, `top_k`, `top_p`, `temperature`, `repetition_penalty` | bool, int, float, float, float | none | Qwen3-TTS; `top_k`, `top_p` and `temperature` also Drama 3 |
+| `do_sample`, `top_k`, `top_p`, `temperature`, `repetition_penalty` | bool, int, float, float, float | none | Qwen3-TTS; `top_k`, `top_p` and `temperature` also Drama 3 and Haru |
 | `code_predictor_do_sample`, `code_predictor_top_k`, `code_predictor_top_p`, `code_predictor_temperature` | bool, int, float, float | none | Qwen3-TTS |
 | `instructions` | string | `""` | Qwen3-TTS 1.7B, Irodori-TTS |
 | `cfg_scale_text`, `cfg_scale_speaker`, `cfg_guidance_mode`, `cfg_min_t`, `cfg_max_t`, `truncation_factor`, `rescale_k`, `rescale_sigma`, `speaker_uncond_mode`, `sway_coeff`, `speaker_kv_scale`, `speaker_kv_min_t`, `speaker_kv_max_layers`, `cfg_scale_instructions` | float, but `cfg_guidance_mode` and `speaker_uncond_mode` string and `speaker_kv_max_layers` int | none | Irodori-TTS v4.1-Small (RF) |
@@ -381,6 +425,8 @@ Each model takes some of them, with ranges and defaults from its file, and `spee
 | `speakers` | bool | false | [Nemotron 3.5 Transcribe](models/nemotron-transcribe.md#options) |
 | `keywords`, `keywords_alpha`, `keywords_guard` | string, float, bool | `""` for `keywords` | [Haas](models/fastconformer.md#a-custom-vocabulary-haas) |
 | `chunk_size_in_seconds`, `hop_length_portion`, `bwe` | float, float, int | none | [RE-USE](models/semamba.md#options) |
+| `persona`, `name`, `gender`, `backchannel`, `other_name`, `relationship`, `situation` | string | none | Haru: the fields of its character card, written in the request's language; `gender` and `backchannel` take the model's choices |
+| `guidance_scale`, `eop_bias`, `speak_first` | float, float, bool | none | Haru |
 
 - A value at an option's neutral value is accepted by every model. Any other value of an option a model does not take is
   `unsupported`. An option whose neutral value is "none" has none.
@@ -439,10 +485,11 @@ loaded on Metal, with two of its nine voices and four of its options shown:
   converted from and the revision. `weight_type` is the type that holds most of the weights: `F32`, `F16`, `Q8_0`,
   `Q6_K`, `Q5_K`, `Q4_K` or `IQ4_NL`.
 - `architecture` is the family: `qwen3-tts`, `irodori-tts`, `drama3`, `fastconformer`, `qwen3-asr`,
-  `nemotron-transcribe`, `silero-vad`, `sortformer` or `semamba`. `layout` is the version of the family's file layout.
-  `task` is `synthesis`, `recognition`, `detection`, `diarization` or `enhancement`; a detection, diarization or
-  enhancement model's `languages` is empty, an enhancement model's `sample_rate` is 0, and a diarization model's
-  `speakers` follows `max_text_tokens`'s place, the most speakers it tells apart.
+  `nemotron-transcribe`, `silero-vad`, `sortformer`, `semamba` or `haru`. `layout` is the version of the family's file
+  layout. `task` is `synthesis`, `recognition`, `detection`, `diarization`, `enhancement` or `dialogue`; a detection,
+  diarization or enhancement model's `languages` is empty, an enhancement model's `sample_rate` is 0, a diarization
+  model's `speakers` follows `max_text_tokens`'s place, the most speakers it tells apart, and a dialogue model's
+  `frame_samples` follows it, the samples of a frame.
 - `incremental` is true for a model that passes audio while it still makes the rest (Qwen3-TTS, Drama 3), so that its first
   audio does not wait on the length of the text, and false for one that makes a request's whole speech before it decodes
   it (Irodori-TTS).
@@ -450,7 +497,7 @@ loaded on Metal, with two of its nine voices and four of its options shown:
   file or a recording says none, but for Drama 3, whose description names the voice's speakers (`speakers 0 and 1`). A
   model of another task than synthesis has no `voices`, `incremental` or `max_text_tokens`.
 - `voice_files` is true for a model that takes voices made from recordings; `voice_codec` then follows it, the hash a
-  voice file must carry. `voice_recordings` is true for a model that adds a voice from a WAVE file as well (Irodori-TTS),
+  voice file must carry. `voice_recordings` is true for a model that adds a voice from a WAVE file as well (Irodori-TTS, Haru),
   and false for one that needs a voice file (Drama 3, whose voice files hold each recording's words).
 - An option has `type` (`string`, `int`, `float`, `bool`), `required`, `steers`, and where they apply `default`,
   `minimum` or `exclusive_minimum`, `maximum`, and `choices`.

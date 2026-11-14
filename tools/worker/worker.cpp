@@ -206,6 +206,10 @@ int run_worker(const CommandLine & line, FILE * out) {
         throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "",
                       path + " is a model of speech detection, which the worker does not serve; use `speech vad` or the C API's speech_detect()");
     }
+    if (task == SPEECH_TASK_DIALOGUE) {
+        throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "",
+                      path + " is a model of speech dialogue, which the worker does not serve; use the C API's speech_dialogue_start()");
+    }
     if (task == SPEECH_TASK_DIARIZATION) {
         throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "",
                       path + " is a model of speech diarization, which the worker does not serve; use `speech diarize` or the C API's speech_diarize()");

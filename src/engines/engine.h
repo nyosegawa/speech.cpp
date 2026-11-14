@@ -96,6 +96,8 @@ struct FamilyInfo {
     size_t max_text_tokens = 0;
     /** The most speakers a diarization model tells apart; 0 for a model of another task. */
     int speakers = 0;
+    /** The samples of a dialogue model's frame; 0 for a model of another task. */
+    int frame_samples = 0;
     std::vector<OptionSpec> options;
     /** What the file lacks of what the family takes, which a request is refused with by its own message. */
     std::vector<Lack> lacks;
@@ -271,6 +273,21 @@ public:
 using AudioSink = std::function<bool(const float * samples, size_t n)>;
 
 /**
+ * A conversation with a dialogue model, which takes the audio it hears a piece at a time at the model's rate and passes
+ * the model's frames to the sink it was started with, the first when it starts and one for each whole frame it hears.
+ */
+class DialogueStream {
+public:
+    virtual ~DialogueStream() = default;
+
+    /** Takes the next `n` samples at the model's rate; false once the sink has asked to stop. */
+    virtual bool push(const float * samples, size_t n) = 0;
+};
+
+/** Where a conversation passes each frame: its audio and its text; false to stop. */
+using DialogueSink = std::function<bool(const float * samples, size_t n, const std::string & text)>;
+
+/**
  * One loaded model of a family behind the C API, which has checked each value of a request against the family's table
  * and the request as a whole for what the table shows. A synthesis family overrides speak(), a recognition family
  * transcribe(), a detection family detect(), a diarization family diarize() and an enhancement family enhance(); a
@@ -333,6 +350,13 @@ public:
     virtual std::unique_ptr<EnhancementStream> start_enhancement(int sample_rate, const RequestValues & values, AudioSink sink);
 
     /**
+     * A conversation with the request's options, after checking what the family's rules ask of them, which runs the prompt
+     * and passes the model's first frame to `sink` before it returns. It computes on the engine, which runs one of its
+     * calls at a time, and lives no longer.
+     */
+    virtual std::unique_ptr<DialogueStream> start_dialogue(const RequestValues & values, DialogueSink sink);
+
+    /**
      * Adds a voice from a voice file or a WAVE file under a name the C API has checked is new, and returns what the
      * model information says of it, or "" for nothing.
      */
@@ -372,3 +396,7 @@ std::unique_ptr<Engine> load_sortformer(const std::string & path, ggml_backend_t
 
 FamilyInfo describe_semamba(const std::shared_ptr<const ModelFile> & file);
 std::unique_ptr<Engine> load_semamba(const std::string & path, ggml_backend_t backend, int threads);
+
+FamilyInfo describe_haru(const std::shared_ptr<const ModelFile> & file);
+std::unique_ptr<Engine> load_haru(const std::string & path, ggml_backend_t backend, int threads);
+void make_haru_voice(const std::string & model_path, const VoiceRecipe & recipe, const std::string & voice_path, ggml_backend_t backend);

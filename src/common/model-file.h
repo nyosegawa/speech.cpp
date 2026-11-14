@@ -88,6 +88,7 @@ public:
     /** Whether the file has `key`, for a key that a file has only where its model has a value for it. */
     bool has(const std::string & key) const;
     uint32_t u32(const std::string & key) const;
+    int32_t i32(const std::string & key) const;
     /**
      * A u32 key that sizes the model, such as a width or a number of heads: 0 throws, and so does a value past the
      * range of int, in which the families hold sizes.

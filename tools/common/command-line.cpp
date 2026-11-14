@@ -219,6 +219,7 @@ const char * task_prefix(speech_task task) {
         case SPEECH_TASK_DETECTION: return "vad";
         case SPEECH_TASK_DIARIZATION: return "diarize";
         case SPEECH_TASK_ENHANCEMENT: return "enhance";
+        case SPEECH_TASK_DIALOGUE: return "talk";
     }
     return "";
 }

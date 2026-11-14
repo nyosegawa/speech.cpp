@@ -268,6 +268,12 @@ void print_info(const speech_model_info * m, bool meta, FILE * out) {
     const size_t languages = speech_model_info_language_count(m);
     row("languages", languages ? list(languages, [&](size_t i) { return std::string(speech_model_info_language(m, i)); }) : "none");
     if (speech_model_info_task(m) == SPEECH_TASK_DIARIZATION) row("speakers", "up to " + std::to_string(speech_model_info_speakers(m)) + ", numbered from 0");
+    if (speech_model_info_task(m) == SPEECH_TASK_DIALOGUE) {
+        const int frame = speech_model_info_frame_samples(m);
+        char ms[32];
+        std::snprintf(ms, sizeof ms, "%.1f", 1000.0 * frame / speech_model_info_sample_rate(m));
+        row("frames", std::to_string(frame) + " samples (" + ms + " ms), one heard and one given at a time");
+    }
     if (synthesis) {
         const size_t n = speech_model_info_voice_count(m);
         if (n == 0) row("voices", "none of its own; add them with --add-voice");

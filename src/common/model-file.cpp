@@ -325,6 +325,10 @@ uint32_t ModelFile::u32(const std::string & key) const {
     return gguf_get_val_u32(gguf_.get(), key_id(key, GGUF_TYPE_UINT32));
 }
 
+int32_t ModelFile::i32(const std::string & key) const {
+    return gguf_get_val_i32(gguf_.get(), key_id(key, GGUF_TYPE_INT32));
+}
+
 void ModelFile::upgrade_u32(const std::string & key, uint32_t value) {
     gguf_set_val_u32(gguf_.get(), key.c_str(), value);
 }

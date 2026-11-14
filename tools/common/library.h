@@ -80,7 +80,7 @@ inline Request new_request(speech_model * model) {
     return Request(raw, speech_request_free);
 }
 
-/** "synthesis", "recognition", "detection", "diarization" or "enhancement". */
+/** "synthesis", "recognition", "detection", "diarization", "enhancement" or "dialogue". */
 inline const char * task_name(speech_task task) {
     switch (task) {
         case SPEECH_TASK_SYNTHESIS: return "synthesis";
@@ -88,6 +88,7 @@ inline const char * task_name(speech_task task) {
         case SPEECH_TASK_DETECTION: return "detection";
         case SPEECH_TASK_DIARIZATION: return "diarization";
         case SPEECH_TASK_ENHANCEMENT: return "enhancement";
+        case SPEECH_TASK_DIALOGUE: return "dialogue";
     }
     throw std::logic_error("a task speech.h does not have");
 }

@@ -206,6 +206,7 @@ inline const char * task_name(speech_task task) {
         case SPEECH_TASK_DETECTION: return "detection";
         case SPEECH_TASK_DIARIZATION: return "diarization";
         case SPEECH_TASK_ENHANCEMENT: return "enhancement";
+        case SPEECH_TASK_DIALOGUE: return "dialogue";
     }
     throw std::logic_error("a task the library does not know");
 }
@@ -218,6 +219,7 @@ inline const char * call_of(speech_task task) {
         case SPEECH_TASK_DETECTION: return "speech_detect() to find where someone speaks";
         case SPEECH_TASK_DIARIZATION: return "speech_diarize() to find who speaks where";
         case SPEECH_TASK_ENHANCEMENT: return "speech_enhance() to enhance speech with it";
+        case SPEECH_TASK_DIALOGUE: return "speech_dialogue_start() to talk with it";
     }
     throw std::logic_error("a task the library does not know");
 }
@@ -227,5 +229,5 @@ inline const char * call_of(speech_task task) {
  * enhancement model takes none.
  */
 inline bool task_has_languages(speech_task task) {
-    return task == SPEECH_TASK_SYNTHESIS || task == SPEECH_TASK_RECOGNITION;
+    return task == SPEECH_TASK_SYNTHESIS || task == SPEECH_TASK_RECOGNITION || task == SPEECH_TASK_DIALOGUE;
 }

@@ -15,6 +15,7 @@
 #include "drama3/layout.h"
 #include "error.h"
 #include "fastconformer/layout.h"
+#include "haru/layout.h"
 #include "irodori-tts/layout.h"
 #include "log.h"
 #include "quantize.h"
@@ -46,6 +47,7 @@ const Family families[] = {
     {SPEECH_TASK_DETECTION, silero_vad::layout, describe_silero_vad, load_silero_vad, nullptr},
     {SPEECH_TASK_DIARIZATION, sortformer::layout, describe_sortformer, load_sortformer, nullptr},
     {SPEECH_TASK_ENHANCEMENT, semamba::layout, describe_semamba, load_semamba, nullptr},
+    {SPEECH_TASK_DIALOGUE, haru::model_layout, describe_haru, load_haru, make_haru_voice},
 };
 
 thread_local std::string last_error;
@@ -130,6 +132,16 @@ const OptionName vocabulary[] = {
     {"chunk_size_in_seconds", SPEECH_TYPE_FLOAT},
     {"hop_length_portion", SPEECH_TYPE_FLOAT},
     {"bwe", SPEECH_TYPE_INT},
+    {"persona", SPEECH_TYPE_STRING},
+    {"name", SPEECH_TYPE_STRING},
+    {"gender", SPEECH_TYPE_STRING},
+    {"backchannel", SPEECH_TYPE_STRING},
+    {"other_name", SPEECH_TYPE_STRING},
+    {"relationship", SPEECH_TYPE_STRING},
+    {"situation", SPEECH_TYPE_STRING},
+    {"guidance_scale", SPEECH_TYPE_FLOAT},
+    {"eop_bias", SPEECH_TYPE_FLOAT},
+    {"speak_first", SPEECH_TYPE_BOOL},
 };
 constexpr size_t kOptions = sizeof vocabulary / sizeof vocabulary[0];
 
@@ -194,6 +206,10 @@ void Engine::enhance(const std::vector<float> &, int, const RequestValues &, Run
 
 std::unique_ptr<EnhancementStream> Engine::start_enhancement(int, const RequestValues &, AudioSink) {
     throw std::logic_error("the family's engine does not enhance speech, though the table of families says it does");
+}
+
+std::unique_ptr<DialogueStream> Engine::start_dialogue(const RequestValues &, DialogueSink) {
+    throw std::logic_error("the family's engine holds no conversation, though the table of families says it does");
 }
 
 std::string Engine::add_voice(const std::string &, const std::string &) {

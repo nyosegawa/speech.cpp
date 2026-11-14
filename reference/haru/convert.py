@@ -5,7 +5,8 @@ usage: uv run python convert.py <out dir>
 Writes the model's file, named under GGUF's naming convention, in layout 1: the language model (a Qwen3.5 text model of
 Gated DeltaNet and gated attention layers), the projections of the model's and the user's audio latents into it, the
 MeanFlow head that draws a frame's audio latent from its hidden state, the VibeVoice acoustic codec, the tokenizer, the
-character card's wording in each language, and every constant the C++ reads, with the model's identity in the GGUF
+character card's wording in each language, the hash of the codec's tensors, which voice files carry, and every constant
+the C++ reads, with the model's identity in the GGUF
 specification's general keys. Each key says where its value comes from: the checkpoint's config.json, a buffer of the
 checkpoint, or a constant of the official code at the commit pyproject.toml pins.
 
@@ -29,9 +30,11 @@ types, each tensor in the type src/families/haru/layout.cpp gives it.
 """
 
 import argparse
+import hashlib
 import json
 import math
 import os
+import struct
 
 import numpy as np
 import torch
@@ -174,7 +177,23 @@ w.add_float32(h + "guidance_max", float(head["guidance_range"][1]))
 w.add_uint32(h + "frequency_dim", meanflow_head._FREQUENCY_DIM)
 w.add_float32(h + "frequency_base", 10000.0)
 
+
+
+def codec_sha256():
+    """SHA-256 over the checkpoint's codec tensors, which voice files carry: for each in ascending order of its name, the
+    name in UTF-8, a 0 byte, the number of dimensions as a little-endian u32, each dimension as a little-endian u64, and the
+    values as little-endian float32 in row-major order."""
+    digest = hashlib.sha256()
+    for name in sorted(k for k in weights.keys() if k.startswith("codec.")):
+        values = np.ascontiguousarray(weights.get_tensor(name).to(torch.float32).numpy(), dtype="<f4")
+        digest.update(name.encode("utf-8") + b"\0")
+        digest.update(struct.pack("<I", values.ndim) + struct.pack(f"<{values.ndim}Q", *values.shape))
+        digest.update(values.tobytes())
+    return digest.hexdigest()
+
+
 c = p + "codec."
+w.add_string(c + "sha256", codec_sha256())
 for key in ["latent_dim", "base_channels"]:
     w.add_uint32(c + key, int(codec[key]))
 for key in ["ratios", "encoder_depths", "decoder_depths"]:

@@ -74,7 +74,9 @@ int check_library(void) {
                                      "decode_on_cpu", "draft", "experts_on_cpu", "streaming_mode", "spkcache_len", "fifo_len",
                                      "chunk_len", "chunk_right_context", "spkcache_update_period", "onset", "offset", "pad_onset",
                                      "pad_offset", "min_duration_on", "min_duration_off", "speakers", "keywords", "keywords_alpha",
-                                     "keywords_guard", "chunk_size_in_seconds", "hop_length_portion", "bwe"};
+                                     "keywords_guard", "chunk_size_in_seconds", "hop_length_portion", "bwe", "persona", "name", "gender",
+                                     "backchannel", "other_name", "relationship", "situation", "guidance_scale", "eop_bias",
+                                     "speak_first"};
     if (speech_option_count() != sizeof options / sizeof options[0]) {
         fprintf(stderr, "FAIL: the library knows %zu options\n", speech_option_count());
         return 1;
@@ -456,6 +458,10 @@ char * read_whole(const char * path, size_t * size) {
 float * read_audio(const char * dump, size_t * n) {
     char path[4096];
     snprintf(path, sizeof path, "%s/audio.npy", dump);
+    return read_samples(path, n);
+}
+
+float * read_samples(const char * path, size_t * n) {
     size_t size = 0;
     char * data = read_whole(path, &size);
     if (!data) return NULL;

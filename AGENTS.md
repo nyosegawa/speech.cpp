@@ -23,14 +23,15 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   (`src/engines/<family>-engine.cpp`). An engine declares in one table the request options its family takes, with their
   defaults and ranges read from the model file, and turns a request checked against that table into the family's; the
   setters, the model information and its JSON read the table and nothing else. One table in `src/api/speech.cpp` lists
-  the families: their task (synthesis, recognition, detection, diarization or enhancement), the layout their reader takes, which names the
+  the families: their task (synthesis, recognition, detection, diarization, enhancement or dialogue), the layout their reader takes, which names the
   `general.architecture` of their files, their engine and, for a family that takes voice files, how it makes one.
   `speech_model_load()` and `speech_model_info_open()` choose the family from the table, and adding a family is adding
   its line.
 - `src/families/<family>/` holds the code of one architecture, whichever weights it is given: `qwen3-tts/`
   runs Qwen3-TTS 0.6B and 1.7B. A family reads its model's one GGUF file, its codec included, and turns text into
-  audio, or audio into text, into the regions where someone speaks, into who speaks where or into the same audio
-  enhanced; it knows nothing of the C API, the worker protocol or the command line. Its
+  audio, or audio into text, into the regions where someone speaks, into who speaks where, into the same audio
+  enhanced or, for audio heard a frame at a time, into a conversation's frames; it knows nothing of the C API, the worker
+  protocol or the command line. Its
   `layout.cpp` says what its reader takes: the architecture, the layout version, every key with its type, and the
   tensors the keys call for.
 - `src/common/` holds what two families use in the same role. Code moves there when a second family needs
@@ -63,8 +64,8 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   synthesis model, Irodori-TTS's own rules and voice files in `speech-api-irodori.c`, with `transcribe`, with a
   recognition model (`speech-api-recognition.c`), with `detect`, with a detection model (`speech-api-detection.c`,
   and detections of audio given a piece at a time in `speech-api-detection-stream.c`), with `diarize`, with a
-  diarization model (`speech-api-diarization.c`), and with `enhance`, with an enhancement model
-  (`speech-api-enhancement.c`), what they share in
+  diarization model (`speech-api-diarization.c`), with `enhance`, with an enhancement model
+  (`speech-api-enhancement.c`), and with `dialogue`, with a dialogue model (`speech-api-dialogue.c`), what they share in
   `speech-api-common.c` and what differs by the operating system in `speech-api-platform.c`. Checks reach into `src/`
   for the stage they check; they are built but not released. `checks/run.py` runs the stage checks of the families and
   devices it is given, with the model files and the dumps it finds, in the order data flows, one line per check.
@@ -228,7 +229,7 @@ comment.
   API or the worker also runs `speech-api-check` and
   `checks/smoke/worker_smoke.py` for each synthesis family, and `speech-api-check transcribe` and
   `checks/smoke/worker_recognition_smoke.py` for both recognition families, `speech-api-check detect` with Silero
-  VAD, and `speech-api-check enhance` and
+  VAD, `speech-api-check dialogue` with Haru, and `speech-api-check enhance` and
   `checks/smoke/worker_enhancement_smoke.py` with RE-USE; a change to the server runs `checks/smoke/server_smoke.py`,
   `checks/smoke/server_realtime_smoke.py`, `checks/smoke/server_diarization_smoke.py`,
   `checks/smoke/server_enhancement_smoke.py` and `checks/smoke/server_page_smoke.py`, one to the page `checks/smoke/server_page_browser_smoke.mjs`, one to the command

@@ -44,6 +44,9 @@ Loading ServedModels::loading_of(speech_task task) const {
 
 std::shared_ptr<Served> ServedModels::load_given(const std::string & path, const std::string & catalog_name) {
     const speech_task task = speech_model_info_task(file_info(path).get());
+    if (task == SPEECH_TASK_DIALOGUE) {
+        throw UsageError(path + " is a model of speech dialogue, which speech serve does not serve; use the C API's speech_dialogue_start()");
+    }
     const auto t0 = std::chrono::steady_clock::now();
     Model model = load_model(path, loading_of(task));
     auto served = std::make_shared<Served>(std::move(model), path, catalog_name,

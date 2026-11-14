@@ -62,7 +62,7 @@ extern "C" {
  * version and a minor version of m or more. Version 4.0 is first released with speech.cpp 0.10.0, and a declaration
  * added since says the version that added it.
  */
-#define SPEECH_API_VERSION_MINOR 1
+#define SPEECH_API_VERSION_MINOR 2
 
 /** The SPEECH_API_VERSION_MAJOR the library was built with, for a caller that loads it at run time. */
 SPEECH_API int speech_api_version_major(void);
@@ -221,7 +221,8 @@ typedef enum speech_option {
     SPEECH_OPT_STEPS = 6,
     /**
      * "max_seconds", a number: the longest the speech may be. A synthesis that reaches it stops there and reports
-     * SPEECH_STOP_MAX_SECONDS.
+     * SPEECH_STOP_MAX_SECONDS. A conversation gives that many seconds of the model's frames at most, and holds the
+     * memory of that many from its start.
      */
     SPEECH_OPT_MAX_SECONDS = 7,
     /**
@@ -522,7 +523,39 @@ typedef enum speech_option {
      * at, as RE-USE's flag --BWE names it; a rate above the audio's lets the model extend its band. Without it the audio is
      * enhanced at its own rate. Its range is the rates the model takes. Added in 4.1.
      */
-    SPEECH_OPT_BWE = 65
+    SPEECH_OPT_BWE = 65,
+    /**
+     * "persona", a string: who the model is in a conversation, the persona of Haru's character card, which the card writes
+     * in the request's language. Added in 4.2.
+     */
+    SPEECH_OPT_PERSONA = 66,
+    /** "name", a string: the model's name in a conversation, the name of Haru's character card. Added in 4.2. */
+    SPEECH_OPT_NAME = 67,
+    /** "gender", a string: the model's gender in a conversation, one of the choices the model declares. Added in 4.2. */
+    SPEECH_OPT_GENDER = 68,
+    /**
+     * "backchannel", a string: how often the model gives backchannels in a conversation, one of the choices the model
+     * declares. Added in 4.2.
+     */
+    SPEECH_OPT_BACKCHANNEL = 69,
+    /** "other_name", a string: the name of the person the model talks with. Added in 4.2. */
+    SPEECH_OPT_OTHER_NAME = 70,
+    /** "relationship", a string: how the model and the person it talks with stand to each other. Added in 4.2. */
+    SPEECH_OPT_RELATIONSHIP = 71,
+    /** "situation", a string: where and why the two talk. Added in 4.2. */
+    SPEECH_OPT_SITUATION = 72,
+    /**
+     * "guidance_scale", a number: how strongly a conversation's audio follows the model's hidden state, as Haru's MeanFlow
+     * head takes it, within the range the model declares. Added in 4.2.
+     */
+    SPEECH_OPT_GUIDANCE_SCALE = 73,
+    /**
+     * "eop_bias", a number: what a conversation adds to the logit of the token with which the model starts to speak; above
+     * 0 it starts sooner, below 0 later. Added in 4.2.
+     */
+    SPEECH_OPT_EOP_BIAS = 74,
+    /** "speak_first", a boolean: whether the model opens the conversation rather than waiting to be spoken to. Added in 4.2. */
+    SPEECH_OPT_SPEAK_FIRST = 75
 } speech_option;
 
 /** The type of an option's values, which names the setter that takes them. */
@@ -599,7 +632,12 @@ typedef enum speech_task {
     /** Audio to who speaks where, through speech_diarize(). */
     SPEECH_TASK_DIARIZATION = 3,
     /** Audio to the same audio with its noise and other degradations removed, through speech_enhance(). Added in 4.1. */
-    SPEECH_TASK_ENHANCEMENT = 4
+    SPEECH_TASK_ENHANCEMENT = 4,
+    /**
+     * A conversation in which the model listens and speaks at once, its audio and text given a frame at a time for the
+     * audio it hears, through speech_dialogue_start(). Added in 4.2.
+     */
+    SPEECH_TASK_DIALOGUE = 5
 } speech_task;
 
 /*
@@ -772,6 +810,12 @@ SPEECH_API speech_status speech_model_info_text_tokens(const speech_model_info *
  * Diarization); 0 for a model of another task.
  */
 SPEECH_API int speech_model_info_speakers(const speech_model_info * info);
+
+/**
+ * The samples of a frame of a dialogue model at its sample rate, which each frame it gives holds and each frame of the
+ * audio it hears takes; 0 for a model of another task. Added in 4.2.
+ */
+SPEECH_API int speech_model_info_frame_samples(const speech_model_info * info);
 
 /** The number of options the model takes. */
 SPEECH_API size_t speech_model_info_option_count(const speech_model_info * info);
@@ -1327,6 +1371,54 @@ SPEECH_API speech_status speech_enhancement_push(speech_enhancement * enhancemen
  * SPEECH_ERROR_OUT_OF_RANGE naming "audio". It returns as speech_enhancement_push() does. Added in 4.1.
  */
 SPEECH_API speech_status speech_enhancement_end(speech_enhancement * enhancement);
+
+/*
+ * Conversations with a model of dialogue, which listens and speaks at once: the caller gives the audio it hears as it
+ * arrives, as from a microphone, and the model gives a frame of its own audio, with the text it speaks in it, for each
+ * frame of that audio, one frame ahead of it, so that the frame's length is the only delay the model adds. A model frame
+ * is speech_model_info_frame_samples() samples at the model's sample rate (3,200 at 24 kHz for Haru, 133 ms);
+ * a caller that plays them as they come and gives the microphone's audio as it comes holds a conversation. A
+ * conversation holds its own memory, the most its max_seconds takes from its start; several may run on one model, each
+ * frame computed while the model is held, as a request is. A conversation is used by one thread at a time. Added in 4.2.
+ */
+typedef struct speech_dialogue speech_dialogue;
+
+/**
+ * Receives a frame of a conversation: `n_samples` mono samples of the model's audio at the model's sample rate, clamped
+ * to [-1, 1], and `text`, UTF-8, what the model began to say in the frame, often empty, a space where it fell silent;
+ * both valid only during the call. Returning nonzero stops the conversation. It runs on the thread that called
+ * speech_dialogue_start() or speech_dialogue_push() and must not call into the library with the same model. Added in
+ * 4.2.
+ */
+typedef int (*speech_dialogue_callback)(const float * samples, size_t n_samples, const char * text, void * user_data);
+
+/**
+ * Starts a conversation that hears audio at `sample_rate` Hz, which speech_dialogue_push() gives, with the options of
+ * `request`, which must have no audio or text of its own: the character card, the voice, the sampling and its length.
+ * It runs the prompt and passes the model's first frame to `on_frame` with `user_data` before it returns, and returns
+ * SPEECH_CANCELLED, with the conversation to free, where the callback asked to stop there. The request's options and the
+ * rate are checked here; the request itself is not used again and may be freed. A model of another task is
+ * SPEECH_ERROR_UNSUPPORTED. Added in 4.2.
+ */
+SPEECH_API speech_status speech_dialogue_start(const speech_request * request, int sample_rate, speech_dialogue_callback on_frame,
+                                               void * user_data, speech_dialogue ** dialogue);
+
+/** Frees a conversation. NULL is ignored. Added in 4.2. */
+SPEECH_API void speech_dialogue_free(speech_dialogue * dialogue);
+
+/**
+ * Takes the next `n_samples` mono samples the model hears and passes, before it returns, the model's next frame for each
+ * whole frame of them, resampled to the model's rate, that has arrived. It returns SPEECH_CANCELLED once the callback
+ * asked to stop, SPEECH_ERROR_OUT_OF_RANGE naming "max_seconds" once the conversation has given as many frames as its
+ * max_seconds holds, and after either, or after another error, the conversation takes no more audio. Added in 4.2.
+ */
+SPEECH_API speech_status speech_dialogue_push(speech_dialogue * dialogue, const float * samples, size_t n_samples);
+
+/**
+ * Ends the conversation: the audio short of a whole frame is dropped, as the model hears whole frames alone. It returns
+ * as speech_dialogue_push() does. Added in 4.2.
+ */
+SPEECH_API speech_status speech_dialogue_end(speech_dialogue * dialogue);
 
 /** Why a request ended. */
 typedef enum speech_stop {

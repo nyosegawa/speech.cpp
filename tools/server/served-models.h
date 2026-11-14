@@ -113,6 +113,7 @@ private:
             case SPEECH_TASK_DETECTION: return detection_;
             case SPEECH_TASK_DIARIZATION: return diarization_;
             case SPEECH_TASK_ENHANCEMENT: return enhancement_;
+            case SPEECH_TASK_DIALOGUE: break;
         }
         throw std::logic_error("a task speech.h does not have");
     }

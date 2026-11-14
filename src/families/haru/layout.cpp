@@ -66,6 +66,7 @@ void add_codec(std::vector<TensorSpec> & t, const ModelFile & m, int64_t latent,
     const std::vector<int32_t> enc = per_stage(m, c + "encoder_depths", stages), dec = per_stage(m, c + "decoder_depths", stages);
     m.f32(c + "norm_eps");
     m.f32(c + "noise_std");
+    require(m.str(c + "sha256").size() == 64, m, "haru.codec.sha256 is not a SHA-256 in hexadecimal");
     const int n = (int) ratios.size();
 
     add_block(t, "codec.enc.stem.", {{"weight", {1, base, width}, kHalf}, {"bias", {base}, kF32}});

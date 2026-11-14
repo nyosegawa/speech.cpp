@@ -93,6 +93,15 @@ char * read_whole(const char * path, size_t * size);
  */
 float * read_audio(const char * dump, size_t * n);
 
+/** The values of a one-dimensional little-endian float32 array in NumPy's format 1.0 at `path`, or NULL; the caller frees them. */
+float * read_samples(const char * path, size_t * n);
+
+/**
+ * The checks of a dialogue model: `argv` is <model.gguf> <dump folder of reference/haru/dump.py> <scratch folder>
+ * [--device NAME], the scratch folder taking the WAVE and voice files the check writes. Returns the exit status.
+ */
+int check_dialogue(int argc, char ** argv);
+
 /** The checks of a recognition model: `argv` is <model.gguf> <dump folder>... [--device NAME]. Returns the exit status. */
 
 /**

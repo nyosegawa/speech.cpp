@@ -53,6 +53,7 @@ const char * use_of(speech_task task) {
         case SPEECH_TASK_DETECTION: return "chunking_strategy of /v1/audio/transcriptions and server_vad of /v1/realtime";
         case SPEECH_TASK_DIARIZATION: return "diarized_json of /v1/audio/transcriptions and diarization of /v1/realtime";
         case SPEECH_TASK_ENHANCEMENT: return "/v1/audio/enhancements";
+        case SPEECH_TASK_DIALOGUE: break;
     }
     throw std::logic_error("a task speech.h does not have");
 }

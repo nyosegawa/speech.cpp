@@ -224,6 +224,7 @@ add_library(haru STATIC
     src/families/haru/detokenizer.cpp
     src/families/haru/prompt.cpp
     src/families/haru/dialogue.cpp
+    src/families/haru/voice-file.cpp
 )
 target_include_directories(haru PUBLIC src/families)
 target_link_libraries(haru PUBLIC speechcommon)
@@ -231,19 +232,19 @@ target_link_libraries(haru PUBLIC speechcommon)
 # The C API, include/speech.h, twice: static for the executables, so that each stays one file, and shared as
 # libspeech for bindings and other programs. On Windows the two would both write speech.lib, the static one as
 # the library and the shared one as its import library, hence speech-static.
-set(SPEECH_SOURCES src/api/speech.cpp src/api/info.cpp src/api/request.cpp src/api/detection.cpp src/api/diarization.cpp src/api/enhancement.cpp src/api/voice.cpp
+set(SPEECH_SOURCES src/api/speech.cpp src/api/info.cpp src/api/request.cpp src/api/detection.cpp src/api/diarization.cpp src/api/enhancement.cpp src/api/dialogue.cpp src/api/voice.cpp
     src/engines/qwen3-tts-engine.cpp src/engines/irodori-tts-engine.cpp src/engines/drama3-engine.cpp src/engines/fastconformer-engine.cpp
     src/engines/qwen3-asr-engine.cpp src/engines/nemotron-transcribe-engine.cpp src/engines/silero-vad-engine.cpp src/engines/sortformer-engine.cpp
-    src/engines/semamba-engine.cpp)
+    src/engines/semamba-engine.cpp src/engines/haru-engine.cpp)
 
 add_library(speech-static STATIC ${SPEECH_SOURCES})
 target_include_directories(speech-static PUBLIC include PRIVATE src/engines)
-target_link_libraries(speech-static PUBLIC qwen3tts irodoritts drama3 fastconformer qwen3asr nemotrontranscribe silerovad sortformer semamba)
+target_link_libraries(speech-static PUBLIC qwen3tts irodoritts drama3 haru fastconformer qwen3asr nemotrontranscribe silerovad sortformer semamba)
 target_compile_definitions(speech-static PRIVATE SPEECH_VERSION="${PROJECT_VERSION}")
 
 add_library(speech SHARED ${SPEECH_SOURCES})
 target_include_directories(speech PUBLIC include PRIVATE src/engines)
-target_link_libraries(speech PRIVATE qwen3tts irodoritts drama3 fastconformer qwen3asr nemotrontranscribe silerovad sortformer semamba)
+target_link_libraries(speech PRIVATE qwen3tts irodoritts drama3 haru fastconformer qwen3asr nemotrontranscribe silerovad sortformer semamba)
 target_compile_definitions(speech PRIVATE SPEECH_BUILD_SHARED SPEECH_VERSION="${PROJECT_VERSION}" INTERFACE SPEECH_SHARED)
 set_target_properties(speech PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 # The shared library's SOVERSION is the C API's major version, which speech.h defines and nothing else repeats.
@@ -435,7 +436,7 @@ target_link_libraries(quantize-check PRIVATE speechcommon)
 
 add_executable(speech-api-check checks/api/speech-api-check.c checks/api/speech-api-irodori.c checks/api/speech-api-drama3.c checks/api/speech-api-recognition.c
                checks/api/speech-api-detection.c checks/api/speech-api-detection-stream.c checks/api/speech-api-diarization.c
-               checks/api/speech-api-enhancement.c
+               checks/api/speech-api-enhancement.c checks/api/speech-api-dialogue.c
                checks/api/speech-api-common.c
                checks/api/speech-api-platform.c)
 target_link_libraries(speech-api-check PRIVATE speech)

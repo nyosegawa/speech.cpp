@@ -15,7 +15,8 @@
  *
  * With a recognition model (transcribe), speech-api-recognition.c, which takes F32 or F16 weights only, with a
  * detection model (detect), speech-api-detection.c and speech-api-detection-stream.c, and with a diarization model
- * (diarize), speech-api-diarization.c, and with an enhancement model (enhance), speech-api-enhancement.c.
+ * (diarize), speech-api-diarization.c, with an enhancement model (enhance), speech-api-enhancement.c, and with a
+ * dialogue model (dialogue), speech-api-dialogue.c.
  *
  * With --make-drama3-voice, Drama 3's voice files of a recording and its transcript, of them put together as two
  * speakers, and the ones refused (speech-api-drama3.c), then refuses the recording added alone and speaks both voices.
@@ -27,6 +28,7 @@
  *        speech-api-check detect <model.gguf> <dump folder>... [--device NAME]
  *        speech-api-check diarize <model.gguf> <input folder>... [--device NAME]
  *        speech-api-check enhance <model.gguf> <dump folder>... [--device NAME]
+ *        speech-api-check dialogue <model.gguf> <dump folder> <scratch folder> [--device NAME]
  */
 
 #include <math.h>
@@ -545,6 +547,7 @@ int main(int argc, char ** argv) {
 #endif
     const int recognition = argc > 1 && !strcmp(argv[1], "transcribe"), detection = argc > 1 && !strcmp(argv[1], "detect");
     const int diarization = argc > 1 && !strcmp(argv[1], "diarize"), enhancement = argc > 1 && !strcmp(argv[1], "enhance");
+    const int dialogue = argc > 1 && !strcmp(argv[1], "dialogue");
     if (argc < 3) {
         fprintf(stderr,
                 "usage: %s <model.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]... "
@@ -552,17 +555,19 @@ int main(int argc, char ** argv) {
                 "       %s transcribe <model.gguf> <dump folder>... [--device NAME]\n"
                 "       %s detect <model.gguf> <dump folder>... [--device NAME]\n"
                 "       %s diarize <model.gguf> <input folder>... [--device NAME]\n"
-                "       %s enhance <model.gguf> <dump folder>... [--device NAME]\n",
-                argv[0], argv[0], argv[0], argv[0], argv[0]);
+                "       %s enhance <model.gguf> <dump folder>... [--device NAME]\n"
+                "       %s dialogue <model.gguf> <dump folder> <scratch folder> [--device NAME]\n",
+                argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);
         return 2;
     }
     speech_log_set(on_log, NULL);
-    const char * checked = argv[recognition || detection || diarization || enhancement ? 2 : 1];
+    const char * checked = argv[recognition || detection || diarization || enhancement || dialogue ? 2 : 1];
     if (check_library() != 0 || check_load_refusals(checked) != 0 || check_quantize_refusals(checked) != 0) return 1;
     if (recognition) return check_recognition(argc - 2, argv + 2);
     if (detection) return check_detection(argc - 2, argv + 2);
     if (diarization) return check_diarization(argc - 2, argv + 2);
     if (enhancement) return check_enhancement(argc - 2, argv + 2);
+    if (dialogue) return check_dialogue(argc - 2, argv + 2);
     const char * model_path = argv[1];
 
     speech_load_params * params = NULL;
