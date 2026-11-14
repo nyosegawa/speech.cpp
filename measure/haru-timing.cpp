@@ -70,7 +70,8 @@ int main(int argc, char ** argv) {
 
         DialogueSettings settings = file_dialogue_settings(model);
         if (args.size() > 6) settings.max_frames = (int64_t) (std::stod(args[6]) / frame_seconds);
-        if (settings.max_frames < frames) throw std::runtime_error("max_seconds holds fewer frames than " + args[4] + " has");
+        // The start gives a frame before the first step.
+        if (settings.max_frames < frames + 1) throw std::runtime_error("max_seconds holds fewer frames than the first and one for each of " + args[4]);
         SeededRandomness warm(1);
         dialogue.start({}, voice.means, voice.quietest, settings, warm);
         for (int64_t i = 0; i < std::min<int64_t>(2, frames); i++) dialogue.step(user_frame(i), warm);
