@@ -102,6 +102,12 @@ and with one subgroup, 32 threads on NVIDIA, on Vulkan: an argmax over Qwen3's 1
 and 190 µs on an RTX 2080 (2026-10-15), longer than the head's product that made the logits on the RTX 2080, so that
 picking Qwen3-ASR's tokens on the device was slower than reading the logits back.
 
+Metal sends a product of more than 8 columns to `kernel_mul_mm` only from K of 64; the mat-vec kernels, which take one
+column of the activations at a time, take the rest. Haru-4B's codec runs each block's MLP at its 32 channels over a
+frame's 3200 samples as a product of K 32: six of them took 2.28 ms on the mat-vec kernels and 0.25 ms on
+`kernel_mul_mm`, as MLX takes 0.27 ms, on an Apple M5 (2026-11-15), and they were most of the time by which the codec
+of the official MLX session encoded and decoded a frame faster than speech.cpp's.
+
 RE-USE, a SEMamba network, runs 120 Mamba-1 layers and 22 convolutions of up to 256 channels on each chunk of 5 s.
 ggml writes Mamba-1 as SSM_CONV, products, softplus, SSM_SCAN and a gate, which pass every step's activations through
 memory; Metal's SSM_SCAN of Mamba-1 gives a threadgroup to each row and synchronizes at every token, and Vulkan takes
@@ -157,6 +163,10 @@ in 32.0 s on Metal; with MAMBA1 in 15.1 s, and with the convolution below as wel
   patches tile by tile, on the matrix units through the tensor API, or in simdgroup matrices before the M5, both
   operands staged in float.
 - **Metal and Vulkan fuse Snake with the channels along `ne[0]`** as they fuse it with the channels along `ne[1]`.
+- **Metal runs products of K from 32 over more than 8 columns on `kernel_mul_mm`**, of F32 or F16 activations, which
+  alone it reads; BF16 activations stay on the mat-vec kernels at every K. On an Apple M5 with Metal (2026-11-15), a step
+  of Haru-4B Q8_0 took 3.85 ms less on the tensor API and 8.95 ms less on the simdgroup kernel, its codec 1.6 to 2.5 ms
+  less a frame each way.
 - **Metal divides the 4-bit scales by 16 in float**, as it already did for Q5_K.
 - **ggml's allocator plans a graph again when its nodes read other tensors than the planned graph's**: the plan records
   each node's flags that change an allocation (input and output) and the position in the graph of each of its sources,
@@ -187,6 +197,7 @@ in 32.0 s on Metal; with MAMBA1 in 15.1 s, and with the convolution below as wel
   | Vulkan's convolutions of an F32 kernel in float | `test-backend-ops -o CONV_2D`: an F32 kernel with values of 6.6e4 to 7.2e4 in the input (64 to 64 channels over 323 by 403, 8 to 17 over 19 by 17) and in the kernel (the latter), on Vulkan on a device with cooperative matrices, such as the RTX 2080 | the tag passes those cases |
   | Vulkan's row-wise operations bounded | `test-backend-ops` NORM, RMS_NORM_BACK, L2_NORM, SUM_ROWS, MEAN and CUMSUM of rows of 64 with 513 rows, 513 over three dimensions and 40411, on Vulkan under a driver that writes outside a descriptor's range, such as MoltenVK | the tag passes those cases |
   | Mamba-1 as one operation (speed-up) | `test-backend-ops -o MAMBA1`: d_inner 256 at 251 tokens of 161 and 481 sequences and 161 and 481 tokens of 251, each way, sequences of 1 and 5 steps, and d_inner 128 and 512 on Metal, on Metal and Vulkan | the tag has an operation of Mamba-1 that SEMamba's graph can take, as fast on Metal and Vulkan |
+  | Metal's kernel_mul_mm from K of 32 (speed-up) | `test-backend-ops -o MUL_MAT`: F32, F16, BF16 and Q8_0 weights with K of 32 to 63 over 9 to 3200 columns, broadcast and permuted, and the BF16 by BF16 products of K 32 to 48, on Metal with and without the tensor API | the tag sends products of K from 32 over more than 8 columns to kernel_mul_mm |
   | Metal's F32 CONV_2D as an implicit matrix product (speed-up) | `test-backend-ops -o CONV_2D`: every case of an F32 kernel, among them SEMamba's convolutions on 2 s of 16 kHz audio, on Metal with and without the tensor API | the tag's Metal CONV_2D of an F32 kernel is as fast |
   | Vulkan's coopmat2 products keep robust buffer access | no `test-backend-ops` case; Irodori-TTS v4 Large Q8_0 speaking the twenty sentences of speech-bench's `prompts/speak-ja-JP.json` in a loop on an RTX 5090 with NVIDIA's Windows driver 616.92 or 617.42 and the pipelines without robustness, which faults within thirty runs | NVIDIA's Windows driver runs that loop thirty times without a fault with the pipelines without robustness, or the tag keeps robustness on them |
 
