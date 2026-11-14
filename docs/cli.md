@@ -338,15 +338,16 @@ speech talk MODEL [options] --live|-o FILE|- AUDIO.wav
   it says in it, one frame ahead: 3,200 samples at 24 kHz, 133 ms, for Haru.
 - `--live` hears the default microphone and plays the model's frames on the default audio output as they come, until
   Ctrl-C, and writes the model's text on stdout as it says it. Use headphones: nothing removes the echo, so with
-  speakers the model hears itself. A GPU is warmed up before the conversation unless `--no-warmup`.
+  speakers the model hears itself. A GPU is warmed up before the conversation unless `--no-warmup`, which a WAVE file,
+  heard without a warm-up, does not take.
 - A live conversation that falls 1 s behind, in audio heard and not yet given to the model and in the model's audio not
   yet played, stops with `speech: device: the conversation has fallen ... behind`: the device computes the model's
   frames slower than they last, and a smaller type of the model or a faster device keeps up. No audio is dropped.
 - With `AUDIO.wav` it hears the file, read as `speech asr` reads it, and writes the model's frames end to end as a
   16-bit mono WAVE at the model's rate to `-o`, or to stdout with `-o -`: one frame for the start and one for each whole
   frame of the file, so that the reply lines up with the file in time. The text goes to stdout, or to stderr with
-  `-o -`. The frames are those a live conversation gives when it hears the same audio. A run that fails removes the
-  file it was writing.
+  `-o -`. The frames are those a live conversation gives when it hears the same audio. An output that is the file heard
+  is refused, and a run that fails removes the file it was writing.
 - A conversation lasts `--max-seconds` at most, the model's own unless given (3600 s for Haru), and holds the memory
   of that length from its start. One that reaches it stops with `speech: out_of_range (max_seconds)`, and one whose memory does not fit on the
   device stops at its start with `speech: out_of_memory (max_seconds)`.

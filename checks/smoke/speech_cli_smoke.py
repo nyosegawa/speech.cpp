@@ -3,7 +3,8 @@ check, and checks what every subcommand shares: --version, --help, the exit code
 
 For every model: `speech info` in text, in JSON equal to the model information of the worker's ready (without the
 device and the threads), or for a detection model the worker's refusal, and with --meta, the identity in both as the general keys of --meta give it; `speech devices` in text and JSON; usage errors (exit 2) and a library error
-(exit 1, "speech: <code> (<option>): <message>"). For a synthesis model: `speech tts`'s WAVE byte for byte against the
+(exit 1, "speech: <code> (<option>): <message>"); for a model of another task than dialogue, the refusal of `speech
+talk`. For a synthesis model: `speech tts`'s WAVE byte for byte against the
 worker's audio of the same lines and seed, into a file, into a regular file through stdout, and appended to a file with
 content and through a pipe into cat, where the header cannot be written again in place and keeps its sizes at
 0xFFFFFFFF; that nothing but the WAVE reaches stdout and a failed run leaves no file; for Qwen3-TTS a stop at
@@ -54,8 +55,9 @@ rate the model does not take, which leaves no file, a chunk shorter than its STF
 --enhance` of each region `speech vad --split` writes. For a dialogue model, given a dump of reference/haru/dump.py:
 `speech talk` hearing its user audio as a 16-bit WAVE file, speaking first, against the worker's frames of the same
 samples, seed and speak_first, into a file with its sizes set and to stdout, its text on stdout and with -o - on stderr; the refusals (exit 2) of
-no -o, of no AUDIO, of --live with AUDIO and of --live with -o, and (exit 1) of a file that is not there and of a
-max_seconds shorter than a frame, which leave no file.
+no -o, of no AUDIO, of --live with AUDIO, of --live with -o, of --no-warmup without --live and of -o the file heard,
+which is left as it was, and (exit 1) of a file that is not there and of a max_seconds shorter than a frame, which leave
+no file.
 
 usage: python3 checks/smoke/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav [--transcript TEXT]]
                                                 [--embedding E.speaker.safetensors] [--vad DETECTION.gguf] [--asr RECOGNITION.gguf]
@@ -189,6 +191,10 @@ refused = ("unsupported", None) if not served_by_worker else ("device", "device"
 assert fatal["type"] == "fatal" and (fatal["error"]["code"], fatal["error"]["option"]) == refused, fatal
 failure(r, *refused)
 print(f"the worker's usage error and its {refused[0]} error: fatal on stdout, exit 2 and 1")
+if info["task"] != "dialogue":
+    # speech talk refuses a model of another task from its file, before it loads it or reads the audio.
+    failure(run("talk", model, "-o", os.path.join(work, "reply.wav"), os.path.join(work, "no-such.wav"), code=1), "unsupported", None)
+    print("talk of a model of another task: exit 1, unsupported")
 
 if info["task"] == "synthesis":
     w = Worker(speech, model, options)
@@ -695,16 +701,18 @@ elif info["task"] == "dialogue":
     assert wave_of(r.stdout) == want and text.strip() in r.stderr.decode(), "talk -o - differs from the worker's frames, or wrote its text elsewhere"
     assert text.strip(), "the model said nothing while it spoke first"
     print(f"talk: {len(want) // 2 // info['frame_samples']} frames into a file and to stdout, the worker's sample for sample, and its text {text.strip()!r}")
-    for command in [["talk", model, heard], ["talk", model, "-o", reply], ["talk", model, "--live", heard], ["talk", model, "--live", "-o", reply]]:
+    for command in [["talk", model, heard], ["talk", model, "-o", reply], ["talk", model, "--live", heard], ["talk", model, "--live", "-o", reply],
+                    ["talk", model, "--no-warmup", "-o", reply, heard], ["talk", model, "-o", heard, heard]]:
         run(*command, *options, code=2)
+    assert os.path.getsize(heard) == 44 + len(pcm), "talk wrote over the file it was to hear"
     left = os.path.join(work, "left.wav")
     failure(run("talk", model, *options, "-o", left, os.path.join(work, "no-such.wav"), code=1), "io", "audio")
     failure(run("talk", model, *options, "--max-seconds", "0.01", "-o", left, heard, code=1), "out_of_range", "max_seconds")
     assert not os.path.exists(left), "a failed run left its file"
     os.remove(heard)
     os.remove(reply)
-    print("talk without -o, without AUDIO, --live with AUDIO and --live with -o: exit 2; a file that is not there and a max_seconds shorter "
-          "than a frame: exit 1, and no file left")
+    print("talk without -o, without AUDIO, --live with AUDIO, --live with -o, --no-warmup without --live and -o the file heard: exit 2; a "
+          "file that is not there and a max_seconds shorter than a frame: exit 1, and no file left")
 elif info["task"] == "recognition":
     files, pcms = [], []
     for d in dumps:

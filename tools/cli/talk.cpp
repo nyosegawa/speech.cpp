@@ -3,9 +3,11 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "commands.h"
@@ -105,6 +107,14 @@ void push(speech_dialogue * dialogue, const std::vector<float> & samples, Talkin
     if (talking.failed) throw *talking.failed;
 }
 
+/** Ends the conversation, whose audio heard at another rate than the model's may complete a last frame. */
+void end(speech_dialogue * dialogue, Talking & talking, double & busy) {
+    const auto t0 = Clock::now();
+    check(speech_dialogue_end(dialogue));
+    busy += seconds_since(t0);
+    if (talking.failed) throw *talking.failed;
+}
+
 /** Talks through the microphone and the audio output until Ctrl-C; the model computes its frames for `busy` seconds. */
 void talk_live(const speech_request * request, int rate, FILE * out, Talking & talking, double & busy) {
     Speaker speaker(rate);
@@ -132,7 +142,7 @@ void talk_live(const speech_request * request, int rate, FILE * out, Talking & t
         if (!heard.empty()) push(dialogue.get(), heard, talking, busy);
     }
     std::signal(SIGINT, SIG_DFL);
-    check(speech_dialogue_end(dialogue.get()));
+    end(dialogue.get(), talking, busy);
 }
 
 /** Talks with the WAVE file at `input` as what the model hears, writing its reply to `output`. */
@@ -146,7 +156,7 @@ void talk_file(const speech_request * request, int rate, const std::string & inp
     talking.text = output == "-" ? stderr : out;
     const Dialogue dialogue = start(request, wav.sample_rate, talking, busy);
     push(dialogue.get(), samples, talking, busy);
-    check(speech_dialogue_end(dialogue.get()));
+    end(dialogue.get(), talking, busy);
     writer.finish();
     file.keep();
 }
@@ -158,9 +168,21 @@ int run_talk(const CommandLine & line, FILE * out) {
     if (live && output) throw UsageError("--live plays the model's audio and writes no WAVE; give -o with an AUDIO file");
     if (!live && line.args.size() < 2) throw UsageError("give the WAVE file the model hears, or --live to talk through the microphone");
     if (!live && !output) throw UsageError("name the WAVE file to write the model's reply to with -o, or give -o - for stdout");
+    if (!live && line.has("--no-warmup")) throw UsageError("--no-warmup skips the warm-up of --live; a WAVE file is heard without one");
+    // An output that is the file heard would replace it before the conversation; equivalent() also sees the same file
+    // under another case or through a link.
+    std::error_code same;
+    if (!live && *output != "-" && std::filesystem::equivalent(std::filesystem::u8path(*output), std::filesystem::u8path(line.args[1]), same)) {
+        throw UsageError("-o would write " + *output + " over " + line.args[1] + ", the file the model hears; give -o another file");
+    }
 
     // A model named for the first time is fetched here, before the load is timed.
     const std::string path = model_file(line.args[0]);
+    const speech_task task = speech_model_info_task(file_info(path).get());
+    if (task != SPEECH_TASK_DIALOGUE) {
+        throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "",
+                      path + " is a model of speech " + task_name(task) + ", and speech talk holds conversations with a dialogue model");
+    }
     require_options(path, line);
     const auto t0 = Clock::now();
     terminal::Status loading("Loading " + argument_label(line.args[0]));
@@ -170,11 +192,6 @@ int run_talk(const CommandLine & line, FILE * out) {
     const speech_model_info * m = info.get();
     loading.done(loaded_line({m}, seconds_since(t0)));
     if (line.has("-v")) std::fprintf(stderr, "speech.cpp %s\n", speech_version());
-    if (speech_model_info_task(m) != SPEECH_TASK_DIALOGUE) {
-        throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "",
-                      std::string(speech_model_info_name(m)) + " is a model of speech " + task_name(speech_model_info_task(m)) +
-                          ", and speech talk holds conversations with a dialogue model");
-    }
     const Request request = new_request(model.get());
     apply_options(request.get(), line.options);
     const int rate = speech_model_info_sample_rate(m);
@@ -215,7 +232,7 @@ Command talk_command() {
         "16-bit mono WAVE at the model's rate to -o, or to stdout with -o -: the frame of the start and one for each whole\n"
         "frame of the file, so that the reply lines up with the file in time. Either way it writes the model's text on\n"
         "stdout as it comes, or on stderr with -o -. A conversation lasts --max-seconds at most and holds the memory of\n"
-        "that length from its start; --no-warmup applies to --live, which warms a GPU up first.";
+        "that length from its start. --live warms a GPU up first, unless --no-warmup.";
     c.flags = {
         {"--live", "", false, "talk through the default microphone and audio output until Ctrl-C"},
         {"-o", "FILE", false, "the WAVE file to write the model's reply to, or - for stdout"},
