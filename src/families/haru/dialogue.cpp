@@ -1,6 +1,7 @@
 #include "dialogue.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 #include "error.h"
@@ -8,6 +9,10 @@
 namespace haru {
 
 namespace {
+
+using Clock = std::chrono::steady_clock;
+
+double seconds_since(Clock::time_point t) { return std::chrono::duration<double>(Clock::now() - t).count(); }
 
 /** π, which MSVC's <cmath> does not define as M_PI without _USE_MATH_DEFINES. */
 constexpr double kPi = 3.14159265358979323846;
@@ -119,6 +124,7 @@ DialogueFrame Dialogue::start(const std::vector<int32_t> & card, const std::vect
     settings_ = s;
     head_.set_guidance(s.guidance);
     frames_ = 0;
+    times_ = DialogueTimes();
     dry_ = std::make_unique<Dry>(dry_config_, std::vector<int32_t>{ids_.pad, ids_.eop, ids_.eos});
     detokenizer_ = std::make_unique<StreamDetokenizer>(*tokenizer_, std::vector<int32_t>{ids_.pad, ids_.eop});
     const int64_t n_ref = (int64_t) reference.size() / latent_;
@@ -159,16 +165,20 @@ DialogueFrame Dialogue::step(const std::vector<float> & user, Randomness & r, Di
         throw Error(Fault::InvalidArgument, "a frame of the user's audio is " + std::to_string(codec_.frame_samples()) + " samples", "audio");
     }
     if (done()) throw Error(Fault::OutOfRange, "the conversation has given its " + std::to_string(settings_.max_frames) + " frames", "max_frames");
+    const Clock::time_point encoding = Clock::now();
     const std::vector<float> mean = codec_.encode(user);
+    times_.encode += seconds_since(encoding);
     const std::vector<float> latent = sample(mean, r);
     if (stages) {
         stages->user_means.insert(stages->user_means.end(), mean.begin(), mean.end());
         stages->user_latents.insert(stages->user_latents.end(), latent.begin(), latent.end());
     }
+    const Clock::time_point building = Clock::now();
     Graph g;
     ggml_tensor * x = build_embed(g, {token_}, latent_last_, latent, nullptr, nullptr);
     if (stages) g.output(x);
     ggml_tensor * hidden = decoder_.build_rows(g, x);
+    times_.model += seconds_since(building);
     DialogueFrame f = emit(g, hidden, r, stages);
     decoder_.advance(1);
     if (stages) {
@@ -179,6 +189,7 @@ DialogueFrame Dialogue::step(const std::vector<float> & user, Randomness & r, Di
 }
 
 DialogueFrame Dialogue::emit(Graph & g, ggml_tensor * hidden, Randomness & r, DialogueStages * stages) {
+    const Clock::time_point computing = Clock::now();
     std::vector<float> noise((size_t) latent_);
     r.normal(noise.data(), noise.size());
     ggml_tensor * logits = build_logits(g, m_, hidden);
@@ -188,6 +199,7 @@ DialogueFrame Dialogue::emit(Graph & g, ggml_tensor * hidden, Randomness & r, Di
     g.compute(backend_, decoder_.allocator());
     std::vector<float> l = Graph::read(logits);
     const std::vector<float> two = Graph::read(silent), z = Graph::read(latent);
+    times_.model += seconds_since(computing);
     if (stages) {
         const std::vector<float> h = Graph::read(hidden);
         stages->hidden.insert(stages->hidden.end(), h.begin(), h.end());
@@ -195,13 +207,17 @@ DialogueFrame Dialogue::emit(Graph & g, ggml_tensor * hidden, Randomness & r, Di
         stages->silent_logits.insert(stages->silent_logits.end(), two.begin(), two.end());
         stages->head_latents.insert(stages->head_latents.end(), z.begin(), z.end());
     }
+    const Clock::time_point sampling = Clock::now();
     shape_logits(l, *dry_, two.data(), ids_, settings_.eop_bias, must_speak_);
     must_speak_ = false;
     DialogueFrame f;
     f.token = r.token(candidates(l, settings_.sampling));
+    times_.sampling += seconds_since(sampling);
     latent_last_.resize(z.size());
     for (size_t i = 0; i < z.size(); i++) latent_last_[i] = head_.unscale(z[i]);
+    const Clock::time_point decoding = Clock::now();
     f.audio = codec_.decode(latent_last_, 1);
+    times_.decode += seconds_since(decoding);
     if (stages) {
         stages->latents.insert(stages->latents.end(), latent_last_.begin(), latent_last_.end());
         stages->codec_audio.insert(stages->codec_audio.end(), f.audio.begin(), f.audio.end());

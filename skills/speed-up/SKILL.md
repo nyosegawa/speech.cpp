@@ -12,8 +12,8 @@ skill.
 ## 1. Find where the time goes
 
 - Time each stage before choosing what to change: a stage that takes 5% of a request cannot give more than 5%.
-  `measure/` times the stages of Qwen3-ASR, FastConformer, Qwen3-TTS and Irodori-TTS (`<family>-timing`, built with
-  the checks) and Irodori-TTS with and without a caption through the worker (`irodori-caption-timing.py`); each prints
+  `measure/` times the stages of Qwen3-ASR, FastConformer, Qwen3-TTS, Irodori-TTS and SEMamba and the steps of Haru's
+  conversation (`<family>-timing`, built with the checks) and Irodori-TTS with and without a caption through the worker (`irodori-caption-timing.py`); each prints
   its usage.
 - Where no tool covers the stage, add timers on an experiment branch and never on main. A timing tool worth running
   again goes into `measure/` in a pull request of its own, written as the ones there are.

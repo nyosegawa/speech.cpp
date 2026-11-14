@@ -73,7 +73,7 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   (`same_audio.py`), the files `speech quantize` makes with the converters' (`quantize_compare.py`) and the first
   release that reads each (`quantize_releases.py`).
 - `measure/` holds what measures and passes or fails nothing: the times of the stages of Qwen3-ASR, FastConformer,
-  Qwen3-TTS, Irodori-TTS and SEMamba (`<family>-timing.cpp`, built with the checks), of llama.cpp's llama-server on Qwen3-ASR's
+  Qwen3-TTS, Irodori-TTS and SEMamba and of Haru's conversation (`<family>-timing.cpp`, built with the checks), of llama.cpp's llama-server on Qwen3-ASR's
   dumps and of Irodori-TTS with and without a caption, the accuracy of each longest region of transcription by regions
   (`region_cap_compare.py`), and how late live transcription over `/v1/realtime` is for one build or two on the same
   recordings (`live_latency.py`). speech.cpp keeps what passes or fails (the checks, the smoke scripts and

@@ -495,6 +495,11 @@ target_link_libraries(qwen3-tts-timing PRIVATE qwen3tts)
 add_executable(irodori-tts-timing measure/irodori-tts-timing.cpp)
 target_link_libraries(irodori-tts-timing PRIVATE irodoritts)
 
+# Times a conversation's start and steps on a recording of the user.
+add_executable(haru-timing measure/haru-timing.cpp)
+target_include_directories(haru-timing PRIVATE checks)
+target_link_libraries(haru-timing PRIVATE haru)
+
 # Times the stages of an enhancement on a chunk of noise.
 add_executable(semamba-timing measure/semamba-timing.cpp)
 target_include_directories(semamba-timing PRIVATE checks)

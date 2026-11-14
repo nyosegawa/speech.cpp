@@ -73,6 +73,18 @@ struct DialogueStages {
     std::vector<float> user_means, user_latents;
 };
 
+/** The seconds a conversation's frames have spent in each part, summed from its start. */
+struct DialogueTimes {
+    /** The codec's encoding of the user's frames. */
+    double encode = 0;
+    /** The graphs of the language model's rows, the logits and the head. */
+    double model = 0;
+    /** The shaping of the logits and the draw of the tokens, on the host. */
+    double sampling = 0;
+    /** The codec's decoding of the model's frames. */
+    double decode = 0;
+};
+
 /**
  * One full-duplex conversation with Haru, as haru.session's DuplexSession holds it: start() runs the prompt, the card
  * and the voice reference, and gives the model's first frame; each step() takes 133 ms of the user's audio and gives the
@@ -112,6 +124,8 @@ public:
 
     /** Whether the conversation has given its max_frames frames. */
     bool done() const { return frames_ >= settings_.max_frames; }
+    /** The time spent in each part of the frames since the conversation started, its first frame's included. */
+    const DialogueTimes & times() const { return times_; }
 
 private:
     /** The latent of digital silence: the last of haru.dialogue.silence_frames frames of zeros, encoded at once. */
@@ -146,6 +160,7 @@ private:
     /** The last frame's token and latent, which the next step's row takes. */
     int32_t token_ = 0;
     std::vector<float> latent_last_;
+    DialogueTimes times_;
 };
 
 }  // namespace haru
