@@ -27,6 +27,7 @@ first time.
 | [`nemotron-3-diarization`](https://huggingface.co/sakasegawa/Nemotron-3-Diarization-GGUF) | diarization | any | `Nemotron-3-Diarization-99M-Q8_0.gguf`, 106 MB | [Sortformer](models/sortformer.md) |
 | [`re-use`](https://huggingface.co/sakasegawa/NVIDIA-NemotronLabs-RE-USE-GGUF) | enhancement | any | `NVIDIA-NemotronLabs-RE-USE-10M-F32.gguf`, 38.5 MB | [SEMamba](models/semamba.md) |
 | [`re-use-laughter`](https://huggingface.co/sakasegawa/NVIDIA-NemotronLabs-RE-USE-laughter-GGUF) | enhancement | any | `NVIDIA-NemotronLabs-RE-USE-10M-laughter-F32.gguf`, 38.5 MB | [SEMamba](models/semamba.md) |
+| [`haru-4b`](https://huggingface.co/sakasegawa/Haru-4B-GGUF) | dialogue | de en es fr ja ko pt ru zh | `Haru-4B-F16.gguf`, 10.56 GB | [Haru](models/haru.md) |
 
 `speech models` prints the same, with what is fetched. Each family's page links the upstream models.
 
@@ -43,7 +44,7 @@ which one to start with:
 | recognition | `parakeet-tdt-0.6b-v3` | bg et hr lt lv mt sk sl uk, the European languages Qwen3-ASR does not recognize |
 
 A detection, diarization or enhancement model takes no language, and `speech vad`, `speech diarize` and `speech enhance`
-without a model list every model of their task.
+without a model list every model of their task, as `speech talk` lists every dialogue model with its languages.
 
 ## Names
 
@@ -91,7 +92,7 @@ Nothing is removed automatically: `speech models` lists the files that no model 
 
 ## Voices
 
-A synthesis request needs a `voice`.
+A synthesis request needs a `voice`; a conversation takes one or none.
 
 - **Qwen3-TTS** speaks with the model's nine speakers: `aiden`, `dylan`, `eric`, `ono_anna`, `ryan`, `serena`, `sohee`,
   `uncle_fu` and `vivian`. `speech info qwen3-tts-0.6b` lists each with its language, gender and description. `dylan`
@@ -102,12 +103,14 @@ A synthesis request needs a `voice`.
 - **Drama 3** speaks with the voice `none`, with which the model chooses a voice for each speaker the text names, or
   in the voices of a voice file that `speech voice` made of recordings and their transcripts, each given to a speaker
   ([models/drama3.md](models/drama3.md#voices)). It takes a voice file alone, not a WAVE file.
+- **Haru** speaks in the voice of a recording of one speaker that you add, or without one in a voice of its own
+  ([models/haru.md](models/haru.md#voices)), from a WAVE file or a voice file as Irodori-TTS takes them.
 
 | Entry point | How to add a voice |
 |---|---|
-| `speech tts` | `--add-voice NAME=FILE`, repeatable |
+| `speech tts`, `speech talk` | `--add-voice NAME=FILE`, repeatable |
 | `speech worker` | `--add-voice NAME=FILE`, or the request `add_voice` |
-| `speech serve` | `--add-voice NAME=FILE`, or a recording on the page (Irodori-TTS) |
+| `speech serve` | `--add-voice NAME=FILE`, or a recording on the page (Irodori-TTS, Haru) |
 | C API | `speech_voice_add()` |
 
 A voice's name is case-sensitive, and may be neither a voice of the model nor `none`.
@@ -117,8 +120,8 @@ A voice's name is case-sensitive, and may be neither a voice of the model nor `n
 - A model's languages are BCP 47 tags: two letters, or three for a language without a two-letter code (`yue`, `fil`).
 - A request's `language` is one of them, a region or script of one (`ja-JP`, `zh-Hant`), or `auto`, the default, which
   leaves the choice to the model. Any other language is refused.
-- Qwen3-TTS and Qwen3-ASR are steered by the language. Irodori-TTS, Drama 3, the FastConformer models and Nemotron 3.5
-  Transcribe only check it against their languages and do not use it. Silero VAD has no languages and takes `auto` alone.
+- Qwen3-TTS and Qwen3-ASR are steered by the language, and Haru writes its character card in it. Irodori-TTS, Drama 3,
+  the FastConformer models and Nemotron 3.5 Transcribe only check it against their languages and do not use it. Silero VAD has no languages and takes `auto` alone.
 - Qwen3-ASR's results say which language it heard.
 
 ## Files on Hugging Face

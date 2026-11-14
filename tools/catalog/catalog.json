@@ -268,6 +268,23 @@
       "files": [
         {"type": "f32", "file": "NVIDIA-NemotronLabs-RE-USE-10M-laughter-F32.gguf", "size": 38519200, "sha256": "15715fbb45e1ba3ae45da52c3018f60ef32f4fd48ff278cb14b402f9e12a32bf"}
       ]
+    },
+    {
+      "name": "haru-4b",
+      "repository": "sakasegawa/Haru-4B-GGUF",
+      "type": "f16",
+      "start": [],
+      "revision": "34a494c9a0423167e684d3a04324f051405d2ae9",
+      "task": "dialogue",
+      "languages": ["de", "en", "es", "fr", "ja", "ko", "pt", "ru", "zh"],
+      "voice_files": true,
+      "files": [
+        {"type": "f16", "file": "Haru-4B-F16.gguf", "size": 10561406688, "sha256": "ea6caae8deccbf58f9b87dd11f893b13dfb96510357393994be94ce4258cc489"},
+        {"type": "q8_0", "file": "Haru-4B-Q8_0.gguf", "size": 6623102720, "sha256": "c372a527e63ca4251429a48863535b8bca03ebd6f414bbf31f28a9d175349934"},
+        {"type": "q6_k", "file": "Haru-4B-Q6_K.gguf", "size": 5605707520, "sha256": "8db05e86acca046bc183d4e30fbda22ac775ba4767ae5a10bcd0d48f8d7db793"},
+        {"type": "q5_k", "file": "Haru-4B-Q5_K.gguf", "size": 5047781120, "sha256": "9b0f703a03c764d14a8e66ff8af1fa20a444d3cf2510c145288a5accf7d935ce"},
+        {"type": "q4_k", "file": "Haru-4B-Q4_K.gguf", "size": 4522673920, "sha256": "e0e5fdd049b41c0510cac04f30468795565ec7f532aeb4552730d75406be19df"}
+      ]
     }
   ]
 }

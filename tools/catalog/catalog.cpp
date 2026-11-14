@@ -93,7 +93,7 @@ std::string joined(const std::vector<std::string> & items, const char * separato
 /** The catalog's names, each task's together: "a, b (synthesis); c (recognition)", a task without models left out. */
 std::string names_by_task() {
     std::string out;
-    for (const char * task : {"synthesis", "recognition", "detection", "diarization", "enhancement"}) {
+    for (const char * task : {"synthesis", "recognition", "detection", "diarization", "enhancement", "dialogue"}) {
         std::vector<std::string> names;
         for (const CatalogModel & m : catalog()) {
             if (m.task == task) names.push_back(m.name);
@@ -159,7 +159,8 @@ std::string no_model_message(const std::string & usage, ModelKind kind) {
                       "\nMODEL is a model file (.gguf) or the name of one in `speech models`, which is fetched the first time it is used.\n";
     std::vector<const CatalogModel *> listed;
     // A subcommand of speech detection, diarization, enhancement or dialogue lists every model of its task, and `speech
-    // voice` every model that takes voice files, whatever the language; the others list the models to start with.
+    // voice` every model that takes voice files, whatever the language, those two with the languages each takes; the
+    // others list the models to start with.
     const bool every = kind == ModelKind::VoiceFiles || kind == ModelKind::Detection || kind == ModelKind::Diarization || kind == ModelKind::Enhancement ||
                        kind == ModelKind::Dialogue;
     for (const CatalogModel & m : catalog()) {
@@ -179,8 +180,8 @@ std::string no_model_message(const std::string & usage, ModelKind kind) {
         // A subcommand of either task names each task once, before its first model.
         const bool any = kind == ModelKind::Any, first = i == 0 || listed[i - 1]->task != m.task;
         const std::string label = any ? (first ? m.task : "") + std::string(13 - (first ? m.task.size() : 0), ' ') : "";
-        out += "  " + label + m.name + std::string(width + 2 - m.name.size(), ' ') + joined(kind == ModelKind::VoiceFiles ? m.languages : m.start, " ") +
-               "\n";
+        const std::vector<std::string> & languages = kind == ModelKind::VoiceFiles || kind == ModelKind::Dialogue ? m.languages : m.start;
+        out += "  " + label + m.name + std::string(width + 2 - m.name.size(), ' ') + joined(languages, " ") + "\n";
     }
     const size_t at = usage.find("MODEL");
     out += "For example: speech " + usage.substr(0, at) + listed.front()->name + usage.substr(at + 5);

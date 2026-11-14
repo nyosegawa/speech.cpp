@@ -92,14 +92,17 @@ request that changes how the page looks takes them again (docs skill), with its 
 
   ```sh
   node skills/release/scripts/page-screenshot.mjs build/speech docs/images/page qwen3-tts-0.6b qwen3-asr-0.6b silero-vad \
-      "Hello. It will be sunny in Tokyo tomorrow, with a high of twenty-four degrees." ryan 6368195046531003
+      "Hello. It will be sunny in Tokyo tomorrow, with a high of twenty-four degrees." ryan 4 \
+      --dialogue haru-4b --talk-seed 1
   ```
 
-  It starts `speech serve` with the three models on port 8080 and a headless Chrome in English, speaks the text with
-  the seed (`page-speak.png`), hands the speech to Transcribe and transcribes it (`page-transcribe.png`), and transcribes
-  a microphone that says the text a sentence at a time (`page-live.png`), taken while the first sentence is final and as
-  much of the next as possible is grey. Look at each image, the transcripts the script prints included, before committing
-  them; a model that samples can say the text badly with a seed that once read well, and another seed is the fix.
+  It starts `speech serve` with the four models on port 8080 and a headless Chrome in English, muted, speaks the text
+  with the seed (`page-speak.png`), hands the speech to Transcribe and transcribes it (`page-transcribe.png`),
+  transcribes a microphone that says the text a sentence at a time (`page-live.png`), taken while the first sentence is
+  final and as much of the next as possible is grey, and holds a conversation in which Haru speaks first while that
+  microphone speaks (`page-talk.png`), taken once Haru has said a few words. Look at each image, the transcripts the
+  script prints included, before committing them; a model that samples can say the text badly with a seed that once read
+  well, and another seed is the fix.
 
 ## 6. Tag and publish
 

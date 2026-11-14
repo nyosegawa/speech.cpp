@@ -23,14 +23,20 @@ Nemotron 3.5 Transcribe, a recognizer of 30B parameters whose rows no K-quant ho
 IQ4_NL; on the whole of Common Voice 8.0's Japanese test set on an H100 with Vulkan on 2026-10-29, IQ4_NL gave a CER of
 9.16% and 5.33% accepting other spellings, against Q8_0's 9.01% and 5.17%, at the same speed in 18.4 GiB of the GPU's
 memory against 33.4 GiB.
+A conversation with Haru-4B has no text to score, and two conversations part after a few frames from rounding alone,
+so its types are compared at the first frame of a conversation dumped from the official code in float32, on an Apple
+M5 with Metal on 2026-11-14: the language model's last hidden state lies 66.5 dB from the official in F16 and 40.1 dB in
+Q8_0, the logits that decide whether the model speaks 74.8 and 40.7 dB, and the audio latent 57.4 and 28.0 dB, where the
+official MLX code gives 65.9, 77.7 and 54.8 dB in float32 and 41.4, 53.4 and 29.9 dB in the bfloat16 its app starts in.
 
 ## Decision
 
 - **A name fetches Q8_0 where Q8_0 measures as F16 does, and F16 where it does not.** For a recognizer, Q8_0 is within
   0.2 points of F16's error rate on the set its accuracy is reported on, and on Common Voice also within 0.2 points of
   the rate that accepts other spellings of the same words; for a synthesis model, Q8_0's CER over three seeds lies
-  within the range of F16's seeds. reazonspeech-v2 and parakeet-tdt_ctc-0.6b-ja fetch Q8_0; parakeet-tdt-0.6b-v3 and
-  both Irodori-TTS models fetch F16. Qwen3-TTS and Qwen3-ASR fetch Q8_0, and their repositories hold no F16
+  within the range of F16's seeds; for a dialogue model, Q8_0 lies as close to the official float32 as F16 does at each
+  stage of a conversation's first frame. reazonspeech-v2 and parakeet-tdt_ctc-0.6b-ja fetch Q8_0; parakeet-tdt-0.6b-v3,
+  both Irodori-TTS models and Haru-4B fetch F16. Qwen3-TTS and Qwen3-ASR fetch Q8_0, and their repositories hold no F16
   file to measure it against.
 - **A model whose Q8_0 file a machine with 32 GB cannot hold on its GPU fetches its 4-bit type, Q4_K or, where the
   family has no K-quant, IQ4_NL, where it measures as Q8_0 does**: for a synthesis model its CER over three seeds lies

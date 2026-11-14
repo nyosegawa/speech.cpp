@@ -2,18 +2,28 @@
 // recognition and a detection model on a free port, opens the page in a headless Chrome in English, speaks the text
 // with the voice (Speak), hands the speech to Transcribe and transcribes it (Transcribe), then transcribes a microphone
 // that says the text a sentence at a time with pauses (Live), taken while the first sentence is final and the next one
-// is still grey. Each is saved at twice its CSS pixels, down to the tab's panel, as OUT-speak.png, OUT-transcribe.png
-// and OUT-live.png. The server listens on 8080, the port the page names, unless $PORT says another. Chrome is the one at
-// $CHROME, or macOS's. The server and Chrome are stopped however the script ends.
-// A sampling model speaks differently each time; give the seed of a take whose transcript reads right.
+// is still grey. With --dialogue and a dialogue model, which the server holds too, the talk panel holds a conversation
+// in English with the model speaking first while the microphone says the text, taken once the model has said a few
+// words. Each is saved at twice its CSS pixels, down to the tab's panel, as OUT-speak.png, OUT-transcribe.png,
+// OUT-live.png and OUT-talk.png. The server listens on 8080, the port the page names, unless $PORT says another. Chrome
+// is the one at $CHROME, or macOS's, muted. The server and Chrome are stopped however the script ends.
+// A sampling model speaks differently each time; give the seed of a take whose transcript reads right, and --talk-seed
+// that of a conversation that reads well.
 // usage: node skills/release/scripts/page-screenshot.mjs <speech> <OUT> <synthesis model> <recognition model>
-//        <detection model> <text> <voice> [seed]
+//        <detection model> <text> <voice> [seed] [--dialogue <dialogue model> [--talk-seed N]]
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const [speech, out, synthesis, recognition, detection, text, voice, seed] = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const flag = (name) => {
+  const at = argv.indexOf(name);
+  return at < 0 ? null : argv.splice(at, 2)[1];
+};
+const dialogue = flag('--dialogue');
+const talkSeed = flag('--talk-seed');
+const [speech, out, synthesis, recognition, detection, text, voice, seed] = argv;
 const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -89,13 +99,14 @@ const running = [];
 let ws = null;
 try {
   const spoken = microphone(profile);
-  const server = start(speech, ['serve', synthesis, recognition, detection, '--port', process.env.PORT ?? '8080'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const models = [synthesis, recognition, detection, ...(dialogue ? [dialogue] : [])];
+  const server = start(speech, ['serve', ...models, '--port', process.env.PORT ?? '8080'], { stdio: ['ignore', 'pipe', 'pipe'] });
   running.push(server);
   let log = '';
   const address = await racing(new Promise((resolve) => {
     const read = (chunk) => {
       log += chunk;
-      const m = /is at (http:\/\/127\.0\.0\.1:\d+\/)/.exec(log);
+      const m = /Ready at (http:\/\/127\.0\.0\.1:\d+\/)/.exec(log);
       if (m) resolve(m[1]);
     };
     server.child.stdout.on('data', read);
@@ -110,6 +121,8 @@ try {
     '--hide-scrollbars', '--lang=en-US', '--accept-lang=en-US', `--window-size=${WIDTH},900`,
     // A click the script makes is no gesture of a person's, which an audio context needs to run.
     '--autoplay-policy=no-user-gesture-required',
+    // The speech and the conversation play, which headless Chrome would otherwise play on the machine's speakers.
+    '--mute-audio',
   ], { stdio: 'ignore' });
   running.push(chrome);
   const port = await racing((async () => {
@@ -252,6 +265,35 @@ try {
     if (!$('live-start').disabled) $('live-start').click();
     await until(() => !$('live-start').disabled && !$('live-status').textContent, 'the last words');
   `);
+
+  if (dialogue) {
+    // The talk panel, its settings folded away, once the model has said a few words while the microphone speaks.
+    await page(`
+      $('tab-talk').click();
+      await until(() => !$('talk-start').disabled, 'the talk panel to start');
+      const field = (name) => document.querySelector('#talk-options [name="' + name + '"], #talk-more [name="' + name + '"]');
+      const set = (name, value) => {
+        field(name).value = value;
+        field(name).dispatchEvent(new Event('change'));
+      };
+      set('language', 'en');
+      set('name', 'Haru');
+      set('persona', 'A cheerful university student who likes coffee and talks about the weather.');
+      if (${JSON.stringify(talkSeed ?? '')}) set('seed', ${JSON.stringify(talkSeed ?? '')});
+      field('speak_first').checked = true;
+      $('talk-start').click();
+      await until(() => !$('talk-dot').hidden || !$('talk-error').hidden, 'the conversation to start');
+      if (!$('talk-error').hidden) throw new Error($('talk-error').textContent);
+    `);
+    const words = () => page(`return document.querySelector('#talk-stage .talk-text').textContent.trim();`);
+    for (const t = Date.now(); Date.now() - t < 30000 && (await words()).split(/\s+/).length < 8;) await wait(200);
+    await shoot(`${out}-talk.png`);
+    console.log('talk:', JSON.stringify(await words()));
+    await page(`
+      $('talk-start').click();
+      await until(() => $('talk-start').textContent === 'Start talking', 'the hang-up');
+    `);
+  }
 } finally {
   ws?.close();
   for (const child of running.reverse()) child.stop();

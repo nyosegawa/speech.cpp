@@ -28,7 +28,7 @@
 speech.cpp is one command, `speech`, and one shared library, `libspeech`, behind one C API, on the CPU, Metal and
 Vulkan through [ggml](https://github.com/ggml-org/ggml). The command speaks text, writes the text of recordings, finds
 where someone speaks in them, removes their noise, transcribes the microphone as someone speaks (`speech asr --live`),
-serves OpenAI's audio API and its Realtime transcription over HTTP, and runs a worker process for any program that keeps models loaded between
+holds a spoken conversation with a model that listens and speaks at once (`speech talk`), serves OpenAI's audio API and its Realtime transcription over HTTP, and runs a worker process for any program that keeps models loaded between
 requests, [ASIST](https://github.com/nyosegawa/asist) among them.
 
 **A time to first audio of a quarter of a second or less.** On an Apple M5, Qwen3-TTS 0.6B sends its first audio
@@ -54,6 +54,9 @@ implementation, from the same inputs.
     <td width="50%"><img src="docs/images/page-transcribe.png" alt="The Transcribe tab: the same speech written by Qwen3-ASR 0.6B, a region at a time where Silero VAD finds speech"><br><sub>Transcribe writes a file or a recording, a region at a time where someone speaks.</sub></td>
     <td width="50%"><img src="docs/images/page-live.png" alt="The Live tab while someone speaks: the first sentence final and the next one in grey as it is said"><br><sub>Live writes the microphone as you speak; the grey text is the utterance still being said.</sub></td>
   </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="docs/images/page-talk.png" alt="The Talk tab during a conversation with Haru-4B: a lane of beads for each side and the text the model says" width="50%"><br><sub>Talk holds a spoken conversation with a dialogue model, which listens and speaks at the same time.</sub></td>
+  </tr>
 </table>
 
 ## Models
@@ -72,13 +75,14 @@ implementation, from the same inputs.
 | Detection | [`silero-vad`](https://huggingface.co/sakasegawa/silero-vad-GGUF) | any | where someone speaks, to give a recognizer one utterance at a time; 1.2 MB |
 | Diarization | [`nemotron-3-diarization`](https://huggingface.co/sakasegawa/Nemotron-3-Diarization-GGUF) | any | who speaks when, up to eight speakers, in a recording or as it arrives; 106 MB |
 | Enhancement | [`re-use`](https://huggingface.co/sakasegawa/NVIDIA-NemotronLabs-RE-USE-GGUF), [`re-use-laughter`](https://huggingface.co/sakasegawa/NVIDIA-NemotronLabs-RE-USE-laughter-GGUF) | any | removes noise, reverberation and band limits from a recording at 8 to 48 kHz, for people to listen to; the laughter model keeps laughter; 38.5 MB |
+| Dialogue | [`haru-4b`](https://huggingface.co/sakasegawa/Haru-4B-GGUF) | de en es fr ja ko pt ru zh | a spoken conversation, listening and speaking at once, in the voice of a recording and the character of a card; a base model for research, which breaks easily; a 10.56 GB file |
 
 A command takes a model by its name and fetches its converted file from Hugging Face, from the repository the name links
 to, the first time. [docs/models.md](docs/models.md) lists the models with their sizes, voices and languages, and each
 family has a page: [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md), [Drama 3](docs/models/drama3.md),
 [FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md),
 [Nemotron 3.5 Transcribe](docs/models/nemotron-transcribe.md), [Silero VAD](docs/models/silero-vad.md),
-[Sortformer](docs/models/sortformer.md) and [SEMamba](docs/models/semamba.md).
+[Sortformer](docs/models/sortformer.md), [SEMamba](docs/models/semamba.md) and [Haru](docs/models/haru.md).
 
 ## Install
 
@@ -136,7 +140,7 @@ source](docs/install.md#build-from-source).
 | `speech diarize` | writes who speaks where in WAVE files |
 | `speech enhance` | removes noise and other degradations from WAVE files |
 | `speech talk` | holds a conversation through the microphone with a model that listens and speaks at once |
-| `speech voice` | makes a voice file for Irodori-TTS or Drama 3 from reference recordings |
+| `speech voice` | makes a voice file for Irodori-TTS, Drama 3 or Haru from reference recordings |
 | `speech info` | prints what a model file says of its model |
 | `speech devices` | lists the devices a model can run on |
 | `speech models`, `pull`, `rm` | list, fetch and remove models |
@@ -154,6 +158,7 @@ speech asr nemotron-3.5-transcribe --speakers meeting.wav
 speech asr reazonspeech-v2 --vad silero-vad --live
 speech vad silero-vad --max-speech-duration-s 10 meeting.wav
 speech enhance re-use street.wav -o clean.wav
+speech talk haru-4b --live --language ja --name ハル --persona "落ち着いた話し方をする大学生。"
 ```
 
 Every request option is a flag, and `speech info MODEL` lists the ones a model takes. [docs/cli.md](docs/cli.md) lists
@@ -243,7 +248,7 @@ more.
 | [Install](docs/install.md) | installers, updating, uninstalling, requirements, release archives and building from source |
 | [Command line](docs/cli.md) | every subcommand and option |
 | [Models](docs/models.md) | the catalog, names, where models are kept, voices and languages |
-| [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md), [Drama 3](docs/models/drama3.md), [FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md), [Nemotron 3.5 Transcribe](docs/models/nemotron-transcribe.md), [Silero VAD](docs/models/silero-vad.md), [Sortformer](docs/models/sortformer.md), [SEMamba](docs/models/semamba.md) | each family: what it does, its options, accuracy and speed |
+| [Qwen3-TTS](docs/models/qwen3-tts.md), [Irodori-TTS](docs/models/irodori-tts.md), [Drama 3](docs/models/drama3.md), [FastConformer](docs/models/fastconformer.md), [Qwen3-ASR](docs/models/qwen3-asr.md), [Nemotron 3.5 Transcribe](docs/models/nemotron-transcribe.md), [Silero VAD](docs/models/silero-vad.md), [Sortformer](docs/models/sortformer.md), [SEMamba](docs/models/semamba.md), [Haru](docs/models/haru.md) | each family: what it does, its options, accuracy and speed |
 | [Server and page](docs/server.md) | `speech serve` and OpenAI's audio API |
 | [Worker protocol](docs/worker.md) | `speech worker` for programs |
 | [C API](docs/c-api.md) | `speech.h` |

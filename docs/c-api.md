@@ -426,8 +426,8 @@ Each model takes some of them, with ranges and defaults from its file, and `spee
 | `speakers` | bool | false | [Nemotron 3.5 Transcribe](models/nemotron-transcribe.md#options) |
 | `keywords`, `keywords_alpha`, `keywords_guard` | string, float, bool | `""` for `keywords` | [Haas](models/fastconformer.md#a-custom-vocabulary-haas) |
 | `chunk_size_in_seconds`, `hop_length_portion`, `bwe` | float, float, int | none | [RE-USE](models/semamba.md#options) |
-| `persona`, `name`, `gender`, `backchannel`, `other_name`, `relationship`, `situation` | string | none | Haru: the fields of its character card, written in the request's language; `gender` and `backchannel` take the model's choices |
-| `guidance_scale`, `eop_bias`, `speak_first` | float, float, bool | none | Haru |
+| `persona`, `name`, `gender`, `backchannel`, `other_name`, `relationship`, `situation` | string | none | [Haru](models/haru.md#the-character-card): the fields of its character card, written in the request's language; `gender` and `backchannel` take the model's choices |
+| `guidance_scale`, `eop_bias`, `speak_first` | float, float, bool | none | [Haru](models/haru.md#options) |
 
 - A value at an option's neutral value is accepted by every model. Any other value of an option a model does not take is
   `unsupported`. An option whose neutral value is "none" has none.

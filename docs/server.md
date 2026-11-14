@@ -15,7 +15,7 @@ speech serve qwen3-tts-0.6b qwen3-asr-0.6b            # speech and transcription
 speech serve reazonspeech-v2 silero-vad               # transcriptions, also by the regions where someone speaks
 speech serve qwen3-asr-1.7b silero-vad nemotron-3-diarization   # and who speaks in each
 speech serve qwen3-asr-1.7b silero-vad re-use         # transcriptions with noise_reduction, and enhancements
-speech serve Haru-4B-F16.gguf --add-voice me=me.wav   # conversations at /v1/dialogue, in the voice of a recording
+speech serve haru-4b --add-voice me=me.wav            # conversations at /v1/dialogue, in the voice of a recording
 speech serve irodori-tts-mf --add-voice me=me.voice.gguf --cors-origin http://localhost:5173
 speech serve irodori-tts-mf --steps 8 --add-voice me=me.voice.gguf  # 8 steps unless a request sets steps
 speech serve qwen3-tts-0.6b qwen3-asr-0.6b --language ja --asr.language auto

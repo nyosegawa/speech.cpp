@@ -63,7 +63,7 @@ speech enhance re-use -o clean.wav street.wav
 speech asr qwen3-asr-1.7b --enhance re-use street.wav
 
 # A conversation through the microphone and headphones, until Ctrl-C, with a character the model plays
-speech talk Haru-4B-Q4_K.gguf --live --language ja --name ハル --persona "落ち着いた話し方をする大学生。"
+speech talk haru-4b --live --language ja --name ハル --persona "落ち着いた話し方をする大学生。"
 
 # What a model file holds, without loading it
 speech info irodori-tts-mf
