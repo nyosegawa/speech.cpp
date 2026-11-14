@@ -138,16 +138,20 @@ struct Codec::Net {
     /**
      * A block: a causal depthwise convolution of the normed input, scaled and added, then an MLP about an exact GELU of
      * the normed sum, scaled and added. The convolution's state holds its normed inputs.
+     *
+     * The convolution is one ggml_conv_2d_dw_direct() on the channel-fastest layout, which its result keeps. The kernel
+     * [c, width] is seen as [width, 1, 1, c] with the channels fastest, as the CPU asserts and Vulkan's shader reads it
+     * without looking at the strides. A product and a sum for each tap take about 1.2 ms more for each frame of the
+     * encoder and of the decoder on M5 with Metal (2026-11-15).
      */
     ggml_tensor * block(ggml_tensor * x, const std::string & name) {
         ggml_tensor * w = m.tensor(name + ".conv.weight");
         const int64_t c = w->ne[0], width = w->ne[1], t = x->ne[1];
         ggml_tensor * hp = after_state(rms_norm(x, name + ".norm"));
-        ggml_tensor * y = nullptr;
-        for (int64_t k = 0; k < width; k++) {
-            ggml_tensor * yk = ggml_mul(ctx(), ggml_view_2d(ctx(), hp, c, t, hp->nb[1], k * hp->nb[1]), ggml_view_1d(ctx(), w, c, k * w->nb[1]));
-            y = y ? ggml_add(ctx(), y, yk) : yk;
-        }
+        ggml_tensor * kernel = ggml_permute(ctx(), ggml_reshape_4d(ctx(), w, c, 1, width, 1), 3, 2, 0, 1);
+        ggml_tensor * in = ggml_permute(ctx(), ggml_reshape_3d(ctx(), hp, c, hp->ne[1], 1), 2, 0, 1, 3);
+        ggml_tensor * out = ggml_conv_2d_dw_direct(ctx(), kernel, in, 1, 1, 0, 0, 1, 1);
+        ggml_tensor * y = ggml_reshape_2d(ctx(), ggml_permute(ctx(), out, 1, 2, 0, 3), c, t);
         keep(hp, width - 1);
         x = ggml_add(ctx(), x, ggml_mul(ctx(), ggml_add(ctx(), y, m.tensor(name + ".conv.bias")), m.tensor(name + ".gamma")));
         ggml_tensor * f = linear(ggml_gelu_erf(ctx(), linear(rms_norm(x, name + ".ffn_norm"), name + ".fc1")), name + ".fc2");
