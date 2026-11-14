@@ -52,6 +52,16 @@ std::string render_card(const ModelFile & m, const std::string & language, const
         }
         if (!value.empty()) text += "\n" + headers[i] + "\n" + value;
     }
+    // The official server refuses a card of more characters than this, which the model file holds.
+    const size_t most = (size_t) m.size("haru.dialogue.card_max_chars"), chars = decode_utf8(text)->size();
+    if (chars > most) {
+        const auto longest = std::max_element(fields.begin(), fields.end(),
+                                              [](const auto & a, const auto & b) { return a.second.size() < b.second.size(); });
+        throw Error(Fault::OutOfRange,
+                    "the character card is " + std::to_string(chars) + " characters, and " + m.str("general.name") + " takes " + std::to_string(most) +
+                        " at most; shorten its fields",
+                    longest->first);
+    }
     return text;
 }
 

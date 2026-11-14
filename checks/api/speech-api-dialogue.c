@@ -100,7 +100,7 @@ static int same_frames(const Frames * a, const Frames * b, const char * what) {
     return 1;
 }
 
-static int check_loaded(speech_model * model, const char * model_path, const char * dump, const char * scratch) {
+static int check_loaded(speech_model * model, const char * model_path, const char * dump, const char * scratch, const speech_load_params * params) {
     int bad = 0;
     speech_model_info * info = NULL;
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
@@ -144,7 +144,8 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
 
     // The voices: a WAVE file, the same made into a voice file, and a recording too short.
     bad += !expect(speech_voice_add(model, "ref", wav), SPEECH_OK, NULL, "a voice from a WAVE file");
-    bad += !expect(speech_voice_make(model_path, wav, voice_file, NULL), SPEECH_OK, NULL, "a voice file from the WAVE file");
+    // The voice file is encoded on the model's device, so that its latents are those of the voice added from the WAVE file.
+    bad += !expect(speech_voice_make(model_path, wav, voice_file, params), SPEECH_OK, NULL, "a voice file from the WAVE file");
     bad += !expect(speech_voice_add(model, "file", voice_file), SPEECH_OK, NULL, "the voice file");
     bad += !expect(speech_voice_add(model, "short", short_wav), SPEECH_ERROR_OUT_OF_RANGE, "voice_path", "a recording of 1 s");
 
@@ -161,6 +162,14 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
     bad += !expect(speech_dialogue_start(card_without_language, rate, on_frame, NULL, &d), SPEECH_ERROR_INVALID_ARGUMENT, "language",
                    "a card without a language");
     speech_request_free(card_without_language);
+    speech_request * too_long = conversation_request(model, NULL, 2.0);
+    char * persona = (char *) malloc(5001);
+    memset(persona, 'a', 5000);
+    persona[5000] = 0;
+    speech_request_set_string(too_long, SPEECH_OPT_PERSONA, persona);
+    bad += !expect(speech_dialogue_start(too_long, rate, on_frame, NULL, &d), SPEECH_ERROR_OUT_OF_RANGE, "persona", "a card of 5,000 characters");
+    free(persona);
+    speech_request_free(too_long);
     speech_request * too_short = conversation_request(model, NULL, 0.1);
     bad += !expect(speech_dialogue_start(too_short, rate, on_frame, NULL, &d), SPEECH_ERROR_OUT_OF_RANGE, "max_seconds", "max_seconds below a frame");
     speech_request_free(too_short);
@@ -253,10 +262,10 @@ int check_dialogue(int argc, char ** argv) {
     speech_model * model = NULL;
     const double load_start = now_seconds();
     if (speech_model_load(model_path, params, &model) != SPEECH_OK) return fail("speech_model_load");
-    speech_load_params_free(params);
     printf("loaded without a warm-up in %.2f s\n", now_seconds() - load_start);
-    const int status = check_loaded(model, model_path, argv[1], argv[2]);
+    const int status = check_loaded(model, model_path, argv[1], argv[2], params);
     speech_model_free(model);
+    speech_load_params_free(params);
     if (status == 0) printf("ok\n");
     return status;
 }

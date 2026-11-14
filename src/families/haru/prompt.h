@@ -17,8 +17,9 @@ namespace haru {
  * haru.card.languages: the lead sentence, then each field of haru.card.fields that has a value, its header and its value,
  * each on a line of its own; the gender and the backchannels are labels chosen by haru.card.gender_values and
  * backchannel_values. Each value is taken without its leading and trailing white space, and an empty one is left out. A
- * language the file has no wording for, a field it does not know and a choice it does not offer throw an Error naming
- * the input, where the official code leaves an unknown choice out.
+ * language the file has no wording for, a field it does not know, a choice it does not offer and a card of more
+ * characters than haru.dialogue.card_max_chars throw an Error naming the input, the longest field for the last, where
+ * the official code leaves an unknown choice out.
  */
 std::string render_card(const ModelFile & m, const std::string & language, const std::map<std::string, std::string> & fields);
 

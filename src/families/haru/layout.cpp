@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <cmath>
 #include <set>
 #include <string>
 #include <vector>
@@ -34,6 +35,13 @@ void require(bool condition, const ModelFile & m, const std::string & what) {
     if (!condition) throw Error(Fault::File, m.path() + ": " + what + "; " + m.remedy());
 }
 
+/** A float key that must be a finite number, as every default a request takes from the file must. */
+double finite(const ModelFile & m, const std::string & key, bool f64 = false) {
+    const double v = f64 ? m.f64(key) : (double) m.f32(key);
+    require(std::isfinite(v), m, key + " is not a finite number");
+    return v;
+}
+
 /** An [i32] key of one positive value per stage of the codec, `stages` of them. */
 std::vector<int32_t> per_stage(const ModelFile & m, const std::string & key, size_t stages) {
     const std::vector<int32_t> v = m.i32_array(key);
@@ -64,8 +72,8 @@ void add_codec(std::vector<TensorSpec> & t, const ModelFile & m, int64_t latent,
     require(product == frame_samples, m, "haru.codec.ratios do not multiply to haru.frame_samples");
     const size_t stages = ratios.size() + 1;
     const std::vector<int32_t> enc = per_stage(m, c + "encoder_depths", stages), dec = per_stage(m, c + "decoder_depths", stages);
-    m.f32(c + "norm_eps");
-    m.f32(c + "noise_std");
+    finite(m, c + "norm_eps");
+    finite(m, c + "noise_std");
     require(m.str(c + "sha256").size() == 64, m, "haru.codec.sha256 is not a SHA-256 in hexadecimal");
     const int n = (int) ratios.size();
 
@@ -120,8 +128,8 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
     const std::string p = "haru.", x = p + "text.", h = p + "head.", s = p + "sampling.", d = p + "dialogue.";
 
     const int64_t frame_samples = m.size(p + "frame_samples"), latent = m.size(p + "latent_dim");
-    m.f32(p + "latent_scale");
-    m.f32(p + "latent_bias");
+    finite(m, p + "latent_scale");
+    finite(m, p + "latent_bias");
 
     const int64_t hidden = m.size(x + "hidden_size"), vocab = m.size(x + "vocab_size"), ffn = m.size(x + "intermediate_size");
     const int layers = m.count(x + "num_hidden_layers");
@@ -137,41 +145,41 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
     require(dk == dv, m, "the Gated DeltaNet's key and value heads differ in width, which ggml_gated_delta_net() does not take");
     const int64_t conv_width = m.size(x + "linear_conv_kernel_dim"), conv = 2 * nk * dk + nv * dv;
     m.size(x + "max_position_embeddings");
-    m.f32(x + "rms_norm_eps");
-    m.f32(x + "rope_theta");
+    finite(m, x + "rms_norm_eps");
+    finite(m, x + "rope_theta");
 
     const uint32_t pad = m.u32(p + "pad_token_id"), eop = m.u32(p + "eop_token_id"), eos = m.u32(p + "eos_token_id");
     require(pad < (uint64_t) vocab && eop < (uint64_t) vocab && eos < (uint64_t) vocab && pad != eop, m,
             "haru.pad_token_id, eop_token_id or eos_token_id is past the vocabulary, or PAD is EOP");
-    m.f32(p + "audio_in.norm_eps");
+    finite(m, p + "audio_in.norm_eps");
 
     const int head_layers = m.count(h + "num_layers");
     const int64_t head_ffn = m.size(h + "ffn_size"), frequencies = m.size(h + "frequency_dim");
     require(frequencies % 2 == 0, m, "haru.head.frequency_dim is odd, where its features are a cosine and a sine of each frequency");
-    m.f32(h + "norm_eps");
-    m.f32(h + "interval_embed");
-    m.f32(h + "frequency_base");
+    finite(m, h + "norm_eps");
+    finite(m, h + "interval_embed");
+    finite(m, h + "frequency_base");
     const float g = m.f32(h + "guidance_scale"), g_min = m.f32(h + "guidance_min"), g_max = m.f32(h + "guidance_max");
     require(g_min > 0.0f && g_min <= g && g <= g_max, m, "haru.head.guidance_scale is not within guidance_min and guidance_max above 0");
 
-    m.f32(s + "temperature");
+    require(finite(m, s + "temperature") >= 0, m, "haru.sampling.temperature is below 0");
     m.u32(s + "top_k");
     const float top_p = m.f32(s + "top_p");
     require(top_p > 0.0f && top_p <= 1.0f, m, "haru.sampling.top_p is not above 0 and at most 1");
-    m.f32(s + "eop_bias");
-    m.f64(s + "dry_multiplier");
-    m.f64(s + "dry_base");
+    finite(m, s + "eop_bias");
+    finite(m, s + "dry_multiplier", true);
+    finite(m, s + "dry_base", true);
     m.u32(s + "dry_allowed_length");
     m.u32(s + "dry_lookback");
     m.size(s + "dry_max_match_length");
-    m.f64(s + "dry_max_penalty");
+    finite(m, s + "dry_max_penalty", true);
 
     m.size(d + "max_frames");
     const float ref_min = m.f32(d + "reference_min_seconds"), ref_max = m.f32(d + "reference_max_seconds");
+    finite(m, d + "silence_dbfs");
+    finite(m, d + "silence_margin_seconds");
     require(ref_min > 0.0f && ref_min <= ref_max, m, "haru.dialogue.reference_min_seconds is not above 0 and at most reference_max_seconds");
     m.size(d + "card_max_chars");
-    m.f32(d + "silence_dbfs");
-    m.f32(d + "silence_margin_seconds");
     m.size(d + "silence_window_divisor");
     m.size(d + "silence_frames");
     m.str(d + "system_open");
