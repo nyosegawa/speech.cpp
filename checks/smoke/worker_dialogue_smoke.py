@@ -33,7 +33,7 @@ if len(args) != 3:
     raise SystemExit(__doc__)
 speech, model, dump = args
 workdir = tempfile.mkdtemp(prefix="dialogue-smoke-")
-with open(os.path.join(dump, "meta.json")) as f:
+with open(os.path.join(dump, "meta.json"), encoding="utf-8") as f:
     meta = json.load(f)
 rate, frame = meta["sample_rate"], meta["frame_samples"]
 # 30 whole frames of the user's audio and part of another, which the conversation drops.
