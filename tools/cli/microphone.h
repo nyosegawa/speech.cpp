@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-// The system's default microphone, through miniaudio, for speech asr --live.
+// The system's default microphone, through miniaudio, for speech asr --live and speech talk --live.
 
 /** The default capture device, started, giving mono 32-bit float samples at the device's own rate. */
 class Microphone {
@@ -21,7 +21,10 @@ public:
 
     int rate() const { return rate_; }
     const std::string & name() const { return name_; }
-    /** The samples captured since the last call, waiting up to `wait` while there are none. */
+    /**
+     * The samples captured since the last call, waiting up to `wait` while there are none. Once they have been nothing
+     * but zeros for 3 s, it says on stderr, once, what keeps the microphone from the program.
+     */
     std::vector<float> take(std::chrono::milliseconds wait);
 
 private:
@@ -35,4 +38,6 @@ private:
     std::mutex mutex_;
     std::condition_variable arrived_;
     std::vector<float> captured_;
+    double silent_ = 0;
+    bool warned_ = false;
 };

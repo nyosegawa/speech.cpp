@@ -1,7 +1,7 @@
 # Worker protocol
 
-This page describes `speech worker`, a process that another program starts to speak texts, recognize speech or enhance
-it, as [ASIST](https://github.com/nyosegawa/asist) does, and the protocol it speaks.
+This page describes `speech worker`, a process that another program starts to speak texts, recognize speech, enhance it
+or hold conversations, as [ASIST](https://github.com/nyosegawa/asist) does, and the protocol it speaks.
 
 ```
 speech worker MODEL [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--no-warmup] [request options]
@@ -44,7 +44,7 @@ flags with their values (`{}` without any), and `model` is the model information
 information keeps the model's own defaults.
 
 `fatal` comes instead when the worker cannot start. The worker then exits with 1, or with 2 for a command line it cannot
-run. A detection or diarization model is `unsupported`: the worker serves synthesis, recognition and enhancement models. A request
+run. A detection or diarization model is `unsupported`: the worker serves synthesis, recognition, enhancement and dialogue models. A request
 option flag the model does not take is `unsupported`, and a value out of its range `out_of_range`, each naming the
 option.
 
@@ -57,10 +57,12 @@ not raise it.
 | `type` | Members | Task | Answer |
 |---|---|---|---|
 | `synthesize` | `id`, `text`, option members | synthesis | `progress` and `chunk`s, then one terminal message |
-| `chunk` | `id`, `seq`, `pcm` | recognition, enhancement | none of its own; it adds audio to request `id` |
+| `chunk` | `id`, `seq`, `pcm` | recognition, enhancement, dialogue | none of its own; it adds audio to request `id` |
 | `transcribe` | `id`, `sample_rate`, option members | recognition | `progress`, then one terminal message |
 | `enhance` | `id`, `sample_rate`, option members | enhancement | `progress` and `chunk`s, then one terminal message |
-| `add_voice` | `id`, `name`, `path` | synthesis models that take voice files | one terminal message |
+| `dialogue` | `id`, `sample_rate`, option members | dialogue | a `chunk` for each frame, then one terminal message |
+| `hang_up` | `id` | dialogue | none of its own; it ends conversation `id` after the audio sent |
+| `add_voice` | `id`, `name`, `path` | models that take voice files | one terminal message |
 | `info` | `id` | any | one terminal message, at once |
 | `count_tokens` | `id`, `text` | synthesis | one terminal message, at once |
 | `cancel` | `id` | any | none of its own |
@@ -70,32 +72,44 @@ not raise it.
   complete, and an enhancement request its `chunk` lines, then its `enhance` line. The chunks of several requests may
   interleave. `sample_rate` is the rate of the chunks' audio: any rate for a recognition, which the library resamples,
   and a rate the model takes for an enhancement (8000 to 48000 Hz for RE-USE), unless its `bwe` resamples it.
+- A conversation is its `dialogue` line, which starts it when its turn comes and sends the model's first frame before
+  any audio, its `chunk` lines, `seq` 0, 1, 2 … in order and of any length, which the model hears as they arrive, also
+  those that arrive while it waits, and its `hang_up`, which ends it once it has heard the audio sent; the audio short
+  of a frame is dropped. `sample_rate` is the rate of its chunks, any rate, which the library resamples. A conversation
+  holds the worker until it ends, and the requests after it wait. The worker keeps no time: it sends a frame as soon as
+  it has computed it, and a caller that plays the frames as they come and sends the microphone's audio as it comes sees
+  whether the model keeps up.
 - `pcm`, in both directions, is base64 of 16-bit little-endian mono samples. Audio from the worker is at the model's
   `sample_rate`, or for an enhancement at the rate it was enhanced at, the request's `sample_rate` or its `bwe`, each
   sample `round(clamp(x, −1, 1) × 32767)`. Audio to the worker is read as `x / 32768`.
-- `path` of `add_voice` is a voice file, or a WAVE file for a model whose `voice_recordings` is true (Irodori-TTS);
+- `path` of `add_voice` is a voice file, or a WAVE file for a model whose `voice_recordings` is true (Irodori-TTS, Haru);
   Drama 3 takes a voice file alone ([models.md](models.md#voices)).
 - `info` gives the voices added so far: one sent before an `add_voice` has had its `end` may not list that voice yet.
 - `count_tokens` counts a text's tokens as a synthesis counts them against `max_text_tokens`, so that a caller can split a
   long text before it sends it, also while a synthesis runs.
 - `cancel` of a request that is collecting chunks or waiting ends it with `cancelled` at once. A running request stops at
-  the next point where its work can stop and ends with `cancelled`; `add_voice` cannot be stopped once it runs. A cancel
-  of an id that no request in flight has is ignored.
+  the next point where its work can stop and ends with `cancelled`, a conversation at its next frame; `add_voice` cannot
+  be stopped once it runs. A cancel of an id that no request in flight has is ignored.
 - Once a request has had its `error` or `cancelled` while it collected chunks, its later `chunk` lines are dropped up to
   and including its `transcribe` or `enhance` line, which frees its id, or until a chunk 0 under its id starts a new
   request. A caller that cancels need not send the `transcribe` or `enhance`.
+- Once a conversation has had its `error` or `cancelled` before its `hang_up`, its later `chunk` lines are dropped up to
+  and including its `hang_up`, or until a `dialogue` line starts a new conversation under its id.
 
 When stdin closes, the worker answers the requests it has, answers each request still collecting chunks with an `error`,
-since no `transcribe` or `enhance` can follow, and exits with 0.
+since no `transcribe` or `enhance` can follow, ends each conversation once it has heard the audio sent, as its `hang_up`
+does, and exits with 0.
 
 ## Answers
 
 ```
 out {"type":"chunk","id":"a","seq":0,"pcm":"..."}
+out {"type":"chunk","id":"d","seq":12,"pcm":"...","text":"そう"}
 out {"type":"progress","id":"r","done":0.42}
 out {"type":"end","id":"a","seed":1234,"samples":96000,"stop":"complete"}
 out {"type":"end","id":"r","text":"...","stop":"complete","segments":[{"start":0.0,"end":2.48,"text":"..."}],"tokens":[{"start":0.0,"end":0.16,"text":"..."}]}
 out {"type":"end","id":"q","text":"...","stop":"complete","languages":["ja"]}
+out {"type":"end","id":"d","frames":151,"samples":483200}
 out {"type":"end","id":"v"}
 out {"type":"end","id":"i","defaults":{"steps":8},"model":{...model information...}}
 out {"type":"end","id":"c","tokens":14}
@@ -113,6 +127,10 @@ out {"type":"cancelled","id":"a"}
   text (Nemotron 3.5 Transcribe), it has `untimed`, why, and neither.
 - `end` of an enhancement has `samples` (the number sent in its chunks, as many as its audio has at the rate it was
   enhanced at) and `stop` (`complete`).
+- A conversation sends a `chunk` for each frame of the model's, `frame_samples` of the model information at its
+  `sample_rate`, with `text`, what the model began to say in the frame: often empty, a space where it fell silent. Its
+  `end` has `frames` and `samples`, the numbers it sent. One that reaches its `max_seconds` ends with an `error`,
+  `out_of_range` naming `max_seconds`.
 - `end` of `info` has `model`, `end` of `count_tokens` has `tokens`, and `end` of `add_voice` has nothing more.
 - `error` has `code` (an error category, [c-api.md](c-api.md#errors)), `option` (the input it concerns: an option's
   name, `text`, `audio`, `id`, `type`, `seq`, `pcm`, `name`, `path`, `sample_rate` or another member's name, or null)
@@ -121,11 +139,12 @@ out {"type":"cancelled","id":"a"}
   has passed since the request's last message. `done` is a fraction from 0 to 1. A caller that takes a silent worker for
   a hung one allows for the longest single step: the encoder of a long recording runs as one (3.7 s for 311 s of audio
   with reazonspeech-nemo-v2 in F16 on an Apple M5).
-- A line that names no request it could belong to (not a JSON object, no string `id`, a `cancel` with a member it does
-  not have, or a line that starts a request under an `id` already in flight) gets an `error` without `id`.
-- A request of another task is `unsupported` with the option `type`: a `synthesize` to a recognition or enhancement
-  model, a `chunk` to a synthesis model, whose later lines are dropped, a `transcribe` to an enhancement model and an
-  `enhance` to a recognition model. A member the type does not have is
+- A line that names no request it could belong to (not a JSON object, no string `id`, a `cancel` or a `hang_up` with a
+  member it does not have, a line that starts a request under an `id` already in flight, or a `chunk` or a `hang_up`
+  for no conversation in flight) gets an `error` without `id`.
+- A request of another task is `unsupported` with the option `type`: a `synthesize` to a model of another task, a `chunk`
+  to a synthesis model, whose later lines are dropped, a `transcribe`, an `enhance` or a `dialogue` to a model of another
+  task, and a `hang_up` to a model of another task, without `id`. A member the type does not have is
   `invalid_argument` with that member as `option`. Option values are checked by the library's setters when the request
   runs, so their errors are the C API's.
 
@@ -141,13 +160,15 @@ out {"type":"cancelled","id":"a"}
   a request should be one utterance. A cancel takes effect before or after the encoder, or during the decoding.
 - **Qwen3-ASR** recognizes up to 1200 s at once, and longer audio in parts. A cancel takes effect within a fraction of a
   second.
+- **Haru** hears and gives frames of 3,200 samples at 24 kHz, 133 ms. Its start runs the character card and the voice as
+  a prompt before the first frame. A cancel takes effect at the next frame.
 - **RE-USE** enhances a request's audio in chunks of `chunk_size_in_seconds` (5 s) that start every
   `hop_length_portion` of a chunk (0.5), and sends each part of it once the chunk after it is done, the rest after the
   last chunk. A cancel takes effect at the next chunk.
 
 ## A session
 
-Irodori-TTS speaking a sentence, and a recognizer taking a request in two chunks:
+Irodori-TTS speaking a sentence, a recognizer taking a request in two chunks, and Haru in a conversation of two seconds:
 
 ```
 in  {"type":"synthesize","id":"1","text":"明日の東京は晴れです。","voice":"me","seed":42}
@@ -159,6 +180,14 @@ in  {"type":"chunk","id":"r","seq":0,"pcm":"..."}
 in  {"type":"chunk","id":"r","seq":1,"pcm":"..."}
 in  {"type":"transcribe","id":"r","sample_rate":16000}
 out {"type":"end","id":"r","text":"群島や湖では必ずしもヨットは必要ありません。","stop":"complete"}
+
+in  {"type":"dialogue","id":"d","sample_rate":48000,"language":"ja","name":"ハル","voice":"me"}
+out {"type":"chunk","id":"d","seq":0,"pcm":"...","text":""}
+in  {"type":"chunk","id":"d","seq":0,"pcm":"..."}
+out {"type":"chunk","id":"d","seq":1,"pcm":"...","text":""}
+...
+in  {"type":"hang_up","id":"d"}
+out {"type":"end","id":"d","frames":16,"samples":51200}
 ```
 
 `checks/smoke/worker_client.py` is a client in Python that checks every line and one terminal message per request.

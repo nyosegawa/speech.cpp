@@ -1,5 +1,6 @@
 // speech: speech synthesis, speech recognition and the detection of speech with every model speech.cpp runs, through
-// its C API, as one executable with a subcommand per program: tts, asr and vad for the command line, voice, info and
+// its C API, as one executable with a subcommand per program: tts, asr, vad, diarize, enhance and talk for the command
+// line, voice, info and
 // devices about models and devices, models, pull and rm about the models it fetches by name, quantize to write a model file in another
 // weight type, update to install the latest release, serve for OpenAI's audio API over HTTP and worker for JSON Lines on
 // stdin and stdout. On a terminal, the subcommands for people say on stderr when a later release is out, unless
@@ -36,7 +37,7 @@ namespace {
 /** The subcommands in the groups the overview lists them in. */
 std::vector<std::pair<const char *, std::vector<Command>>> groups() {
     return {
-        {"Speak and transcribe", {tts_command(), asr_command(), vad_command(), diarize_command(), enhance_command()}},
+        {"Speak and transcribe", {tts_command(), asr_command(), vad_command(), diarize_command(), enhance_command(), talk_command()}},
         {"Serve", {serve_command(), worker_command()}},
         {"Models", {models_command(), pull_command(), rm_command(), info_command(), voice_command(), quantize_command()}},
         {"This installation", {devices_command(), update_command()}},

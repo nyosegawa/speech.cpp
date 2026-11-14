@@ -135,6 +135,7 @@ source](docs/install.md#build-from-source).
 | `speech vad` | writes where someone speaks in WAVE files |
 | `speech diarize` | writes who speaks where in WAVE files |
 | `speech enhance` | removes noise and other degradations from WAVE files |
+| `speech talk` | holds a conversation through the microphone with a model that listens and speaks at once |
 | `speech voice` | makes a voice file for Irodori-TTS or Drama 3 from reference recordings |
 | `speech info` | prints what a model file says of its model |
 | `speech devices` | lists the devices a model can run on |

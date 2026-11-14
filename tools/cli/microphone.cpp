@@ -1,5 +1,7 @@
 #include "microphone.h"
 
+#include <cstdio>
+
 #include "failure.h"
 #include "miniaudio.h"
 
@@ -48,9 +50,21 @@ void Microphone::captured(const float * samples, size_t n) {
 }
 
 std::vector<float> Microphone::take(std::chrono::milliseconds wait) {
-    std::unique_lock<std::mutex> lock(mutex_);
-    arrived_.wait_for(lock, wait, [&] { return !captured_.empty(); });
     std::vector<float> out;
-    out.swap(captured_);
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        arrived_.wait_for(lock, wait, [&] { return !captured_.empty(); });
+        out.swap(captured_);
+    }
+    // A microphone always hears some noise, so audio of nothing but zeros for seconds is one the system keeps from the
+    // program, as macOS does without the terminal's permission to use the microphone.
+    bool zeros = true;
+    for (const float s : out) zeros = zeros && s == 0;
+    silent_ = zeros ? silent_ + (double) out.size() / rate_ : 0;
+    if (silent_ >= 3 && !warned_) {
+        std::fprintf(stderr, "the microphone has given nothing but zeros for 3 s: check that it is not muted, and on macOS that the terminal "
+                             "may use it (System Settings, Privacy & Security, Microphone)\n");
+        warned_ = true;
+    }
     return out;
 }

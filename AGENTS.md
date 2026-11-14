@@ -37,7 +37,7 @@ README.md and `docs/` are the documentation for users; what a developer needs is
 - `src/common/` holds what two families use in the same role. Code moves there when a second family needs
   it, not before, and never as a framework for families that do not exist yet.
 - `tools/` holds `speech`, the one executable for users, with a subcommand per program: `tts`,
-  `asr`, `vad`, `diarize`, `enhance`, `voice`, `info`, `devices`, `quantize` and `update` in `tools/cli/` (with
+  `asr`, `vad`, `diarize`, `enhance`, `talk`, `voice`, `info`, `devices`, `quantize` and `update` in `tools/cli/` (with
   `main.cpp`, which dispatches
   them and prints the notice of a newer release on a terminal), `worker` in
   `tools/worker/` and `serve` in `tools/server/`, and what they share in `tools/common/`: the one parser of every
@@ -97,7 +97,8 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   of `speech serve --open`, plain HTML, CSS and JavaScript modules compiled into `speech`, which `page.cpp` serves
   with the endpoints that fetch and load models; `access.cpp` guards them with the Host and the Origin.
 - The smoke scripts in `checks/smoke/` drive each entry point as its caller does and fail on a defect:
-  `worker_smoke.py`, `worker_recognition_smoke.py` and `worker_enhancement_smoke.py` the worker protocol through
+  `worker_smoke.py`, `worker_recognition_smoke.py`, `worker_enhancement_smoke.py` and `worker_dialogue_smoke.py` the
+  worker protocol through
   `worker_client.py`, which checks every line and one terminal message per request, `server_smoke.py` every HTTP
   endpoint and the mapping of errors, `server_realtime_smoke.py` the Realtime sessions of `/v1/realtime`,
   `server_diarization_smoke.py` the speakers of `/v1/realtime` and of `diarized_json`, `server_enhancement_smoke.py`
@@ -122,7 +123,8 @@ another one.
 
 - C++17 with ggml as a git submodule and no other dependency, except two single headers vendored by commit and compiled
   into `speech` alone: cpp-httplib's in `vendor/cpp-httplib/` for `speech serve`, and miniaudio's in `vendor/miniaudio/`
-  for the microphone of `speech asr --live`, which loads the system's audio library only when the microphone opens. The
+  for the microphone of `speech asr --live` and the microphone and audio output of `speech talk --live`, which loads the
+  system's audio library only when a device opens. The
   library and `libspeech` never include either. `speech` has the library and ggml linked in statically, so that a release is
   one executable beside the shared library `libspeech`, which exports the C API and nothing else, for bindings and
   other programs.
@@ -229,7 +231,7 @@ comment.
   API or the worker also runs `speech-api-check` and
   `checks/smoke/worker_smoke.py` for each synthesis family, and `speech-api-check transcribe` and
   `checks/smoke/worker_recognition_smoke.py` for both recognition families, `speech-api-check detect` with Silero
-  VAD, `speech-api-check dialogue` with Haru, and `speech-api-check enhance` and
+  VAD, `speech-api-check dialogue` and `checks/smoke/worker_dialogue_smoke.py` with Haru, and `speech-api-check enhance` and
   `checks/smoke/worker_enhancement_smoke.py` with RE-USE; a change to the server runs `checks/smoke/server_smoke.py`,
   `checks/smoke/server_realtime_smoke.py`, `checks/smoke/server_diarization_smoke.py`,
   `checks/smoke/server_enhancement_smoke.py` and `checks/smoke/server_page_smoke.py`, one to the page `checks/smoke/server_page_browser_smoke.mjs`, one to the command

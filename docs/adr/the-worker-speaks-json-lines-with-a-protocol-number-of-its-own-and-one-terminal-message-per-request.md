@@ -29,13 +29,23 @@ encoder of a long recording runs as one step (3.7 s for 311 s of audio with reaz
   it says that the work moves, not only that the process lives.
 - **Audio is base64 of 16-bit PCM** in both directions. A recognition request is its `chunk` lines followed by its
   `transcribe` line, which gives the chunks' rate; the library resamples.
+- **A conversation is the other way round**: its `dialogue` line starts it, with the rate of its chunks, and its
+  `chunk` lines are passed to it as they arrive while it runs, up to its `hang_up`, which ends it with `end`. Each frame
+  of the model's is a `chunk` that carries the frame's audio and the text the model began in it together, as the C
+  API's callback passes them. The worker keeps no time: it computes a frame once its audio has arrived, and the caller,
+  which knows whether it plays the frames live, judges whether they keep up. A conversation holds the worker until it
+  ends, as any request does, and adding it raised no protocol number.
 
 Where a request could otherwise get no answer or two, the worker answers so:
 
 - A recognition request that had its `error` or its `cancelled` while it collected chunks drops its later chunk lines
   up to and including its `transcribe` line, or until a chunk 0 under its id starts a new request. A caller that
   cancels need not send the `transcribe`, and may reuse the id at once.
-- A request still collecting chunks when stdin closes gets an `error`, since no `transcribe` can follow.
+- A request still collecting chunks when stdin closes gets an `error`, since no `transcribe` can follow. A conversation
+  running when stdin closes ends as at its `hang_up`, since it has heard every frame sent.
+- A conversation that had its `error` or its `cancelled` before its `hang_up` drops its later chunk lines up to and
+  including its `hang_up`, which its caller sends before it reads the answer; a `dialogue` line under its id starts a
+  new one.
 - `info` and `count_tokens` only read the model's information, which any thread may read while a request runs, so they
   are answered as they arrive rather than in turn: a caller counts the tokens of its next text while the current one
   speaks.
@@ -61,6 +71,10 @@ The alternatives were turned down:
 - One line with the whole audio of a request. Chunks keep lines small, let a caller send the microphone's audio while
   it records, and mirror what a synthesis worker sends.
 - Float samples on the protocol. One form of audio in both directions is simpler for every caller.
+- The model's text as a message of its own beside each frame's chunk. A caller would match two lines to each frame,
+  where one line keeps the frame's audio and text together.
+- A conversation ended by `cancel` alone. A cancel answers `cancelled`, which tells a caller that the work stopped
+  short, where a conversation that the caller ends has done all it was asked.
 
 ## Consequences
 

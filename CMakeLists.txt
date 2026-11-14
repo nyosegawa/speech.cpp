@@ -294,18 +294,20 @@ file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/page-files.cpp CONTENT "@SPEEC
 # ggml linked in. The target is speech-cli since the shared library holds the name speech. It has two dependencies
 # besides ggml, each a single header vendored with its license: cpp-httplib for `speech serve`, in vendor/cpp-httplib from
 # yhirose/cpp-httplib at commit cf3693cb5cc0d39b0e6f4122ba89bda9edb5ac6b (v0.59.0), and miniaudio for the microphone of
-# `speech asr --live`, in vendor/miniaudio from mackron/miniaudio at commit 9634bedb5b5a2ca38c1ee7108a9358a4e233f14d
-# (v0.11.25).
+# `speech asr --live` and the microphone and audio output of `speech talk --live`, in vendor/miniaudio from
+# mackron/miniaudio at commit 9634bedb5b5a2ca38c1ee7108a9358a4e233f14d (v0.11.25).
 add_executable(speech-cli
     tools/cli/main.cpp
     tools/cli/tts.cpp
     tools/cli/asr.cpp
     tools/cli/asr-stream.cpp
     tools/cli/microphone.cpp
+    tools/cli/speaker.cpp
     tools/cli/miniaudio.c
     tools/cli/vad.cpp
     tools/cli/diarize.cpp
     tools/cli/enhance.cpp
+    tools/cli/talk.cpp
     tools/cli/wave-output.cpp
     tools/cli/model.cpp
     tools/cli/models.cpp
@@ -349,10 +351,10 @@ add_executable(speech-cli
 set_target_properties(speech-cli PROPERTIES OUTPUT_NAME speech)
 target_include_directories(speech-cli PRIVATE tools/common tools/cli tools/catalog tools/server vendor/cpp-httplib vendor/miniaudio)
 target_link_libraries(speech-cli PRIVATE speech-static)
-# miniaudio captures audio and nothing else, so that its decoders, encoders and engine stay out of speech, and without its
-# null backend, which opens "NULL Capture Device" when no real one does and gives silence, where speech asr --live is to
-# say that the microphone did not open. On macOS it links the system's audio frameworks; elsewhere it loads the system's
-# audio library when the microphone opens, so that no build needs the development packages of ALSA or PulseAudio and a
+# miniaudio captures and plays audio and nothing else, so that its decoders, encoders and engine stay out of speech, and
+# without its null backend, which opens "NULL Capture Device" when no real one does and gives silence, where speech asr
+# --live is to say that the microphone did not open. On macOS it links the system's audio frameworks; elsewhere it loads
+# the system's audio library when a device opens, so that no build needs the development packages of ALSA or PulseAudio and a
 # Linux release needs no audio library to start.
 target_compile_definitions(speech-cli PRIVATE MA_NO_DECODING MA_NO_ENCODING MA_NO_GENERATION MA_NO_ENGINE MA_NO_NODE_GRAPH
                            MA_NO_RESOURCE_MANAGER MA_NO_NULL)

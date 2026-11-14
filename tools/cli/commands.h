@@ -12,6 +12,7 @@ Command asr_command();
 Command vad_command();
 Command diarize_command();
 Command enhance_command();
+Command talk_command();
 Command voice_command();
 Command info_command();
 Command devices_command();

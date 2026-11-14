@@ -51,7 +51,11 @@ or one folder for two files of one name, of an input as -o, of - with a file and
 rate the model does not take, which leaves no file, a chunk shorter than its STFT and an odd byte on stdin; with --asr,
 `speech asr --enhance`, and the refusal of --enhance with a model of another task; and with --vad too, `speech asr --vad
 --enhance -`, whose utterances begin where those of `speech asr --vad -` begin and whose texts are those of `speech asr
---enhance` of each region `speech vad --split` writes.
+--enhance` of each region `speech vad --split` writes. For a dialogue model, given a dump of reference/haru/dump.py:
+`speech talk` hearing its user audio as a 16-bit WAVE file, speaking first, against the worker's frames of the same
+samples, seed and speak_first, into a file with its sizes set and to stdout, its text on stdout and with -o - on stderr; the refusals (exit 2) of
+no -o, of no AUDIO, of --live with AUDIO and of --live with -o, and (exit 1) of a file that is not there and of a
+max_seconds shorter than a frame, which leave no file.
 
 usage: python3 checks/smoke/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav [--transcript TEXT]]
                                                 [--embedding E.speaker.safetensors] [--vad DETECTION.gguf] [--asr RECOGNITION.gguf]
@@ -105,7 +109,7 @@ if "--asr" in args:
 speech, work, model, *dumps = args
 os.makedirs(work, exist_ok=True)
 added = [o.split("=", 1)[0] for i, o in enumerate(options) if i > 0 and options[i - 1] == "--add-voice"]
-SUBCOMMANDS = ["tts", "asr", "vad", "diarize", "enhance", "voice", "info", "devices", "models", "pull", "rm", "quantize", "update", "serve", "worker"]
+SUBCOMMANDS = ["tts", "asr", "vad", "diarize", "enhance", "talk", "voice", "info", "devices", "models", "pull", "rm", "quantize", "update", "serve", "worker"]
 
 
 def run(*command, input=None, stdout=subprocess.PIPE, code=0):
@@ -659,6 +663,48 @@ elif info["task"] == "enhancement":
             print("asr --vad --enhance -: the regions of the audio unenhanced, each utterance the text of speech asr --enhance of its region")
     for path in files:
         os.remove(path)
+elif info["task"] == "dialogue":
+    # The user's audio of a dump of reference/haru/dump.py, as a 16-bit WAVE file; the model speaks first, so that it says
+    # something within it.
+    pcm = pcm16(read_npy(os.path.join(dumps[0], "user_audio.npy")))
+    heard = os.path.join(work, "heard.wav")
+    with open(heard, "wb") as f:
+        f.write(b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+                + b"data" + struct.pack("<I", len(pcm)) + pcm)
+
+    def wave_of(data):
+        assert data[:4] == b"RIFF" and data[36:40] == b"data" and struct.unpack("<I", data[24:28])[0] == rate, data[:44]
+        return data[44:]
+
+    w = Worker(speech, model, options)
+    w.request({"type": "dialogue", "id": "t", "sample_rate": rate, "seed": 3, "speak_first": True})
+    w.send({"type": "chunk", "id": "t", "seq": 0, "pcm": base64.b64encode(pcm).decode()})
+    w.send({"type": "hang_up", "id": "t"})
+    said = w.until("t")
+    w.close()
+    want = b"".join(base64.b64decode(m["pcm"]) for m in said if m["type"] == "chunk")
+    text = "".join(m["text"] for m in said if m["type"] == "chunk")
+    assert said[-1]["type"] == "end" and len(want) == (len(pcm) // 2 // info["frame_samples"] + 1) * info["frame_samples"] * 2, short(said[-1])
+    reply = os.path.join(work, "reply.wav")
+    r = run("talk", model, *options, "--seed", "3", "--speak-first", "-o", reply, heard)
+    with open(reply, "rb") as f:
+        data = f.read()
+    assert struct.unpack("<II", data[4:8] + data[40:44]) == (36 + len(want), len(want)) and wave_of(data) == want, "talk's WAVE differs from the worker's frames"
+    assert r.stdout.decode() == text + ("\n" if text else ""), (r.stdout, text)
+    r = run("talk", model, *options, "--seed", "3", "--speak-first", "-o", "-", heard)
+    assert wave_of(r.stdout) == want and text.strip() in r.stderr.decode(), "talk -o - differs from the worker's frames, or wrote its text elsewhere"
+    assert text.strip(), "the model said nothing while it spoke first"
+    print(f"talk: {len(want) // 2 // info['frame_samples']} frames into a file and to stdout, the worker's sample for sample, and its text {text.strip()!r}")
+    for command in [["talk", model, heard], ["talk", model, "-o", reply], ["talk", model, "--live", heard], ["talk", model, "--live", "-o", reply]]:
+        run(*command, *options, code=2)
+    left = os.path.join(work, "left.wav")
+    failure(run("talk", model, *options, "-o", left, os.path.join(work, "no-such.wav"), code=1), "io", "audio")
+    failure(run("talk", model, *options, "--max-seconds", "0.01", "-o", left, heard, code=1), "out_of_range", "max_seconds")
+    assert not os.path.exists(left), "a failed run left its file"
+    os.remove(heard)
+    os.remove(reply)
+    print("talk without -o, without AUDIO, --live with AUDIO and --live with -o: exit 2; a file that is not there and a max_seconds shorter "
+          "than a frame: exit 1, and no file left")
 elif info["task"] == "recognition":
     files, pcms = [], []
     for d in dumps:

@@ -118,6 +118,7 @@ irm https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.ps1 | ie
 | `speech vad` | WAVE ファイルの中で人が話している区間を書き出します |
 | `speech diarize` | WAVE ファイルの中で誰がどこで話しているかを書き出します |
 | `speech enhance` | WAVE ファイルから雑音などの劣化を取り除きます |
+| `speech talk` | 聞きながら話すモデルと、マイクを通して会話します |
 | `speech voice` | 参照録音から Irodori-TTS か Drama 3 の声のファイルを作ります |
 | `speech info` | モデルファイルに書かれているモデルの情報を表示します |
 | `speech devices` | モデルを動かせるデバイスを一覧にします |

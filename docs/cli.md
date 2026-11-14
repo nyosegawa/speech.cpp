@@ -9,6 +9,7 @@ This page lists the subcommands of `speech` and their options. `speech <subcomma
 | [`speech vad`](#speech-vad) | writes where someone speaks in WAVE files |
 | [`speech diarize`](#speech-diarize) | writes who speaks where in WAVE files |
 | [`speech enhance`](#speech-enhance) | removes noise and other degradations from WAVE files, or from audio on stdin |
+| [`speech talk`](#speech-talk) | holds a conversation with a model that listens and speaks at once, through the microphone or on a WAVE file |
 | [`speech voice`](#speech-voice) | makes a voice file for Irodori-TTS or Drama 3 from reference recordings |
 | [`speech info`](#speech-info) | prints what a model file says of its model, without loading it |
 | [`speech devices`](#speech-devices) | lists the devices a model can run on |
@@ -61,6 +62,9 @@ speech diarize nemotron-3-diarization --format rttm meeting.wav > meeting.rttm
 speech enhance re-use -o clean.wav street.wav
 speech asr qwen3-asr-1.7b --enhance re-use street.wav
 
+# A conversation through the microphone and headphones, until Ctrl-C, with a character the model plays
+speech talk Haru-4B-Q4_K.gguf --live --language ja --name ハル --persona "落ち着いた話し方をする大学生。"
+
 # What a model file holds, without loading it
 speech info irodori-tts-mf
 ```
@@ -71,7 +75,7 @@ speech info irodori-tts-mf
   fetched the first time it is used ([models.md](models.md)).
 - **`--device NAME`** is `auto` (the default: the first GPU, or the CPU on a machine without one), `gpu`, `cpu`, or a
   name that `speech devices` lists. **`--threads N`** is the CPU's threads; by default the machine's performance cores.
-- **Request options.** `speech tts`, `speech asr`, `speech vad`, `speech diarize` and `speech enhance` take every option of the C API's
+- **Request options.** `speech tts`, `speech asr`, `speech vad`, `speech diarize`, `speech enhance` and `speech talk` take every option of the C API's
   vocabulary as a flag of its name in kebab-case: `duration_scale` is `--duration-scale` ([c-api.md](c-api.md#options)).
   The model refuses an option it does not take, as the C API does: Qwen3-TTS answers `--speed 1.5` with
   `speech: unsupported (speed): ...`.
@@ -318,6 +322,36 @@ speech enhance MODEL -o FILE|DIR|- [options] AUDIO.wav...|-
   RE-USE); a rate above the file's lets the model fill in the band the file lacks.
 - stderr reports the load time and, for each file, its seconds of audio, the time they took and the RTFx.
 
+## speech talk
+
+```
+speech talk MODEL [options] --live|-o FILE|- AUDIO.wav
+  --live                   talk through the default microphone and audio output until Ctrl-C
+  -o FILE                  the WAVE file to write the model's reply to, or - for stdout
+  --add-voice NAME=FILE    add a voice from a voice file or a WAVE file before the conversation
+  --device NAME --threads N --no-warmup
+  -v                       also report the release
+  --voice NAME --language L --persona TEXT --max-seconds S ... every request option
+```
+
+- Holds a conversation with a dialogue model, which hears a frame of audio and gives a frame of its own, with the text
+  it says in it, one frame ahead: 3,200 samples at 24 kHz, 133 ms, for Haru.
+- `--live` hears the default microphone and plays the model's frames on the default audio output as they come, until
+  Ctrl-C, and writes the model's text on stdout as it says it. Use headphones: nothing removes the echo, so with
+  speakers the model hears itself. A GPU is warmed up before the conversation unless `--no-warmup`.
+- A live conversation that falls 1 s behind, in audio heard and not yet given to the model and in the model's audio not
+  yet played, stops with `speech: device: the conversation has fallen ... behind`: the device computes the model's
+  frames slower than they last, and a smaller type of the model or a faster device keeps up. No audio is dropped.
+- With `AUDIO.wav` it hears the file, read as `speech asr` reads it, and writes the model's frames end to end as a
+  16-bit mono WAVE at the model's rate to `-o`, or to stdout with `-o -`: one frame for the start and one for each whole
+  frame of the file, so that the reply lines up with the file in time. The text goes to stdout, or to stderr with
+  `-o -`. The frames are those a live conversation gives when it hears the same audio. A run that fails removes the
+  file it was writing.
+- A conversation lasts `--max-seconds` at most, the model's own unless given (3600 s for Haru), and holds the memory
+  of that length from its start. One that reaches it stops with `speech: out_of_range (max_seconds)`, and one whose memory does not fit on the
+  device stops at its start with `speech: out_of_memory (max_seconds)`.
+- stderr reports the load time and the seconds of audio the model gave, the time it took to compute them and the RTFx.
+
 ## speech voice
 
 ```
@@ -509,7 +543,7 @@ speech worker MODEL [--add-voice NAME=FILE]... [--device NAME] [--threads N] [--
 
 [server.md](server.md) and [worker.md](worker.md) describe them. `speech serve` takes one model of each task: a
 synthesis, a recognition, a detection, a diarization and an enhancement model. The worker serves a synthesis, a
-recognition or an enhancement model.
+recognition, an enhancement or a dialogue model.
 
 A request option given as a flag is the default of every request that does not set it, in place of the model's own:
 `speech serve irodori-tts-mf --steps 8` samples in 8 steps unless a request sets `steps`. A request's own value wins,

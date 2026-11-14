@@ -285,20 +285,8 @@ int transcribe_stream(const CommandLine & line, FILE * out, speech_model * recog
         std::fprintf(stderr, "listening to %s at %d Hz; Ctrl-C ends\n", microphone->name().c_str(), rate);
         interrupted = false;
         std::signal(SIGINT, on_interrupt);
-        // A microphone always hears some noise, so audio of nothing but zeros for seconds is one the system keeps from
-        // the program, as macOS does without the terminal's permission to use the microphone.
-        double silent = 0;
-        bool warned = false;
         while (!interrupted && !failed()) {
             const std::vector<float> samples = microphone->take(std::chrono::milliseconds(50));
-            bool zeros = true;
-            for (const float s : samples) zeros = zeros && s == 0;
-            silent = zeros ? silent + (double) samples.size() / rate : 0;
-            if (silent >= 3 && !warned) {
-                std::fprintf(stderr, "the microphone has given nothing but zeros for 3 s: check that it is not muted, and on macOS that the terminal "
-                                     "may use it (System Settings, Privacy & Security, Microphone)\n");
-                warned = true;
-            }
             assembly.push(samples.data(), samples.size());
             // The microphone cannot wait, and audio is not dropped, so audio held past the bound ends the run.
             if (assembly.held() > kHeld) throw past_the_bound(assembly, rate);

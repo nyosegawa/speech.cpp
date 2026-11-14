@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdio>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
@@ -22,7 +23,8 @@
 // unless --no-warmup, adds the voices of --add-voice and says `ready` with the model's information, or `fatal` when it
 // cannot; then it runs the requests one at a time in the order they become complete, but for info and count_tokens,
 // which it answers as they arrive, each answered by exactly one terminal message, `end`, `error` or `cancelled`, and
-// exits with 0 once stdin closes and every request is answered.
+// exits with 0 once stdin closes and every request is answered. A conversation runs from its dialogue line to its
+// hang_up, hearing its chunks as they arrive and sending a chunk for each frame the model gives.
 
 namespace {
 
@@ -64,12 +66,17 @@ struct Running {
     std::vector<int16_t> pcm;
 };
 
+/** Samples as the protocol's audio: base64 of 16-bit samples, each round(clamp(x, -1, 1) * 32767), through `pcm`. */
+std::string pcm_base64(const float * s, size_t n, std::vector<int16_t> & pcm) {
+    pcm.resize(n);
+    for (size_t i = 0; i < n; i++) pcm[i] = (int16_t) std::lround(std::max(-1.0f, std::min(1.0f, s[i])) * 32767.0f);
+    return base64((const uint8_t *) pcm.data(), n * sizeof(int16_t));
+}
+
 int on_audio(const float * s, size_t n, void * user_data) {
     Running & r = *static_cast<Running *>(user_data);
-    r.pcm.resize(n);
-    for (size_t i = 0; i < n; i++) r.pcm[i] = (int16_t) std::lround(std::max(-1.0f, std::min(1.0f, s[i])) * 32767.0f);
     r.protocol.line("{\"type\":\"chunk\",\"id\":" + json_string(r.id) + ",\"seq\":" + std::to_string(r.seq++) + ",\"pcm\":\"" +
-                    base64((const uint8_t *) r.pcm.data(), n * sizeof(int16_t)) + "\"}");
+                    pcm_base64(s, n, r.pcm) + "\"}");
     r.last = Clock::now();
     return 0;
 }
@@ -84,10 +91,10 @@ int on_progress(double done, void * user_data) {
     return 0;
 }
 
-/** The audio of transcribe and enhance as the library takes it: 16-bit samples scaled as a 16-bit WAVE file is read. */
-std::vector<float> samples_of(const Job & job) {
-    std::vector<float> out(job.pcm.size());
-    for (size_t i = 0; i < out.size(); i++) out[i] = (float) job.pcm[i] / 32768.0f;
+/** The protocol's audio as the library takes it: 16-bit samples scaled as a 16-bit WAVE file is read. */
+std::vector<float> samples_of(const std::vector<int16_t> & pcm) {
+    std::vector<float> out(pcm.size());
+    for (size_t i = 0; i < out.size(); i++) out[i] = (float) pcm[i] / 32768.0f;
     return out;
 }
 
@@ -123,7 +130,7 @@ void recognize(Inbox & inbox, Protocol & protocol, speech_model * model, const s
     Running running{protocol, job.id, Clock::now()};
     std::string terminal;
     try {
-        const std::vector<float> samples = samples_of(job);
+        const std::vector<float> samples = samples_of(job.pcm);
         check(speech_request_set_audio(r, samples.data(), samples.size(), job.sample_rate));
         apply_options(r, job.options);
         check(speech_request_set_progress(r, on_progress, &running));
@@ -146,7 +153,7 @@ void enhance(Inbox & inbox, Protocol & protocol, speech_model * model, const Job
     Running running{protocol, job.id, Clock::now()};
     std::string terminal;
     try {
-        const std::vector<float> samples = samples_of(job);
+        const std::vector<float> samples = samples_of(job.pcm);
         const Request request = enhancement_request(model, samples, job.sample_rate, job.options);
         check(speech_request_set_progress(request.get(), on_progress, &running));
         const std::optional<uint64_t> passed = enhance_audio(request.get(), on_audio, &running, cancellation);
@@ -155,6 +162,63 @@ void enhance(Inbox & inbox, Protocol & protocol, speech_model * model, const Job
         } else {
             terminal = "{\"type\":\"end\",\"id\":" + json_string(job.id) + ",\"samples\":" + std::to_string(*passed) + ",\"stop\":\"" +
                        speech_stop_name(speech_result_stop(speech_request_result(request.get()))) + "\"}";
+        }
+    } catch (const std::exception & e) {
+        terminal = error_line(job.id, e);
+    }
+    inbox.finish(job, terminal);
+}
+
+/** What the frame callback of a conversation needs: its id, the frames sent, and the cancel that stops it at the next. */
+struct Talking {
+    Protocol & protocol;
+    const std::string & id;
+    const Cancellation & cancellation;
+    uint64_t frames = 0, samples = 0;
+    std::vector<int16_t> pcm;
+};
+
+int on_frame(const float * s, size_t n, const char * text, void * user_data) {
+    Talking & t = *static_cast<Talking *>(user_data);
+    t.protocol.line("{\"type\":\"chunk\",\"id\":" + json_string(t.id) + ",\"seq\":" + std::to_string(t.frames++) + ",\"pcm\":\"" +
+                    pcm_base64(s, n, t.pcm) + "\",\"text\":" + json_string(text) + "}");
+    t.samples += n;
+    return t.cancellation.cancelled() ? 1 : 0;
+}
+
+/**
+ * Holds the job's conversation: starts it, which sends the model's first frame, and passes it the audio of its chunks as
+ * they arrive, each whole frame of which sends the model's next, until its hang_up or the end of stdin ends it. The
+ * worker keeps no time: a caller that plays the frames as they come sees whether they keep up.
+ */
+void converse(Inbox & inbox, Protocol & protocol, speech_model * model, const Job & job) {
+    Cancellation cancellation;
+    if (!inbox.start(job, &cancellation)) return;
+    Talking talking{protocol, job.id, cancellation};
+    std::string terminal;
+    try {
+        const Request request = new_request(model);
+        apply_options(request.get(), job.options);
+        speech_dialogue * raw = nullptr;
+        speech_status s = check(speech_dialogue_start(request.get(), job.sample_rate, on_frame, &talking, &raw));
+        const std::unique_ptr<speech_dialogue, decltype(&speech_dialogue_free)> dialogue(raw, speech_dialogue_free);
+        for (bool last = false; s == SPEECH_OK && !last;) {
+            const Heard heard = inbox.hear(job);
+            if (heard.refused) throw Failure(speech_status_name(SPEECH_ERROR_INVALID_ARGUMENT), heard.refused->first, heard.refused->second);
+            if (cancellation.cancelled()) {
+                s = SPEECH_CANCELLED;
+                break;
+            }
+            const std::vector<float> samples = samples_of(heard.pcm);
+            if (!samples.empty()) s = check(speech_dialogue_push(dialogue.get(), samples.data(), samples.size()));
+            last = heard.last;
+        }
+        if (s == SPEECH_OK) s = check(speech_dialogue_end(dialogue.get()));
+        if (s == SPEECH_CANCELLED) {
+            terminal = cancelled_line(job.id);
+        } else {
+            terminal = "{\"type\":\"end\",\"id\":" + json_string(job.id) + ",\"frames\":" + std::to_string(talking.frames) + ",\"samples\":" +
+                       std::to_string(talking.samples) + "}";
         }
     } catch (const std::exception & e) {
         terminal = error_line(job.id, e);
@@ -200,15 +264,11 @@ int run_worker(const CommandLine & line, FILE * out) {
     current = &protocol;
     const std::string path = model_file(line.args[0]);
     const Loading loading = line.loading(true);
-    // The protocol has the messages of synthesis, recognition and enhancement alone.
+    // The protocol has the messages of synthesis, recognition, enhancement and dialogue alone.
     const speech_task task = speech_model_info_task(file_info(path).get());
     if (task == SPEECH_TASK_DETECTION) {
         throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "",
                       path + " is a model of speech detection, which the worker does not serve; use `speech vad` or the C API's speech_detect()");
-    }
-    if (task == SPEECH_TASK_DIALOGUE) {
-        throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "",
-                      path + " is a model of speech dialogue, which the worker does not serve; use the C API's speech_dialogue_start()");
     }
     if (task == SPEECH_TASK_DIARIZATION) {
         throw Failure(speech_status_name(SPEECH_ERROR_UNSUPPORTED), "",
@@ -242,6 +302,7 @@ int run_worker(const CommandLine & line, FILE * out) {
             case Job::Kind::Synthesize: synthesize(inbox, protocol, model.get(), job); break;
             case Job::Kind::Transcribe: recognize(inbox, protocol, model.get(), m, job); break;
             case Job::Kind::Enhance: enhance(inbox, protocol, model.get(), job); break;
+            case Job::Kind::Converse: converse(inbox, protocol, model.get(), job); break;
             default: add_voice(inbox, model.get(), job); break;
         }
     }

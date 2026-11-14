@@ -11,7 +11,7 @@
 
 namespace {
 
-const char * const kTypes = "synthesize, chunk, transcribe, enhance, add_voice, info, count_tokens or cancel";
+const char * const kTypes = "synthesize, chunk, transcribe, enhance, dialogue, hang_up, add_voice, info, count_tokens or cancel";
 
 /** The requests a model of `task` takes, for a message that refuses another. */
 std::string requests_of(speech_task task) {
@@ -19,6 +19,7 @@ std::string requests_of(speech_task task) {
         case SPEECH_TASK_SYNTHESIS: return "synthesize";
         case SPEECH_TASK_RECOGNITION: return "chunk and transcribe";
         case SPEECH_TASK_ENHANCEMENT: return "chunk and enhance";
+        case SPEECH_TASK_DIALOGUE: return "dialogue, chunk and hang_up";
         default: return "none";
     }
 }
@@ -90,12 +91,12 @@ void Inbox::read(std::istream & in) {
     }
     std::lock_guard<std::mutex> lock(mutex_);
     closed_ = true;
-    ready_.notify_all();
+    changed_.notify_all();
 }
 
 bool Inbox::take(Job & job) {
     std::unique_lock<std::mutex> lock(mutex_);
-    ready_.wait(lock, [&] { return !queue_.empty() || closed_; });
+    changed_.wait(lock, [&] { return !queue_.empty() || closed_; });
     if (queue_.empty()) return false;
     job = std::move(queue_.front());
     queue_.pop_front();
@@ -111,9 +112,23 @@ bool Inbox::start(const Job & job, Cancellation * cancellation) {
     return true;
 }
 
+Heard Inbox::hear(const Job & job) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    Pending & p = pending_.at(job.id);
+    changed_.wait(lock, [&] { return !p.pcm.empty() || p.hung_up || closed_ || p.refused || (p.running && p.running->cancelled()); });
+    Heard heard;
+    heard.pcm.swap(p.pcm);
+    heard.last = p.hung_up || closed_;
+    heard.refused = p.refused;
+    return heard;
+}
+
 void Inbox::finish(const Job & job, const std::string & line) {
     std::lock_guard<std::mutex> lock(mutex_);
-    pending_.erase(job.id);
+    const auto it = pending_.find(job.id);
+    // A conversation answered before its hang_up drops the chunks its caller sent before it saw the answer.
+    if (it != pending_.end() && it->second.dialogue && !it->second.hung_up) dropping_.insert(job.id);
+    if (it != pending_.end()) pending_.erase(it);
     protocol_.line(line);
 }
 
@@ -147,6 +162,19 @@ void Inbox::fail_collecting(const std::string & id, const std::string & option, 
     dropping_.insert(id);
 }
 
+void Inbox::fail_dialogue(const std::string & id, const std::string & option, const std::string & message) {
+    Pending & p = pending_.at(id);
+    dropping_.insert(id);
+    if (p.state == Pending::State::Running) {
+        // The run sends the error, as the conversation's terminal message must follow its last frame.
+        p.refused = std::make_pair(option, message);
+        changed_.notify_all();
+        return;
+    }
+    pending_.erase(id);
+    reply_error(&id, speech_status_name(SPEECH_ERROR_INVALID_ARGUMENT), option, message);
+}
+
 Inbox::Pending & Inbox::open(const std::string & id, Pending::State state) {
     Pending & p = pending_[id];
     p.serial = ++serial_;
@@ -156,7 +184,7 @@ Inbox::Pending & Inbox::open(const std::string & id, Pending::State state) {
 
 void Inbox::queue(Job job) {
     queue_.push_back(std::move(job));
-    ready_.notify_one();
+    changed_.notify_all();
 }
 
 bool Inbox::read_options(const JsonValue & message, const std::vector<std::string> & members, bool options, std::vector<RequestOption> & out,
@@ -217,13 +245,15 @@ void Inbox::take_line(const std::string & line) {
         return;
     }
     const std::string & t = type->text;
-    if (t == "cancel") {
+    if (t == "cancel" || t == "hang_up") {
         for (const auto & member : message.members) {
             if (member.first == "type" || member.first == "id") continue;
-            // A cancel has no answer of its own, so an error with its id would read as the answer of its request.
-            reply_error(nullptr, invalid, member.first, "cancel has no member \"" + member.first + "\"; its members are id and type");
+            // Neither has an answer of its own, so an error with its id would read as the answer of its request.
+            reply_error(nullptr, invalid, member.first, t + " has no member \"" + member.first + "\"; its members are id and type");
             return;
         }
+    }
+    if (t == "cancel") {
         cancel(id);
     } else if (t == "chunk") {
         chunk(id, message);
@@ -231,6 +261,10 @@ void Inbox::take_line(const std::string & line) {
         end_chunks(Job::Kind::Transcribe, id, message);
     } else if (t == "enhance") {
         end_chunks(Job::Kind::Enhance, id, message);
+    } else if (t == "dialogue") {
+        request(Job::Kind::Converse, t, id, message);
+    } else if (t == "hang_up") {
+        hang_up(id);
     } else if (t == "synthesize") {
         request(Job::Kind::Synthesize, t, id, message);
     } else if (t == "add_voice") {
@@ -251,9 +285,10 @@ void Inbox::cancel(const std::string & id) {
     if (p.state == Pending::State::Running) {
         // The run ends with `cancelled`, or with its answer when it was past the point where it could stop.
         if (p.running) p.running->cancel();
+        changed_.notify_all();
         return;
     }
-    if (p.state == Pending::State::Collecting) dropping_.insert(id);
+    if (p.state == Pending::State::Collecting || (p.dialogue && !p.hung_up)) dropping_.insert(id);
     pending_.erase(it);
     protocol_.line("{\"type\":\"cancelled\",\"id\":" + json_string(id) + "}");
 }
@@ -271,9 +306,31 @@ void Inbox::request(Job::Kind kind, const std::string & type, const std::string 
                         "; synthesize needs a synthesis model");
         return;
     }
+    if (kind == Job::Kind::Converse && task_ != SPEECH_TASK_DIALOGUE) {
+        reply_error(&id, speech_status_name(SPEECH_ERROR_UNSUPPORTED), "type",
+                    model_name_ + " is a model of speech " + task_name(task_) + ", which takes " + requests_of(task_) +
+                        "; dialogue needs a dialogue model");
+        return;
+    }
     Job job;
     job.kind = kind;
     job.id = id;
+    if (kind == Job::Kind::Converse) {
+        std::string option, problem;
+        int64_t rate = 0;
+        if (!read_rate(message, job.options, rate, option, problem)) {
+            reply_error(&id, invalid, option, problem);
+            return;
+        }
+        job.sample_rate = (int) rate;
+        // A new conversation under the id of one answered before its hang_up ends the dropping of that one's lines.
+        dropping_.erase(id);
+        Pending & p = open(id, Pending::State::Waiting);
+        p.dialogue = true;
+        job.serial = p.serial;
+        queue(std::move(job));
+        return;
+    }
     std::vector<std::string> members = {"type", "id"};
     if (kind == Job::Kind::Synthesize || kind == Job::Kind::CountTokens) members.push_back("text");
     if (kind == Job::Kind::AddVoice) members.insert(members.end(), {"name", "path"});
@@ -304,6 +361,10 @@ void Inbox::request(Job::Kind kind, const std::string & type, const std::string 
 }
 
 void Inbox::chunk(const std::string & id, const JsonValue & message) {
+    if (task_ == SPEECH_TASK_DIALOGUE) {
+        dialogue_chunk(id, message);
+        return;
+    }
     const JsonValue * seq_value = message.member("seq");
     if (dropping_.count(id)) {
         // A chunk 0 under the id of a request that was answered starts a new request; any other is the old one's.
@@ -319,47 +380,87 @@ void Inbox::chunk(const std::string & id, const JsonValue & message) {
     if (!in_flight(id) && task_ != SPEECH_TASK_RECOGNITION && task_ != SPEECH_TASK_ENHANCEMENT) {
         reply_error(&id, speech_status_name(SPEECH_ERROR_UNSUPPORTED), "type",
                     model_name_ + " is a model of speech " + task_name(task_) + ", which takes " + requests_of(task_) +
-                        "; chunk needs a recognition or enhancement model");
+                        "; chunk needs a recognition, enhancement or dialogue model");
         dropping_.insert(id);
         return;
     }
     Pending & p = in_flight(id) ? pending_[id] : open(id, Pending::State::Collecting);
-    std::vector<RequestOption> none;
     std::string option, problem;
-    if (!read_options(message, {"type", "id", "seq", "pcm"}, false, none, option, problem)) {
-        fail_collecting(id, option, problem);
+    if (!read_chunk(message, p, option, problem)) fail_collecting(id, option, problem);
+}
+
+void Inbox::dialogue_chunk(const std::string & id, const JsonValue & message) {
+    if (dropping_.count(id)) return;
+    const std::string invalid = speech_status_name(SPEECH_ERROR_INVALID_ARGUMENT);
+    const auto it = pending_.find(id);
+    if (it == pending_.end() || !it->second.dialogue) {
+        reply_error(nullptr, invalid, "id",
+                    "no conversation under the id " + json_string(id) + " is in flight; start one with a dialogue line before its chunks");
         return;
     }
+    if (it->second.hung_up) {
+        reply_error(nullptr, invalid, "id", "the conversation " + json_string(id) + " has had its hang_up; send its chunks before it");
+        return;
+    }
+    std::string option, problem;
+    if (!read_chunk(message, it->second, option, problem)) {
+        fail_dialogue(id, option, problem);
+        return;
+    }
+    changed_.notify_all();
+}
+
+void Inbox::hang_up(const std::string & id) {
+    if (task_ != SPEECH_TASK_DIALOGUE) {
+        reply_error(nullptr, speech_status_name(SPEECH_ERROR_UNSUPPORTED), "type",
+                    model_name_ + " is a model of speech " + task_name(task_) + ", which takes " + requests_of(task_) +
+                        "; hang_up ends a conversation of a dialogue model");
+        return;
+    }
+    const auto it = pending_.find(id);
+    if (it != pending_.end() && it->second.dialogue && !it->second.hung_up) {
+        it->second.hung_up = true;
+        dropping_.erase(id);
+        changed_.notify_all();
+        return;
+    }
+    if (dropping_.erase(id)) return;
+    reply_error(nullptr, speech_status_name(SPEECH_ERROR_INVALID_ARGUMENT), "id",
+                "no conversation under the id " + json_string(id) + " is in flight before its hang_up; hang up a conversation once");
+}
+
+bool Inbox::read_chunk(const JsonValue & message, Pending & p, std::string & option, std::string & problem) const {
+    std::vector<RequestOption> none;
+    if (!read_options(message, {"type", "id", "seq", "pcm"}, false, none, option, problem)) return false;
+    option = "seq";
     int64_t seq = 0;
-    if (!count_member(message, "seq", 0, "the chunk's number in its request", seq, problem)) {
-        fail_collecting(id, "seq", problem);
-        return;
-    }
+    if (!count_member(message, "seq", 0, "the chunk's number in its request", seq, problem)) return false;
     if ((uint64_t) seq != p.next_seq) {
-        fail_collecting(id, "seq", "the chunk's \"seq\" is " + std::to_string(seq) + " where " + std::to_string(p.next_seq) +
-                                       " comes next; send a request's chunks in order from 0");
-        return;
+        problem = "the chunk's \"seq\" is " + std::to_string(seq) + " where " + std::to_string(p.next_seq) + " comes next; send a request's chunks in order from 0";
+        return false;
     }
+    option = "pcm";
     const std::string * pcm = string_member(message, "pcm", problem);
     if (!pcm) {
-        fail_collecting(id, "pcm", problem.empty() ? "the chunk has no \"pcm\", its audio as base64 of 16-bit little-endian samples" : problem);
-        return;
+        if (problem.empty()) problem = "the chunk has no \"pcm\", its audio as base64 of 16-bit little-endian samples";
+        return false;
     }
     std::string bytes;
     try {
         bytes = base64_decode(*pcm);
     } catch (const std::invalid_argument & e) {
-        fail_collecting(id, "pcm", std::string("the chunk's \"pcm\" is not base64: ") + e.what());
-        return;
+        problem = std::string("the chunk's \"pcm\" is not base64: ") + e.what();
+        return false;
     }
     if (bytes.size() % 2 != 0) {
-        fail_collecting(id, "pcm", "the chunk's \"pcm\" holds an odd number of bytes; it is 16-bit samples");
-        return;
+        problem = "the chunk's \"pcm\" holds an odd number of bytes; it is 16-bit samples";
+        return false;
     }
     const size_t at = p.pcm.size();
     p.pcm.resize(at + bytes.size() / 2);
     for (size_t i = 0; i < bytes.size() / 2; i++) p.pcm[at + i] = (int16_t) (uint16_t) ((uint8_t) bytes[2 * i] | (uint8_t) bytes[2 * i + 1] << 8);
     p.next_seq++;
+    return true;
 }
 
 void Inbox::end_chunks(Job::Kind kind, const std::string & id, const JsonValue & message) {
