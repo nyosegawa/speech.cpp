@@ -425,10 +425,33 @@ try {
   console.log(`live: ${(spoken.length / rate).toFixed(1)} s from the microphone, sent from ${(lag / pcmRate).toFixed(3)} s on with `
               + `the largest difference ${largest.toFixed(0)} steps of 16-bit PCM, grey text in ${live.grey} of its looks, the API's text for the audio sent: ${live.text.slice(0, 40)}`);
   if (dialogue) {
+    // A hang-up while the microphone's permission is unanswered stops the conversation the start began, which would
+    // otherwise hold the server's one conversation until the browser answered.
+    const begun = await page(`
+      $('tab-talk').click();
+      await until(() => !$('talk-start').disabled, 'the talk panel to start');
+      window.__givenMicrophone = navigator.mediaDevices.getUserMedia;
+      navigator.mediaDevices.getUserMedia = () => new Promise(() => {});
+      $('talk-start').click();
+      return $('talk-start').textContent;
+    `);
+    const lines = (pattern) => new RegExp(pattern).test(log);
+    await racing((async () => { while (!lines('dialogue from \\S+ opened')) await wait(100); })(), running, 120000, 'the server to open the conversation');
+    const stopped = await page(`
+      $('talk-start').click();
+      navigator.mediaDevices.getUserMedia = window.__givenMicrophone;
+      return { button: $('talk-start').textContent, folded: $('talk-setup').hidden };
+    `);
+    await racing((async () => { while (!lines("dialogue from \\S+: \\d+ frames, [\\d.]+ s of the model's audio in [\\d.]+ s, gone")) await wait(100); })(),
+                 running, 60000, 'the server to end the conversation stopped while it started');
+    if (begun !== 'Hang up' || stopped.button !== 'Start talking' || stopped.folded) {
+      throw new Error(`a hang-up while the microphone's permission was unanswered: the button said ${begun}, then ${JSON.stringify(stopped)}`);
+    }
+    console.log('talk: a hang-up while the microphone\'s permission was unanswered stopped the conversation, which the server ended');
+
     // The talk panel: the model speaks first while the microphone plays, then the conversation is hung up.
     const talkSeconds = 12;
     const talk = await page(`
-      $('tab-talk').click();
       await until(() => !$('talk-start').disabled, 'the talk panel to start');
       const first = document.querySelector('#talk-options input[name="speak_first"]');
       first.checked = true;

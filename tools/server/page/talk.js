@@ -27,7 +27,11 @@ export class TalkPanel {
   #voice = new AudioInput($('talk-voice-audio'));
   #recorder = null;
   #dialogue = null;
-  /** The recorder of a conversation whose microphone or prompt is not there yet; a change of model ends it. */
+  /**
+   * The recorder and the conversation of a start whose microphone or prompt is not there yet, {recorder, dialogue}; a
+   * hang-up or a change of model stops both at once, since a microphone whose permission is never answered would hold
+   * the server's one conversation until then.
+   */
   #starting = null;
   #ticking = 0;
   #busy;
@@ -99,16 +103,21 @@ export class TalkPanel {
         this.#ready();
       },
     );
-    this.#starting = recorder;
+    const starting = { recorder, dialogue };
+    this.#starting = starting;
     this.#ready();
     $('talk-stage').hidden = false;
     this.#view.start(options.name || this.#held.model.basename || this.#held.model.name);
     this.#status('Starting the conversation');
     const [microphone, session] = await Promise.allSettled([recorder.start(), dialogue.open(options)]);
-    if (microphone.status === 'rejected' || session.status === 'rejected' || this.#starting !== recorder) {
+    if (this.#starting !== starting) {
+      // A microphone given after the start was stopped is turned off as soon as it is there.
+      await recorder.stop();
+      return;
+    }
+    if (microphone.status === 'rejected' || session.status === 'rejected') {
       dialogue.abort();
       await recorder.stop();
-      if (this.#starting !== recorder) return;
       this.#starting = null;
       this.#view.stop();
       this.#fail(microphone.status === 'rejected' ? microphone.reason : session.reason);
@@ -137,7 +146,7 @@ export class TalkPanel {
   /** Ends the conversation once the server has answered what it heard, and leaves it on the stage. */
   async #hangUp() {
     if (this.#starting) {
-      this.#starting = null;
+      this.#stopStarting();
       this.#ready();
       return;
     }
@@ -159,9 +168,19 @@ export class TalkPanel {
     this.#ready();
   }
 
+  /** Stops a start under way: its conversation and its microphone, whichever is there already. */
+  #stopStarting() {
+    const { recorder, dialogue } = this.#starting;
+    this.#starting = null;
+    dialogue.abort();
+    recorder.stop();
+    this.#view.stop();
+    this.#status('');
+  }
+
   /** Ends a conversation that is starting or going on, without waiting for the server. */
   #end() {
-    this.#starting = null;
+    if (this.#starting) this.#stopStarting();
     clearInterval(this.#ticking);
     this.#recorder?.stop();
     this.#recorder = null;

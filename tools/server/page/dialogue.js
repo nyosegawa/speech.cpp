@@ -49,6 +49,7 @@ export class Dialogue {
   async open(options) {
     this.#context = new AudioContext();
     await this.#context.resume();
+    if (this.#closing) throw new DOMException('The conversation was stopped.', 'AbortError');
     const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocket(`${scheme}//${location.host}/v1/dialogue`);
     socket.binaryType = 'arraybuffer';
@@ -112,9 +113,10 @@ export class Dialogue {
     this.#release();
   }
 
-  /** Ends the conversation at once, without waiting for the server. */
+  /** Ends the conversation at once, without waiting for the server; an open() or a hangUp() under way rejects. */
   abort() {
     this.#closing = true;
+    this.#ended?.reject(new DOMException('The conversation was stopped.', 'AbortError'));
     this.#release();
   }
 

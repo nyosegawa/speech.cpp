@@ -222,7 +222,10 @@ private:
         ws_.close();
     }
 
+    /** Frees the conversation and its place, once: after that the place may be another conversation's. */
     void release() {
+        if (released_) return;
+        released_ = true;
         dialogue_.reset();
         busy_ = false;
     }
@@ -232,6 +235,7 @@ private:
     std::atomic<bool> & busy_;
     Talking talking_;
     Dialogue dialogue_{nullptr, speech_dialogue_free};
+    bool released_ = false;
     std::string outcome_;
 };
 
