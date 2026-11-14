@@ -346,7 +346,8 @@ speech_dialogue_free(dialogue);
   of a frame waits for the next push, and the end drops it.
 - **Its options.** The request has no audio or text of its own. The character card, the voice, the sampling and the
   length are options (below); `max_seconds` bounds the frames a conversation gives, and a push past it is
-  `out_of_range` naming `max_seconds`. A conversation holds the memory of its `max_seconds` from its start.
+  `out_of_range` naming `max_seconds`. A conversation holds the memory of its `max_seconds` from its start, and a start whose
+  memory does not fit is `out_of_memory` naming `max_seconds`.
 - **Several at once.** Each conversation holds its own state; several may run on one model, each frame computed while
   the model is held, as a request is. A conversation is used by one thread at a time.
 - **Its end.** A push or the end returns `SPEECH_CANCELLED` once the callback asks to stop, the start too where it asks

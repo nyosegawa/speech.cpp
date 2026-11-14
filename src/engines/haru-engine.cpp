@@ -120,7 +120,17 @@ public:
         }
         const haru::Voice * voice = values.has(SPEECH_OPT_VOICE) ? &voices_.at(values.string(SPEECH_OPT_VOICE)) : nullptr;
         auto stream = std::make_unique<Stream>(std::move(dialogue), (uint64_t) values.integer(SPEECH_OPT_SEED), std::move(sink));
-        stream->start(card, voice, s);
+        try {
+            stream->start(card, voice, s);
+        } catch (const Error & e) {
+            if (e.fault() != Fault::OutOfMemory) throw;
+            // The keys and values of every frame of max_seconds are allocated at the start, 64 KB a frame for Haru-4B:
+            // an hour does not fit beside Q8_0's weights on a GPU of 8 GB.
+            throw Error(Fault::OutOfMemory,
+                        std::string(e.what()) + "; a conversation holds the keys and values of its max_seconds, " + json_number(seconds) +
+                            " s, from its start: give a shorter max_seconds, or load a smaller type of the model",
+                        "max_seconds");
+        }
         return stream;
     }
 

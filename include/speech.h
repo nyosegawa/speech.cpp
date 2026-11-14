@@ -1397,8 +1397,9 @@ typedef int (*speech_dialogue_callback)(const float * samples, size_t n_samples,
  * `request`, which must have no audio or text of its own: the character card, the voice, the sampling and its length.
  * It runs the prompt and passes the model's first frame to `on_frame` with `user_data` before it returns, and returns
  * SPEECH_CANCELLED, with the conversation to free, where the callback asked to stop there. The request's options and the
- * rate are checked here; the request itself is not used again and may be freed. A model of another task is
- * SPEECH_ERROR_UNSUPPORTED. Added in 4.2.
+ * rate are checked here; the request itself is not used again and may be freed. A conversation whose memory, which
+ * grows with its max_seconds, does not fit on the device is SPEECH_ERROR_OUT_OF_MEMORY naming "max_seconds". A model of
+ * another task is SPEECH_ERROR_UNSUPPORTED. Added in 4.2.
  */
 SPEECH_API speech_status speech_dialogue_start(const speech_request * request, int sample_rate, speech_dialogue_callback on_frame,
                                                void * user_data, speech_dialogue ** dialogue);
