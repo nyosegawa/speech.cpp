@@ -143,7 +143,7 @@ speech enhance re-use street.wav -o clean.wav
 
 ## サーバーとページ
 
-`speech serve` は合成モデル、認識モデル、検出モデル、話者分離モデルを1つずつ保持し、OpenAI の音声 API と同じように`POST /v1/audio/speech` と `POST /v1/audio/transcriptions` に応答します。`diarized_json` では話者も返します。Web アプリ、スクリプト、curl から使えます。
+`speech serve` は処理の種類ごとにモデルを1つずつ保持し、OpenAI の音声 API と同じように`POST /v1/audio/speech` と `POST /v1/audio/transcriptions` に応答します。`diarized_json` では話者も返します。Web アプリ、スクリプト、curl から使えます。また、対話モデルとの会話を `/v1/dialogue` の WebSocket で行います。
 
 ```sh
 speech serve qwen3-tts-0.6b qwen3-asr-0.6b

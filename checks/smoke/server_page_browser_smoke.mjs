@@ -9,18 +9,25 @@
 // milliseconds late, which moves Silero VAD's chunks of 32 ms over the speech, and the regions and the text with them;
 // the file delayed by 4 to 28 ms gave reazonspeech-nemo-v2 F16 texts 8.7 to 17.4% CER from the undelayed one's (Apple
 // M5, Metal, 2026-10-12). The audio is
-// 16-bit WAVE made of the dumps of reference/fastconformer/dump.py or reference/qwen3-asr/dump.py. Chrome is the one at
-// $CHROME, or macOS's; the server and Chrome are stopped however the script ends.
-// usage: node checks/smoke/server_page_browser_smoke.mjs <speech> <work dir> <recognition model> <detection model's catalog name> <dump folder>...
+// 16-bit WAVE made of the dumps of reference/fastconformer/dump.py or reference/qwen3-asr/dump.py. With --dialogue and a
+// dialogue model, which the server is given beside the recognition model, the talk panel holds a conversation that hears
+// the same microphone, with the model speaking first: its settings folded away while it runs, beads in both lanes, the
+// model's text and its name, the microphone's audio sent as it plays, and the server's log of a conversation hung up.
+// Chrome is the one at $CHROME, or macOS's; the server and Chrome are stopped however the script ends.
+// usage: node checks/smoke/server_page_browser_smoke.mjs <speech> <work dir> <recognition model> <detection model's catalog name> <dump folder>... [--dialogue <dialogue model>]
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
-const [speech, work, recognition, detection, ...dumps] = process.argv.slice(2);
-if (!dumps.length) {
-  console.error('usage: node checks/smoke/server_page_browser_smoke.mjs <speech> <work dir> <recognition model> <detection model\'s catalog name> <dump folder>...');
+const argv = process.argv.slice(2);
+const dialogueAt = argv.indexOf('--dialogue');
+const dialogue = dialogueAt >= 0 ? argv[dialogueAt + 1] : null;
+if (dialogueAt >= 0) argv.splice(dialogueAt, 2);
+const [speech, work, recognition, detection, ...dumps] = argv;
+if (!dumps.length || (dialogueAt >= 0 && !dialogue)) {
+  console.error('usage: node checks/smoke/server_page_browser_smoke.mjs <speech> <work dir> <recognition model> <detection model\'s catalog name> <dump folder>... [--dialogue <dialogue model>]');
   process.exit(2);
 }
 const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -142,7 +149,7 @@ try {
   const microphone = path.join(work, 'page-smoke-microphone.wav');
   fs.writeFileSync(microphone, wav(spoken, rate));
 
-  const server = start(speech, ['serve', recognition, '--port', String(await freePort())], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const server = start(speech, ['serve', recognition, ...(dialogue ? [dialogue] : []), '--port', String(await freePort())], { stdio: ['ignore', 'pipe', 'pipe'] });
   running.push(server);
   let log = '';
   const address = await racing(new Promise((resolve) => {
@@ -174,6 +181,8 @@ try {
     '--hide-scrollbars', '--lang=en-US', '--accept-lang=en-US', '--window-size=960,900',
     // A click the script makes is no gesture of a person's, which an audio context needs to run.
     '--autoplay-policy=no-user-gesture-required',
+    // The talk panel plays the model's frames, which headless Chrome would otherwise play on the machine's speakers.
+    '--mute-audio',
   ], { stdio: 'ignore' });
   running.push(chrome);
   const port = await racing((async () => {
@@ -271,8 +280,14 @@ try {
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `
     window.__sessions = [];
     window.__appended = [];
+    window.__talked = [];
     const sent = WebSocket.prototype.send;
     WebSocket.prototype.send = function (data) {
+      // The talk panel sends its audio in binary messages, the samples counted here.
+      if (typeof data !== 'string') {
+        window.__talked.push(data.byteLength / 2);
+        return sent.call(this, data);
+      }
       const event = JSON.parse(data);
       if (event.type === 'session.update') window.__sessions.push(event.session);
       if (event.type === 'input_audio_buffer.append') window.__appended.push(event.audio);
@@ -409,6 +424,78 @@ try {
   }
   console.log(`live: ${(spoken.length / rate).toFixed(1)} s from the microphone, sent from ${(lag / pcmRate).toFixed(3)} s on with `
               + `the largest difference ${largest.toFixed(0)} steps of 16-bit PCM, grey text in ${live.grey} of its looks, the API's text for the audio sent: ${live.text.slice(0, 40)}`);
+  if (dialogue) {
+    // A hang-up while the microphone's permission is unanswered stops the conversation the start began, which would
+    // otherwise hold the server's one conversation until the browser answered.
+    const begun = await page(`
+      $('tab-talk').click();
+      await until(() => !$('talk-start').disabled, 'the talk panel to start');
+      window.__givenMicrophone = navigator.mediaDevices.getUserMedia;
+      navigator.mediaDevices.getUserMedia = () => new Promise(() => {});
+      $('talk-start').click();
+      return $('talk-start').textContent;
+    `);
+    const lines = (pattern) => new RegExp(pattern).test(log);
+    await racing((async () => { while (!lines('dialogue from \\S+ opened')) await wait(100); })(), running, 120000, 'the server to open the conversation');
+    const stopped = await page(`
+      $('talk-start').click();
+      navigator.mediaDevices.getUserMedia = window.__givenMicrophone;
+      return { button: $('talk-start').textContent, folded: $('talk-setup').hidden };
+    `);
+    await racing((async () => { while (!lines("dialogue from \\S+: \\d+ frames, [\\d.]+ s of the model's audio in [\\d.]+ s, gone")) await wait(100); })(),
+                 running, 60000, 'the server to end the conversation stopped while it started');
+    if (begun !== 'Hang up' || stopped.button !== 'Start talking' || stopped.folded) {
+      throw new Error(`a hang-up while the microphone's permission was unanswered: the button said ${begun}, then ${JSON.stringify(stopped)}`);
+    }
+    console.log('talk: a hang-up while the microphone\'s permission was unanswered stopped the conversation, which the server ended');
+
+    // The talk panel: the model speaks first while the microphone plays, then the conversation is hung up.
+    const talkSeconds = 12;
+    const talk = await page(`
+      await until(() => !$('talk-start').disabled, 'the talk panel to start');
+      const first = document.querySelector('#talk-options input[name="speak_first"]');
+      first.checked = true;
+      document.querySelector('#talk-options input[name="seed"]').value = '1';
+      window.__talked.length = 0;
+      $('talk-start').click();
+      await until(() => !$('talk-dot').hidden || !$('talk-error').hidden, 'the conversation to start');
+      if (!$('talk-error').hidden) return { error: $('talk-error').textContent };
+      const folded = $('talk-setup').hidden;
+      // A lane's canvas holds the dots of silence alone until audio arrives, and beads cover more of it.
+      const ink = (lane) => {
+        const c = document.querySelector('.talk-lane.' + lane + ' canvas');
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let n = 0;
+        for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+        return n;
+      };
+      const quiet = { you: ink('talk-you'), model: ink('talk-model') };
+      const most = { you: 0, model: 0 };
+      const end = Date.now() + ${talkSeconds * 1000};
+      while (Date.now() < end) {
+        if (!$('talk-error').hidden) return { error: $('talk-error').textContent };
+        most.you = Math.max(most.you, ink('talk-you'));
+        most.model = Math.max(most.model, ink('talk-model'));
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      const text = document.querySelector('#talk-stage .talk-text').textContent;
+      $('talk-start').click();
+      await until(() => !$('talk-setup').hidden && $('talk-start').textContent === 'Start talking', 'the hang-up');
+      return {
+        error: $('talk-error').hidden ? null : $('talk-error').textContent, folded, quiet, most, text,
+        name: document.querySelector('#talk-stage .talk-title .talk-model-name').textContent,
+        sent: window.__talked.reduce((n, k) => n + k, 0) / ${pcmRate},
+      };
+    `);
+    const hungUp = /dialogue from \S+: \d+ frames, [\d.]+ s of the model's audio in [\d.]+ s, hung up/.test(log);
+    if (talk.error || !talk.folded || talk.most.you < 3 * talk.quiet.you || talk.most.model < 3 * talk.quiet.model || !talk.text.trim()
+        || !talk.name || Math.abs(talk.sent - talkSeconds) > 2 || !hungUp) {
+      throw new Error(`the talk panel: ${JSON.stringify(talk)}, the server's log hung up: ${hungUp}`);
+    }
+    console.log(`talk: settings folded while ${talk.name} spoke first, beads in both lanes (${talk.most.you} and ${talk.most.model} pixels against `
+                + `${talk.quiet.you} and ${talk.quiet.model} of silence), ${talk.sent.toFixed(1)} s of the microphone sent in ${talkSeconds} s, `
+                + `the model's text ${JSON.stringify(talk.text.slice(0, 40))}, hung up`);
+  }
   if (errors.length) throw new Error(`the page threw: ${errors.join('; ')}`);
   console.log('ok');
 } finally {

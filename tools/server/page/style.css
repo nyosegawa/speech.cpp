@@ -19,6 +19,11 @@
   --danger-soft: #fbe9e7;
   --wave-played: var(--accent);
   --wave-rest: #c5cbd5;
+  --talk-you: #3f9d78;
+  --talk-you-light: #c3e08f;
+  --talk-model: #ea714c;
+  --talk-model-light: #ffc493;
+  --talk-dots: #bfc5cf;
   --radius: 14px;
   --radius-small: 8px;
   --space: 16px;
@@ -47,6 +52,11 @@
     --danger: #ff8f86;
     --danger-soft: #3a1c1a;
     --wave-rest: #3c434d;
+    --talk-you: #5fc497;
+    --talk-you-light: #c9e79b;
+    --talk-model: #ff8a62;
+    --talk-model-light: #ffca9e;
+    --talk-dots: #4a525e;
     --shadow: none;
     --shadow-raised: 0 12px 40px rgb(0 0 0 / 50%);
   }
@@ -129,7 +139,7 @@ main {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 4px;
   padding: 4px;
   background: var(--sunken);
@@ -782,8 +792,122 @@ audio {
   height: 36px;
 }
 
+.talk-stage {
+  display: grid;
+  gap: 14px;
+}
+
+.talk-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+
+.talk-title .talk-orb {
+  width: 16px;
+  height: 16px;
+  box-shadow: none;
+  transform: none;
+}
+
+.talk-title,
+.talk-lane.talk-model {
+  --lane: var(--talk-model);
+  --orb-light: var(--talk-model-light);
+}
+
+.talk-lane.talk-you {
+  --lane: var(--talk-you);
+  --orb-light: var(--talk-you-light);
+}
+
+.talk-lane {
+  --lane-dots: var(--talk-dots);
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+  gap: 14px;
+}
+
+.talk-who {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.talk-orb {
+  --level: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 70% 32%, var(--orb-light), var(--lane) 72%);
+  box-shadow: 0 0 calc(6px + 18px * var(--level)) color-mix(in srgb, var(--orb-light) 75%, transparent);
+  transform: scale(calc(1 + 0.18 * var(--level)));
+}
+
+.talk-band {
+  height: 104px;
+  padding: 0 22px;
+  border-radius: 22px;
+  background: var(--sunken);
+}
+
+.talk-band canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.talk-text {
+  display: grid;
+  gap: 6px;
+  min-height: 5.5em;
+  padding-left: 86px;
+}
+
+.talk-line {
+  color: var(--muted);
+}
+
+.talk-line.current {
+  color: var(--text);
+  font-size: 1.45rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 520px) {
+  .talk-lane {
+    grid-template-columns: 52px 1fr;
+    gap: 10px;
+  }
+
+  .talk-orb {
+    width: 34px;
+    height: 34px;
+  }
+
+  .talk-band {
+    height: 80px;
+    padding: 0 12px;
+  }
+
+  .talk-text {
+    padding-left: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .recording-dot {
     animation: none;
+  }
+
+  .talk-orb {
+    transform: none;
   }
 }

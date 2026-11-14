@@ -1,17 +1,19 @@
 // The page of speech serve: asks the server for the catalog and the models it holds, and shows a tab for each panel. A
 // task has one model picker, which moves to the panel in view, so that the transcribe and live panels show the same
 // recognition model and the same progress of a load. Both also show the detection model, which finds the regions the
-// transcribe panel transcribes and the utterances of the live one.
+// transcribe panel transcribes and the utterances of the live one. The talk panel holds conversations with the dialogue
+// model.
 
 import * as api from './api.js';
 import { LivePanel } from './live.js';
 import { ModelPicker } from './picker.js';
 import { SpeakPanel } from './speak.js';
 import { Tabs } from './tabs.js';
+import { TalkPanel } from './talk.js';
 import { TranscribePanel } from './transcribe.js';
 
 const $ = (id) => document.getElementById(id);
-const TASKS = ['synthesis', 'recognition', 'detection'];
+const TASKS = ['synthesis', 'recognition', 'detection', 'dialogue'];
 
 /** How often the page asks again while a model of a task is being replaced by a load that another page started. */
 const WATCH_MS = 500;
@@ -26,10 +28,12 @@ const speak = new SpeakPanel((wav, label) => {
   tabs.select('transcribe');
 });
 const live = new LivePanel((busy) => tabs.busy('live', busy));
+const talk = new TalkPanel((busy) => tabs.busy('talk', busy));
 const panels = {
   synthesis: [speak],
   recognition: [transcribe, live],
   detection: [{ show: (held) => transcribe.showDetection(held) }, { show: (held) => live.showDetection(held) }],
+  dialogue: [talk],
 };
 /** What each panel shows, so that a refresh that changes nothing leaves its fields alone. */
 const shown = {};

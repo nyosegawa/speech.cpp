@@ -66,7 +66,8 @@ void send_file(const PageFile & file, httplib::Response & res) {
 }
 
 speech_task task_of(const CatalogModel & model) {
-    for (speech_task task : {SPEECH_TASK_SYNTHESIS, SPEECH_TASK_RECOGNITION, SPEECH_TASK_DETECTION, SPEECH_TASK_DIARIZATION, SPEECH_TASK_ENHANCEMENT}) {
+    for (speech_task task : {SPEECH_TASK_SYNTHESIS, SPEECH_TASK_RECOGNITION, SPEECH_TASK_DETECTION, SPEECH_TASK_DIARIZATION, SPEECH_TASK_ENHANCEMENT,
+                             SPEECH_TASK_DIALOGUE}) {
         if (model.task == task_name(task)) return task;
     }
     throw std::logic_error("the catalog gives " + model.name + " the task " + model.task + ", which speech.h does not have");
@@ -175,7 +176,8 @@ void Page::models(httplib::Response & res) const {
     };
     try {
         res.set_content("{\"catalog\":" + models_json() + ",\"synthesis\":" + task(SPEECH_TASK_SYNTHESIS) + ",\"recognition\":" +
-                            task(SPEECH_TASK_RECOGNITION) + ",\"detection\":" + task(SPEECH_TASK_DETECTION) + "}",
+                            task(SPEECH_TASK_RECOGNITION) + ",\"detection\":" + task(SPEECH_TASK_DETECTION) + ",\"dialogue\":" +
+                            task(SPEECH_TASK_DIALOGUE) + "}",
                         "application/json");
     } catch (const Failure & e) {
         send_error(res, openai::library_error(e));
@@ -254,9 +256,16 @@ void Page::load(const httplib::Request & req, httplib::Response & res) {
 }
 
 void Page::add_voice(const httplib::Request & req, httplib::Response & res) {
-    const auto served = models_.of(SPEECH_TASK_SYNTHESIS);
+    const auto field = req.form.fields.find("task");
+    const std::string task_field = field == req.form.fields.end() ? "synthesis" : field->second.content;
+    if (task_field != "synthesis" && task_field != "dialogue") {
+        send_error(res, {400, "\"task\" is synthesis or dialogue, the model to add the voice to.", "task", "invalid_value"});
+        return;
+    }
+    const speech_task task = task_field == "dialogue" ? SPEECH_TASK_DIALOGUE : SPEECH_TASK_SYNTHESIS;
+    const auto served = models_.of(task);
     if (!served) {
-        send_error(res, {409, "No speech synthesis model is in place to add a voice to; pick one first.", "", "model_not_found"});
+        send_error(res, {409, "No speech " + task_field + " model is in place to add a voice to; pick one first.", "", "model_not_found"});
         return;
     }
     const auto name = req.form.fields.find("name");

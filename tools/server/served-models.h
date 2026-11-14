@@ -14,7 +14,8 @@
 
 // The models the server holds: at most one for speech synthesis, one for speech recognition, one for the detection of
 // speech, which cuts the audio of a transcription into the regions where someone speaks, one for the diarization of
-// speakers, which gives each region or utterance its speakers, and one for the enhancement of speech, so that a page can
+// speakers, which gives each region or utterance its speakers, one for the enhancement of speech and one for dialogue, which
+// holds conversations, so that a page can
 // speak and transcribe with one server while no more than one model of a task takes memory. A model given on the command line is loaded before the server
 // listens; the page replaces the one of a task by a model of the catalog.
 
@@ -83,7 +84,7 @@ public:
 
     /** The model of a task, or nullptr while there is none or one is being loaded in its place. */
     std::shared_ptr<Served> of(speech_task task) const;
-    /** Every model held: synthesis, recognition, detection, diarization, then enhancement. */
+    /** Every model held: synthesis, recognition, detection, diarization, enhancement, then dialogue. */
     std::vector<std::shared_ptr<Served>> all() const;
     /** The NAME[:TYPE] of the model the page is replacing a task's with, or "". */
     std::string replacing(speech_task task) const;
@@ -113,7 +114,7 @@ private:
             case SPEECH_TASK_DETECTION: return detection_;
             case SPEECH_TASK_DIARIZATION: return diarization_;
             case SPEECH_TASK_ENHANCEMENT: return enhancement_;
-            case SPEECH_TASK_DIALOGUE: break;
+            case SPEECH_TASK_DIALOGUE: return dialogue_;
         }
         throw std::logic_error("a task speech.h does not have");
     }
@@ -121,7 +122,7 @@ private:
 
     Loading loading_;
     mutable std::mutex mutex_;
-    Place synthesis_, recognition_, detection_, diarization_, enhancement_;
+    Place synthesis_, recognition_, detection_, diarization_, enhancement_, dialogue_;
 };
 
 }  // namespace server

@@ -2,7 +2,7 @@
 
 This page describes `speech serve`, which serves a synthesis model, a recognition model, a detection model, a
 diarization model and an enhancement model over HTTP with a subset of OpenAI's audio API and its Realtime transcription,
-and a page on which to try models.
+holds conversations with a dialogue model over a WebSocket of its own, and has a page on which to try models.
 
 ```
 speech serve [MODEL...] [--open] [--host 127.0.0.1] [--port 8080] [--cors-origin ORIGIN|*]...
@@ -15,6 +15,7 @@ speech serve qwen3-tts-0.6b qwen3-asr-0.6b            # speech and transcription
 speech serve reazonspeech-v2 silero-vad               # transcriptions, also by the regions where someone speaks
 speech serve qwen3-asr-1.7b silero-vad nemotron-3-diarization   # and who speaks in each
 speech serve qwen3-asr-1.7b silero-vad re-use         # transcriptions with noise_reduction, and enhancements
+speech serve Haru-4B-F16.gguf --add-voice me=me.wav   # conversations at /v1/dialogue, in the voice of a recording
 speech serve irodori-tts-mf --add-voice me=me.voice.gguf --cors-origin http://localhost:5173
 speech serve irodori-tts-mf --steps 8 --add-voice me=me.voice.gguf  # 8 steps unless a request sets steps
 speech serve qwen3-tts-0.6b qwen3-asr-0.6b --language ja --asr.language auto
@@ -24,7 +25,8 @@ The server holds at most one model of each task: synthesis, recognition, detecti
 transcriptions with `chunking_strategy` and Realtime sessions with `server_vad` use, and diarization (Nemotron 3
 Diarization), whose speakers `diarized_json` and Realtime sessions with `diarization` give, and enhancement (RE-USE),
 which serves `/v1/audio/enhancements` and cleans the audio of transcriptions and Realtime sessions with
-`noise_reduction`. It loads the models given, listens once they are ready, and logs to stderr.
+`noise_reduction`, and dialogue (Haru-4B), which holds conversations at `/v1/dialogue`. It loads the models given,
+listens once they are ready, and logs to stderr.
 
 ```
 ▁▃▅▇▅▃▁ speech.cpp 0.9.0 · serve
@@ -49,22 +51,23 @@ machines the client's address.
 | `--port N` | the port, 8080 unless given, or 0 for any free one |
 | `--open` | open the page in the browser once the server listens; without a MODEL the server starts with none |
 | `--cors-origin ORIGIN` | an origin a web page may call the server from, such as `http://localhost:5173`, or `*` for any; repeatable. A web page of any other origin is refused (403 `origin_not_allowed`); curl and scripts send no origin and are not |
-| `--add-voice NAME=FILE` | add a voice to the synthesis model from a voice file or a WAVE file; repeatable |
-| `--device`, `--threads`, `--no-warmup` | as for the worker, for the synthesis, recognition, diarization and enhancement models the server loads, the page's included. A detection model runs on the CPU with one thread |
+| `--add-voice NAME=FILE` | add a voice to the synthesis model and to the dialogue model, each that is given, from a voice file or a WAVE file; repeatable |
+| `--device`, `--threads`, `--no-warmup` | as for the worker, for the synthesis, recognition, diarization, enhancement and dialogue models the server loads, the page's included. A detection model runs on the CPU with one thread |
 | a request option, such as `--steps 8` or `--language ja` | the default of every request that does not set it, for each model given that takes the option. A request's own value wins; an option that no model given takes, or a value out of its range, stops the server before it listens. The detection model's options, such as `--threshold`, come before OpenAI's server_vad defaults in `chunking_strategy` and Realtime turn detection |
-| `--tts.`, `--asr.`, `--vad.`, `--diarize.` or `--enhance.` and a request option, such as `--asr.language en` | the same for the synthesis, recognition, detection, diarization or enhancement model alone, winning over the option without the prefix. A model the page loads later keeps its own defaults |
+| `--tts.`, `--asr.`, `--vad.`, `--diarize.`, `--enhance.` or `--talk.` and a request option, such as `--asr.language en` | the same for the synthesis, recognition, detection, diarization, enhancement or dialogue model alone, winning over the option without the prefix. A model the page loads later keeps its own defaults |
 
 ## Endpoints
 
 | Endpoint | What it does |
 |---|---|
 | `GET /health` | answers `{"status":"ok"}` |
-| `GET /v1/models` | lists the models held, synthesis, recognition, detection, diarization and enhancement in that order, as OpenAI's model objects whose `id` is the model's name, with `defaults`, the request options the command line gave the model (`{}` without any), and `speech`, the model information ([c-api.md](c-api.md#model-information-as-json)), which keeps the model's own defaults |
+| `GET /v1/models` | lists the models held, synthesis, recognition, detection, diarization, enhancement and dialogue in that order, as OpenAI's model objects whose `id` is the model's name, with `defaults`, the request options the command line gave the model (`{}` without any), and `speech`, the model information ([c-api.md](c-api.md#model-information-as-json)), which keeps the model's own defaults |
 | `GET /v1/models/{id}` | one model; another id is a 404 (`model_not_found`) |
 | `POST /v1/audio/speech` | speaks a text, as [OpenAI's create speech](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create) does |
 | `POST /v1/audio/transcriptions` | recognizes the speech in a WAV file, as [OpenAI's create transcription](https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create) does |
 | `POST /v1/audio/enhancements` | speech.cpp's own: removes noise and other degradations from a WAV file ([below](#enhancements)) |
 | `GET /v1/realtime` | a WebSocket that transcribes audio as it is sent, as [OpenAI's Realtime transcription](https://developers.openai.com/api/reference/resources/realtime/client-events) does ([below](#realtime-transcription)) |
+| `GET /v1/dialogue` | speech.cpp's own: a WebSocket that holds a conversation with the dialogue model, which listens and speaks at once ([below](#conversations)) |
 
 An endpoint of a task the server holds no model of answers a 404 whose message says so. One whose model the page is
 replacing answers a 503 (`model_loading`) with `Retry-After`.
@@ -370,6 +373,33 @@ connection.session.update(session={"type": "transcription", "audio": {"input": {
     "noise_reduction": {"type": "far_field"}, "turn_detection": {"type": "server_vad"}}}})
 ```
 
+## Conversations
+
+`/v1/dialogue` is a WebSocket of speech.cpp's own on which a client talks with the dialogue model: it sends the audio it
+hears as it comes, and the model answers each frame of it (133 ms for Haru) with a frame of its own audio and the text
+it began to say in it, also while the client speaks. OpenAI's API has no conversation without turns, so OpenAI's
+clients do not speak it.
+
+| Client sends | Meaning |
+|---|---|
+| `{"type":"start", ...}` | the first message: `sample_rate`, the rate of the audio it will send, the model's (24000 for Haru) unless given, and the model's request options by name, such as `voice`, `language`, `seed`, `speak_first` or Haru's character card (`name`, `persona`, ...), which `speech info` lists |
+| binary messages | the audio heard, 16-bit little-endian mono PCM at `sample_rate`, in pieces of any length |
+| `{"type":"hang_up"}` | ends the conversation; the audio short of a frame is dropped |
+
+| Server sends | Meaning |
+|---|---|
+| `{"type":"started","sample_rate":24000,"frame_samples":3200}` | the prompt has run; the model's rate and frame |
+| binary messages | each frame of the model's audio, 16-bit little-endian mono PCM at the model's rate: the first answers the prompt, and each later one a frame heard |
+| `{"type":"text","text":"..."}` | the text the model began to say in the frame that comes next |
+| `{"type":"end","frames":31,"samples":99200}` | the answer to `hang_up`, after the last frame; then the server closes |
+| `{"type":"error","error":{...}}` | a failure, as in [Errors](#errors), such as an option out of range or `max_seconds` reached; then the server closes |
+
+The server computes each frame once its audio has arrived, and keeps no time: a client that plays the frames as they
+come sees whether they keep up, as the page does, which stops a conversation that has fallen a second behind. One
+conversation runs at a time; another is refused with a 409 (`conversation_in_progress`) until it ends, and a client
+that goes away ends its own. A conversation holds the memory of its `max_seconds` from its start (about 1.7 GB for
+Haru's 60 minutes), which a lower `max_seconds` in the start message or as a flag (`--max-seconds 600`) reduces.
+
 ## Enhancements
 
 `POST /v1/audio/enhancements` is speech.cpp's own endpoint, which OpenAI's audio API does not have. Its request is a
@@ -416,7 +446,7 @@ the client reads as a broken transfer, and an SSE stream with `{"type":"error","
 
 `speech serve --open` opens a page on which to try models without writing a request.
 
-- Three tabs: Speak, Transcribe and Live. At the top of each, a picker lists the catalog's models of its task, each in
+- Four tabs: Speak, Transcribe, Live and Talk. At the top of each, a picker lists the catalog's models of its task, each in
   every type, with their sizes, whether they are fetched and their languages. Picking one fetches it, with progress that can be
   cancelled and is resumed the next time, and loads it in place of the model of its task. Transcribe and Live use the
   same recognition model and the same detection model. The options' fields, Live's pause among them, start at the
@@ -433,6 +463,11 @@ the client reads as a broken transfer, and an SSE stream with `{"type":"error","
   which a second picker holds as in Transcribe. The text of an utterance under way is shown in grey and grows as the
   readings agree; once a pause ends the utterance, its final text replaces it. More options set that pause, 500 ms
   unless changed.
+- Talk holds a conversation with the dialogue model through the microphone and the speakers; use headphones, since the
+  model hears what the speakers play. Before it starts, the panel shows the model's options, Haru's character card
+  among them, and makes a voice from a recording, of a speaker whose voice you have the right to use. While it runs,
+  the settings fold away and two lanes show the conversation, you above and the model below, as beads that flow from
+  right to left as each side speaks, with the model's text below them.
 - Transcribe sends a file whole, or, where it is larger than the server takes in a request, in pieces of about
   12 minutes cut at a pause, whose texts are joined.
 - The page is built into `speech` and needs nothing from the network.

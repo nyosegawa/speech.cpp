@@ -187,8 +187,9 @@ class WebSocket:
         self._frame(0x2, data)
 
     def receive(self):
-        """The next message's text, or None once the server has closed the WebSocket."""
+        """The next message: a text message's text, a binary message's bytes, or None once the server has closed the WebSocket."""
         parts = b""
+        binary = None
         while True:
             first, second = self._exactly(2)
             n = second & 0x7F
@@ -203,14 +204,17 @@ class WebSocket:
             elif opcode == 0x8:
                 return None
             elif opcode in (0x0, 0x1, 0x2):
+                if opcode != 0x0:
+                    binary = opcode == 0x2
                 parts += payload
                 if first & 0x80:
-                    return parts.decode()
+                    return parts if binary else parts.decode()
 
     def event(self):
         """The next message as a JSON object."""
         text = self.receive()
         assert text is not None, "the server closed the WebSocket"
+        assert isinstance(text, str), f"the server sent {len(text)} bytes where a JSON object was due"
         return json.loads(text)
 
     def close(self):

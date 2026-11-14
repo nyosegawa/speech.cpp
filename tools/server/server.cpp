@@ -24,6 +24,7 @@
 #include "audio-enhancements.h"
 #include "audio-speech.h"
 #include "page.h"
+#include "dialogue.h"
 #include "realtime.h"
 #include "served-models.h"
 
@@ -33,7 +34,8 @@
 // the regions where the detection model finds that someone speaks, and the enhancement model speech.cpp's own
 // POST /v1/audio/enhancements (audio-enhancements.h); GET /v1/models gives the models with their
 // information, and GET /health says the server is up, which it is once the models given are loaded. A WebSocket at
-// /v1/realtime carries OpenAI's Realtime transcription session (realtime.h). A failure of
+// /v1/realtime carries OpenAI's Realtime transcription session (realtime.h), and one at /v1/dialogue a conversation with
+// the dialogue model (dialogue.h). A failure of
 // the library becomes OpenAI's error object by its category alone (openai::library_error()). A model serves one request
 // at a time in the order they arrive, and a client that goes away while it waits or while its request runs cancels it.
 // On a loopback address the server also serves its page (page.h), which replaces the model of a task by one of the
@@ -53,7 +55,7 @@ const char * use_of(speech_task task) {
         case SPEECH_TASK_DETECTION: return "chunking_strategy of /v1/audio/transcriptions and server_vad of /v1/realtime";
         case SPEECH_TASK_DIARIZATION: return "diarized_json of /v1/audio/transcriptions and diarization of /v1/realtime";
         case SPEECH_TASK_ENHANCEMENT: return "/v1/audio/enhancements";
-        case SPEECH_TASK_DIALOGUE: break;
+        case SPEECH_TASK_DIALOGUE: return "/v1/dialogue";
     }
     throw std::logic_error("a task speech.h does not have");
 }
@@ -80,7 +82,8 @@ std::string error_message(const httplib::Response & res) {
 
 class Server {
 public:
-    Server(ServedModels & models, const Access & access, const Realtime & realtime) : models_(models), access_(access), realtime_(realtime) {}
+    Server(ServedModels & models, const Access & access, const Realtime & realtime, const Dialogues & dialogues)
+        : models_(models), access_(access), realtime_(realtime), dialogues_(dialogues) {}
 
     void route(httplib::Server & http) {
         http.set_pre_routing_handler([this](const httplib::Request & req, httplib::Response & res) { return admit(req, res); });
@@ -124,6 +127,7 @@ private:
     ServedModels & models_;
     const Access & access_;
     const Realtime & realtime_;
+    const Dialogues & dialogues_;
 
     /**
      * The model of the task the endpoint asks for; otherwise answers a 404, as for a path the server does not have,
@@ -163,8 +167,8 @@ private:
             return httplib::Server::HandlerResponse::Handled;
         }
         // A WebSocket is answered by its handler only once it is upgraded, so a refusal of one is an HTTP answer here.
-        if (req.path == "/v1/realtime") {
-            if (const auto refusal = realtime_.refusal(req)) {
+        if (req.path == "/v1/realtime" || req.path == "/v1/dialogue") {
+            if (const auto refusal = req.path == "/v1/realtime" ? realtime_.refusal(req) : dialogues_.refusal(req)) {
                 send_error(res, *refusal);
                 return httplib::Server::HandlerResponse::Handled;
             }
@@ -420,8 +424,13 @@ int run_serve(const CommandLine & line, FILE *) {
     if (line.args.empty()) std::fprintf(stderr, "  %s\n", terminal::paint(terminal::Color::Gray, "No model yet: pick one of each task on the page").c_str());
     if (!loading.voices.empty()) {
         const auto synthesis = models.of(SPEECH_TASK_SYNTHESIS);
-        if (!synthesis) throw UsageError("--add-voice adds voices to the synthesis model, and none is given");
-        for (const auto & [name, file] : loading.voices) synthesis->add_voice(name, file);
+        const auto dialogue = models.of(SPEECH_TASK_DIALOGUE);
+        if (!synthesis && !dialogue) throw UsageError("--add-voice adds voices to the synthesis and the dialogue model, and neither is given");
+        for (const auto & [name, file] : loading.voices) {
+            for (const auto & served : {synthesis, dialogue}) {
+                if (served) served->add_voice(name, file);
+            }
+        }
     }
     give_defaults(models, line);
     for (const auto & served : models.all()) {
@@ -444,9 +453,11 @@ int run_serve(const CommandLine & line, FILE *) {
     const Access access(host, bound, line.values("--cors-origin"));
     log_clients(!access.loopback());
     Realtime realtime(models, access, kUpload);
-    Server server(models, access, realtime);
+    Dialogues dialogues(models, access);
+    Server server(models, access, realtime, dialogues);
     server.route(http);
     realtime.route(http);
+    dialogues.route(http);
     Page page(models, access);
     page.route(http);
     const std::string address = host.find(':') == std::string::npos ? host : "[" + host + "]";
@@ -468,19 +479,20 @@ Command serve_command() {
     c.usage = "serve [MODEL...] [options]";
     c.summary = "serve models over HTTP with OpenAI's audio API, and a page to try them";
     c.description =
-        "Loads each MODEL, one model of each task at most (synthesis, recognition, detection, diarization and\n"
-        "enhancement), warmed up unless --no-warmup, adds the voices of --add-voice to the synthesis model, and serves\n"
-        "them over HTTP: POST /v1/audio/speech, POST /v1/audio/transcriptions, which with chunking_strategy recognizes the\n"
-        "regions where the detection model finds speech and with response_format diarized_json gives each its speakers,\n"
-        "POST /v1/audio/enhancements, speech.cpp's own, which enhances a WAV file, GET /v1/models,\n"
-        "GET /health, and OpenAI's Realtime transcription over a WebSocket at /v1/realtime, which transcribes each buffer\n"
-        "the client commits, or with server_vad each region of the detection model, and the text agreed so far while it\n"
-        "is said, and with session.audio.input.diarization gives each utterance its speakers. It has no authentication\n"
+        "Loads each MODEL, one model of each task at most (synthesis, recognition, detection, diarization, enhancement\n"
+        "and dialogue), warmed up unless --no-warmup, adds the voices of --add-voice to the synthesis and the dialogue\n"
+        "model, and serves them over HTTP: POST /v1/audio/speech, POST /v1/audio/transcriptions, which with\n"
+        "chunking_strategy recognizes the regions where the detection model finds speech and with response_format\n"
+        "diarized_json gives each its speakers, POST /v1/audio/enhancements, speech.cpp's own, which enhances a WAV file,\n"
+        "GET /v1/models, GET /health, OpenAI's Realtime transcription over a WebSocket at /v1/realtime, which transcribes\n"
+        "each buffer the client commits, or with server_vad each region of the detection model, and the text agreed so\n"
+        "far while it is said, and with session.audio.input.diarization gives each utterance its speakers, and a\n"
+        "conversation with the dialogue model over speech.cpp's own WebSocket at /v1/dialogue. It has no authentication\n"
         "and no TLS, and refuses a request that a web page at another origin than --cors-origin's sends. On 127.0.0.1,\n"
         "::1 or localhost it also serves a page on which to pick models of the catalog, fetch them and try them, at the\n"
         "address it prints; --open opens it, and starts the server without a model if none is given. A request option\n"
-        "given as a flag is the default, in place of the model's own, of every request that does not set it on each\n"
-        "MODEL that takes it; a model the page loads keeps its own defaults.";
+        "given as a flag is the default, in place of the model's own, of every request that does not set it on each MODEL\n"
+        "that takes it; a model the page loads keeps its own defaults.";
     c.flags = {
         {"--host", "ADDRESS", false, "the address to listen on, 127.0.0.1 unless given"},
         {"--port", "N", false, "the port, 8080 unless given; 0 for any free one"},

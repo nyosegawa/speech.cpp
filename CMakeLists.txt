@@ -347,6 +347,7 @@ add_executable(speech-cli
     tools/server/access.cpp
     tools/server/page.cpp
     tools/server/realtime.cpp
+    tools/server/dialogue.cpp
 )
 set_target_properties(speech-cli PROPERTIES OUTPUT_NAME speech)
 target_include_directories(speech-cli PRIVATE tools/common tools/cli tools/catalog tools/server vendor/cpp-httplib vendor/miniaudio)

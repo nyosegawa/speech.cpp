@@ -68,10 +68,14 @@ export async function* load(name, signal) {
   }
 }
 
-/** Adds a voice made from a WAVE recording to the synthesis model, and returns the model as the server now holds it. */
-export async function addVoice(name, recording) {
+/**
+ * Adds a voice made from a WAVE recording to the model of `task`, synthesis or dialogue, and returns the model as the
+ * server now holds it.
+ */
+export async function addVoice(name, recording, task = 'synthesis') {
   const form = new FormData();
   form.append('name', name);
+  form.append('task', task);
   form.append('file', recording, 'recording.wav');
   return (await (await call('/speech/voices', { method: 'POST', body: form })).json()).held;
 }

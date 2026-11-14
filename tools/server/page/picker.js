@@ -6,11 +6,21 @@
 import * as api from './api.js';
 import { languageList, languageNames, startPhrase } from './languages.js';
 
-const TITLES = { synthesis: 'Models to speak with', recognition: 'Models to transcribe with', detection: 'Models to find speech with' };
-const ROLES = { synthesis: 'Model to speak with', recognition: 'Model to transcribe with', detection: 'Model to find speech with' };
-const LABELS = { synthesis: 'Speak with', recognition: 'Transcribe with', detection: 'Find speech with' };
+const TITLES = {
+  synthesis: 'Models to speak with',
+  recognition: 'Models to transcribe with',
+  detection: 'Models to find speech with',
+  dialogue: 'Models to talk with',
+};
+const ROLES = {
+  synthesis: 'Model to speak with',
+  recognition: 'Model to transcribe with',
+  detection: 'Model to find speech with',
+  dialogue: 'Model to talk with',
+};
+const LABELS = { synthesis: 'Speak with', recognition: 'Transcribe with', detection: 'Find speech with', dialogue: 'Talk with' };
 /** What the button says while the task has no model: a panel can work without a detection model. */
-const NONE = { synthesis: 'Choose a model', recognition: 'Choose a model', detection: 'None' };
+const NONE = { synthesis: 'Choose a model', recognition: 'Choose a model', detection: 'None', dialogue: 'Choose a model' };
 
 function gigabytes(bytes) {
   return `${(bytes / 1e9).toFixed(2)} GB`;

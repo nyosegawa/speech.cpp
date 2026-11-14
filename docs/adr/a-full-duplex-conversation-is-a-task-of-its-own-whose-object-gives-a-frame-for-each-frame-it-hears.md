@@ -43,5 +43,6 @@ The alternatives were turned down:
 
 ## Consequences
 
-- The tools that serve the other tasks refuse a dialogue model until they hold conversations.
+- `speech talk`, the worker and `speech serve` hold conversations, the server over a WebSocket of its own
+  ([speech-serve-holds-one-conversation-at-a-time-over-its-own-websocket-at-v1-dialogue.md](speech-serve-holds-one-conversation-at-a-time-over-its-own-websocket-at-v1-dialogue.md)).
 - A model of another kind with frames of another length takes the same object; the model information says the length.

@@ -6,8 +6,8 @@
 
 import { languageName } from './languages.js';
 
-const COMMON = new Set(['voice', 'language', 'speed', 'seed', 'instructions', 'prompt']);
-const LONG = new Set(['instructions', 'prompt']);
+const COMMON = new Set(['voice', 'language', 'speed', 'seed', 'instructions', 'prompt', 'name', 'persona', 'speak_first']);
+const LONG = new Set(['instructions', 'prompt', 'persona']);
 /** A bound at or past which a range says nothing a user needs: the largest int32 and 2^53 - 1 among them. */
 const UNBOUNDED = 1e6;
 let fieldCount = 0;
