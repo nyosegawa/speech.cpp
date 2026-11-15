@@ -30,11 +30,11 @@ on the M5 with its screen locked, and the peak memory that of `speech talk` with
 
 | Type | File | Hidden state | Speak or not | Latent | Step p50, M5 | Peak memory, M5 |
 |---|---|---|---|---|---|---|
-| F16 | 10.56 GB | 66.5 dB | 74.8 dB | 57.4 dB | 92 ms | 10.84 GB |
-| Q8_0 | 6.62 GB | 40.1 dB | 40.7 dB | 28.0 dB | 64 ms | 6.90 GB |
-| Q6_K | 5.61 GB | 26.7 dB | 17.3 dB | 17.7 dB | 57 ms | 5.88 GB |
-| Q5_K | 5.05 GB | 9.0 dB | -4.0 dB | 9.0 dB | 52 ms | 5.33 GB |
-| Q4_K | 4.52 GB | 7.4 dB | -3.6 dB | 2.7 dB | 49 ms | 4.80 GB |
+| F16 | 10.56 GB | 66.5 dB | 74.8 dB | 57.4 dB | 89 ms | 10.84 GB |
+| Q8_0 | 6.62 GB | 40.1 dB | 40.7 dB | 28.0 dB | 60 ms | 6.90 GB |
+| Q6_K | 5.61 GB | 26.7 dB | 17.3 dB | 17.7 dB | 54 ms | 5.89 GB |
+| Q5_K | 5.05 GB | 9.0 dB | -4.0 dB | 9.0 dB | 49 ms | 5.33 GB |
+| Q4_K | 4.52 GB | 7.4 dB | -3.6 dB | 2.7 dB | 46 ms | 4.80 GB |
 | official MLX, float32 | | 65.9 dB | 77.7 dB | 54.8 dB | | |
 | official MLX, bfloat16 | | 41.4 dB | 53.4 dB | 29.9 dB | 86 ms | |
 | official MLX, 8-bit | | 33.2 dB | 22.5 dB | 23.2 dB | 56 ms | |
@@ -58,8 +58,8 @@ F16 lies as close to the official float32 as the official MLX code in float32 do
   the first frame.
 - `speech talk --live` and the page's Talk tab play the frames as they come. Use headphones: with speakers the model
   hears itself. A conversation that falls a second behind stops with `device`: the device computes the frames slower
-  than they last, and a smaller type or a faster device keeps up. On a Mac whose screen is busy drawing, F16 takes
-  close to a frame for each step where Q8_0 keeps well within it ([Speed](#speed)).
+  than they last, and a smaller type or a faster device keeps up. On a Mac whose screen is busy drawing, F16's steps
+  take most of a frame where Q8_0's keep well within it ([Speed](#speed)).
 - On a WAVE file, `speech talk` writes the model's frames end to end, one frame for the start and one for each whole
   frame of the file, so that the reply lines up with the file in time.
 - `speak_first` makes the model open the conversation instead of waiting to be spoken to.
@@ -144,17 +144,17 @@ nothing else drew on its GPU:
 
 | Device | Type | Step p50 | Step p99 | RTFx |
 |---|---|---|---|---|
-| Apple M5, Metal | F16 | 92 ms | 94 ms | 1.45 |
-| Apple M5, Metal | Q8_0 | 64 ms | 65 ms | 2.09 |
-| Apple M5, Metal | Q6_K | 57 ms | 58 ms | 2.35 |
-| Apple M5, Metal | Q5_K | 52 ms | 54 ms | 2.55 |
-| Apple M5, Metal | Q4_K | 49 ms | 50 ms | 2.73 |
-| Apple M5, CPU | Q8_0 | 119 ms | 122 ms | 1.12 |
+| Apple M5, Metal | F16 | 89 ms | 92 ms | 1.50 |
+| Apple M5, Metal | Q8_0 | 60 ms | 64 ms | 2.20 |
+| Apple M5, Metal | Q6_K | 54 ms | 57 ms | 2.49 |
+| Apple M5, Metal | Q5_K | 49 ms | 51 ms | 2.71 |
+| Apple M5, Metal | Q4_K | 46 ms | 47 ms | 2.91 |
+| Apple M5, CPU | Q8_0 | 118 ms | 122 ms | 1.12 |
 | NVIDIA GeForce RTX 2080, Vulkan | Q8_0, 600 s | 34 ms | 35 ms | 3.94 |
 | NVIDIA GeForce RTX 2080, Vulkan | Q4_K | 26 ms | 28 ms | 5.07 |
 
 A step is the user's frame encoded, the language model's row with the head, and the model's frame decoded; a
 conversation keeps up while its steps take less than a frame, 133 ms. A screen that draws shares the GPU: on the same
-M5 with its screen on and a desktop app drawing, the steps took 119 ms in F16, up to 14 of 143 of them longer than a
-frame, and 77 ms in Q8_0. The official MLX session, timed on the same M5 with its screen locked over 428 steps, took
-86 ms in bfloat16 and 56 ms in 8-bit.
+M5 with its screen on and the desktop drawing, five runs took 92 to 108 ms a step in F16 and 65 to 81 ms in Q8_0, and
+the official MLX session 89 to 109 ms in bfloat16 and 58 to 83 ms in 8-bit. With the screen locked, the official
+session took 86 ms in bfloat16 and 56 ms in 8-bit over 428 steps.
