@@ -274,7 +274,7 @@
       "repository": "sakasegawa/Haru-4B-GGUF",
       "type": "f16",
       "start": [],
-      "revision": "34a494c9a0423167e684d3a04324f051405d2ae9",
+      "revision": "fc026182f7bbfaa0400b2d44358a5e9e327b957f",
       "task": "dialogue",
       "languages": ["de", "en", "es", "fr", "ja", "ko", "pt", "ru", "zh"],
       "voice_files": true,
