@@ -38,12 +38,26 @@ function check(m, status) {
                         option ? m.UTF8ToString(option) : null);
 }
 
+/** The error of the module's memory, which cannot grow to hold `what`. */
+function outOfMemory(m, what) {
+  return new SpeechError('out_of_memory', `the module's memory of ${m.HEAPU8.length} bytes cannot grow to hold ${what}; `
+                         + 'free a model or give less audio', null);
+}
+
 /**
- * Runs `call` with the address of a word that the library writes, as the C API's out parameters, and returns the word:
- * a pointer, which a module of more than 2 GB holds above 2^31, read unsigned.
+ * The address of `bytes` of the module's memory, which malloc() gives as 0, and which would then be written over the
+ * module's own data, where the memory cannot grow to hold them. A pointer of a module of more than 2 GB is above 2^31
+ * and read unsigned.
  */
+function alloc(m, bytes) {
+  const at = bytes < 2 ** 32 ? m._malloc(bytes) >>> 0 : 0;
+  if (!at) throw outOfMemory(m, `${bytes} bytes more`);
+  return at;
+}
+
+/** Runs `call` with the address of a word that the library writes, as the C API's out parameters, and returns the word. */
 function out(m, call) {
-  const at = m._malloc(4) >>> 0;
+  const at = alloc(m, 4);
   try {
     check(m, call(at));
     return m.HEAPU32[at >>> 2];
@@ -55,6 +69,7 @@ function out(m, call) {
 /** Runs `call` with `text` in the module's memory as a UTF-8 C string. */
 function withString(m, text, call) {
   const at = m.stringToNewUTF8(text) >>> 0;
+  if (!at) throw outOfMemory(m, `a string of ${text.length} characters`);
   try {
     return call(at);
   } finally {
@@ -73,7 +88,13 @@ function setOption(m, request, name, value) {
     if (typeof value !== 'string') refuse('a string');
     withString(m, value, (text) => check(m, m._speech_request_set_string(request, option, text)));
   } else if (type === TYPE_INT) {
-    if (typeof value !== 'bigint' && !Number.isInteger(value)) refuse('an integer');
+    // WebAssembly takes a BigInt for an int64_t modulo 2^64, and a Number past 2^53 is not the integer it was written as.
+    if (typeof value === 'number' ? !Number.isSafeInteger(value) : typeof value !== 'bigint') {
+      refuse('an integer, a Number of at most 2^53 or a BigInt');
+    }
+    if (BigInt(value) < -(2n ** 63n) || BigInt(value) >= 2n ** 63n) {
+      throw new SpeechError('out_of_range', `the option ${name} is ${value}, which is not a 64-bit integer`, name);
+    }
     check(m, m._speech_request_set_int(request, option, BigInt(value)));
   } else if (type === TYPE_FLOAT) {
     if (typeof value !== 'number') refuse('a number');
@@ -168,7 +189,7 @@ class Model {
     return this.#request(samples, sampleRate, options, (request) => m._speech_detect(request), (result) => {
       const n = m._speech_result_segment_count(result) >>> 0;
       const regions = [];
-      const at = m._malloc(24) >>> 0;
+      const at = alloc(m, 24);
       try {
         for (let i = 0; i < n; i++) {
           check(m, m._speech_result_segment(result, i, at, at + 8, at + 16));
@@ -200,7 +221,7 @@ class Model {
     if (!(samples instanceof Float32Array)) throw new TypeError('the samples are a Float32Array');
     const request = out(m, (at) => m._speech_request_new(this.#live(), at));
     try {
-      const audio = m._malloc(Math.max(1, samples.length) * 4) >>> 0;
+      const audio = alloc(m, Math.max(1, samples.length) * 4);
       try {
         m.HEAPF32.set(samples, audio >>> 2);
         check(m, m._speech_request_set_audio(request, audio, samples.length, sampleRate));

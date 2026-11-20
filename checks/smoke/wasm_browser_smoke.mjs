@@ -1,7 +1,8 @@
 // Runs the WebAssembly build of speech.cpp in a headless Chrome through its page (wasm/index.html), as a script drives
 // it, and fails on a defect: the regions where someone speaks in each WAVE file must be those `speech vad` finds in it on
-// the CPU, number for number; the build must refuse more threads than it starts, and a model file cut short, as errors
-// of the C API naming the input rather than an abort, and answer the next request after both. It prints the time to load
+// the CPU, number for number; the build must refuse more threads than it starts, a model file cut short and an integer
+// option past what the C API takes, as errors naming the input rather than an abort or a value of another size, and
+// answer the next request after them; a run must keep its model while another loads one. It prints the time to load
 // the model, the RTFx of each file and the most memory the module held. The page is served from 127.0.0.1 with COOP and
 // COEP, which the build with threads needs, and the files given at /files/. Chrome is the one at $CHROME, or macOS's;
 // the server and Chrome are stopped however the script ends.
@@ -165,18 +166,34 @@ try {
     throw new Error(`two threads in the build without threads: ${JSON.stringify(threads)}, where invalid_argument naming threads was due`);
   }
   console.log(`two threads refused: ${threads.error.status} (${threads.error.option}): ${threads.error.message}`);
-  const cut = await page(`
+  // The model cut in half is loaded while a run of the whole one is under way, which must keep its own model. Both are
+  // Blobs at hand, so that the second load reaches the Worker before the first run's detection.
+  const [whole, cut] = await page(`
     const whole = await (await fetch(${JSON.stringify(urls[0])})).blob();
     const model = new File([whole.slice(0, Math.floor(whole.size / 2))], 'cut.gguf');
-    return await speechPage.run({ model, ${one} }).catch(failure);
+    return await Promise.all([
+      speechPage.run({ model: new File([whole], 'whole.gguf'), ${one} }).catch(failure),
+      speechPage.run({ model, ${one} }).catch(failure),
+    ]);
   `);
   if (cut.error?.status !== 'model_file') throw new Error(`a model cut in half: ${JSON.stringify(cut)}, where model_file was due`);
-  console.log(`a model cut in half refused: ${cut.error.status}: ${cut.error.message}`);
+  if (whole.error) throw new Error(`a run with a model cut in half after it failed: ${JSON.stringify(whole.error)}`);
+  const differsBeside = departure(whole.detections, native.slice(0, 1));
+  if (differsBeside) throw new Error(`a run with a model cut in half after it: ${differsBeside}`);
+  console.log(`a model cut in half refused: ${cut.error.status}: ${cut.error.message}; the run before it kept its own model`);
+  // A BigInt past 64 bits would reach the library modulo 2^64, as 0, and a Number past 2^53 as another integer.
+  for (const [value, status] of [['-(2n ** 64n)', 'out_of_range'], ['2 ** 60', 'invalid_argument']]) {
+    const wide = await run(`{ model: ${JSON.stringify(urls[0])}, ${one}, options: { min_speech_duration_ms: ${value} } }`);
+    if (wide.error?.status !== status || wide.error.option !== 'min_speech_duration_ms') {
+      throw new Error(`min_speech_duration_ms of ${value}: ${JSON.stringify(wide)}, where ${status} naming it was due`);
+    }
+    console.log(`min_speech_duration_ms of ${value} refused: ${wide.error.status}: ${wide.error.message}`);
+  }
   const again = await run(`{ model: ${JSON.stringify(urls[0])}, ${one} }`);
   if (again.error) throw new Error(`the page failed after the errors: ${JSON.stringify(again.error)}`);
   const differsAgain = departure(again.detections, native.slice(0, 1));
   if (differsAgain) throw new Error(`after the errors, ${differsAgain}`);
-  console.log('the next request after both: the same regions');
+  console.log('the next request after them: the same regions');
 
   if (errors.length) throw new Error(`the page threw: ${errors.join('; ')}`);
   console.log('ok');

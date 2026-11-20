@@ -48,12 +48,24 @@ async function blobOf(source) {
 }
 
 /** Loads `model` and detects speech in each of `audio`, with the threads and the request options given. */
-async function run({ model, audio, threads, options = {} }) {
+async function runNow({ model, audio, threads, options = {} }) {
   const open = await library();
   const loaded = await call('load', { blob: await blobOf(model), threads });
   const detections = [];
   for (const source of audio) detections.push(await call('detect', { blob: await blobOf(source), options }));
   return { version: open.version, open: open.ms, load: loaded.ms, info: loaded.info, detections, memory: detections.at(-1)?.memory ?? loaded.memory };
+}
+
+let queue = Promise.resolve();
+
+/**
+ * runNow() once the runs before it have ended: the Worker holds one model, which a run that loads another while one
+ * detects would replace or free under it.
+ */
+function run(args) {
+  const result = queue.then(() => runNow(args));
+  queue = result.catch(() => {});
+  return result;
 }
 
 const seconds = (s) => `${s.toFixed(3)} s`;
