@@ -219,6 +219,7 @@ FastConformer のモデル(parakeet、ReazonSpeech、Haas-ja-v1.0)は、2026-10-
 | [Server and page](docs/server.md) | `speech serve` と OpenAI の音声 API |
 | [Worker protocol](docs/worker.md) | プログラムから使う `speech worker` |
 | [C API](docs/c-api.md) | `speech.h` |
+| [Browser](docs/browser.md) | WebAssembly のビルド。ウェブページの中で Silero VAD を動かす |
 
 ## ライセンス
 

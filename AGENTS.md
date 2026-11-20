@@ -3,7 +3,7 @@
 ## Project
 
 speech.cpp runs speech models in C++ on [ggml](https://github.com/ggml-org/ggml), on macOS arm64 with Metal,
-Windows x64 with Vulkan and Linux x64 with Vulkan or the CPU alone, as a library with one C API,
+Windows x64 with Vulkan and Linux x64 with Vulkan or the CPU alone, and in browsers as WebAssembly, as a library with one C API,
 `include/speech.h`, for any program that speaks text, recognizes speech or detects it: ASIST's worker, other tools, bindings
 and other people's applications. Each model's official
 implementation is the reference: every stage of a port is checked against tensors dumped from it.
@@ -97,6 +97,12 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   `served-models.cpp` holds one model of each task and replaces it once its requests have ended. `page/` is the page
   of `speech serve --open`, plain HTML, CSS and JavaScript modules compiled into `speech`, which `page.cpp` serves
   with the endpoints that fetch and load models; `access.cpp` guards them with the Host and the Origin.
+- `wasm/` holds what goes beside the library built for WebAssembly, which `emcmake cmake` configures: the C API
+  compiled whole into `libspeech.js` and `libspeech.wasm`, with the families `SPEECH_WASM_FAMILIES` names, each a line
+  of the table of families that the build keeps. `speech.mjs` is the thin module that calls it from a Worker and reads
+  a model from its Blob through WORKERFS, `wav.mjs` reads a WAVE file as `src/common/wav.cpp` does, and `index.html`,
+  `page.mjs` and `worker.mjs` are a page that detects speech in a file with them. The build makes neither the
+  executables nor the checks.
 - The smoke scripts in `checks/smoke/` drive each entry point as its caller does and fail on a defect:
   `worker_smoke.py`, `worker_recognition_smoke.py`, `worker_enhancement_smoke.py` and `worker_dialogue_smoke.py` the
   worker protocol through
@@ -108,8 +114,9 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   `server_client.py`, which stops the
   server however the script ends, `server_page_browser_smoke.mjs` the page itself in a headless Chrome, as a person uses
   it, `server_openai_smoke.py` the server through the official openai-python client,
-  `speech_cli_smoke.py` the command line against the worker, and `models_smoke.py` the naming, fetching and removing of
-  models against a temporary model folder. A script that needs packages outside the standard library is a uv script
+  `speech_cli_smoke.py` the command line against the worker, `models_smoke.py` the naming, fetching and removing of
+  models against a temporary model folder, and `wasm_browser_smoke.mjs` the WebAssembly build through its page in a
+  headless Chrome against `speech vad`. A script that needs packages outside the standard library is a uv script
   with its dependencies pinned in the script and in a lock file beside it.
 - `reference/<model>/` holds, per model, a uv environment that pins the official code, PyTorch and the rest,
   `pins.py`, which pins the checkpoints by revision, the conversion of the official weights to one GGUF file per
@@ -236,8 +243,9 @@ comment.
   `checks/smoke/worker_enhancement_smoke.py` with RE-USE; a change to the server runs `checks/smoke/server_smoke.py`,
   `checks/smoke/server_realtime_smoke.py`, `checks/smoke/server_diarization_smoke.py`,
   `checks/smoke/server_enhancement_smoke.py`, `checks/smoke/server_dialogue_smoke.py` and `checks/smoke/server_page_smoke.py`, one to the page `checks/smoke/server_page_browser_smoke.mjs` (with `--dialogue` and Haru for the talk panel), one to the command
-  line or the parser `checks/smoke/speech_cli_smoke.py`, with a model of each family, and one to `tools/catalog/`
-  `checks/smoke/models_smoke.py`.
+  line or the parser `checks/smoke/speech_cli_smoke.py`, with a model of each family, one to `tools/catalog/`
+  `checks/smoke/models_smoke.py`, and one to `wasm/`, to the library's code that a WebAssembly build compiles
+  differently or to the table of families `checks/smoke/wasm_browser_smoke.mjs`, with Silero VAD.
 - Never commit on main. Every change reaches main through a pull request, one coherent unit each: a
   model's stage, a fix, a refactor or a documentation change.
 - Commit messages and pull request titles are one English sentence in the imperative, without a prefix

@@ -252,6 +252,7 @@ more.
 | [Server and page](docs/server.md) | `speech serve` and OpenAI's audio API |
 | [Worker protocol](docs/worker.md) | `speech worker` for programs |
 | [C API](docs/c-api.md) | `speech.h` |
+| [Browser](docs/browser.md) | the WebAssembly build: Silero VAD inside a web page |
 
 ## License
 

@@ -35,19 +35,40 @@ namespace {
 /**
  * The families speech.cpp runs: the task of each, the layout its reader takes, which names its general.architecture,
  * its table of options with what else its information says, its engine, and how it makes a voice file where it takes
- * them. Adding a family is adding its line.
+ * them. Adding a family is adding its line. A build holds the line of each family it takes, which CMake marks with
+ * SPEECH_FAMILY_<FAMILY>: every family, but in WebAssembly those it is configured with.
  */
 const Family families[] = {
+#ifdef SPEECH_FAMILY_QWEN3_TTS
     {SPEECH_TASK_SYNTHESIS, qwen3_tts_layout, describe_qwen3_tts, load_qwen3_tts, nullptr},
+#endif
+#ifdef SPEECH_FAMILY_IRODORI_TTS
     {SPEECH_TASK_SYNTHESIS, irodori::model_layout, describe_irodori_tts, load_irodori_tts, make_irodori_tts_voice},
+#endif
+#ifdef SPEECH_FAMILY_DRAMA3
     {SPEECH_TASK_SYNTHESIS, drama3::model_layout, describe_drama3, load_drama3, make_drama3_voice},
+#endif
+#ifdef SPEECH_FAMILY_FASTCONFORMER
     {SPEECH_TASK_RECOGNITION, fastconformer::layout, describe_fastconformer, load_fastconformer, nullptr},
+#endif
+#ifdef SPEECH_FAMILY_QWEN3_ASR
     {SPEECH_TASK_RECOGNITION, qwen3_asr::layout, describe_qwen3_asr, load_qwen3_asr, nullptr},
+#endif
+#ifdef SPEECH_FAMILY_NEMOTRON_TRANSCRIBE
     {SPEECH_TASK_RECOGNITION, nemotron_transcribe::layout, describe_nemotron_transcribe, load_nemotron_transcribe, nullptr},
+#endif
+#ifdef SPEECH_FAMILY_SILERO_VAD
     {SPEECH_TASK_DETECTION, silero_vad::layout, describe_silero_vad, load_silero_vad, nullptr},
+#endif
+#ifdef SPEECH_FAMILY_SORTFORMER
     {SPEECH_TASK_DIARIZATION, sortformer::layout, describe_sortformer, load_sortformer, nullptr},
+#endif
+#ifdef SPEECH_FAMILY_SEMAMBA
     {SPEECH_TASK_ENHANCEMENT, semamba::layout, describe_semamba, load_semamba, nullptr},
+#endif
+#ifdef SPEECH_FAMILY_HARU
     {SPEECH_TASK_DIALOGUE, haru::model_layout, describe_haru, load_haru, make_haru_voice},
+#endif
 };
 
 thread_local std::string last_error;
@@ -253,7 +274,7 @@ const Family & family_of(const std::string & path) {
     }
     std::string known;
     for (const Family & f : families) known += (known.empty() ? "" : ", ") + std::string(f.layout.architecture);
-    throw Error(Fault::File, path + " is a model of " + architecture + ", which speech.cpp does not run; it runs " + known);
+    throw Error(Fault::File, path + " is a model of " + architecture + ", which this build of speech.cpp does not run; it runs " + known);
 }
 
 const OptionSpec * FileInfo::spec(speech_option option) const {
@@ -457,6 +478,12 @@ speech_status speech_load_params_set_threads(speech_load_params * params, int th
         require(params, "params");
         if (threads < 1) {
             throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the threads are " + std::to_string(threads) + "; give 1 or more", "threads");
+        }
+        if (threads > max_threads()) {
+            const std::string most = std::to_string(max_threads());
+            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "the threads are " + std::to_string(threads) + ", and this build of speech.cpp computes with " +
+                                                              (max_threads() == 1 ? "one thread alone; give 1" : "at most " + most + "; give 1 to " + most),
+                           "threads");
         }
         params->threads = threads;
         return SPEECH_OK;

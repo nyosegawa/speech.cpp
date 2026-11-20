@@ -1,9 +1,10 @@
-# Releases run on macOS arm64 with Metal, Windows x64 with Vulkan, and Linux x64 on glibc 2.34 with Vulkan or the CPU
+# Releases run on macOS arm64 with Metal, Windows x64 with Vulkan, Linux x64 on glibc 2.34 with Vulkan or the CPU, and browsers in WebAssembly
 
 ## Context
 
 A release is one archive per platform, `speech-<VERSION>-<platform>.zip`, holding `speech`, `libspeech` and `speech.h`,
-which CI builds and checks on every run. Vulkan runs the GPUs of NVIDIA, AMD and Intel, NVIDIA's at the speeds
+or for a browser the library in WebAssembly, which CI builds and checks on every run. Callers such as ASIST pin an
+archive by its SHA-256. Vulkan runs the GPUs of NVIDIA, AMD and Intel, NVIDIA's at the speeds
 docs/models/ lists for an RTX 2080, and on Windows every GPU driver of the three installs the Vulkan loader,
 `vulkan-1.dll`.
 
@@ -14,6 +15,10 @@ servers and containers often have no GPU and no Vulkan loader at all. Measured o
 other functions glibc 2.34 moved into libc), and nothing from 2.35. The Linux Vulkan SDK 1.4.357.0's `glslc` and loader
 need glibc 2.34 and GCC 11's libstdc++ (`GLIBCXX_3.4.29`). GitHub retired its Ubuntu 20.04 runners in April 2025;
 `ubuntu-22.04` is the oldest it hosts.
+
+A browser runs a page's code as WebAssembly on the CPU, in a memory of the page's own, and runs ggml's SIMD128 code
+where it runs WebAssembly's 128-bit SIMD: Chrome 91, Firefox 89 and Safari 16.4 and later. speech.cpp's C++ throws and
+catches, which in WebAssembly takes its exceptions: Chrome 95, Firefox 100 and Safari 15.2 and later.
 
 ## Decision
 
@@ -35,6 +40,9 @@ need glibc 2.34 and GCC 11's libstdc++ (`GLIBCXX_3.4.29`). GitHub retired its Ub
   that needs another. MSVC's OpenMP runtime, `vcomp140.dll`, comes only with the Visual C++ Redistributable, which
   Windows does not ship.
 - **No CUDA build is released.**
+- **Browsers have one archive** (`wasm`): the C API built with Emscripten for WebAssembly with SIMD128 and its
+  exceptions, with the module that calls it from a module Worker and a page that tries it, which Chrome 95, Firefox 114
+  and Safari 16.4 and later run. It runs on the CPU and holds the families that are checked in a browser.
 
 The alternatives were turned down:
 
@@ -59,10 +67,14 @@ The alternatives were turned down:
 - A CUDA build. It would carry cuBLAS, several hundred megabytes, or require the user's CUDA toolkit to match,
   would tie the binary to a range of NVIDIA drivers, and would put the CUDA toolkit and its kernel compilation into CI.
   It stays a build from source (`-DGGML_CUDA=ON`).
+- Leaving the WebAssembly build to be built from source with Emscripten. Every page would build a module of its own,
+  with its own Emscripten, and none would be the module that CI checks and that a caller can pin by its SHA-256 as it
+  pins the other archives.
 
 ## Consequences
 
 A CPU without AVX2 is not supported by any release, and a Mac with an Intel CPU, a system of another architecture and a
-Linux system with musl build from source. The installers pick the archive from these rules. When GitHub retires
+Linux system with musl build from source; a browser without WebAssembly's SIMD128 runs no release. The installers pick
+the archive from these rules and leave out the WebAssembly one, which a page serves. When GitHub retires
 `ubuntu-22.04`, the Linux jobs move to the next image, and the glibc check shows at once whether the floor moves; the
 floor in the workflow, the installer, README.md, docs/install.md, AGENTS.md and this record then change together.

@@ -26,8 +26,8 @@ speech vad silero-vad --min-silence-duration-ms 1000 --max-speech-duration-s 10 
   ends, once 100 ms of silence has ended the region. A region under way is said to be kept once its speech has lasted
   longer than `min_speech_duration_ms`, 250 ms by default, which it then is.
 - The file is F32 alone: `speech quantize` writes no other type of it.
-- `speech vad`, `speech asr --vad`, `speech serve` (for `chunking_strategy`) and the C API's `speech_detect()` and
-  detections take it; `speech worker` does not.
+- `speech vad`, `speech asr --vad`, `speech serve` (for `chunking_strategy`), the C API's `speech_detect()` and
+  detections, and the WebAssembly build in a web page ([browser.md](../browser.md)) take it; `speech worker` does not.
 
 ## Options
 

@@ -13,7 +13,23 @@ endif()
 # ggml is linked in statically, so that a release is speech beside the shared libspeech and needs no library of ggml.
 option(BUILD_SHARED_LIBS "Build ggml as shared libraries" OFF)
 # The shared libspeech links the same static libraries as the executables.
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+if (NOT EMSCRIPTEN)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
+# A build configured with Emscripten's emcmake is the library alone, as WebAssembly for a page's Worker (wasm/). Its C++
+# throws and catches as every build does, with WebAssembly's exceptions, which Chrome 95, Firefox 100 and Safari 15.2
+# and later run; without them Emscripten aborts at the first throw. Emscripten's toolchain names the processor x86,
+# for projects that read a 32-bit platform from it, and ggml compiles its SIMD128 code only for a processor named wasm;
+# for any other it falls back to its generic C. ggml repacks weights only for instructions of x86, Arm and RISC-V,
+# and its repacking code, never run in WebAssembly, was 50 KB of the 410 KB of a gzipped module of Silero VAD
+# (Emscripten 7.0.0, 2026-11-21).
+if (EMSCRIPTEN)
+    set(CMAKE_SYSTEM_PROCESSOR wasm32)
+    set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+    set(GGML_CPU_REPACK OFF CACHE BOOL "" FORCE)
+    add_compile_options(-fwasm-exceptions)
+    add_link_options(-fwasm-exceptions)
+endif()
 # CI builds the submodule's ggml once, installs it with static libraries, and reuses it while the
 # submodule's commit stays the same; Vulkan's shaders alone take minutes to compile.
 option(SPEECH_INSTALLED_GGML "Link a ggml installed from the submodule, found through CMAKE_PREFIX_PATH" OFF)
@@ -70,7 +86,41 @@ if (WIN32)
     target_link_libraries(speechcommon PUBLIC shell32)
 endif()
 
-add_library(qwen3tts STATIC
+# The families the library runs, by their folders in src/families/, each with its engine, src/engines/<family>-engine.cpp.
+# A WebAssembly build takes the ones SPEECH_WASM_FAMILIES names, so that a page fetches the code of the models it runs
+# and no more; every other build takes them all, which speech and the checks need.
+set(SPEECH_ALL_FAMILIES qwen3-tts irodori-tts drama3 haru fastconformer qwen3-asr nemotron-transcribe silero-vad sortformer semamba)
+if (EMSCRIPTEN)
+    set(SPEECH_WASM_FAMILIES silero-vad CACHE STRING "The families of the WebAssembly build, by their folders in src/families/, or all")
+    if (SPEECH_WASM_FAMILIES STREQUAL "all")
+        set(SPEECH_FAMILIES ${SPEECH_ALL_FAMILIES})
+    else()
+        set(SPEECH_FAMILIES ${SPEECH_WASM_FAMILIES})
+    endif()
+    if (NOT SPEECH_FAMILIES)
+        message(FATAL_ERROR "SPEECH_WASM_FAMILIES names no family; name one or more of ${SPEECH_ALL_FAMILIES}, or all")
+    endif()
+    foreach(family ${SPEECH_FAMILIES})
+        if (NOT family IN_LIST SPEECH_ALL_FAMILIES)
+            message(FATAL_ERROR "SPEECH_WASM_FAMILIES names ${family}, which is not a family; the families are ${SPEECH_ALL_FAMILIES}, or all")
+        endif()
+    endforeach()
+else()
+    set(SPEECH_FAMILIES ${SPEECH_ALL_FAMILIES})
+endif()
+# A family's code is the library of its folder's name without dashes, made only where the build takes the family. Code
+# names the family in its includes ("qwen3-tts/codec.h"), since several families have a codec.h.
+function(speech_family family)
+    if (NOT family IN_LIST SPEECH_FAMILIES)
+        return()
+    endif()
+    string(REPLACE "-" "" target ${family})
+    add_library(${target} STATIC ${ARGN})
+    target_include_directories(${target} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/families)
+    target_link_libraries(${target} PUBLIC speechcommon)
+endfunction()
+
+speech_family(qwen3-tts
     src/families/qwen3-tts/layout.cpp
     src/families/qwen3-tts/codec.cpp
     src/families/qwen3-tts/talker.cpp
@@ -79,11 +129,8 @@ add_library(qwen3tts STATIC
     src/families/qwen3-tts/graph-sampler.cpp
     src/families/qwen3-tts/synthesizer.cpp
 )
-# Code names the family in its includes ("qwen3-tts/codec.h"), since both families have a codec.h.
-target_include_directories(qwen3tts PUBLIC src/families)
-target_link_libraries(qwen3tts PUBLIC speechcommon)
 
-add_library(irodoritts STATIC
+speech_family(irodori-tts
     src/families/irodori-tts/layout.cpp
     src/families/irodori-tts/text-normalizer.cpp
     src/families/irodori-tts/tokenizer.cpp
@@ -99,11 +146,9 @@ add_library(irodoritts STATIC
     src/families/irodori-tts/synthesizer.cpp
     src/families/irodori-tts/voice-file.cpp
 )
-target_include_directories(irodoritts PUBLIC src/families)
-target_link_libraries(irodoritts PUBLIC speechcommon)
 
 # FastConformer speech recognition (NVIDIA NeMo): the family.
-add_library(fastconformer STATIC
+speech_family(fastconformer
     src/families/fastconformer/layout.cpp
     src/families/fastconformer/encoder.cpp
     src/families/fastconformer/transducer.cpp
@@ -122,11 +167,9 @@ add_library(fastconformer STATIC
     src/families/fastconformer/vocabulary.cpp
     src/families/fastconformer/guard.cpp
 )
-target_include_directories(fastconformer PUBLIC src/families)
-target_link_libraries(fastconformer PUBLIC speechcommon)
 
 # Qwen3-ASR speech recognition (Qwen): the family.
-add_library(qwen3asr STATIC
+speech_family(qwen3-asr
     src/families/qwen3-asr/layout.cpp
     src/families/qwen3-asr/frontend.cpp
     src/families/qwen3-asr/encoder.cpp
@@ -137,47 +180,41 @@ add_library(qwen3asr STATIC
     src/families/qwen3-asr/split.cpp
     src/families/qwen3-asr/recognizer.cpp
 )
-target_include_directories(qwen3asr PUBLIC src/families)
-target_link_libraries(qwen3asr PUBLIC speechcommon)
 
 # Silero VAD speech detection (Silero Team): the family.
-add_library(silerovad STATIC
+speech_family(silero-vad
     src/families/silero-vad/layout.cpp
     src/families/silero-vad/network.cpp
     src/families/silero-vad/regions.cpp
     src/families/silero-vad/detector.cpp
 )
-target_include_directories(silerovad PUBLIC src/families)
-target_link_libraries(silerovad PUBLIC speechcommon)
 
-add_library(sortformer STATIC
+speech_family(sortformer
     src/families/sortformer/layout.cpp
     src/families/sortformer/segments.cpp
     src/families/sortformer/diarizer.cpp
 )
-target_include_directories(sortformer PUBLIC src/families)
-target_link_libraries(sortformer PUBLIC speechcommon)
 # The speaker cache's scores and the segments' times are float32 arithmetic whose roundings decide which frames the cache
 # keeps and whether two padded segments meet, rounded after each operation as torch rounds them: a fused multiply-add
 # moves a value by a unit in its last place. GCC fuses across statements by default and Clang within one; MSVC's
 # /fp:precise does not fuse.
 if (NOT MSVC)
-    target_compile_options(sortformer PRIVATE -ffp-contract=off)
     set_source_files_properties(src/common/sortformer-cache.cpp PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
+    if (TARGET sortformer)
+        target_compile_options(sortformer PRIVATE -ffp-contract=off)
+    endif()
 endif()
 
 # NVIDIA NemotronLabs RE-USE speech enhancement (NVIDIA): the family of SEMamba.
-add_library(semamba STATIC
+speech_family(semamba
     src/families/semamba/layout.cpp
     src/families/semamba/stft.cpp
     src/families/semamba/network.cpp
     src/families/semamba/enhancer.cpp
 )
-target_include_directories(semamba PUBLIC src/families)
-target_link_libraries(semamba PUBLIC speechcommon)
 
 # NVIDIA Nemotron 3.5 Transcribe speech recognition (NVIDIA): the family.
-add_library(nemotrontranscribe STATIC
+speech_family(nemotron-transcribe
     src/families/nemotron-transcribe/layout.cpp
     src/families/nemotron-transcribe/tokenizer.cpp
     src/families/nemotron-transcribe/encoder.cpp
@@ -192,15 +229,13 @@ add_library(nemotrontranscribe STATIC
     src/families/nemotron-transcribe/alignment.cpp
     src/families/nemotron-transcribe/timing.cpp
 )
-target_include_directories(nemotrontranscribe PUBLIC src/families)
 # The alignment computes as NumPy and PyTorch do, every product and sum rounded on its own.
 if(NOT MSVC)
     set_source_files_properties(src/families/nemotron-transcribe/alignment.cpp PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
 endif()
-target_link_libraries(nemotrontranscribe PUBLIC speechcommon)
 
 # Fish Audio Drama 3 speech synthesis (Fish Audio): the family.
-add_library(drama3 STATIC
+speech_family(drama3
     src/families/drama3/layout.cpp
     src/families/drama3/codec.cpp
     src/families/drama3/sampler.cpp
@@ -212,11 +247,9 @@ add_library(drama3 STATIC
     src/families/drama3/voice-file.cpp
     src/families/drama3/placement.cpp
 )
-target_include_directories(drama3 PUBLIC src/families)
-target_link_libraries(drama3 PUBLIC speechcommon)
 
 # Haru full-duplex spoken dialogue (higurashi): the family.
-add_library(haru STATIC
+speech_family(haru
     src/families/haru/layout.cpp
     src/families/haru/codec.cpp
     src/families/haru/head.cpp
@@ -226,25 +259,65 @@ add_library(haru STATIC
     src/families/haru/dialogue.cpp
     src/families/haru/voice-file.cpp
 )
-target_include_directories(haru PUBLIC src/families)
-target_link_libraries(haru PUBLIC speechcommon)
 
 # The C API, include/speech.h, twice: static for the executables, so that each stays one file, and shared as
 # libspeech for bindings and other programs. On Windows the two would both write speech.lib, the static one as
-# the library and the shared one as its import library, hence speech-static.
-set(SPEECH_SOURCES src/api/speech.cpp src/api/info.cpp src/api/request.cpp src/api/detection.cpp src/api/diarization.cpp src/api/enhancement.cpp src/api/dialogue.cpp src/api/voice.cpp
-    src/engines/qwen3-tts-engine.cpp src/engines/irodori-tts-engine.cpp src/engines/drama3-engine.cpp src/engines/fastconformer-engine.cpp
-    src/engines/qwen3-asr-engine.cpp src/engines/nemotron-transcribe-engine.cpp src/engines/silero-vad-engine.cpp src/engines/sortformer-engine.cpp
-    src/engines/semamba-engine.cpp src/engines/haru-engine.cpp)
+# the library and the shared one as its import library, hence speech-static. The table of families in
+# src/api/speech.cpp holds the line of each family the build takes, which SPEECH_FAMILY_<FAMILY> marks.
+set(SPEECH_SOURCES src/api/speech.cpp src/api/info.cpp src/api/request.cpp src/api/detection.cpp src/api/diarization.cpp src/api/enhancement.cpp src/api/dialogue.cpp src/api/voice.cpp)
+set(SPEECH_FAMILY_LIBRARIES "")
+set(SPEECH_FAMILY_DEFINITIONS "")
+foreach(family ${SPEECH_FAMILIES})
+    list(APPEND SPEECH_SOURCES src/engines/${family}-engine.cpp)
+    string(REPLACE "-" "" library ${family})
+    list(APPEND SPEECH_FAMILY_LIBRARIES ${library})
+    string(MAKE_C_IDENTIFIER "SPEECH_FAMILY_${family}" definition)
+    string(TOUPPER ${definition} definition)
+    list(APPEND SPEECH_FAMILY_DEFINITIONS ${definition})
+endforeach()
+set_source_files_properties(src/api/speech.cpp PROPERTIES COMPILE_DEFINITIONS "${SPEECH_FAMILY_DEFINITIONS}")
+
+# A WebAssembly build makes the C API once, as libspeech.js and libspeech.wasm, an ES module for a Worker that
+# wasm/speech.mjs wraps, and nothing else: the executables and the checks run
+# processes, terminals, devices and the network, which a browser does not give them. The module exports every function
+# speech.h declares, and Emscripten's file system with WORKERFS, which reads a model from a Blob as it is asked, so
+# that the weights are held once, in the module's memory. The memory grows as the model needs, up to the 4 GB a
+# 32-bit address reaches.
+if (EMSCRIPTEN)
+    file(STRINGS include/speech.h api_lines REGEX "^SPEECH_API .*speech_[a-z0-9_]+\\(")
+    set(exports _malloc _free)
+    foreach(line ${api_lines})
+        string(REGEX MATCH "speech_[a-z0-9_]+\\(" name "${line}")
+        string(REPLACE "(" "" name "${name}")
+        list(APPEND exports _${name})
+    endforeach()
+    list(JOIN exports "," exports)
+    add_executable(speech-wasm ${SPEECH_SOURCES})
+    target_include_directories(speech-wasm PRIVATE include src/engines)
+    target_link_libraries(speech-wasm PRIVATE ${SPEECH_FAMILY_LIBRARIES})
+    target_compile_definitions(speech-wasm PRIVATE SPEECH_VERSION="${PROJECT_VERSION}")
+    set_target_properties(speech-wasm PROPERTIES OUTPUT_NAME libspeech SUFFIX .js)
+    target_link_options(speech-wasm PRIVATE
+        -sMODULARIZE -sEXPORT_ES6 -sENVIRONMENT=worker
+        -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=4GB
+        -sEXPORTED_FUNCTIONS=${exports}
+        -sEXPORTED_RUNTIME_METHODS=FS,WORKERFS,UTF8ToString,stringToNewUTF8,HEAPU8,HEAP32,HEAPU32,HEAPF32,HEAPF64,HEAP64
+        -lworkerfs.js)
+    # The module that wraps the library and the page that tries it go beside it, as a release's archive holds them.
+    foreach(file speech.mjs wav.mjs worker.mjs page.mjs index.html)
+        configure_file(wasm/${file} ${CMAKE_CURRENT_BINARY_DIR}/${file} COPYONLY)
+    endforeach()
+    return()
+endif()
 
 add_library(speech-static STATIC ${SPEECH_SOURCES})
 target_include_directories(speech-static PUBLIC include PRIVATE src/engines)
-target_link_libraries(speech-static PUBLIC qwen3tts irodoritts drama3 haru fastconformer qwen3asr nemotrontranscribe silerovad sortformer semamba)
+target_link_libraries(speech-static PUBLIC ${SPEECH_FAMILY_LIBRARIES})
 target_compile_definitions(speech-static PRIVATE SPEECH_VERSION="${PROJECT_VERSION}")
 
 add_library(speech SHARED ${SPEECH_SOURCES})
 target_include_directories(speech PUBLIC include PRIVATE src/engines)
-target_link_libraries(speech PRIVATE qwen3tts irodoritts drama3 haru fastconformer qwen3asr nemotrontranscribe silerovad sortformer semamba)
+target_link_libraries(speech PRIVATE ${SPEECH_FAMILY_LIBRARIES})
 target_compile_definitions(speech PRIVATE SPEECH_BUILD_SHARED SPEECH_VERSION="${PROJECT_VERSION}" INTERFACE SPEECH_SHARED)
 set_target_properties(speech PROPERTIES C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 # The shared library's SOVERSION is the C API's major version, which speech.h defines and nothing else repeats.

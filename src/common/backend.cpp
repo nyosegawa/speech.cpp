@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -120,7 +121,7 @@ ggml_backend_t start_device(ggml_backend_dev_t device, int threads) {
 }
 
 int default_threads() {
-    static const int threads = [] {
+    static const int threads = std::min(max_threads(), [] {
 #ifdef __APPLE__
         for (const char * key : {"hw.perflevel0.physicalcpu", "hw.physicalcpu"}) {
             int n = 0;
@@ -162,8 +163,16 @@ int default_threads() {
         if (!cores.empty()) return (int) cores.size();
 #endif
         return (int) std::max(1u, std::thread::hardware_concurrency());
-    }();
+    }());
     return threads;
+}
+
+int max_threads() {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+    return 1;
+#else
+    return std::numeric_limits<int>::max();
+#endif
 }
 
 ggml_backend_t init_backend(const std::string & name) {

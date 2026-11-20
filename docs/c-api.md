@@ -132,7 +132,8 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
     compared without case. A device asked for by `gpu` or by name that is not there or does not start is an error, and
     no other device takes its place.
   - the CPU's threads, which apply to whatever runs on the CPU; by default the machine's performance cores, or its
-    physical cores where the system does not tell them apart.
+    physical cores where the system does not tell them apart. The WebAssembly build ([browser.md](browser.md)) computes
+    on one thread and refuses more.
   - a warm-up that runs a short request while the model loads, so that a GPU compiles its kernels before the first
     request. It is off by default; `speech worker` and `speech serve` turn it on.
 - **Model information.** `speech_model_info_open()` reads what a model file says of its model from its metadata, without
@@ -505,5 +506,6 @@ loaded on Metal, with two of its nine voices and four of its options shown:
 - `device` and `threads` are there for a loaded model alone. `threads` is the number of CPU threads in effect for a model
   on the CPU or for a model on a GPU that can compute part of a request on the CPU (FastConformer's decoding with
   `decode_on_cpu`, or Drama 3's and Nemotron 3.5 Transcribe's experts that its GPU does not hold), and 0 for a model on
-  a GPU that computes nothing there. Setting threads is never an error, since with the device `auto` a caller cannot
-  know where the model will run.
+  a GPU that computes nothing there. Setting threads is never an error in the builds for a system, since with the
+  device `auto` a caller cannot know where the model will run; the WebAssembly build, which has the CPU alone, refuses
+  more threads than it computes with.
