@@ -278,11 +278,13 @@ endforeach()
 set_source_files_properties(src/api/speech.cpp PROPERTIES COMPILE_DEFINITIONS "${SPEECH_FAMILY_DEFINITIONS}")
 
 # A WebAssembly build makes the C API once, as libspeech.js and libspeech.wasm, an ES module for a Worker that
-# wasm/speech.mjs wraps, and nothing else: the executables and the checks run
-# processes, terminals, devices and the network, which a browser does not give them. The module exports every function
-# speech.h declares, and Emscripten's file system with WORKERFS, which reads a model from a Blob as it is asked, so
-# that the weights are held once, in the module's memory. The memory grows as the model needs, up to the 4 GB a
-# 32-bit address reaches.
+# wasm/speech.mjs wraps, and nothing else: the executables and the checks run processes, terminals, devices and the
+# network, which a browser does not give them. The module exports every function speech.h declares, and Emscripten's
+# file system with WORKERFS, which reads a model from a Blob as it is asked, so that the weights are held once, in the
+# module's memory. The memory grows as the model needs, up to the 4 GB a 32-bit address reaches. Emscripten gives the
+# stack 64 KB, and ggml builds a graph by recursing once for each node of its longest chain: RE-USE's graph on 2 s of
+# audio overflowed 64 KB and ran in 128 KB (Emscripten 7.0.0, 2026-11-21). The stack is 1 MB, as on Windows' main
+# thread, the least the library runs on in a native build.
 if (EMSCRIPTEN)
     file(STRINGS include/speech.h api_lines REGEX "^SPEECH_API .*speech_[a-z0-9_]+\\(")
     set(exports _malloc _free)
@@ -299,7 +301,7 @@ if (EMSCRIPTEN)
     set_target_properties(speech-wasm PROPERTIES OUTPUT_NAME libspeech SUFFIX .js)
     target_link_options(speech-wasm PRIVATE
         -sMODULARIZE -sEXPORT_ES6 -sENVIRONMENT=worker
-        -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=4GB
+        -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=4GB -sSTACK_SIZE=1MB
         -sEXPORTED_FUNCTIONS=${exports}
         -sEXPORTED_RUNTIME_METHODS=FS,WORKERFS,UTF8ToString,stringToNewUTF8,HEAPU8,HEAP32,HEAPU32,HEAPF32,HEAPF64,HEAP64
         -lworkerfs.js)

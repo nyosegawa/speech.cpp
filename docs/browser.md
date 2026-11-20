@@ -92,7 +92,7 @@ Silero VAD F32 on an Apple M5 (macOS 26.2) in headless Chrome 158, built with Em
 | load time | 9 ms |
 | a minute of audio, the first request after loading | 0.12 s, an RTFx of 490 |
 | a minute of audio, the later requests | 0.09 s, an RTFx of 670 |
-| the module's memory, at most | 28.6 MiB |
+| the module's memory, at most | 29.9 MiB |
 
 The first request is slower because the browser compiles the module's code again, faster, once it runs often. `speech
 vad` on the same CPU with one thread takes 0.089 s, an RTFx of 675. The page gives the regions `speech vad` gives, number
