@@ -111,17 +111,17 @@ Silero VAD F32 on an Apple M5 (macOS 26.2, 10 logical processors) in headless Ch
 | | `libspeech` | `libspeech-threads`, 2 threads | `libspeech-threads`, 4 threads |
 |---|---|---|---|
 | `.wasm` and `.js`, gzipped | 360 KB and 18 KB | 340 KB and 22 KB | 340 KB and 22 KB |
-| the module started, from the same machine | 6 ms | 17 ms | 19 ms |
-| load time | 9 ms | 8 ms | 9 ms |
-| the first request after loading | 0.13 s, RTFx 480 | 0.09 s, RTFx 640 | 0.11 s, RTFx 560 |
-| the fifth request | 0.09 s, RTFx 670 | 0.06 s, RTFx 1080 | 0.04 s, RTFx 1350 |
+| the module started, from the same machine | 7 ms | 18 ms | 19 ms |
+| load time | 9 ms | 9 ms | 9 ms |
+| the first request after loading | 0.13 s, RTFx 480 | 0.10 s, RTFx 630 | 0.10 s, RTFx 590 |
+| the fifth request | 0.09 s, RTFx 680 | 0.05 s, RTFx 1100 | 0.04 s, RTFx 1580 |
 | the module's memory, at most | 29.9 MiB | 29.9 MiB | 35.9 MiB |
 
 The first requests are slower because the browser compiles the module's code again, faster, once it runs often. With
 all 10 logical processors the first request took 0.6 s, since the library starts its threads anew for each part of
-the work. `speech vad` on the same CPU takes 0.091 s with one thread (RTFx 660) and 0.049 s with four (RTFx 1220). The page
-gives the regions `speech vad` gives, number for number, in Chrome and in Safari on the iOS 26.5 simulator, with and
-without threads.
+the work. `speech vad` on the same CPU takes 0.090 s with one thread (RTFx 670) and 0.041 s with four (RTFx 1450). The
+page gives the regions `speech vad` gives, number for number, in Chrome and in Safari on the iOS 26.5 simulator, with
+and without threads.
 
 ## Build it
 
