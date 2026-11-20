@@ -5,6 +5,9 @@ leaves the browser. It holds Silero VAD, which finds where someone speaks in a r
 
 ## What it is
 
+Each [release](https://github.com/nyosegawa/speech.cpp/releases) has it in `speech-<version>-wasm.zip`, whose SHA-256
+is in the release's `SHA256SUMS`, or you [build it](#build-it):
+
 | File | What it is |
 |---|---|
 | `libspeech.js`, `libspeech.wasm` | the library: the C API compiled to WebAssembly, an ES module for a Worker, on one thread |
@@ -13,6 +16,7 @@ leaves the browser. It holds Silero VAD, which finds where someone speaks in a r
 | `wav.mjs` | reads a WAVE file into samples as `speech` reads it |
 | `index.html`, `page.mjs`, `worker.mjs` | a page that finds the regions of speech in a WAVE file you choose |
 | `serve.py` | serves the folder on 127.0.0.1 with the headers the build with threads needs |
+| `speech.h` | the C API, which the library exports function for function |
 
 It runs on the CPU in Chrome and Edge 95, Firefox 114 and Safari 16.4 and later, on phones too.
 
@@ -21,7 +25,8 @@ It runs on the CPU in Chrome and Edge 95, Firefox 114 and Safari 16.4 and later,
 Serve the folder over HTTP, since a page opened from a file cannot load modules, and open it:
 
 ```sh
-cd build-wasm
+unzip speech-*-wasm.zip -d speech-wasm
+cd speech-wasm
 python3 serve.py
 ```
 

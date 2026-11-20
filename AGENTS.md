@@ -117,7 +117,8 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   it, `server_openai_smoke.py` the server through the official openai-python client,
   `speech_cli_smoke.py` the command line against the worker, `models_smoke.py` the naming, fetching and removing of
   models against a temporary model folder, and `wasm_browser_smoke.mjs` the WebAssembly build through its page in a
-  headless Chrome against `speech vad`. A script that needs packages outside the standard library is a uv script
+  headless Chrome against `speech vad`, or with `--started`, as CI checks the archive without a model, that its modules
+  start. A script that needs packages outside the standard library is a uv script
   with its dependencies pinned in the script and in a lock file beside it.
 - `reference/<model>/` holds, per model, a uv environment that pins the official code, PyTorch and the rest,
   `pins.py`, which pins the checkpoints by revision, the conversion of the official weights to one GGUF file per

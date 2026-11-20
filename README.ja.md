@@ -22,6 +22,7 @@
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20%C2%B7%20Metal-lightgrey?style=flat-square" alt="Apple Silicon の macOS で Metal を使う">
   <img src="https://img.shields.io/badge/Windows-x64%20%C2%B7%20Vulkan-lightgrey?style=flat-square" alt="x64 の Windows で Vulkan を使う">
   <img src="https://img.shields.io/badge/Linux-x64%20%C2%B7%20Vulkan%20or%20CPU-lightgrey?style=flat-square" alt="x64 の Linux で Vulkan か CPU を使う">
+  <img src="https://img.shields.io/badge/Browser-WebAssembly-lightgrey?style=flat-square" alt="ブラウザで WebAssembly として動く">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT ライセンス"></a>
 </p>
 
@@ -85,7 +86,7 @@ x64 の Windows では、PowerShell で次のコマンドを実行します。
 irm https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.ps1 | iex
 ```
 
-インストーラはリリースのアーカイブを SHA-256 で確かめ、`speech` をホームフォルダの下に置き、`PATH` に加えます。`speech update` を実行するか、インストーラをもう一度実行すると更新されます。Linux では、Vulkan のローダーが入っていれば Vulkan 版を、入っていなければ CPU 版をインストールします。Linux 版には glibc 2.34 以降が必要です。オプション、アンインストールの方法、各プラットフォームで必要なものは [docs/install.md](docs/install.md) にあります。Intel Mac やその他のシステムでは、[ソースからビルド](docs/install.md#build-from-source)してください。
+インストーラはリリースのアーカイブを SHA-256 で確かめ、`speech` をホームフォルダの下に置き、`PATH` に加えます。`speech update` を実行するか、インストーラをもう一度実行すると更新されます。Linux では、Vulkan のローダーが入っていれば Vulkan 版を、入っていなければ CPU 版をインストールします。Linux 版には glibc 2.34 以降が必要です。オプション、アンインストールの方法、各プラットフォームで必要なものは [docs/install.md](docs/install.md) にあります。Intel Mac やその他のシステムでは、[ソースからビルド](docs/install.md#build-from-source)してください。ウェブページで使うために、各リリースには WebAssembly にしたライブラリーの `speech-<version>-wasm.zip` があり、ブラウザの中で Silero VAD を動かせます([docs/browser.md](docs/browser.md))。
 
 ## クイックスタート
 

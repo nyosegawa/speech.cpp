@@ -113,12 +113,17 @@ links the library takes them by hand.
 | `windows-x64-vulkan` | Windows x64, with Vulkan |
 | `linux-x64-vulkan` | Linux x86-64, with Vulkan |
 | `linux-x64-cpu` | Linux x86-64, on the CPU alone |
+| `wasm` | web pages, as WebAssembly on the CPU ([browser.md](browser.md)); the installer does not install it |
 
 | File in the archive | What it is |
 |---|---|
 | `speech` or `speech.exe` | the command, with the library and ggml linked in |
 | `libspeech.4.dylib` and the link `libspeech.dylib`, `libspeech.so.4` and the link `libspeech.so`, or `speech.dll` and its import library `speech.lib` | the shared library, which exports the C API and nothing else; 4 is the C API's major version |
 | `speech.h` | the C API ([c-api.md](c-api.md)) |
+
+`speech-<version>-wasm.zip` holds the library in WebAssembly in place of `speech` and the shared library: `libspeech.js`
+and `libspeech.wasm`, the same with threads in `libspeech-threads.js` and `libspeech-threads.wasm`, `speech.mjs`,
+`wav.mjs`, the page (`index.html`, `page.mjs`, `worker.mjs`), `serve.py` and `speech.h`.
 
 ## Build from source
 

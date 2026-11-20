@@ -117,10 +117,14 @@ the packaging steps of `.github/workflows/build.yml` and docs/install.md's Relea
 
 ## 7. Check what was published
 
-- `gh release view v<version>` lists the four archives and `SHA256SUMS`.
+- `gh release view v<version>` lists the five archives and `SHA256SUMS`.
 - The installer installs it: `curl -fsSL …/install.sh | sh` in a temporary `HOME` on macOS, and `install.ps1` on
   Windows with `LOCALAPPDATA` pointed at a temporary folder and `-NoModifyPath`; `speech --version` names the release.
 - `speech pull <name>` and one synthesis and one recognition by name work from the installed `speech`.
+- The browser's archive, `speech-<version>-wasm.zip`, downloaded and unpacked into a folder of its own, runs Silero
+  VAD as the installed `speech vad` does, without threads and with them:
+  `node checks/smoke/wasm_browser_smoke.mjs <installed speech> <folder> <silero-vad file> <audio.wav>...`, and again
+  with `--threads 4`.
 
 ## 8. After it
 

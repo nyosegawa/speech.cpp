@@ -22,6 +22,7 @@
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20%C2%B7%20Metal-lightgrey?style=flat-square" alt="macOS on Apple Silicon, with Metal">
   <img src="https://img.shields.io/badge/Windows-x64%20%C2%B7%20Vulkan-lightgrey?style=flat-square" alt="Windows on x64, with Vulkan">
   <img src="https://img.shields.io/badge/Linux-x64%20%C2%B7%20Vulkan%20or%20CPU-lightgrey?style=flat-square" alt="Linux on x64, with Vulkan or the CPU">
+  <img src="https://img.shields.io/badge/Browser-WebAssembly-lightgrey?style=flat-square" alt="Browsers, as WebAssembly">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License"></a>
 </p>
 
@@ -102,7 +103,8 @@ The installer checks the release's archive against its SHA-256, puts `speech` un
 `PATH`. `speech update`, or running it again, updates it. On Linux it installs the Vulkan build when the Vulkan loader
 is installed, and the CPU build otherwise; the Linux builds need glibc 2.34 or later. [docs/install.md](docs/install.md)
 has the options, how to uninstall, and what each platform needs. On an Intel Mac or another system, [build from
-source](docs/install.md#build-from-source).
+source](docs/install.md#build-from-source). For a web page, each release has the library in WebAssembly,
+`speech-<version>-wasm.zip`, which runs Silero VAD inside the browser ([docs/browser.md](docs/browser.md)).
 
 ## Quick start
 
