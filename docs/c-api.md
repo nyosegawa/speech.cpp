@@ -133,7 +133,8 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
     no other device takes its place.
   - the CPU's threads, which apply to whatever runs on the CPU; by default the machine's performance cores, or its
     physical cores where the system does not tell them apart. The WebAssembly build ([browser.md](browser.md)) computes
-    on one thread and refuses more.
+    on one thread and refuses more, and its build with threads on 4 by default and at most the browser's logical
+    processors.
   - a warm-up that runs a short request while the model loads, so that a GPU compiles its kernels before the first
     request. It is off by default; `speech worker` and `speech serve` turn it on.
 - **Model information.** `speech_model_info_open()` reads what a model file says of its model from its metadata, without

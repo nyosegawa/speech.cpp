@@ -1,12 +1,13 @@
 // speech.cpp's C API in a Worker, over the library compiled to WebAssembly: libspeech.js and libspeech.wasm. A model is
 // read from a Blob or File through Emscripten's WORKERFS, which reads the file a piece at a time as the library asks for
 // it, so that the weights are held once, in the module's memory. Each call blocks until the library returns, as the C
-// API's do, and WORKERFS reads with FileReaderSync, which a Worker alone has: the module runs in a Worker.
+// API's do, and WORKERFS reads with FileReaderSync, which a Worker alone has: the module runs in a Worker. With threads
+// it loads libspeech-threads.js and libspeech-threads.wasm instead.
 //
 // usage, in a module Worker:
 //   import { openSpeech } from './speech.mjs';
-//   const speech = await openSpeech();
-//   const model = speech.load(file);                            // a Blob or File of a GGUF model
+//   const speech = await openSpeech();                          // { threads: true } for the build with threads
+//   const model = speech.load(file, { threads: 4 });            // a Blob or File of a GGUF model
 //   const regions = model.detect(samples, 16000, { threshold: 0.5 });   // [{ start, end }] in seconds
 //   model.free();
 
@@ -23,9 +24,18 @@ export class SpeechError extends Error {
   }
 }
 
-/** The library, loaded from libspeech.js beside this file, or from `url`. */
-export async function openSpeech({ url } = {}) {
-  const module = url ?? new URL('./libspeech.js', import.meta.url).href;
+/**
+ * The library, loaded from libspeech.js beside this file, or libspeech-threads.js with `threads`, or from `url`. The
+ * build with threads shares its memory between Workers, which a browser allows only in a page that is cross-origin
+ * isolated, served with the headers Cross-Origin-Opener-Policy: same-origin and Cross-Origin-Embedder-Policy:
+ * require-corp.
+ */
+export async function openSpeech({ threads = false, url } = {}) {
+  if (threads && !globalThis.crossOriginIsolated) {
+    throw new Error('the build with threads needs a page that is cross-origin isolated: serve it with the headers '
+                    + 'Cross-Origin-Opener-Policy: same-origin and Cross-Origin-Embedder-Policy: require-corp');
+  }
+  const module = url ?? new URL(threads ? './libspeech-threads.js' : './libspeech.js', import.meta.url).href;
   const { default: create } = await import(module);
   return new Speech(await create());
 }

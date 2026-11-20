@@ -41,8 +41,9 @@ catches, which in WebAssembly takes its exceptions: Chrome 95, Firefox 100 and S
   Windows does not ship.
 - **No CUDA build is released.**
 - **Browsers have one archive** (`wasm`): the C API built with Emscripten for WebAssembly with SIMD128 and its
-  exceptions, with the module that calls it from a module Worker and a page that tries it, which Chrome 95, Firefox 114
-  and Safari 16.4 and later run. It runs on the CPU and holds the families that are checked in a browser.
+  exceptions, on one thread and with threads, with the module that calls it from a module Worker and a page that tries
+  it, which Chrome 95, Firefox 114 and Safari 16.4 and later run. It runs on the CPU and holds the families that are
+  checked in a browser.
 
 The alternatives were turned down:
 

@@ -25,6 +25,9 @@
 #include <fstream>
 #include <sstream>
 #endif
+#ifdef __EMSCRIPTEN_PTHREADS__
+#include <emscripten/threading.h>
+#endif
 
 namespace {
 
@@ -122,7 +125,12 @@ ggml_backend_t start_device(ggml_backend_dev_t device, int threads) {
 
 int default_threads() {
     static const int threads = std::min(max_threads(), [] {
-#ifdef __APPLE__
+#if defined(__EMSCRIPTEN_PTHREADS__)
+        // A browser tells no performance cores from the others, and ggml starts its threads for each graph. Silero VAD
+        // F32 on a minute of audio, on an Apple M5 of 10 logical processors in Chrome 158 (2026-11-21): RTFx 520 on the
+        // first request and 1100 to 1500 on the fifth with 4 threads, and 100 and 700 to 1000 with 10.
+        return std::min(4, emscripten_num_logical_cores());
+#elif defined(__APPLE__)
         for (const char * key : {"hw.perflevel0.physicalcpu", "hw.physicalcpu"}) {
             int n = 0;
             size_t size = sizeof n;
@@ -168,7 +176,11 @@ int default_threads() {
 }
 
 int max_threads() {
-#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+#if defined(__EMSCRIPTEN_PTHREADS__)
+    // The build with threads starts a Worker for each of the browser's logical processors before it runs, and a thread
+    // past them would wait for a Worker that cannot start while the module computes.
+    return std::max(1, emscripten_num_logical_cores());
+#elif defined(__EMSCRIPTEN__)
     return 1;
 #else
     return std::numeric_limits<int>::max();

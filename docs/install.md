@@ -139,7 +139,7 @@ It makes `build/speech` and the shared library beside it. A build from source is
 | CPU | `cmake -B build` elsewhere | checked and released for Linux |
 | Vulkan | `cmake -B build -DGGML_VULKAN=ON` | checked on NVIDIA and released for Windows and Linux; needs the Vulkan SDK to build |
 | CUDA | `cmake -B build -DGGML_CUDA=ON` | builds, but is not checked or released |
-| WebAssembly | `emcmake cmake -B build-wasm` | the library alone, for a web page; needs Emscripten ([browser.md](browser.md#build-it)) |
+| WebAssembly | `emcmake cmake -B build-wasm`, with threads `-DSPEECH_WASM_THREADS=ON` | the library alone, for a web page; needs Emscripten ([browser.md](browser.md#build-it)) |
 
 On Linux, the [Vulkan SDK](https://vulkan.lunarg.com/sdk/home#linux) brings everything the Vulkan build needs in one
 archive:

@@ -22,13 +22,19 @@ endif()
 # for projects that read a 32-bit platform from it, and ggml compiles its SIMD128 code only for a processor named wasm;
 # for any other it falls back to its generic C. ggml repacks weights only for instructions of x86, Arm and RISC-V,
 # and its repacking code, never run in WebAssembly, was 50 KB of the 410 KB of a gzipped module of Silero VAD
-# (Emscripten 7.0.0, 2026-11-21).
+# (Emscripten 7.0.0, 2026-11-21). With SPEECH_WASM_THREADS every file, ggml's included, is compiled for threads, since
+# wasm-ld links no file compiled without atomics into a module of shared memory.
 if (EMSCRIPTEN)
+    option(SPEECH_WASM_THREADS "Build the WebAssembly library with threads, which a page runs only cross-origin isolated" OFF)
     set(CMAKE_SYSTEM_PROCESSOR wasm32)
     set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
     set(GGML_CPU_REPACK OFF CACHE BOOL "" FORCE)
     add_compile_options(-fwasm-exceptions)
     add_link_options(-fwasm-exceptions)
+    if (SPEECH_WASM_THREADS)
+        add_compile_options(-pthread)
+        add_link_options(-pthread)
+    endif()
 endif()
 # CI builds the submodule's ggml once, installs it with static libraries, and reuses it while the
 # submodule's commit stays the same; Vulkan's shaders alone take minutes to compile.
@@ -277,15 +283,26 @@ foreach(family ${SPEECH_FAMILIES})
 endforeach()
 set_source_files_properties(src/api/speech.cpp PROPERTIES COMPILE_DEFINITIONS "${SPEECH_FAMILY_DEFINITIONS}")
 
-# A WebAssembly build makes the C API once, as libspeech.js and libspeech.wasm, an ES module for a Worker that
-# wasm/speech.mjs wraps, and nothing else: the executables and the checks run processes, terminals, devices and the
-# network, which a browser does not give them. The module exports every function speech.h declares, and Emscripten's
-# file system with WORKERFS, which reads a model from a Blob as it is asked, so that the weights are held once, in the
-# module's memory. The memory grows as the model needs, up to the 4 GB a 32-bit address reaches. Emscripten gives the
-# stack 64 KB, and ggml builds a graph by recursing once for each node of its longest chain: RE-USE's graph on 2 s of
-# audio overflowed 64 KB and ran in 128 KB (Emscripten 7.0.0, 2026-11-21). The stack is 1 MB, as on Windows' main
-# thread, the least the library runs on in a native build.
+# A WebAssembly build makes the C API once, as libspeech.js and libspeech.wasm (libspeech-threads.js and .wasm with
+# threads), an ES module for a Worker that wasm/speech.mjs wraps, and nothing else: the executables and the checks run
+# processes, terminals, devices and the network, which a browser does not give them. The module exports every function
+# speech.h declares, and Emscripten's file system with WORKERFS, which reads a model from a Blob as it is asked, so
+# that the weights are held once, in the module's memory. The memory grows as the model needs, up to the 4 GB a
+# 32-bit address reaches, or 1 GB with threads: Safari on iOS counts a shared memory's maximum against the memory of the
+# process as it makes it, and refused one of 2 GB on iOS 16.2. The module with threads starts a Worker for each of the
+# browser's logical processors before it runs, since a thread that the library starts while it computes would wait for
+# a Worker to start, which it cannot until the module returns; a thread past them fails to start rather than waits.
+# Emscripten gives the stack 64 KB, and ggml builds a graph by recursing once for each node of its longest chain:
+# RE-USE's graph on 2 s of audio overflowed 64 KB and ran in 128 KB (Emscripten 7.0.0, 2026-11-21). The stack is 1 MB,
+# as on Windows' main thread, the least the library runs on in a native build.
 if (EMSCRIPTEN)
+    if (SPEECH_WASM_THREADS)
+        set(output libspeech-threads)
+        set(memory -sMAXIMUM_MEMORY=1GB -sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency -sPTHREAD_POOL_SIZE_STRICT=2)
+    else()
+        set(output libspeech)
+        set(memory -sMAXIMUM_MEMORY=4GB)
+    endif()
     file(STRINGS include/speech.h api_lines REGEX "^SPEECH_API .*speech_[a-z0-9_]+\\(")
     set(exports _malloc _free)
     foreach(line ${api_lines})
@@ -298,15 +315,16 @@ if (EMSCRIPTEN)
     target_include_directories(speech-wasm PRIVATE include src/engines)
     target_link_libraries(speech-wasm PRIVATE ${SPEECH_FAMILY_LIBRARIES})
     target_compile_definitions(speech-wasm PRIVATE SPEECH_VERSION="${PROJECT_VERSION}")
-    set_target_properties(speech-wasm PROPERTIES OUTPUT_NAME libspeech SUFFIX .js)
+    set_target_properties(speech-wasm PROPERTIES OUTPUT_NAME ${output} SUFFIX .js)
     target_link_options(speech-wasm PRIVATE
         -sMODULARIZE -sEXPORT_ES6 -sENVIRONMENT=worker
-        -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=4GB -sSTACK_SIZE=1MB
+        -sALLOW_MEMORY_GROWTH -sSTACK_SIZE=1MB ${memory}
         -sEXPORTED_FUNCTIONS=${exports}
         -sEXPORTED_RUNTIME_METHODS=FS,WORKERFS,UTF8ToString,stringToNewUTF8,HEAPU8,HEAP32,HEAPU32,HEAPF32,HEAPF64,HEAP64
         -lworkerfs.js)
-    # The module that wraps the library and the page that tries it go beside it, as a release's archive holds them.
-    foreach(file speech.mjs wav.mjs worker.mjs page.mjs index.html)
+    # The module that wraps the library, the page that tries it and the server that serves the page cross-origin
+    # isolated go beside it, as a release's archive holds them.
+    foreach(file speech.mjs wav.mjs worker.mjs page.mjs index.html serve.py)
         configure_file(wasm/${file} ${CMAKE_CURRENT_BINARY_DIR}/${file} COPYONLY)
     endforeach()
     return()

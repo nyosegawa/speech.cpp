@@ -20,8 +20,8 @@ gives less of, and a page downloads every byte of the module before it runs. The
 - **The families a module holds are chosen when it is built** (`SPEECH_WASM_FAMILIES`), each a line of the table of
   families that the build keeps or leaves out, so that a page downloads the code of the models it runs and no more.
   Silero VAD's module is 360 KB gzipped, and one of every family 936 KB (Emscripten 7.0.0, 2026-11-21).
-- **The module without threads refuses more than one** at `speech_load_params_set_threads()`, where ggml would abort
-  the module when the thread it starts does not.
+- **A module refuses more threads than it can start** at `speech_load_params_set_threads()`, one without threads more
+  than one, where ggml would abort the module when the thread it starts does not.
 - **A WAVE file is read in JavaScript as the library reads one** (`wasm/wav.mjs`), since the C API takes samples, so
   that a page and `speech` give a model the same samples of the same file.
 

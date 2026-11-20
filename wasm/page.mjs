@@ -1,13 +1,16 @@
 // The page in index.html: finds the regions where someone speaks in a WAVE file with a detection model, both chosen by
 // the person, through speech.mjs in a Worker (worker.mjs), and shows the regions, the load time, the RTFx and the module's
 // memory. window.speechPage.run() does the same for a script, such as checks/smoke/wasm_browser_smoke.mjs, from URLs or
-// Blobs: run({ model, audio: [...], threads, options }) loads the model once and detects in each audio in turn. A link
-// with ?model=URL&audio=URL runs on those files as the page opens, as on a phone, where a script cannot reach the page.
+// Blobs: run({ model, audio: [...], threads, threaded, options }) loads the model once and detects in each audio in
+// turn, in the build with threads where `threaded` says, by default where more than one thread is asked for. A link with
+// ?model=URL&audio=URL&threads=N runs on those files as the page opens, as on a phone, where a script cannot reach the
+// page. The build with threads needs the page cross-origin isolated.
 
 const $ = (id) => document.getElementById(id);
 
 let worker = null;
 let opened = null;
+let threaded = null;
 let next = 0;
 const waiting = new Map();
 
@@ -29,12 +32,17 @@ function answered({ data: { id, value, error } }) {
   reject(e);
 }
 
-/** The Worker with the library loaded, started on first use. */
-function library() {
+/** The Worker with the library loaded, the build with threads or the one without, started again for the other build. */
+function library(threads) {
+  if (opened && threaded !== threads) {
+    worker.terminate();
+    opened = null;
+  }
   if (!opened) {
     worker = new Worker(new URL('./worker.mjs', import.meta.url), { type: 'module' });
     worker.onmessage = answered;
-    opened = call('open');
+    threaded = threads;
+    opened = call('open', { threads });
   }
   return opened;
 }
@@ -48,8 +56,8 @@ async function blobOf(source) {
 }
 
 /** Loads `model` and detects speech in each of `audio`, with the threads and the request options given. */
-async function runNow({ model, audio, threads, options = {} }) {
-  const open = await library();
+async function runNow({ model, audio, threads, threaded = threads > 1, options = {} }) {
+  const open = await library(threaded);
   const loaded = await call('load', { blob: await blobOf(model), threads });
   const detections = [];
   for (const source of audio) detections.push(await call('detect', { blob: await blobOf(source), options }));
@@ -75,6 +83,7 @@ function show(result) {
   $('version').textContent = `speech.cpp ${result.version}`;
   $('stats').replaceChildren(...[
     ['Model', `${result.info.name} (${result.info.weight_type})`],
+    ['Threads', String(result.info.threads)],
     ['Load time', `${result.load.toFixed(1)} ms`],
     ['Audio', seconds(detection.seconds)],
     ['Detection', `${detection.ms.toFixed(1)} ms`],
@@ -99,14 +108,14 @@ function show(result) {
   $('result').hidden = false;
 }
 
-/** Runs on the model and audio given, or the files chosen, showing the result or the error. */
+/** Runs on the model and audio given, or the files chosen, with the threads chosen, showing the result or the error. */
 async function detect({ model = $('model').files[0], audio = $('audio').files[0] } = {}) {
   $('error').hidden = true;
   $('detect').disabled = true;
   $('status').textContent = 'Detecting…';
   try {
     const options = $('options').value.trim() ? JSON.parse($('options').value) : {};
-    show(await run({ model, audio: [audio], options }));
+    show(await run({ model, audio: [audio], threads: Number($('threads').value), options }));
   } catch (e) {
     $('error').textContent = e.status ? `${e.status}${e.option ? ` (${e.option})` : ''}: ${e.message}` : e.message;
     $('error').hidden = false;
@@ -126,5 +135,11 @@ $('form').addEventListener('submit', (event) => {
 ready();
 
 window.speechPage = { run };
+$('threads').max = navigator.hardwareConcurrency;
+$('isolation').textContent = crossOriginIsolated
+  ? `More than 1 runs the build with threads, up to this browser's ${navigator.hardwareConcurrency}.`
+  : 'This page is not cross-origin isolated, so it runs on 1 thread.';
+$('threads').disabled = !crossOriginIsolated;
 const linked = new URLSearchParams(location.search);
+if (linked.has('threads')) $('threads').value = linked.get('threads');
 if (linked.has('model') && linked.has('audio')) detect({ model: linked.get('model'), audio: linked.get('audio') });

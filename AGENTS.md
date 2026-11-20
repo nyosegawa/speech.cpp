@@ -98,11 +98,12 @@ README.md and `docs/` are the documentation for users; what a developer needs is
   of `speech serve --open`, plain HTML, CSS and JavaScript modules compiled into `speech`, which `page.cpp` serves
   with the endpoints that fetch and load models; `access.cpp` guards them with the Host and the Origin.
 - `wasm/` holds what goes beside the library built for WebAssembly, which `emcmake cmake` configures: the C API
-  compiled whole into `libspeech.js` and `libspeech.wasm`, with the families `SPEECH_WASM_FAMILIES` names, each a line
-  of the table of families that the build keeps. `speech.mjs` is the thin module that calls it from a Worker and reads
-  a model from its Blob through WORKERFS, `wav.mjs` reads a WAVE file as `src/common/wav.cpp` does, and `index.html`,
-  `page.mjs` and `worker.mjs` are a page that detects speech in a file with them. The build makes neither the
-  executables nor the checks.
+  compiled whole into `libspeech.js` and `libspeech.wasm`, or with `SPEECH_WASM_THREADS` into `libspeech-threads.js`
+  and `libspeech-threads.wasm`, with the families `SPEECH_WASM_FAMILIES` names, each a line of the table of families
+  that the build keeps. `speech.mjs` is the thin module that calls it from a Worker and reads a model from its Blob
+  through WORKERFS, `wav.mjs` reads a WAVE file as `src/common/wav.cpp` does, `index.html`, `page.mjs` and `worker.mjs`
+  are a page that detects speech in a file with them, and `serve.py` serves the folder cross-origin isolated, as the
+  module with threads needs. The build makes neither the executables nor the checks.
 - The smoke scripts in `checks/smoke/` drive each entry point as its caller does and fail on a defect:
   `worker_smoke.py`, `worker_recognition_smoke.py`, `worker_enhancement_smoke.py` and `worker_dialogue_smoke.py` the
   worker protocol through
@@ -245,7 +246,8 @@ comment.
   `checks/smoke/server_enhancement_smoke.py`, `checks/smoke/server_dialogue_smoke.py` and `checks/smoke/server_page_smoke.py`, one to the page `checks/smoke/server_page_browser_smoke.mjs` (with `--dialogue` and Haru for the talk panel), one to the command
   line or the parser `checks/smoke/speech_cli_smoke.py`, with a model of each family, one to `tools/catalog/`
   `checks/smoke/models_smoke.py`, and one to `wasm/`, to the library's code that a WebAssembly build compiles
-  differently or to the table of families `checks/smoke/wasm_browser_smoke.mjs`, with Silero VAD.
+  differently or to the table of families `checks/smoke/wasm_browser_smoke.mjs`, with Silero VAD, on the module without
+  threads and with `--threads 4` on the module with them.
 - Never commit on main. Every change reaches main through a pull request, one coherent unit each: a
   model's stage, a fix, a refactor or a documentation change.
 - Commit messages and pull request titles are one English sentence in the imperative, without a prefix

@@ -30,13 +30,14 @@ ggml_backend_t start_device(ggml_backend_dev_t device, int threads);
 /**
  * The CPU threads the library computes with when the caller does not choose: the machine's performance cores, or its
  * physical cores where the system does not tell them apart, or its logical processors where it tells neither, up to
- * max_threads().
+ * max_threads(); in WebAssembly with threads, 4 or the browser's logical processors where they are fewer.
  */
 int default_threads();
 
 /**
- * The most CPU threads this build can compute with: one in WebAssembly without threads, which starts none, and no limit
- * elsewhere. ggml aborts the process when a thread it starts does not.
+ * The most CPU threads this build can compute with: one in WebAssembly without threads, which starts none, the
+ * browser's logical processors in WebAssembly with threads, and no limit elsewhere. ggml aborts the process when a
+ * thread it starts does not.
  */
 int max_threads();
 

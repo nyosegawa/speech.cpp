@@ -610,8 +610,9 @@ SPEECH_API speech_status speech_load_params_set_device(speech_load_params * para
  * whatever the model computes on the CPU: all of its graphs for a model on the CPU, and for a model on a GPU those it
  * computes on the CPU, such as a decoding with decode_on_cpu, or none. Without it the library takes the machine's
  * performance cores, or its physical cores where the system does not tell them apart. The model's information reports
- * the number in effect (speech_model_info_threads()). A WebAssembly build without threads computes with 1 alone and
- * refuses more as SPEECH_ERROR_INVALID_ARGUMENT.
+ * the number in effect (speech_model_info_threads()). A WebAssembly build without threads computes with 1 alone, and
+ * one with threads with at most the browser's logical processors, 4 by default; each refuses more as
+ * SPEECH_ERROR_INVALID_ARGUMENT.
  */
 SPEECH_API speech_status speech_load_params_set_threads(speech_load_params * params, int threads);
 

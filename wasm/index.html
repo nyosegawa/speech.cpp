@@ -12,7 +12,7 @@
   p { margin: 0 0 1rem; color: var(--muted); }
   form { display: grid; gap: 0.75rem; margin-bottom: 1.5rem; }
   label { display: grid; gap: 0.25rem; font-weight: 600; }
-  input[type=text] { font: inherit; padding: 0.4rem; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; }
+  input[type=text], input[type=number] { font: inherit; padding: 0.4rem; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; }
   button { justify-self: start; font: inherit; padding: 0.45rem 1.2rem; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; }
   button:disabled { cursor: default; opacity: 0.5; }
   #error { color: var(--error); white-space: pre-wrap; }
@@ -29,6 +29,8 @@
 <form id="form">
   <label>Model (GGUF) <input id="model" type="file" accept=".gguf"></label>
   <label>Audio (WAVE) <input id="audio" type="file" accept=".wav,audio/wav"></label>
+  <label>Threads <input id="threads" type="number" min="1" value="1"></label>
+  <p id="isolation"></p>
   <label>Request options (JSON) <input id="options" type="text" placeholder='{"threshold": 0.5}' spellcheck="false"></label>
   <button id="detect" type="submit">Detect speech</button>
   <span id="status" role="status"></span>

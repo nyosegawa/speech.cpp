@@ -1,7 +1,8 @@
 // The Worker of the page in index.html: runs speech.mjs on the page's messages, one at a time, and answers each with
-// its value or its error. A message is { id, op, ...arguments }: "open" loads the library; "load" loads a model from a
-// Blob, freeing the one before; "detect" reads a WAVE Blob as `speech` reads the file and finds the regions where
-// someone speaks. Each answer carries the milliseconds the library took and the bytes of its memory.
+// its value or its error. A message is { id, op, ...arguments }: "open" loads the library, the build with threads or
+// the one without; "load" loads a model from a Blob, freeing the one before; "detect" reads a WAVE Blob as `speech`
+// reads the file and finds the regions where someone speaks. Each answer carries the milliseconds the library took and
+// the bytes of its memory.
 import { openSpeech } from './speech.mjs';
 import { readWav } from './wav.mjs';
 
@@ -9,9 +10,9 @@ let speech = null;
 let model = null;
 
 const ops = {
-  async open() {
+  async open({ threads }) {
     const start = performance.now();
-    speech = await openSpeech();
+    speech = await openSpeech({ threads });
     return { version: speech.version, ms: performance.now() - start };
   },
   load({ blob, threads }) {
