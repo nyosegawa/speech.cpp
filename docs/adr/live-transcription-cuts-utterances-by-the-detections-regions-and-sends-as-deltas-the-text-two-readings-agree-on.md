@@ -94,13 +94,24 @@ program using the GPU at times), the times counted from where speech vad finds t
 |---|---|---|
 | speech started, after the speech begins | 0.25 to 0.26 s | 0.25 to 0.27 s |
 | first delta, after the speech begins | 0.68 to 1.53 s | 0.48 to 1.12 s |
-| commit, after the speech ends | 0.60 s | 0.60 s |
-| completed, after the speech ends | 0.69 to 1.15 s | 0.72 to 1.30 s |
 
 Two runs each, while another program synthesized speech on the GPU. The first delta waits for two readings to agree
-past the mark or space before their end, about half a second of speech. The commit waits for the silence of `min_silence_duration_ms` and for what follows within twice
-`speech_pad_ms`. The detection took 0.12 s per minute of 16 kHz audio and 0.15 s of 24 kHz alone, and 0.3 to 0.6 s
-beside the readings, which take the GPU and the CPU it waits on.
+past the mark or space before their end, about half a second of speech. The detection took 0.12 s per minute of 16 kHz
+audio and 0.15 s of 24 kHz alone, and 0.3 to 0.6 s beside the readings, which take the GPU and the CPU it waits on.
+
+The commit comes once `min_silence_duration_ms` of silence has passed, within the detection's chunk of 32 ms and the
+client's piece of audio. `measure/live_latency.py` on an Apple M5 (2026-11-22): FLEURS ja_jp and en_us test clips, two
+sessions of five clips per language in each of two rounds, sent over `/v1/realtime` with `server_vad`'s defaults in
+pieces of 100 ms as they would be said, Qwen3-ASR Q8_0 on Metal and Silero VAD on the CPU; the medians of the
+utterances the detection did not cut, over Japanese and English, from the end of speech:
+
+| | Silero VAD's padding | the tools' padding |
+|---|---|---|
+| commit | 0.67 to 0.69 s | 0.58 to 0.60 s |
+| completed, Qwen3-ASR 0.6B | 0.79 to 0.80 s | 0.69 to 0.73 s |
+| completed, Qwen3-ASR 1.7B | 0.96 to 1.00 s | 0.84 to 0.85 s |
+
+Every completed transcript was the recognition of the same samples sent as a file afterwards.
 
 A beginning that two readings agree on and a later reading changes stays in the deltas until the completed event
 replaces it, and later readings add nothing to them; where the final text goes on from what they gave, one more delta
