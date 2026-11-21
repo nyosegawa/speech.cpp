@@ -46,6 +46,13 @@ on the CPU with one thread, 0.17 s with the performance cores and 0.52 s on Meta
   0.2 s of new audio has come, the next starts at once, so readings never pile up. A committed utterance is recognized
   before any reading, and a reading under way when its utterance ends is stopped with `speech_request_cancel()`. 0.2 s,
   because the audio arrives every 0.1 to 0.2 s and the detection works in chunks of 32 ms.
+- **While the silence that would end an utterance goes on, one reading reads it to the end it would take, and its
+  commit takes that reading.** Once the detection says the speech has stopped (`speech_detection_ending()`), a reading
+  reads the utterance to the end its region takes if the silence lasts, its padding included, as soon as that audio is
+  there, and no reading reads the silence after it. A commit of a region of the same samples completes with that
+  reading's text in place of a recognition of its own: the samples, the request and the draft, the reading before, are
+  those the commit's recognition would have had. Where speech starts again, it is a reading like any other. An
+  utterance enhanced before its recognition is recognized after its commit, as the reading hears it unenhanced.
 - **Each recognition takes its place among the host's requests as it is accepted**: a committed utterance's when it is
   committed, and a reading's when it starts, with the assembly's lock held, so that a commit accepted before the reading
   runs before it and one accepted after it runs after it. A reading takes no place while it waits for audio, since it
@@ -77,6 +84,12 @@ The alternatives were turned down:
   which the assembly could tell without the detection's word: 0.6 s later, and still wrong where the probability stays
   between the two thresholds, which keeps a region open without lengthening its speech.
 - Readings at a fixed interval. It wastes time on a fast machine and falls behind on a slow one.
+- The commit's recognition run only once the utterance is committed. The audio of a region is all there once the
+  silence after its speech has lasted the padding it keeps, 300 ms with the defaults, and the readings meanwhile read
+  the silence beyond it; the recognition, 0.1 s with Qwen3-ASR 0.6B and 0.25 s with 1.7B on an Apple M5 (below), waited
+  for the commit, 200 ms later.
+- The last reading's text as the completed transcript. Its audio runs into the silence beyond the region's end, so its
+  text is not the recognition of the region's samples, and could differ from a file's.
 - Each reading's whole text as it comes, or the difference from the reading before. A delta cannot take back text, and
   each reading rewrites the end of the one before, which the end of its audio cut.
 - One delta of the whole text once the utterance is recognized, as manual commits had. No text comes while someone
@@ -105,13 +118,15 @@ sessions of five clips per language in each of two rounds, sent over `/v1/realti
 pieces of 100 ms as they would be said, Qwen3-ASR Q8_0 on Metal and Silero VAD on the CPU; the medians of the
 utterances the detection did not cut, over Japanese and English, from the end of speech:
 
-| | Silero VAD's padding | the tools' padding |
-|---|---|---|
-| commit | 0.67 to 0.69 s | 0.58 to 0.60 s |
-| completed, Qwen3-ASR 0.6B | 0.79 to 0.80 s | 0.69 to 0.73 s |
-| completed, Qwen3-ASR 1.7B | 0.96 to 1.00 s | 0.84 to 0.85 s |
+| | Silero VAD's padding | the tools' padding | and the reading before the commit |
+|---|---|---|---|
+| commit | 0.67 to 0.69 s | 0.58 to 0.60 s | 0.58 to 0.60 s |
+| completed, Qwen3-ASR 0.6B | 0.79 to 0.80 s | 0.69 to 0.73 s | 0.58 to 0.59 s |
+| completed, Qwen3-ASR 1.7B | 0.96 to 1.00 s | 0.84 to 0.85 s | 0.62 to 0.66 s |
 
-Every completed transcript was the recognition of the same samples sent as a file afterwards.
+Every completed transcript was the recognition of the same samples sent as a file afterwards, 58 for each model and
+each column. With the reading before the commit, the 0.6B model completes as the utterance is committed, and the 1.7B,
+whose recognition takes longer than the 200 ms between the end of an utterance's audio and its commit, soon after.
 
 A beginning that two readings agree on and a later reading changes stays in the deltas until the completed event
 replaces it, and later readings add nothing to them; where the final text goes on from what they gave, one more delta

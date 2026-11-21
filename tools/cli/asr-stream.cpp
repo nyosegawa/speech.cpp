@@ -91,7 +91,9 @@ public:
         if (check(cancellation.run(request.get(), [&] { return speech_transcribe(request.get()); })) == SPEECH_CANCELLED) return std::nullopt;
         std::lock_guard<std::mutex> lock(mutex_);
         if (provisional) readings_++;
-        else took_[utterance] = seconds_since(t0);
+        // An utterance's last recognition is the one it completes with: its own, or the reading of the same samples that
+        // ran while the silence that ended it went on.
+        took_[utterance] = seconds_since(t0);
         return transcript_of(speech_request_result(request.get()), false);
     }
 

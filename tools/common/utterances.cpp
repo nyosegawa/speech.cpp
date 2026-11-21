@@ -80,6 +80,12 @@ std::optional<std::pair<double, bool>> Detection::speaking() const {
     return std::make_pair(start, kept != 0);
 }
 
+std::optional<double> Detection::ending() const {
+    double end = 0;
+    if (!speech_detection_ending(detection_.get(), &end)) return std::nullopt;
+    return end;
+}
+
 Assembly::Assembly(Recognizer & recognizer, int rate, std::function<void(const Event &)> emit, Enhancer * enhancer)
     : recognizer_(recognizer), enhancer_(enhancer), rate_(rate), emit_(std::move(emit)) {
     worker_ = std::thread([this] { work(); });
@@ -101,9 +107,11 @@ Assembly::~Assembly() {
 void Assembly::ask(std::optional<Asked> asked) {
     std::lock_guard<std::mutex> lock(mutex_);
     asked_ = std::move(asked);
-    // Readings asked otherwise would not agree as two readings of the same request do.
+    // Readings asked otherwise would not agree as two readings of the same request do, and would not be the recognition
+    // a commit asks for.
     if (reading_) reading_->cancel();
     if (current_) current_->last_reading.clear();
+    ending_.reset();
     changed_.notify_all();
 }
 
@@ -200,6 +208,7 @@ void Assembly::clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (reading_) reading_->cancel();
     current_.reset();
+    ending_.reset();
     keep_from(heard_);
     if (detection_) restart_detection();
 }
@@ -253,7 +262,10 @@ void Assembly::take_regions(bool ended) {
             if (speaking->second) next = speaking->first;
             else unsure = true;
         }
-        if (!ended && (unsure || (!next && length - speech.end < cut.silence()))) return;
+        if (!ended && (unsure || (!next && length - speech.end < cut.silence()))) {
+            if (current_) current_->ends_at = 0;
+            return;
+        }
         const Region region = cut.pad(speech, from_, next, length);
         held_.pop_front();
         from_ = region.end;
@@ -280,6 +292,10 @@ void Assembly::take_regions(bool ended) {
     if (!current_) current_ = Utterance{next_++, start, false, start, "", "", ""};
     keep_from(start);
     if (speaking->second) announce(*current_);
+    // The end the region takes where the silence after its speech lasts, as RegionCut pads it, which a reading reads to
+    // once its audio is there; the sample is the one at() gives the region's end once the audio holds it.
+    const std::optional<double> ending = current_->announced ? detection_->ending() : std::nullopt;
+    current_->ends_at = ending ? origin_ + region_samples(Region{*ending + cut.after(), 0}, rate_, SIZE_MAX).first : 0;
 }
 
 void Assembly::announce(Utterance & u) {
@@ -309,12 +325,16 @@ void Assembly::commit_samples(uint64_t number, uint64_t first, uint64_t last) {
     committed.utterance = number;
     committed.recognized = asked_.has_value();
     send(committed);
-    if (reading_) reading_->cancel();
+    // The reading of the same samples, under way or ended, completes the commit; a reading of other samples stops.
+    std::shared_ptr<Ending> ending = std::move(ending_);
+    if (ending && !(ending->number == number && ending->first == first && ending->last == last)) ending.reset();
+    if (reading_ && !(ending && !ending->done)) reading_->cancel();
     if (asked_) {
         Final f;
         f.number = number;
         f.first = first;
         f.last = last;
+        f.ending = std::move(ending);
         f.diarized = diarized_;
         if (current_ && current_->number == number) {
             f.sent = current_->sent;
@@ -371,6 +391,7 @@ void Assembly::restart_detection() {
     regions_ = 0;
     held_.clear();
     from_ = 0;
+    ending_.reset();
 }
 
 void Assembly::begin_manual_utterance() {
@@ -379,7 +400,11 @@ void Assembly::begin_manual_utterance() {
 }
 
 bool Assembly::reading_due() const {
-    return asked_ && current_ && finals_.empty() && heard_ >= current_->read_to + (uint64_t) (kReadAgainAfter * rate_);
+    if (!asked_ || !current_ || !finals_.empty()) return false;
+    // While the silence after the speech goes on, one reading reads the utterance to where that silence would end it,
+    // once the audio is there, and none reads the silence after it.
+    if (current_->ends_at) return heard_ >= current_->ends_at && current_->read_to != current_->ends_at;
+    return heard_ >= current_->read_to + (uint64_t) (kReadAgainAfter * rate_);
 }
 
 void Assembly::send(const Event & e) {
@@ -423,14 +448,17 @@ void Assembly::work() {
             e.utterance = f.number;
             try {
                 if (f.refused) std::rethrow_exception(f.refused);
-                std::optional<std::pair<std::vector<float>, int>> audio(std::make_pair(std::move(f.samples), rate_));
-                if (f.enhancement) {
-                    audio = enhancer_->enhance(*f.enhancement, std::move(audio->first), rate_, *cancellation);
-                    // The enhancement's place passes as soon as it has ended.
-                    f.enhancement.reset();
+                // This thread ran the reading that completes it before it took the commit, which came after.
+                std::optional<Transcript> t = f.ending ? f.ending->transcript : std::nullopt;
+                if (!t) {
+                    std::optional<std::pair<std::vector<float>, int>> audio(std::make_pair(std::move(f.samples), rate_));
+                    if (f.enhancement) {
+                        audio = enhancer_->enhance(*f.enhancement, std::move(audio->first), rate_, *cancellation);
+                        // The enhancement's place passes as soon as it has ended.
+                        f.enhancement.reset();
+                    }
+                    if (audio) t = recognizer_.transcribe(*f.reservation, f.asked, std::move(audio->first), audio->second, *cancellation, f.number, false, f.draft);
                 }
-                std::optional<Transcript> t;
-                if (audio) t = recognizer_.transcribe(*f.reservation, f.asked, std::move(audio->first), audio->second, *cancellation, f.number, false, f.draft);
                 if (t) {
                     e.kind = Event::Kind::Completed;
                     e.transcript = std::move(*t);
@@ -468,7 +496,8 @@ void Assembly::work() {
             continue;
         }
         const uint64_t number = current_->number;
-        current_->read_to = heard_;
+        const uint64_t to = current_->ends_at ? current_->ends_at : heard_;
+        current_->read_to = to;
         const Asked asked = *asked_;
         // A reading takes its place once it is due, with the mutex held, so that a commit accepted before it runs first,
         // and one accepted after it, which this thread recognizes next, after it.
@@ -480,9 +509,13 @@ void Assembly::work() {
             busy_ = false;
             continue;
         }
-        std::vector<float> samples(audio_.begin() + (long) (current_->start - buffer_), audio_.end());
+        std::vector<float> samples(audio_.begin() + (long) (current_->start - buffer_), audio_.begin() + (long) (to - buffer_));
         // Each reading reads the utterance from its start again, and the reading before is the likeliest text of this one.
         const std::string draft = current_->last_reading;
+        // A reading to where the silence would end the utterance is the recognition its commit would run, unless the
+        // utterance is enhanced before its recognition.
+        std::shared_ptr<Ending> ending;
+        if (current_->ends_at && !asked.enhance) ending = ending_ = std::make_shared<Ending>(Ending{number, current_->start, to});
         const std::shared_ptr<Cancellation> cancellation = reading_ = std::make_shared<Cancellation>();
         lock.unlock();
         std::optional<Transcript> t;
@@ -495,6 +528,10 @@ void Assembly::work() {
         lock.lock();
         reading_.reset();
         busy_ = false;
+        if (ending) {
+            ending->done = true;
+            if (!cancellation->cancelled()) ending->transcript = t;
+        }
         changed_.notify_all();
         if (!t || cancellation->cancelled() || !current_ || current_->number != number) continue;
         current_->agreed = agreed_beginning(current_->last_reading, t->text);

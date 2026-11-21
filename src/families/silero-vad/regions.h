@@ -32,10 +32,14 @@ struct Region {
     int64_t start, end;
 };
 
-/** A region begun and not given yet: its padded start, and whether it is certain to be given. */
+/**
+ * A region begun and not given yet: its padded start, whether it is certain to be given, and, once its speech has
+ * stopped where it would end long enough to be given, the padded end it takes unless speech starts again.
+ */
 struct Begun {
     int64_t start;
     bool kept;
+    std::optional<int64_t> ending;
 };
 
 /**
@@ -79,6 +83,12 @@ public:
      * under way, kept once no end it can still take leaves it no longer than min_speech_duration_ms; none when there is
      * neither. A region under way not kept is dropped if its speech ends that soon, and no region is then given from its
      * start. With what settle() or end() was last told of the audio heard.
+     *
+     * Its ending is the end it is given with where no region starts within twice speech_pad_ms of its unpadded end, the
+     * silence after it lasts min_silence_duration_ms, max_speech_duration_s does not cut it elsewhere and the audio does
+     * not end first: for the region under way, where its probability fell below neg_threshold and has not risen above the
+     * threshold since, once it is longer than min_speech_duration_ms there; for the region whose end waits, its end
+     * while no region has begun after it.
      */
     std::optional<Begun> open() const;
 

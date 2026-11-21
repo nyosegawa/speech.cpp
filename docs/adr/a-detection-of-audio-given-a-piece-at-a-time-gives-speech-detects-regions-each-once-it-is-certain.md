@@ -46,6 +46,13 @@ with the number of chunks its graph held (Apple M5, 2026-10-08).
   after the silence that ends it, so that a caller can say someone speaks long before it can give the utterance, and
   never for a noise it then drops. `speech_detection_speaking()` gives it beside the start, in one call that reads one
   region: whether a region has begun, its start, and whether it is kept.
+- **The end a region would take is said once its speech has stopped**, so that a caller can start on the region's audio
+  while the silence that ends it goes on: `speech_detection_ending()` gives, for the region `speech_detection_speaking()`
+  reads, the end it is given with if no speech starts again, once its probability has fallen below the threshold less
+  0.15 without rising above the threshold since and the region would be long enough to be given there, or, for a
+  region whose end waits, while no region has begun after it. It is a function of its own, added to the API's minor
+  version, where an output added to `speech_detection_speaking()` would change the call for every caller; no call
+  between the two changes the region they read.
 - **The library resamples the pieces** with the filter of the whole audio
   ([the record of resampling](the-library-resamples-input-audio-with-torchaudios-kaiser-best-filter-and-drama3-references-as-fish-speech-does.md)), which holds
   back the half of the filter after the last sample until more arrives: 4.2 to 4.3 ms from 24, 32, 44.1 or 48 kHz to

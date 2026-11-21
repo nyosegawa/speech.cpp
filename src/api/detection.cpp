@@ -142,4 +142,12 @@ int speech_detection_speaking(const speech_detection * detection, double * start
     return open ? 1 : 0;
 }
 
+int speech_detection_ending(const speech_detection * detection, double * end) {
+    if (!detection) return 0;
+    const std::optional<DetectionStream::Begun> open = detection->stream->open();
+    if (!open || !open->ending) return 0;
+    if (end) *end = *open->ending;
+    return 1;
+}
+
 }  // extern "C"

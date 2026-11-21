@@ -170,8 +170,8 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
   before it runs returns at once. Either returns `SPEECH_CANCELLED`.
 - **Detections of audio that arrives.** `speech_detection_start()` starts a detection with a request's options and the
   rate of the audio to come; `speech_detection_push()` gives it samples, `speech_detection_end()` ends the audio, and
-  `speech_detection_region_count()`, `speech_detection_region()` and `speech_detection_speaking()` read what it has found
-  so far ([below](#detections)).
+  `speech_detection_region_count()`, `speech_detection_region()`, `speech_detection_speaking()` and
+  `speech_detection_ending()` read what it has found so far ([below](#detections)).
 - **Diarizations of audio that arrives.** `speech_diarization_start()`, `speech_diarization_push()` and
   `speech_diarization_end()` do the same with a diarization model, and `speech_diarization_segment_count()`,
   `speech_diarization_segment()`, `speech_diarization_settled()` and `speech_diarization_speaking()` read what it has
@@ -239,6 +239,11 @@ A detection finds the regions of audio that arrives a piece at a time, with a de
   `min_speech_duration_ms` makes no region, so the region under way is kept once its speech has lasted longer than that
   without falling silent: with the defaults, about 250 ms after it began, where a region is given only after the
   silence that ends it.
+- **`speech_detection_ending()`** (API 4.3) says whether the speech of that region has stopped, and the end it is given
+  with if no speech starts again: where someone stopped speaking and the region is long enough to be given. A caller can
+  start on the region's audio while the silence that ends it goes on, as `speech serve` and `speech asr -` recognize an
+  utterance before it is committed. Speech that starts again within the silence, a region that starts within twice
+  `speech_pad_ms` and a cut at `max_speech_duration_s` give the region another end.
 - **Any rate.** The audio is resampled to the model's rate a piece at a time, which holds back the last 4.3 ms of the
   audio pushed from 24, 44.1 or 48 kHz (8.6 ms from 8 kHz) until more arrives. The model computes a chunk (32 ms for
   Silero VAD) once its samples have arrived.

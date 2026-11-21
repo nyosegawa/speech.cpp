@@ -111,8 +111,17 @@ void RegionStream::end(int64_t samples) {
 }
 
 std::optional<Begun> RegionStream::open() const {
-    if (pending_) return Begun{pending_->start, true};
-    if (triggered_) return Begun{padded_start(start_), (double) (earliest_end() - start_) > min_speech_};
+    // Both endings are the end padded_end() gives where no region follows within twice the padding.
+    if (pending_) {
+        std::optional<int64_t> ending;
+        if (!triggered_) ending = (int64_t) ((double) pending_->end + pad_);
+        return Begun{pending_->start, true, ending};
+    }
+    if (triggered_) {
+        std::optional<int64_t> ending;
+        if (temp_end_ != 0 && (double) (temp_end_ - start_) > min_speech_) ending = (int64_t) ((double) temp_end_ + pad_);
+        return Begun{padded_start(start_), (double) (earliest_end() - start_) > min_speech_, ending};
+    }
     return std::nullopt;
 }
 

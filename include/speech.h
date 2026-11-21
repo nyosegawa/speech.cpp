@@ -62,7 +62,7 @@ extern "C" {
  * version and a minor version of m or more. Version 4.0 is first released with speech.cpp 0.10.0, and a declaration
  * added since says the version that added it.
  */
-#define SPEECH_API_VERSION_MINOR 2
+#define SPEECH_API_VERSION_MINOR 3
 
 /** The SPEECH_API_VERSION_MAJOR the library was built with, for a caller that loads it at run time. */
 SPEECH_API int speech_api_version_major(void);
@@ -1266,6 +1266,17 @@ SPEECH_API speech_status speech_detection_region(const speech_detection * detect
  * soon. 0 when neither, and after speech_detection_end().
  */
 SPEECH_API int speech_detection_speaking(const speech_detection * detection, double * start, int * kept);
+
+/**
+ * Whether the speech of the region speech_detection_speaking() reports has stopped (1), with in `*end`, unless NULL, the
+ * end in seconds it is given with if no speech starts again: for the region under way, once its probability has fallen
+ * below the threshold less 0.15 (0.01 at least) and not risen above the threshold since, where it is longer than
+ * min_speech_duration_ms; for a region whose end waits on what follows, while no region has begun after it. The region
+ * takes another end where a region starts within twice speech_pad_ms of it, max_speech_duration_s cuts it elsewhere or
+ * the audio ends first. A caller can start on the region's audio while the silence that ends it goes on. 0 while someone
+ * speaks or no region has begun, and after speech_detection_end(). Added in 4.3.
+ */
+SPEECH_API int speech_detection_ending(const speech_detection * detection, double * end);
 
 /*
  * Diarizations of audio that arrives a piece at a time, as from a microphone or a meeting's call, for a diarization model:
