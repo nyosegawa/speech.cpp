@@ -86,8 +86,8 @@ The alternatives were turned down:
 - Readings at a fixed interval. It wastes time on a fast machine and falls behind on a slow one.
 - The commit's recognition run only once the utterance is committed. The audio of a region is all there once the
   silence after its speech has lasted the padding it keeps, 300 ms with the defaults, and the readings meanwhile read
-  the silence beyond it; the recognition, 0.1 s with Qwen3-ASR 0.6B and 0.3 s with 1.7B on an Apple M5, waited for the
-  commit, 200 ms later.
+  the silence beyond it; the recognition, 0.1 s with Qwen3-ASR 0.6B and 0.25 s with 1.7B on an Apple M5 (below), waited
+  for the commit, 200 ms later.
 - The last reading's text as the completed transcript. Its audio runs into the silence beyond the region's end, so its
   text is not the recognition of the region's samples, and could differ from a file's.
 - Each reading's whole text as it comes, or the difference from the reading before. A delta cannot take back text, and
@@ -118,13 +118,15 @@ sessions of five clips per language in each of two rounds, sent over `/v1/realti
 pieces of 100 ms as they would be said, Qwen3-ASR Q8_0 on Metal and Silero VAD on the CPU; the medians of the
 utterances the detection did not cut, over Japanese and English, from the end of speech:
 
-| | Silero VAD's padding | the tools' padding |
-|---|---|---|
-| commit | 0.67 to 0.69 s | 0.58 to 0.60 s |
-| completed, Qwen3-ASR 0.6B | 0.79 to 0.80 s | 0.69 to 0.73 s |
-| completed, Qwen3-ASR 1.7B | 0.96 to 1.00 s | 0.84 to 0.85 s |
+| | Silero VAD's padding | the tools' padding | and the reading before the commit |
+|---|---|---|---|
+| commit | 0.67 to 0.69 s | 0.58 to 0.60 s | 0.58 to 0.60 s |
+| completed, Qwen3-ASR 0.6B | 0.79 to 0.80 s | 0.69 to 0.73 s | 0.58 to 0.59 s |
+| completed, Qwen3-ASR 1.7B | 0.96 to 1.00 s | 0.84 to 0.85 s | 0.62 to 0.66 s |
 
-Every completed transcript was the recognition of the same samples sent as a file afterwards.
+Every completed transcript was the recognition of the same samples sent as a file afterwards, 58 for each model and
+each column. With the reading before the commit, the 0.6B model completes as the utterance is committed, and the 1.7B,
+whose recognition takes longer than the 200 ms between the end of an utterance's audio and its commit, soon after.
 
 A beginning that two readings agree on and a later reading changes stays in the deltas until the completed event
 replaces it, and later readings add nothing to them; where the final text goes on from what they gave, one more delta
