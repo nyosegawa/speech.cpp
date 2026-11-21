@@ -847,11 +847,51 @@ elif info["task"] == "recognition":
                 assert done["transcript"] == end["text"] and done["stop"] == end["stop"], (done, end)
                 assert [x["code"] for x in done.get("languages", [])] == end.get("languages", []), (done, end)
                 assert done["usage"]["seconds"] == (last - first) / rate, (done, start, end_s)
+        # A region the longest region of 2 s cut within its speech, followed by 150 ms of that speech, too short to keep, and
+        # a second of silence: the stream waits until that speech is dropped and pads the region as the file does, where
+        # the region after it is none.
+        cuts = [r for k, r in enumerate(found) if k + 1 < len(found) and found[k + 1]["start"] - r["end"] < 0.05]
+        assert cuts, found
+        short = joined[:2 * round((cuts[0]["end"] + 0.15) * rate)] + b"\0" * 2 * rate
+        short_path = os.path.join(work, "speech-cli-smoke-cut.wav")
+        with open(short_path, "wb") as f:
+            f.write(b"RIFF" + struct.pack("<I", 36 + len(short)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+                    + b"data" + struct.pack("<I", len(short)) + short)
+        speech_only = json.loads(run("vad", vad, "--format", "json", "--device", "cpu", *region_cut.detection_flags(0.5, 300, 500, 2),
+                                     short_path).stdout)["regions"]
+        assert speech_only[-1]["end"] == cuts[0]["end"], (speech_only, cuts[0])
+        want = region_cut.padded([(r["start"], r["end"]) for r in speech_only], 300, 500, len(short) / 2 / rate)
+        # Fed as it is said, in pieces of 20 ms, so that the region is given before the speech after it is dropped.
+        process = subprocess.Popen([speech, "asr", model, "--vad", vad, "--format", "json", "--rate", str(rate), *detection, *options, "-"],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        lines = []
+        reader = threading.Thread(target=lambda: lines.extend(process.stdout))
+        reader.start()
+        errors = []
+        threading.Thread(target=lambda: errors.extend(process.stderr), daemon=True).start()
+        while not any(b"reading 16-bit PCM" in line for line in errors):
+            assert process.poll() is None, b"".join(errors)
+            time.sleep(0.05)
+        started = time.perf_counter()
+        piece = rate // 50 * 2
+        for k, at in enumerate(range(0, len(short), piece)):
+            time.sleep(max(0.0, started + k * 0.02 - time.perf_counter()))
+            process.stdin.write(short[at:at + piece])
+            process.stdin.flush()
+        process.stdin.close()
+        reader.join()
+        assert process.wait() == 0, b"".join(errors)
+        events = [json.loads(line) for line in lines]
+        bounds = [(e["audio_start_ms"], next(x["audio_end_ms"] for x in events if x["item_id"] == e["item_id"] and x["type"].endswith(".speech_stopped")))
+                  for e in events if e["type"].endswith(".speech_started")]
+        assert bounds == [(milliseconds(round(a * rate) / rate), milliseconds(round(b * rate) / rate)) for a, b in want], (bounds, want)
+        os.remove(short_path)
         got = json.loads(run("asr", model, "--vad", vad, "--format", "json", *(["--timestamps"] if timed else []), *options, silence).stdout)
         assert got == {"file": silence, "text": "", "stop": "complete", **({"segments": [], "tokens": []} if timed else {})}, got
         print(f"asr --vad and asr --vad -: {counted[0]} and, with a longest region of 2 s, {counted[1]} regions of {len(joined) / 2 / rate:.1f} s, "
               f"the worker's ends of the regions{' with their times' if timed else ''} joined from a file, and each utterance from stdin "
-              f"speech_started and speech_stopped at its region's bounds and completed with the worker's text; a file of silence gives an empty text")
+              f"speech_started and speech_stopped at its region's bounds and completed with the worker's text; a region cut within its speech "
+              f"and followed by speech too short to keep, padded from stdin as in a file; a file of silence gives an empty text")
         # Fed as fast as it is said, the first of the longest dump's utterances gets deltas before it is committed.
         longest = max(pcms, key=len)
         process = subprocess.Popen([speech, "asr", model, "--vad", vad, "--format", "json", "--rate", str(rate), *options, "-"], stdin=subprocess.PIPE,

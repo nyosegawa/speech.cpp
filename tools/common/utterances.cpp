@@ -241,13 +241,19 @@ void Assembly::take_regions(bool ended) {
     const std::optional<std::pair<double, bool>> speaking = detection_->speaking();
     // The detection gives a region that silence ended once that silence has passed, and one that max_speech_duration_s cut
     // with the speech after it begun, or, where it cut the speech itself, before the speech after it has begun; such a
-    // region waits for that speech or for the silence, so that its padding is the one RegionCut gives the whole audio.
+    // region waits for that speech to be kept or dropped, or for the silence, so that its padding is the one RegionCut
+    // gives the whole audio, in which the speech after it is a region's only where it was kept.
     while (!held_.empty()) {
         const Region speech = held_.front();
         std::optional<double> next;
-        if (held_.size() > 1) next = held_[1].start;
-        else if (speaking) next = speaking->first;
-        if (!next && !ended && length - speech.end < cut.silence()) return;
+        bool unsure = false;
+        if (held_.size() > 1) {
+            next = held_[1].start;
+        } else if (speaking && speaking->first - speech.end < cut.silence()) {
+            if (speaking->second) next = speaking->first;
+            else unsure = true;
+        }
+        if (!ended && (unsure || (!next && length - speech.end < cut.silence()))) return;
         const Region region = cut.pad(speech, from_, next, length);
         held_.pop_front();
         from_ = region.end;
