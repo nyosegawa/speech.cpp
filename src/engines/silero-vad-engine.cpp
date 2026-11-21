@@ -55,7 +55,9 @@ public:
     std::optional<Begun> open() const override {
         const std::optional<silero_vad::Begun> begun = rule_.open();
         if (!begun) return std::nullopt;
-        return Begun{(double) begun->start / sample_rate_, begun->kept};
+        std::optional<double> ending;
+        if (begun->ending) ending = (double) *begun->ending / sample_rate_;
+        return Begun{(double) begun->start / sample_rate_, begun->kept, ending};
     }
 
 private:

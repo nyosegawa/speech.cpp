@@ -141,6 +141,8 @@ public:
      * speech_detection_speaking() gives them, or nothing.
      */
     std::optional<std::pair<double, bool>> speaking() const;
+    /** Where the speech of the region begun has stopped, unless speech starts again, as speech_detection_ending() gives it. */
+    std::optional<double> ending() const;
     /** Starts again, on the audio that follows, with the same model and options. */
     void restart();
 
@@ -230,9 +232,25 @@ private:
         std::string last_reading;
         std::string agreed;
         std::string sent;
+        /**
+         * The sample after its last where the detection says its speech has stopped and the silence under way would end
+         * it, or 0 while someone speaks.
+         */
+        uint64_t ends_at = 0;
     };
 
-    /** A committed utterance that waits for its recognition, with its place or what refused it one. */
+    /**
+     * A reading of the utterance under way to where the silence under way would end it, which runs while that silence
+     * goes on: the commit of a region of the same samples takes its text as its recognition, since a recognition of those
+     * samples, with the reading before as its draft, is what the commit would run. Its utterance, its first sample and
+     * the sample after its last, and once it has ended, its text, or nothing where it failed or stopped.
+     */
+    struct Ending {
+        uint64_t number = 0, first = 0, last = 0;
+        bool done = false;
+        std::optional<Transcript> transcript;
+    };
+
     /** A diarization as the utterances committed while it goes on read it. */
     struct Diarized {
         std::shared_ptr<Diarization> diarization;
@@ -241,6 +259,7 @@ private:
         int first_speaker = 0;
     };
 
+    /** A committed utterance that waits for its recognition, with its place or what refused it one. */
     struct Final {
         uint64_t number = 0;
         /** Its first sample and the sample after its last, counted from the start of the audio. */
@@ -259,6 +278,8 @@ private:
         std::unique_ptr<Reservation> enhancement;
         std::unique_ptr<Reservation> reservation;
         std::exception_ptr refused;
+        /** The reading of its samples that completes it where it gives a text, its place then passing unused. */
+        std::shared_ptr<Ending> ending;
     };
 
     void work();
@@ -327,6 +348,8 @@ private:
     /** Whether the worker recognizes, an utterance or the beginning of one. */
     bool busy_ = false;
     std::shared_ptr<Cancellation> reading_, final_;
+    /** The reading of the utterance under way to where the silence under way would end it, begun or ended. */
+    std::shared_ptr<Ending> ending_;
     bool closing_ = false;
     std::thread worker_;
 };

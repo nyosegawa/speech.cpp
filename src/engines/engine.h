@@ -206,10 +206,14 @@ public:
 
     virtual const std::vector<TimedText> & regions() const = 0;
 
-    /** A region begun and not given yet: its start in seconds, and whether it is certain to be given. */
+    /**
+     * A region begun and not given yet: its start in seconds, whether it is certain to be given, and, once its speech has
+     * stopped, the end it is given with unless speech starts again.
+     */
     struct Begun {
         double start;
         bool kept;
+        std::optional<double> ending;
     };
 
     /**

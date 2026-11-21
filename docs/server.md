@@ -320,7 +320,10 @@ texts as `chunking_strategy` with the same values. A server without a detection 
 
 An utterance is at most 10 s long, cut at its longest silence. `speech_started` comes about 0.26 s after the speech
 begins, once it has lasted long enough to be kept, and the utterance is committed once `silence_duration_ms` of
-silence has followed it, within the detection's 32 ms. A shorter `silence_duration_ms` gives the text sooner, and cuts
+silence has followed it, within the detection's 32 ms. Its audio is all there once the silence has lasted the padding
+it keeps after the speech, and the server recognizes it then, so that the `completed` follows the commit at once where
+that recognition takes less than the rest of the silence (200 ms with the defaults); where speech starts again, the
+utterance goes on. A shorter `silence_duration_ms` gives the text sooner, and cuts
 sentences at shorter pauses: below about 200 ms, an utterance ends at nearly every pause, and a stretch of speech shorter
 than 250 ms between two of them is dropped. The buffer
 keeps only the utterance under way, or the last moments of silence, so a session can stay open through silence; a
