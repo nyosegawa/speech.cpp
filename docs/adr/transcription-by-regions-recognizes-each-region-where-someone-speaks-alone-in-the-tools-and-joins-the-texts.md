@@ -32,6 +32,13 @@ without a separator, as qwen-asr does.
   `chunking_strategy` `"auto"` takes them all, and a `server_vad` object those of the members it leaves out.
   `speech asr --vad MODEL` takes the options of `speech vad` as flags of their names: those the detection model takes and
   the recognition model does not go to the detection, the others to every region's recognition.
+- **The detection finds the speech alone, and the tools pad it as OpenAI describes a `server_vad` turn**, which ends
+  once `silence_duration_ms` of silence has followed its speech and keeps `prefix_padding_ms` before it. The detection
+  runs with `speech_pad_ms` 0, and a region keeps `speech_pad_ms` before its speech, but not before the region before it
+  ends, and as much after it, but no more than `min_silence_duration_ms`, so that its audio is all there once the
+  silence that ends it has passed. Where `max_speech_duration_s` cut the speech and the speech after it starts within
+  that silence, the region ends halfway to it if that comes first. The detection's longest region is
+  `max_speech_duration_s` less the padding, so that a region with its padding is no longer, as Silero VAD keeps it.
 - **The texts are joined with a space, unless either side is written without spaces or already has one**: Han,
   Hiragana and Katakana with their radicals, symbols, punctuation and full-width forms, the scripts the page's join
   leaves without a space. The space begins the next region's first segment and first token, so that the segments, and
@@ -43,8 +50,9 @@ without a separator, as qwen-asr does.
   long region better, less than a shorter one.
 - **Audio in which no one speaks gives "" and recognizes nothing**, while the recognition options are still checked
   against the model, so that a request is refused the same way whatever its audio holds.
-- **`speech vad --split DIR` writes each region as a 16-bit WAVE file**, cut as transcription by regions cuts it, so that
-  the regions it recognizes can be heard and given to other programs.
+- **`speech vad --split DIR` writes each of its regions as a 16-bit WAVE file**, cut from the audio as transcription by
+  regions cuts a region, so that the regions can be heard and given to other programs. Its regions are Silero VAD's,
+  padded by Silero VAD's own rule.
 
 `measure/region_cap_compare.py` measured each longest region on 105.6 minutes of recordings joined from public test
 clips (Apple M5, Metal, 2026-10-08): FLEURS ja_jp test, one reading of each of its 321 sentences, in 21 recordings, and
@@ -79,6 +87,10 @@ The alternatives were turned down:
   together at every pause, where a part of 1200 s ends once in twenty minutes.
 - Silero VAD's own defaults. They cut a sentence at every breath, and an OpenAI client that asks for `"auto"` or leaves a
   member of `server_vad` out expects OpenAI's values.
+- Silero VAD's padding, with `prefix_padding_ms` as its `speech_pad_ms`, which pads both ends of a region and gives two
+  regions closer than twice it half the silence between them. A stream knows a region's end only once that much silence
+  has passed: 600 ms with OpenAI's defaults, where `silence_duration_ms` says 500, and a `silence_duration_ms` below
+  twice `prefix_padding_ms` gave no sooner turn at all.
 - 200 ms of silence for `chunking_strategy`, as `VadConfig` gives it, beside 500 ms for the Realtime API. The same audio
   would be cut into other regions by a file sent whole than by the same audio streamed, and by the command line.
 - No longest region, or 15 to 30 s. Regions of up to 27.7 s let reazonspeech-v2 drop three times as many FLEURS

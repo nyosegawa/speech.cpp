@@ -37,10 +37,12 @@ while it goes on and recognizes it whole once committed
   on the recognition model held when it is committed, which it keeps, and in the turn it takes then among the requests
   on that model, so that a request that arrives after it runs after it, its audio resampled by the library as a file's
   is. A turn whose utterance never runs, because the session ended, is given up, so that the requests behind it go on.
-- **`server_vad` cuts the utterances by the regions of the server's detection model**, with the options of transcription
-  by regions: `threshold`, `prefix_padding_ms` as `speech_pad_ms` and `silence_duration_ms` as
+- **`server_vad` cuts the utterances by the regions of transcription by regions on the server's detection model**, with
+  its options: `threshold`, `prefix_padding_ms` as `speech_pad_ms` and `silence_duration_ms` as
   `min_silence_duration_ms`, defaulting to OpenAI's 0.5, 300 ms and 500 ms, and a longest region of 10 s. A
-  `turn_detection` given is the whole of it, a member left out taking its default. Each region gives `speech_started`,
+  `turn_detection` given is the whole of it, a member left out taking its default. The padding is the tools' own, so
+  that an utterance is committed once `silence_duration_ms` of silence has followed its speech, as OpenAI's reference
+  describes the turn. Each region gives `speech_started`,
   `speech_stopped` and `committed` of one item, in that order, with `audio_start_ms` and `audio_end_ms` the region's
   bounds from the start of the session's audio, so that the same audio gives the regions and texts of `chunking_strategy`
   with the same values. A server without a detection model answers `server_vad` with an error that says to give

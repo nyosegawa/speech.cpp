@@ -44,10 +44,14 @@ std::string region_defaults() {
     return out;
 }
 
-/** The detection model of --vad, and the request options that are its own: those it takes and the recognizer does not. */
+/**
+ * The detection model of --vad, the request options that are its own (those it takes and the recognizer does not), and
+ * the cut of transcription by regions they ask for.
+ */
 struct Detection {
     Model model{nullptr, speech_model_free};
     std::vector<RequestOption> options;
+    std::optional<RegionCut> cut;
 };
 
 /** The diarization model of --diarize, and the request options that are its own. */
@@ -132,6 +136,7 @@ std::optional<Detection> detection_of(const CommandLine & line, const std::optio
         (own ? d.options : recognition).push_back(o);
     }
     d.options = region_options(d.options);
+    d.cut.emplace(d.model.get(), d.options);
     options = recognition;
     return d;
 }
@@ -279,8 +284,8 @@ int run_asr(const CommandLine & line, FILE * out) {
                     rate = enhanced.rate;
                 }
                 if (detection) {
-                    const Request request = detection_request(detection->model.get(), samples, rate, detection->options);
-                    found = *detect_regions(request.get(), never);
+                    const Request request = detection_request(detection->model.get(), samples, rate, detection->cut->detection());
+                    found = detection->cut->regions(*detect_regions(request.get(), never), (double) samples.size() / rate);
                     regions = found.size();
                     transcript = *transcribe_regions(model.get(), samples, rate, found, options, timestamps, never, &parts);
                     if (diarizer) {

@@ -27,9 +27,10 @@ language and a prompt, with a decoding other than the default or with a vocabula
 languages; for a Nemotron 3.5 Transcribe dump
 of the model card's prompt for speaker tags, `speech asr --speakers` as a line per segment with its speaker and as JSON
 against the worker's end with speakers, and its refusal with --vad; and with --vad a detection model,
-`speech asr --vad` on the dumps' audio joined with silences between them against the worker's ends of the regions that
-`speech vad --split` writes, each of which holds the samples of its region, joined as transcription by regions joins
-them (as JSON, with times where the model takes timestamps), an empty text for a file of silence, and the refusals of a
+`speech asr --vad` on the dumps' audio joined with silences between them against the worker's ends of the regions of the
+speech that `speech vad` finds, padded as transcription by regions pads them (region_cut.py), joined as transcription by
+regions joins them (as JSON, with times where the model takes timestamps), and again with a longest region of 2 s, which
+cuts the speech; an empty text for a file of silence, and the refusals of a
 model of another task for --vad and of a detection option the model does not take. For a detection model: `speech vad`
 on 32-bit float WAVE files of the dumps of reference/silero-vad/dump.py against the regions in each dump's
 regions.json, the official's, with the flags of each set of options, as text and as JSON; with --split a WAVE file of
@@ -52,7 +53,7 @@ or one folder for two files of one name, of an input as -o, of - with a file and
 rate the model does not take, which leaves no file, a chunk shorter than its STFT and an odd byte on stdin; with --asr,
 `speech asr --enhance`, and the refusal of --enhance with a model of another task; and with --vad too, `speech asr --vad
 --enhance -`, whose utterances begin where those of `speech asr --vad -` begin and whose texts are those of `speech asr
---enhance` of each region `speech vad --split` writes. For a dialogue model, given a dump of reference/haru/dump.py:
+--enhance` of each region of the speech `speech vad` finds, padded as transcription by regions pads it. For a dialogue model, given a dump of reference/haru/dump.py:
 `speech talk` hearing its user audio as a 16-bit WAVE file, speaking first, against the worker's frames of the same
 samples, seed and speak_first, into a file with its sizes set and to stdout, its text on stdout and with -o - on stderr; the refusals (exit 2) of
 no -o, of no AUDIO, of --live with AUDIO, of --live with -o, of --no-warmup without --live and of -o the file heard,
@@ -77,6 +78,7 @@ import sys
 import threading
 import time
 
+import region_cut
 from worker_client import (MOST_CER, PARAGRAPH, Worker, cer, dump_requests, heard, joined_transcript, main_speaker, pcm16, read_npy, realtime_speakers, short,
                            speakers_json, speaks_by_sentence)
 
@@ -645,10 +647,9 @@ elif info["task"] == "enhancement":
         assert enhanced_text.endswith("\n"), enhanced_text
         print(f"asr --enhance: {enhanced_text.strip()!r}; --enhance of a recognition model: exit 2")
         if vad:
-            # The detection hears the audio as it arrives, so the stream's utterances are the regions `speech vad --split`
-            # writes, and each utterance is recognized as `speech asr --enhance` recognizes its region alone.
-            split = os.path.join(work, "regions")
-            shutil.rmtree(split, ignore_errors=True)
+            # The detection hears the audio as it arrives, so the stream's utterances are the regions of the speech `speech
+            # vad` finds in it, and each utterance is recognized as `speech asr --enhance` recognizes its region alone.
+            region_file = os.path.join(work, "region.wav")
             detection = ["--threshold", "0.5", "--speech-pad-ms", "300", "--min-silence-duration-ms", "500", "--max-speech-duration-s", "10"]
             for path, pcm, at in zip(files, pcms, rates):
                 plain = run("asr", recognizer, "--vad", vad, "--format", "json", *detection, *options, "--rate", str(at), "-", input=pcm).stdout.decode()
@@ -657,15 +658,20 @@ elif info["task"] == "enhancement":
                 starts = [e["audio_start_ms"] for e in events if e["type"] == "input_audio_buffer.speech_started"]
                 assert starts == [json.loads(line)["audio_start_ms"] for line in plain.splitlines()
                                   if json.loads(line)["type"] == "input_audio_buffer.speech_started"], "the detection heard enhanced audio"
-                # speech asr runs its detection on the CPU, and speech vad there gives the same regions.
-                run("vad", vad, "--split", split, "--device", "cpu", *detection, path)
-                regions = sorted(os.listdir(split))
+                # speech asr runs its detection on the CPU, and speech vad there finds the same speech.
+                found = json.loads(run("vad", vad, "--format", "json", "--device", "cpu", *region_cut.detection_flags(0.5, 300, 500, 10),
+                                       path).stdout)["regions"]
+                regions = region_cut.padded([(r["start"], r["end"]) for r in found], 300, 500, len(pcm) / 2 / at)
                 texts = [e["transcript"] for e in events if e["type"] == "conversation.item.input_audio_transcription.completed"]
                 assert len(texts) == len(regions), (texts, regions)
-                for region, text in zip(regions, texts):
-                    alone = run("asr", recognizer, "--enhance", model, *options, os.path.join(split, region)).stdout.decode().strip()
-                    assert text == alone, (region, text, alone)
-                shutil.rmtree(split)
+                for (start, end), text in zip(regions, texts):
+                    part = pcm[2 * round(start * at):2 * round(end * at)]
+                    with open(region_file, "wb") as f:
+                        f.write(b"RIFF" + struct.pack("<I", 36 + len(part)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, at, at * 2, 2, 16)
+                                + b"data" + struct.pack("<I", len(part)) + part)
+                    alone = run("asr", recognizer, "--enhance", model, *options, region_file).stdout.decode().strip()
+                    assert text == alone, (start, end, text, alone)
+                os.remove(region_file)
             print("asr --vad --enhance -: the regions of the audio unenhanced, each utterance the text of speech asr --enhance of its region")
     for path in files:
         os.remove(path)
@@ -798,56 +804,54 @@ elif info["task"] == "recognition":
             with open(path, "wb") as f:
                 f.write(b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
                         + b"data" + struct.pack("<I", len(pcm)) + pcm)
-        detection = ["--threshold", "0.5", "--speech-pad-ms", "300", "--min-silence-duration-ms", "500", "--max-speech-duration-s", "8"]
-        split = os.path.join(work, "speech-cli-smoke-split")
-        shutil.rmtree(split, ignore_errors=True)
-        # speech asr runs its detection on the CPU, and speech vad there gives the same regions.
-        regions = json.loads(run("vad", vad, "--format", "json", "--split", split, "--device", "cpu", *detection, long).stdout)["regions"]
-        names = sorted(os.listdir(split))
-        assert len(names) == len(regions) > len(pcms), (names, regions)
-        w = Worker(speech, model, options)
-        parts = []
-        for k, (name, region) in enumerate(zip(names, regions)):
-            with open(os.path.join(split, name), "rb") as f:
-                pcm = f.read()[44:]
-            first = round(region["start"] * rate)
-            assert pcm == joined[2 * first:2 * round(region["end"] * rate)], name
-            parts.append((first / rate, worker_end(f"region-{k}", pcm, **timed)))
-        w.close()
-        shutil.rmtree(split)
-        want = {"file": long, **joined_transcript(parts, bool(timed))}
-        got = json.loads(run("asr", model, "--vad", vad, "--format", "json", *detection, *(["--timestamps"] if timed else []), *options, long).stdout)
-        assert got == want, (got, want)
-        got = json.loads(run("asr", model, "--vad", vad, "--format", "json", *(["--timestamps"] if timed else []), *options, silence).stdout)
-        assert got == {"file": silence, "text": "", "stop": "complete", **({"segments": [], "tokens": []} if timed else {})}, got
-        print(f"asr --vad: {len(regions)} regions of {len(joined) / 2 / rate:.1f} s, the worker's ends of vad --split's files joined"
-              f"{' with their times' if timed else ''}; a file of silence gives an empty text")
-        # The same samples as PCM on stdin: OpenAI's events of each region in order, its start and end in milliseconds, and
-        # its completed with the worker's text, stop and languages of the region's samples. Read all at once, a region
-        # may get no delta, and any it gets come before its completed.
-        streamed = run("asr", model, "--vad", vad, "--format", "json", "--rate", str(rate), *detection, *options, "-", input=joined)
-        events = [json.loads(line) for line in streamed.stdout.decode().splitlines()]
-        items = list(dict.fromkeys(e["item_id"] for e in events))
-        assert len(items) == len(regions), (len(items), regions)
-
         def milliseconds(seconds):
             """Milliseconds rounded half away from zero, as C's llround() rounds them."""
             whole = math.floor(seconds * 1000)
             return whole + (1 if seconds * 1000 - whole >= 0.5 else 0)
 
-        for item, region, (_, end) in zip(items, regions, parts):
-            mine = [e for e in events if e["item_id"] == item]
-            kinds = [e["type"].rsplit(".", 1)[1] for e in mine if not e["type"].endswith(".delta")]
-            assert kinds == ["speech_started", "speech_stopped", "committed", "completed"], kinds
-            first, last = round(region["start"] * rate), round(region["end"] * rate)
-            assert mine[0]["audio_start_ms"] == milliseconds(first / rate) and mine[1]["audio_end_ms"] == milliseconds(last / rate), (mine[:2], region)
-            assert all(e["delta"] for e in mine if e["type"].endswith(".delta")), mine
-            done = mine[-1]
-            assert done["transcript"] == end["text"] and done["stop"] == end["stop"], (done, end)
-            assert [x["code"] for x in done.get("languages", [])] == end.get("languages", []), (done, end)
-            assert done["usage"]["seconds"] == (last - first) / rate, (done, region)
-        print(f"asr --vad -: {len(items)} utterances, each speech_started and speech_stopped at its region's bounds, committed, and "
-              f"completed with the worker's text of the region")
+        # With a longest region of 8 s, and of 2 s, which cuts the speech at its pauses or within it, so that a region
+        # waits for the speech after it or for the silence before its padding is known.
+        counted = []
+        for longest_region in (8, 2):
+            detection = ["--threshold", "0.5", "--speech-pad-ms", "300", "--min-silence-duration-ms", "500", "--max-speech-duration-s", str(longest_region)]
+            # speech asr runs its detection on the CPU, and speech vad there finds the same speech.
+            found = json.loads(run("vad", vad, "--format", "json", "--device", "cpu", *region_cut.detection_flags(0.5, 300, 500, longest_region),
+                                   long).stdout)["regions"]
+            regions = region_cut.padded([(r["start"], r["end"]) for r in found], 300, 500, len(joined) / 2 / rate)
+            assert len(regions) > (counted[-1] if counted else len(pcms)), (longest_region, regions)
+            counted.append(len(regions))
+            w = Worker(speech, model, options)
+            parts = []
+            for k, (start, end) in enumerate(regions):
+                first = round(start * rate)
+                parts.append((first / rate, worker_end(f"region-{k}", joined[2 * first:2 * round(end * rate)], **timed)))
+            w.close()
+            want = {"file": long, **joined_transcript(parts, bool(timed))}
+            got = json.loads(run("asr", model, "--vad", vad, "--format", "json", *detection, *(["--timestamps"] if timed else []), *options, long).stdout)
+            assert got == want, (longest_region, got, want)
+            # The same samples as PCM on stdin: OpenAI's events of each region in order, its start and end in milliseconds,
+            # and its completed with the worker's text, stop and languages of the region's samples. Read all at once, a
+            # region may get no delta, and any it gets come before its completed.
+            streamed = run("asr", model, "--vad", vad, "--format", "json", "--rate", str(rate), *detection, *options, "-", input=joined)
+            events = [json.loads(line) for line in streamed.stdout.decode().splitlines()]
+            items = list(dict.fromkeys(e["item_id"] for e in events))
+            assert len(items) == len(regions), (longest_region, len(items), regions)
+            for item, (start, end_s), (_, end) in zip(items, regions, parts):
+                mine = [e for e in events if e["item_id"] == item]
+                kinds = [e["type"].rsplit(".", 1)[1] for e in mine if not e["type"].endswith(".delta")]
+                assert kinds == ["speech_started", "speech_stopped", "committed", "completed"], kinds
+                first, last = round(start * rate), round(end_s * rate)
+                assert mine[0]["audio_start_ms"] == milliseconds(first / rate) and mine[1]["audio_end_ms"] == milliseconds(last / rate), (mine[:2], start, end_s)
+                assert all(e["delta"] for e in mine if e["type"].endswith(".delta")), mine
+                done = mine[-1]
+                assert done["transcript"] == end["text"] and done["stop"] == end["stop"], (done, end)
+                assert [x["code"] for x in done.get("languages", [])] == end.get("languages", []), (done, end)
+                assert done["usage"]["seconds"] == (last - first) / rate, (done, start, end_s)
+        got = json.loads(run("asr", model, "--vad", vad, "--format", "json", *(["--timestamps"] if timed else []), *options, silence).stdout)
+        assert got == {"file": silence, "text": "", "stop": "complete", **({"segments": [], "tokens": []} if timed else {})}, got
+        print(f"asr --vad and asr --vad -: {counted[0]} and, with a longest region of 2 s, {counted[1]} regions of {len(joined) / 2 / rate:.1f} s, "
+              f"the worker's ends of the regions{' with their times' if timed else ''} joined from a file, and each utterance from stdin "
+              f"speech_started and speech_stopped at its region's bounds and completed with the worker's text; a file of silence gives an empty text")
         # Fed as fast as it is said, the first of the longest dump's utterances gets deltas before it is committed.
         longest = max(pcms, key=len)
         process = subprocess.Popen([speech, "asr", model, "--vad", vad, "--format", "json", "--rate", str(rate), *options, "-"], stdin=subprocess.PIPE,

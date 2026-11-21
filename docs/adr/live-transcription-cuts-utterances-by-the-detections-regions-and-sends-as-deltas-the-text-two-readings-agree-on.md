@@ -14,7 +14,8 @@ The library recognizes a request's audio whole and gives its text once the recog
 as it arrives. The detection of audio given a piece at a time gives `speech_detect()`'s regions, each once it is
 certain ([the record of that detection](a-detection-of-audio-given-a-piece-at-a-time-gives-speech-detects-regions-each-once-it-is-certain.md)),
 and `speech_detection_speaking()` reports the region under way, and whether it is kept: until its speech has lasted
-longer than `min_speech_duration_ms`, it is dropped if its speech ends that soon. Transcription by regions cuts a file with the options `region_options()` gives
+longer than `min_speech_duration_ms`, it is dropped if its speech ends that soon. Transcription by regions cuts a file with the options `region_options()` gives,
+the detection finding the speech alone and the tools padding it
 ([its record](transcription-by-regions-recognizes-each-region-where-someone-speaks-alone-in-the-tools-and-joins-the-texts.md)).
 
 Silero VAD's graphs are small (Apple M5, 2026-10-08): a minute of 16 kHz audio pushed in pieces of 20 ms takes 0.12 s
@@ -26,10 +27,12 @@ on the CPU with one thread, 0.17 s with the performance cores and 0.52 s on Meta
 - **One assembly of utterances in `tools/common`**, for the command line and the server: it takes audio at the
   caller's rate, cuts it into utterances, recognizes each alone, one at a time on a thread of its own, and gives its
   events in order: speech started, speech stopped, committed, delta, completed or failed. With a detection, the
-  utterances are the detection's regions, with the options of transcription by regions, and each region's samples are
-  cut as transcription by regions cuts a file's, so a stream gets the regions and the texts that `speech asr --vad` gets
-  for the same audio. Without one, the caller commits, and an utterance is the audio taken since the last commit or
-  clear.
+  utterances are the regions of transcription by regions, the speech the detection finds padded as a file's, and each
+  region's samples are cut as transcription by regions cuts a file's, so a stream gets the regions and the texts that
+  `speech asr --vad` gets for the same audio. A region is committed once the silence that ends it has passed, or, where
+  `max_speech_duration_s` cut the speech itself, once the speech after it has begun or that silence has passed, since its
+  padding depends on which. Without a detection, the caller commits, and an utterance is the audio taken since the last
+  commit or clear.
 - **A delta carries the beginning that two readings in a row agree on**, beyond what the deltas sent: while an utterance
   goes on, its audio from its start is recognized again, and two readings in a row agree on the code points both begin
   with, back to the end of a word both have whole where the script puts spaces between words, and, where that is all of

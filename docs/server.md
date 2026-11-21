@@ -195,10 +195,11 @@ field per member:
 |---|---|---|
 | `chunking_strategy[type]` | | `server_vad`, required with the others |
 | `chunking_strategy[threshold]` | 0.5 | the speech probability from which audio counts as speech, 0 to 1 |
-| `chunking_strategy[prefix_padding_ms]` | 300 | the audio kept before and after each region |
+| `chunking_strategy[prefix_padding_ms]` | 300 | the audio kept before each region's speech, and after it up to `silence_duration_ms` |
 | `chunking_strategy[silence_duration_ms]` | 500 | the silence that ends a region |
 
-A region is at most 10 s long, cut at its longest silence. A request with `chunking_strategy` to a server without a
+A region is at most 10 s long, cut at its longest silence. A `silence_duration_ms` below about 200 ms cuts sentences at
+their pauses, and a stretch of speech shorter than 250 ms between two such cuts is dropped. A request with `chunking_strategy` to a server without a
 detection model is a 400 that says to give it one: `speech serve reazonspeech-v2 silero-vad`.
 
 ```python
@@ -314,11 +315,14 @@ texts as `chunking_strategy` with the same values. A server without a detection 
 | Member | Default | Meaning |
 |---|---|---|
 | `threshold` | 0.5 | the speech probability from which audio counts as speech, 0 to 1 |
-| `prefix_padding_ms` | 300 | the audio kept before and after each utterance |
+| `prefix_padding_ms` | 300 | the audio kept before each utterance's speech, and after it up to `silence_duration_ms` |
 | `silence_duration_ms` | 500 | the silence that ends an utterance |
 
 An utterance is at most 10 s long, cut at its longest silence. `speech_started` comes about 0.26 s after the speech
-begins, once it has lasted long enough to be kept, and the utterance is committed about 0.6 s after the speech ends. The buffer
+begins, once it has lasted long enough to be kept, and the utterance is committed once `silence_duration_ms` of
+silence has followed it, within the detection's 32 ms. A shorter `silence_duration_ms` gives the text sooner, and cuts
+sentences at shorter pauses: below about 200 ms, an utterance ends at nearly every pause, and a stretch of speech shorter
+than 250 ms between two of them is dropped. The buffer
 keeps only the utterance under way, or the last moments of silence, so a session can stay open through silence; a
 commit while `server_vad` runs transcribes it as an utterance, the one that `speech_started` named if speech is under
 way, and a clear drops it, and in both cases turn detection begins again on the audio that follows.

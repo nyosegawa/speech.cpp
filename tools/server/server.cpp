@@ -231,8 +231,8 @@ private:
                                    res);
             if (!job->detector) return;
             try {
-                job->detection = detection_request(job->detector->get(), asked.samples, asked.sample_rate,
-                                                   region_options(*asked.regions, job->detector->defaults()));
+                job->cut.emplace(job->detector->get(), region_options(*asked.regions, job->detector->defaults()));
+                job->detection = detection_request(job->detector->get(), asked.samples, asked.sample_rate, job->cut->detection());
             } catch (const Failure & e) {
                 ApiError error = openai::library_error(e);
                 const std::string member = server_vad_member(e.option());

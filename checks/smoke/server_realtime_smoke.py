@@ -11,10 +11,11 @@ session holds before it is transcribed, two commits and an HTTP request run in t
 while its commit is transcribed, and the refusals of the upgrade: another model, another query member, another Origin
 and another Host. As someone speaks: deltas of a commit appended in real time before it is committed, and a reading
 under way stopped by the commit; with turn_detection server_vad, the dumps joined with silences and appended in pieces
-of 20 ms cut into the regions that speech vad finds on the CPU, each with its speech_started and speech_stopped at the
-region's bounds, its commit and its completed with the text of the region's samples sent as a WAV file, all of them
-joined into the text of chunking_strategy with the same values; deltas of an utterance appended in real time before its
-commit; a commit and a clear while speech is under way; minutes of silence held within the bound; server_vad's
+of 20 ms cut into the regions of the speech that speech vad finds on the CPU, padded as transcription by regions pads
+them (region_cut.py), each with its speech_started and speech_stopped at the region's bounds, its commit and its
+completed with the text of the region's samples sent as a WAV file, all of them joined into the text of chunking_strategy
+with the same values; each region committed once silence_duration_ms has followed its speech; deltas of an utterance
+appended in real time before its commit; a commit and a clear while speech is under way; minutes of silence held within the bound; server_vad's
 refusals, on a server without a detection model too; and a detection flag given to the server (--threshold) as turn
 detection's default, before OpenAI's, with a session's own member kept.
 
@@ -33,6 +34,7 @@ import sys
 import tempfile
 import time
 
+import region_cut
 from server_client import Server, expect_error
 from worker_client import joined_transcript, read_npy
 
@@ -430,9 +432,10 @@ else:
     raise SystemExit("no reading stopped when its buffer was committed: " + "".join(list(server.lines)[-5:]))
 print("realtime: a reading under way when its buffer was committed stopped, and the commit was recognized whole")
 
-# server_vad: the dumps joined with silences of 1.5 s, appended in pieces of 20 ms, are cut into the regions speech vad
-# finds in the same samples on the CPU, which the server's detection runs on too; each region is committed and
-# recognized as its samples sent as a WAV file, and their texts join into what chunking_strategy gives the whole.
+# server_vad: the dumps joined with silences of 1.5 s, appended in pieces of 20 ms, are cut into the regions of the speech
+# speech vad finds in the same samples on the CPU, which the server's detection runs on too, padded as transcription by
+# regions pads them; each region is committed and recognized as its samples sent as a WAV file, and their texts join into
+# what chunking_strategy gives the whole.
 alls = [pcm24(read_npy(os.path.join(d, "audio.npy"))) for d in dumps]
 silence = b"\0" * 2 * 36000
 joined = b"".join(p + silence for p in alls)
@@ -440,9 +443,10 @@ folder = tempfile.mkdtemp()
 path = os.path.join(folder, "joined.wav")
 with open(path, "wb") as f:
     f.write(wav24(joined))
-detection = ["--threshold", "0.5", "--speech-pad-ms", "300", "--min-silence-duration-ms", "500", "--max-speech-duration-s", "10"]
-regions = json.loads(subprocess.run([speech, "vad", vad, "--device", "cpu", "--threads", "1", "--format", "json", *detection, path],
-                                    capture_output=True, check=True).stdout)["regions"]
+detection = region_cut.detection_flags(0.5, 300, 500, 10)
+speech_found = json.loads(subprocess.run([speech, "vad", vad, "--device", "cpu", "--threads", "1", "--format", "json", *detection, path],
+                                         capture_output=True, check=True).stdout)["regions"]
+regions = [{"start": s, "end": e} for s, e in region_cut.padded([(r["start"], r["end"]) for r in speech_found], 300, 500, len(joined) / 48000)]
 shutil.rmtree(folder)
 assert len(regions) >= len(alls), regions
 vws = server.websocket("/v1/realtime")
@@ -480,7 +484,20 @@ assert [e["previous_item_id"] for e in events if e["type"] == "input_audio_buffe
 status, _, body = transcribe([("chunking_strategy", "auto")], [("file", "x.wav", wav24(joined))])
 assert status == 200 and json.loads(body)["text"] == joined_transcript(parts, False)["text"], (body, parts)
 print(f"realtime server_vad: {len(items)} utterances of {len(joined) / 48000:.1f} s appended in pieces of 20 ms, each at the bounds of "
-      f"speech vad's region and completed with the text of its samples as a file, joined into chunking_strategy's text")
+      f"its region and completed with the text of its samples as a file, joined into chunking_strategy's text")
+# A region is committed once silence_duration_ms of silence has followed its speech: the first dump's audio up to 580 ms
+# after its last speech commits every region of it. The detection takes the 500 ms in its chunks of 32 ms, 512 ms and the
+# chunk itself, and its resampler holds back 4.3 ms; Silero VAD's own padding would wait for 600 ms, and 640 ms of audio.
+within = [r for r in speech_found if r["end"] < len(alls[0]) / 48000]
+ows = server.websocket("/v1/realtime")
+assert ows.event()["type"] == "session.created"
+ows.send(session({"model": name}, {"type": "server_vad"}))
+assert ows.event()["type"] == "session.updated"
+appended(ows, joined[:2 * round((within[-1]["end"] + 0.58) * 24000)], 960)
+events = settle(ows)
+assert sum(e["type"] == "input_audio_buffer.committed" for e in events) == len(within), events
+ows.close()
+print(f"realtime server_vad: the {len(within)} utterances of the first dump committed with 580 ms of audio after its last speech")
 # Appended as fast as it is said, an utterance gets deltas after its speech started and before its commit.
 paced(vws, longest + silence)
 events = settle(vws)

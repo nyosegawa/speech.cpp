@@ -14,15 +14,16 @@
 
 #include "cancellation.h"
 #include "library.h"
+#include "regions.h"
 #include "request-options.h"
 #include "speakers.h"
 #include "transcript.h"
 
 // Utterance assembly: audio that arrives a piece at a time, at a rate given when the assembly starts, cut into
 // utterances, each recognized alone, as transcription by regions recognizes a whole recording. With a detection, the
-// utterances are the regions where someone speaks, which the detection gives sample for sample as speech_detect() gives
-// them for the whole audio; without one, the caller commits each utterance, all the audio appended since the last
-// commit. While an utterance goes on, its beginning is read again and again, and the beginning that two readings in a
+// utterances are the regions of transcription by regions: the speech that the detection finds sample for sample as
+// speech_detect() finds it in the whole audio, padded as RegionCut pads it; without one, the caller commits each
+// utterance, all the audio appended since the last commit. While an utterance goes on, its beginning is read again and again, and the beginning that two readings in a
 // row agree on goes out as deltas, which only ever add text; once it is committed, it is recognized whole, and that
 // recognition, which may differ from the deltas, completes it. With a diarization, the completion waits until the
 // diarization has settled the utterance's audio, and carries the speakers within it, while the recognitions after it go
@@ -108,19 +109,20 @@ public:
 };
 
 /**
- * A detection of audio given a piece at a time (speech_detection), on a detection model that `keep` keeps until the
- * detection is freed, with the request options it was started with.
+ * A detection of audio given a piece at a time (speech_detection) of the speech alone, on a detection model that `keep`
+ * keeps until the detection is freed, with the cut of transcription by regions that pads its regions.
  */
 class Detection {
 public:
     /**
-     * Starts a detection of audio at `rate` with `options`, which the library checks; its refusal throws a Failure, and so
-     * does a rate below 8000 Hz, whose resampler holds back more audio than the assembly keeps for a region to come.
+     * Starts a detection of audio at `rate` with the cut that `options`, as region_options() completes them, ask for,
+     * which the library checks; its refusal throws a Failure, and so does a rate below 8000 Hz, whose resampler holds back
+     * more audio than the assembly keeps for a region to come.
      */
-    Detection(speech_model * model, std::shared_ptr<const void> keep, std::vector<RequestOption> options, int rate);
+    Detection(speech_model * model, std::shared_ptr<const void> keep, const std::vector<RequestOption> & options, int rate);
 
     int rate() const { return rate_; }
-    const std::vector<RequestOption> & options() const { return options_; }
+    const RegionCut & cut() const { return cut_; }
     /** What keeps the model, which tells the model a host holds now from the one the detection runs on. */
     const void * model() const { return keep_.get(); }
     /**
@@ -132,10 +134,10 @@ public:
     void push(const float * samples, size_t n);
     void end();
     size_t region_count() const;
-    /** The region at `index`, in seconds from the start of the detection's audio. */
-    std::pair<double, double> region(size_t index) const;
+    /** The speech of the region at `index`, in seconds from the start of the detection's audio. */
+    Region region(size_t index) const;
     /**
-     * The start of the region begun and not given yet, and whether it is certain to be given, as
+     * The start of the speech of the region begun and not given yet, and whether it is certain to be given, as
      * speech_detection_speaking() gives them, or nothing.
      */
     std::optional<std::pair<double, bool>> speaking() const;
@@ -147,7 +149,7 @@ private:
 
     speech_model * model_;
     std::shared_ptr<const void> keep_;
-    std::vector<RequestOption> options_;
+    RegionCut cut_;
     int rate_;
     double reach_back_ = 0;
     std::unique_ptr<speech_detection, decltype(&speech_detection_free)> detection_{nullptr, speech_detection_free};
@@ -272,7 +274,8 @@ private:
     /** Sends the completions that wait, from the first, while each one's speakers are settled. */
     void release();
     // These run with the mutex held.
-    void take_regions();
+    /** Commits the regions the detection has given, and follows the one begun; `ended` once the detection's audio has. */
+    void take_regions(bool ended = false);
     void announce(Utterance & u);
     void send_agreed(Utterance & u);
     void commit_samples(uint64_t number, uint64_t first, uint64_t last);
@@ -308,9 +311,15 @@ private:
     uint64_t heard_ = 0, buffer_ = 0;
     /** The samples of the utterances committed and not yet recognized. */
     size_t committed_ = 0;
-    /** Where the detection's audio began, how much of it it took, and how many of its regions are committed. */
+    /** Where the detection's audio began, how much of it it took, and how many of its regions it has given. */
     uint64_t origin_ = 0, pushed_ = 0;
     size_t regions_ = 0;
+    /**
+     * The speech of the regions given and not yet committed, whose padding waits on whether speech starts again within
+     * the silence that ends a region, and the end of the last region committed, in seconds of the detection's audio.
+     */
+    std::deque<Region> held_;
+    double from_ = 0;
     uint64_t next_ = 0;
     std::optional<Utterance> current_;
     std::deque<Final> finals_;
