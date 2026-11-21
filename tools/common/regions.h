@@ -24,7 +24,8 @@ struct VadMember {
 
 /**
  * The members of server_vad that speech.cpp takes: threshold as threshold, prefix_padding_ms, the audio kept before
- * speech, as speech_pad_ms, and silence_duration_ms, the silence that ends speech, as min_silence_duration_ms.
+ * speech, as speech_pad_ms, and silence_duration_ms, the silence that ends speech, as min_silence_duration_ms. RegionCut
+ * keeps that padding around the speech itself.
  */
 constexpr VadMember kServerVad[] = {
     {"threshold", SPEECH_OPT_THRESHOLD},
@@ -57,6 +58,45 @@ Request detection_request(speech_model * detector, const std::vector<float> & sa
 
 /** The regions that a detection request set up by detection_request() finds, or nothing once it is cancelled. */
 std::optional<std::vector<Region>> detect_regions(speech_request * detection, Cancellation & cancellation);
+
+/**
+ * How transcription by regions cuts audio, as OpenAI's server_vad describes its turns: a turn ends once
+ * silence_duration_ms of silence has followed its speech, and keeps prefix_padding_ms before the speech. The detection
+ * finds the speech alone, with speech_pad_ms 0, and each region keeps speech_pad_ms before its speech and as much after
+ * it, but no more than min_silence_duration_ms, so that the audio of a region is all there once the silence that ends it
+ * has passed. Silero VAD's own padding gives a region half the silence before the next one where that starts within
+ * twice speech_pad_ms, which a stream knows only once that much silence has passed: 600 ms with OpenAI's defaults, where
+ * silence_duration_ms says 500.
+ */
+class RegionCut {
+public:
+    /**
+     * The cut that `options`, as region_options() completes them, ask of `detector`, which checks them as a request
+     * does; it throws a Failure where the padding leaves no room for speech within max_speech_duration_s.
+     */
+    RegionCut(speech_model * detector, const std::vector<RequestOption> & options);
+
+    /** The detection's options: `options` with speech_pad_ms 0, and max_speech_duration_s less the padding. */
+    const std::vector<RequestOption> & detection() const { return detection_; }
+    /** The seconds kept before a region's speech and after it, and the silence that ends a region. */
+    double before() const { return before_; }
+    double after() const { return after_; }
+    double silence() const { return silence_; }
+
+    /**
+     * The region of `speech`, in audio of `length` seconds: from before() earlier, but not before `from`, the end of the
+     * region before it, to after() later, but not past `length`. Where the speech after it starts at `next` within the
+     * silence that ends a region, as where max_speech_duration_s cut the speech, the region ends after() later or halfway
+     * to `next`, whichever comes first.
+     */
+    Region pad(const Region & speech, double from, std::optional<double> next, double length) const;
+    /** The regions of `speech`, the speech that a detection with detection() found in `length` seconds of audio. */
+    std::vector<Region> regions(const std::vector<Region> & speech, double length) const;
+
+private:
+    std::vector<RequestOption> detection_;
+    double before_ = 0, after_ = 0, silence_ = 0;
+};
 
 /**
  * Checks that `recognizer` is a model of speech recognition and takes `options`, before any region, so that audio without

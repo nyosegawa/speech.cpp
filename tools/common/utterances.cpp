@@ -1,10 +1,8 @@
 #include "utterances.h"
 
+#include <algorithm>
 #include <chrono>
 #include <stdexcept>
-#include <variant>
-
-#include "regions.h"
 
 namespace utterances {
 
@@ -33,29 +31,20 @@ double seconds_since(std::chrono::steady_clock::time_point t0) {
 
 }  // namespace
 
-Detection::Detection(speech_model * model, std::shared_ptr<const void> keep, std::vector<RequestOption> options, int rate)
-    : model_(model), keep_(std::move(keep)), options_(std::move(options)), rate_(rate) {
+Detection::Detection(speech_model * model, std::shared_ptr<const void> keep, const std::vector<RequestOption> & options, int rate)
+    : model_(model), keep_(std::move(keep)), cut_(model, options), rate_(rate) {
     if (rate < kLowestRate) {
         throw Failure(speech_status_name(SPEECH_ERROR_INVALID_ARGUMENT), "audio",
                       "audio at " + std::to_string(rate) + " Hz is below the " + std::to_string(kLowestRate) +
                           " Hz that detecting speech as it arrives takes; resample it to " + std::to_string(kLowestRate) + " Hz or more");
     }
     start();
-    const ModelInfo info = model_info(model_);
-    const auto milliseconds = [&](speech_option option) {
-        for (const RequestOption & o : options_) {
-            if (o.option == option) return (double) std::get<int64_t>(o.value);
-        }
-        int64_t value = 0;
-        check(speech_model_info_option_default_int(info.get(), option, &value));
-        return (double) value;
-    };
-    reach_back_ = milliseconds(SPEECH_OPT_SPEECH_PAD_MS) / 1000 + kReachMargin;
+    reach_back_ = cut_.before() + kReachMargin;
 }
 
 void Detection::start() {
     const Request request = new_request(model_);
-    apply_options(request.get(), options_);
+    apply_options(request.get(), cut_.detection());
     speech_detection * raw = nullptr;
     check(speech_detection_start(request.get(), rate_, &raw));
     detection_.reset(raw);
@@ -78,10 +67,10 @@ size_t Detection::region_count() const {
     return speech_detection_region_count(detection_.get());
 }
 
-std::pair<double, double> Detection::region(size_t index) const {
-    double start = 0, end = 0;
-    check(speech_detection_region(detection_.get(), index, &start, &end));
-    return {start, end};
+Region Detection::region(size_t index) const {
+    Region r;
+    check(speech_detection_region(detection_.get(), index, &r.start, &r.end));
+    return r;
 }
 
 std::optional<std::pair<double, bool>> Detection::speaking() const {
@@ -133,6 +122,8 @@ void Assembly::detect(std::unique_ptr<Detection> detection) {
     origin_ = heard_;
     pushed_ = 0;
     regions_ = 0;
+    held_.clear();
+    from_ = 0;
 }
 
 void Assembly::manual() {
@@ -242,11 +233,31 @@ double Assembly::heard() const {
     return (double) heard_ / rate_;
 }
 
-void Assembly::take_regions() {
+void Assembly::take_regions(bool ended) {
+    const RegionCut & cut = detection_->cut();
+    const double length = (double) pushed_ / rate_;
     const auto at = [&](double seconds) { return origin_ + region_samples(Region{seconds, seconds}, rate_, pushed_).first; };
-    for (const size_t count = detection_->region_count(); regions_ < count; regions_++) {
-        const std::pair<double, double> region = detection_->region(regions_);
-        const uint64_t first = at(region.first), last = at(region.second);
+    for (const size_t count = detection_->region_count(); regions_ < count; regions_++) held_.push_back(detection_->region(regions_));
+    const std::optional<std::pair<double, bool>> speaking = detection_->speaking();
+    // The detection gives a region that silence ended once that silence has passed, and one that max_speech_duration_s cut
+    // with the speech after it begun, or, where it cut the speech itself, before the speech after it has begun; such a
+    // region waits for that speech to be kept or dropped, or for the silence, so that its padding is the one RegionCut
+    // gives the whole audio, in which the speech after it is a region's only where it was kept.
+    while (!held_.empty()) {
+        const Region speech = held_.front();
+        std::optional<double> next;
+        bool unsure = false;
+        if (held_.size() > 1) {
+            next = held_[1].start;
+        } else if (speaking && speaking->first - speech.end < cut.silence()) {
+            if (speaking->second) next = speaking->first;
+            else unsure = true;
+        }
+        if (!ended && (unsure || (!next && length - speech.end < cut.silence()))) return;
+        const Region region = cut.pad(speech, from_, next, length);
+        held_.pop_front();
+        from_ = region.end;
+        const uint64_t first = at(region.start), last = at(region.end);
         if (current_ && current_->start != first) drop_current();
         if (!current_) current_ = Utterance{next_++, first, false, first, "", "", ""};
         announce(*current_);
@@ -257,7 +268,6 @@ void Assembly::take_regions() {
         send(stopped);
         commit_samples(current_->number, first, last);
     }
-    const std::optional<std::pair<double, bool>> speaking = detection_->speaking();
     if (!speaking) {
         if (current_) drop_current();
         // The audio before what a region still to come may reach back to lies outside every region.
@@ -265,7 +275,7 @@ void Assembly::take_regions() {
         if (heard_ - buffer_ > reach) keep_from(heard_ - reach);
         return;
     }
-    const uint64_t start = at(speaking->first);
+    const uint64_t start = at(std::max(speaking->first - cut.before(), from_));
     if (current_ && current_->start != start) drop_current();
     if (!current_) current_ = Utterance{next_++, start, false, start, "", "", ""};
     keep_from(start);
@@ -350,7 +360,7 @@ void Assembly::end_detection() {
     const auto t0 = std::chrono::steady_clock::now();
     detection_->end();
     detecting_ += seconds_since(t0);
-    take_regions();
+    take_regions(true);
     detection_.reset();
 }
 
@@ -359,6 +369,8 @@ void Assembly::restart_detection() {
     origin_ = heard_;
     pushed_ = 0;
     regions_ = 0;
+    held_.clear();
+    from_ = 0;
 }
 
 void Assembly::begin_manual_utterance() {

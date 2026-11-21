@@ -2,6 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <stdexcept>
+
+#include "failure.h"
 
 namespace {
 
@@ -47,6 +51,52 @@ Request detection_request(speech_model * detector, const std::vector<float> & sa
     check(speech_request_set_audio(request.get(), samples.data(), samples.size(), rate));
     apply_options(request.get(), options);
     return request;
+}
+
+RegionCut::RegionCut(speech_model * detector, const std::vector<RequestOption> & options) : detection_(options) {
+    apply_options(new_request(detector).get(), options);
+    const auto value = [&](speech_option option) -> const OptionValue & {
+        const auto last = std::find_if(options.rbegin(), options.rend(), [&](const RequestOption & o) { return o.option == option; });
+        if (last == options.rend()) throw std::logic_error(std::string("a region cut without ") + speech_option_name(option));
+        return last->value;
+    };
+    const int64_t pad = std::get<int64_t>(value(SPEECH_OPT_SPEECH_PAD_MS));
+    const int64_t silence = std::get<int64_t>(value(SPEECH_OPT_MIN_SILENCE_DURATION_MS));
+    const double longest = std::get<double>(value(SPEECH_OPT_MAX_SPEECH_DURATION_S));
+    before_ = (double) pad / 1000;
+    after_ = (double) std::min(pad, silence) / 1000;
+    silence_ = (double) silence / 1000;
+    // Silero VAD keeps a region with its padding within max_speech_duration_s, which it shortens by twice its own padding.
+    const double speech = longest - before_ - after_;
+    if (!(speech > 0)) {
+        char message[256];
+        std::snprintf(message, sizeof message,
+                      "speech_pad_ms %lld keeps %g s around the speech of a region, which leaves it no room within max_speech_duration_s %g; "
+                      "give less padding or a longer max_speech_duration_s",
+                      (long long) pad, before_ + after_, longest);
+        throw Failure(speech_status_name(SPEECH_ERROR_INVALID_ARGUMENT), speech_option_name(SPEECH_OPT_SPEECH_PAD_MS), message);
+    }
+    for (RequestOption & o : detection_) {
+        if (o.option == SPEECH_OPT_SPEECH_PAD_MS) o.value = (int64_t) 0;
+        if (o.option == SPEECH_OPT_MAX_SPEECH_DURATION_S) o.value = speech;
+    }
+}
+
+Region RegionCut::pad(const Region & speech, double from, std::optional<double> next, double length) const {
+    double end = speech.end + after_;
+    if (next && *next - speech.end < silence_) end = std::min(end, speech.end + (*next - speech.end) / 2);
+    return {std::max(speech.start - before_, from), std::min(end, length)};
+}
+
+std::vector<Region> RegionCut::regions(const std::vector<Region> & speech, double length) const {
+    std::vector<Region> out;
+    double from = 0;
+    for (size_t i = 0; i < speech.size(); i++) {
+        const std::optional<double> next = i + 1 < speech.size() ? std::optional<double>(speech[i + 1].start) : std::nullopt;
+        out.push_back(pad(speech[i], from, next, length));
+        from = out.back().end;
+    }
+    return out;
 }
 
 std::optional<std::vector<Region>> detect_regions(speech_request * detection, Cancellation & cancellation) {

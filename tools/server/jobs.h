@@ -147,8 +147,12 @@ struct TranscriptionJob : Job {
     /** The length of the audio in seconds and its rate, for the log and verbose_json. */
     double duration = 0;
     int sample_rate = 0;
-    /** With chunking_strategy: the detection model, kept as `served` is, and its request set up with the audio. */
+    /**
+     * With chunking_strategy: the detection model, kept as `served` is, the cut its members ask for, and the detection
+     * request set up with the audio and the cut's options.
+     */
     std::shared_ptr<Served> detector;
+    std::optional<RegionCut> cut;
     Request detection{nullptr, speech_request_free};
     /** With chunking_strategy: the model of `served`, the audio, the recognition options and whether they set timestamps. */
     speech_model * recognizer = nullptr;
@@ -292,7 +296,7 @@ inline void transcribe(const std::shared_ptr<TranscriptionJob> & job, Turns & tu
         }
         std::optional<std::vector<Region>> regions = detect_regions(job->detection.get(), job->cancellation);
         if (!regions) return SPEECH_CANCELLED;
-        job->regions = std::move(*regions);
+        job->regions = job->cut->regions(*regions, (double) job->samples.size() / job->sample_rate);
         std::optional<Transcript> t = transcribe_regions(job->recognizer, job->samples, job->sample_rate, job->regions, job->options, job->timestamps,
                                                          job->cancellation, job->diarization ? &job->parts : nullptr);
         if (!t) return SPEECH_CANCELLED;

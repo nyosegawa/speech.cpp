@@ -28,8 +28,10 @@ records:
 - speech started and committed, from the start and from the end of speech;
 - whether it is cut: an utterance the detection cuts out of speech longer than its longest region (10 s) begins or ends
   inside the speech, at the cut, and is committed only once the stretch reaches that length, so its parts wait;
-- whether the completed transcript is the text of the same samples, the region the server's detection cut found by
-  `speech vad` with server_vad's options, sent afterwards to /v1/audio/transcriptions of the same server.
+- whether the completed transcript is the text of the same samples, the region the server's detection cut, sent
+  afterwards to /v1/audio/transcriptions of the same server: the region whose bounds are the item's among those of
+  `speech vad` with server_vad's options, padded either way a build may pad them, by Silero VAD's rule or by
+  transcription by regions' own (checks/smoke/region_cut.py).
 
 With --diarize, each server also holds the diarization model MODEL and each session asks for diarization with its
 defaults (session.audio.input.diarization {}), so that the server holds each completed transcript until the diarization
@@ -79,6 +81,7 @@ import numpy
 import soxr
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "checks", "smoke"))
+import region_cut  # noqa: E402
 from server_client import Server, WebSocket  # noqa: E402
 
 RATE = 24000
@@ -344,7 +347,8 @@ def utterances(events, started, reference, cut):
         if partial:
             at["first_partial"] = partial[0]
         done = first.get("completed") or first.get("failed")
-        region = [r for r in cut if milliseconds(r[0]) == first["speech_started"][1]["audio_start_ms"]] if "speech_started" in first else []
+        region = [r for r in cut if milliseconds(r[0]) == first["speech_started"][1]["audio_start_ms"] and
+                  ("speech_stopped" not in first or milliseconds(r[1]) == first["speech_stopped"][1]["audio_end_ms"])] if "speech_started" in first else []
         rows.append({"item": item, "start": begin, "end": end, "heard": [r for r in reference if r[1] > begin and r[0] < end], "at": at,
                      "failed": "failed" in first, "text": done[1].get("transcript") if done else None, "region": region[0] if region else None})
     return rows
@@ -430,15 +434,17 @@ def run(work, label, speech, model, vad, diarizer, serve, names, chunk_ms, round
             meta = json.load(f)
         path = os.path.join(work, "sessions", name + ".wav")
         cut_path = os.path.join(work, "cuts", label, name + ".json")
+        with open(path, "rb") as f:
+            pcm = f.read()[44:]
         if not os.path.exists(cut_path):
             os.makedirs(os.path.dirname(cut_path), exist_ok=True)
             cut = regions(speech, vad, [path], *SERVER_VAD)[0]
+            speech_only = regions(speech, vad, [path], *region_cut.detection_flags(0.5, 300, 500, 10))[0]
+            cut += [r for r in region_cut.padded(speech_only, 300, 500, len(pcm) / 2 / RATE) if r not in cut]
             with open(cut_path, "w") as f:
                 json.dump(cut, f)
         with open(cut_path) as f:
             cut = json.load(f)
-        with open(path, "rb") as f:
-            pcm = f.read()[44:]
         language = meta["language"] if takes_language else None
         session = Session(server.port, info["name"], language, diarizer is not None)
         started = session.stream(pcm, RATE * chunk_ms // 1000)

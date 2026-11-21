@@ -181,12 +181,14 @@ region:
 | Flag | Default | Meaning |
 |---|---|---|
 | `--threshold X` | 0.5 | the speech probability from which audio counts as speech |
-| `--speech-pad-ms N` | 300 | the audio kept before and after each region |
+| `--speech-pad-ms N` | 300 | the audio kept before each region's speech, and after it up to `--min-silence-duration-ms` |
 | `--min-silence-duration-ms N` | 500 | the silence that ends a region |
 | `--max-speech-duration-s S` | 10 | the longest region; a longer one is cut at its longest silence |
 | `--min-speech-duration-ms N` | 250 | the shortest region kept |
 
-`speech vad --split` with the same flags writes the regions that `speech asr --vad` recognizes.
+The padding after a region's speech is never longer than the silence that ends it, so that a region ends as soon as
+that silence has passed, as `server_vad` ends a turn. `speech vad` pads its regions as Silero VAD does, so they can
+differ from those of `speech asr --vad` where two lie close together or the silence is shorter than the padding.
 
 ### Speakers
 
@@ -232,7 +234,7 @@ speech asr qwen3-asr-0.6b --vad silero-vad --live --format json > events.jsonl
   `conversation.item.input_audio_transcription.delta`, text that adds to the end of what came before, and
   `conversation.item.input_audio_transcription.completed`, whose `transcript` is the whole text and replaces the deltas.
 - On an Apple M5, speech started comes 0.26 s after the speech begins, the first text 0.5 to 1.5 s after it, and the
-  final text 0.7 to 1.3 s after the speech ends.
+  final text 0.7 s (Qwen3-ASR 0.6B) to 0.85 s (1.7B) after the speech ends, in the median with the defaults.
 - stderr reports the microphone and its rate, and at the end the utterances and the time the detection took; `-v` also
   reports each utterance as it ends. A recognition that fails ends the run with exit 1, after the `failed` event in JSON.
 - With `--diarize`, the diarization hears the audio as it arrives, in its `low_latency` mode unless `--streaming-mode`
